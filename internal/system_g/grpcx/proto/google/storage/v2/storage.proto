@@ -1,0 +1,41 @@
+syntax = "proto3";
+
+// A minimal, WIRE-COMPATIBLE subset of Google's google/storage/v2/storage.proto: only the
+// ListBuckets method and the Bucket fields this audit reads, at their REAL field numbers. Protobuf
+// ignores every other field on the wire, so this is necessary and sufficient to query real GCS gRPC
+// (storage.googleapis.com:443) with no googleapis imports and no generated code. To read more
+// fields, add them here at their real numbers; to add methods, declare them.
+package google.storage.v2;
+
+service Storage {
+  rpc ListBuckets(ListBucketsRequest) returns (ListBucketsResponse);
+}
+
+message ListBucketsRequest {
+  string parent = 1; // "projects/{project}"
+  int32 page_size = 2;
+  string page_token = 3;
+}
+
+message ListBucketsResponse {
+  repeated Bucket buckets = 1;
+  string next_page_token = 2;
+}
+
+message Bucket {
+  message Encryption {
+    string default_kms_key = 1;
+  }
+  message IamConfig {
+    string public_access_prevention = 3;
+  }
+  message Versioning {
+    bool enabled = 1;
+  }
+
+  string name = 1;      // "projects/_/buckets/{bucket_id}"
+  string bucket_id = 2; // short bucket name
+  Versioning versioning = 17;
+  Encryption encryption = 20;
+  IamConfig iam_config = 23;
+}

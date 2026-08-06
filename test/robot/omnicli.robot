@@ -1,0 +1,320 @@
+*** Settings ***
+Library           Process
+Library           OperatingSystem
+Library           mocklib.py
+Suite Setup       Start Mock
+Suite Teardown    Stop Mock
+
+*** Variables ***
+${PORT}           8085
+${ENDPOINT}       http://127.0.0.1:${PORT}
+${BINARY}         ${EXECDIR}/build/omnicli
+${MOCKDIR}        ${CURDIR}/../mock
+${OUTDIR}         ${CURDIR}/out
+${EXPECTED}       ${MOCKDIR}/expected/encryption.jsonl
+${OUT}            ${OUTDIR}/omnicli-encryption.jsonl
+${PROVISION_JSON}    ${MOCKDIR}/collateral/ec2/provision.json
+${PROVISION_OUT}     ${OUTDIR}/omnicli-provision.jsonl
+${GCP_SA}            ${OUTDIR}/gcp-sa.json
+${GCP_OUT}           ${OUTDIR}/omnicli-gcp.jsonl
+${GCP_LOG}           ${OUTDIR}/omnicli-gcp-traffic.log
+${AZURE_OUT}         ${OUTDIR}/omnicli-azure.jsonl
+${AZURE_EXPECTED}    ${MOCKDIR}/expected/azure.jsonl
+${BLOB_OUT}          ${OUTDIR}/omnicli-blob.jsonl
+${GCP_ORG_OUT}       ${OUTDIR}/omnicli-blob-gcp-org.jsonl
+${GCP_ORG_LOG}       ${OUTDIR}/omnicli-blob-gcp-org.log
+${AZ_AUTH_OUT}       ${OUTDIR}/omnicli-azure-auth.jsonl
+
+*** Test Cases ***
+Resources And Methods Discovery
+    [Documentation]    Discovery off the facade catalog: list resources by regex, get a resource's
+    ...    canonical schema, then list a resource's methods with their signatures (params + output
+    ...    schema). Dot-path grammar. The CLI is a thin catalog consumer.
+    ${list}=    Run Process    ${BINARY}    resources    --filter    storage
+    ...    stdout=${OUTDIR}/resources.out    stderr=${OUTDIR}/resources.err
+    Should Be Equal As Integers    ${list.rc}    0    omnicli failed: ${list.stderr}
+    Should Contain    ${list.stdout}    azure.storage.accounts
+    Should Contain    ${list.stdout}    google.storage.buckets
+    ${res}=    Run Process    ${BINARY}    resources    google.storage.buckets
+    ...    stdout=${OUTDIR}/resource.out    stderr=${OUTDIR}/resource.err
+    Should Be Equal As Integers    ${res.rc}    0    omnicli failed: ${res.stderr}
+    Should Contain    ${res.stdout}    "$schema"
+    ${meth}=    Run Process    ${BINARY}    methods    google.storage.buckets
+    ...    stdout=${OUTDIR}/methods.out    stderr=${OUTDIR}/methods.err
+    Should Be Equal As Integers    ${meth.rc}    0    omnicli failed: ${meth.stderr}
+    Should Contain    ${meth.stdout}    google.storage.buckets.list
+    Should Contain    ${meth.stdout}    "name": "project"
+    Should Contain    ${meth.stdout}    "encryption_class"
+    ${one}=    Run Process    ${BINARY}    method    google.storage.buckets.list
+    ...    stdout=${OUTDIR}/method.out    stderr=${OUTDIR}/method.err
+    Should Be Equal As Integers    ${one.rc}    0    omnicli failed: ${one.stderr}
+    Should Contain    ${one.stdout}    "path": "google.storage.buckets.list"
+    Should Contain    ${one.stdout}    "$schema"
+
+Generic Run Command Deserializes JSON Args
+    [Documentation]    The generic `run <method> <json>` form: Args deserialized with Go's intrinsic
+    ...    encoding/json. Same rows as the named command; tuning (limit) honored straight from the JSON.
+    Write Gcp Service Account    ${GCP_SA}
+    ${result}=    Run Process    ${BINARY}    run    google.storage.buckets.list    {"params":{"project":"mock-project"}}    --endpoint    ${ENDPOINT}    --out    ${GCP_OUT}
+    ...    env:GOOGLE_APPLICATION_CREDENTIALS=${GCP_SA}
+    ...    stdout=${OUTDIR}/run.out    stderr=${OUTDIR}/run.err
+    Should Be Equal As Integers    ${result.rc}    0    omnicli failed: ${result.stderr}
+    ${out}=    Get File    ${GCP_OUT}
+    Should Contain    ${out}    "provider":"gcp"
+    Should Contain    ${out}    gcs-cmek
+    # tuning (limit) rides in the SAME JSON object — org scope capped to 1 row
+    ${lim}=    Run Process    ${BINARY}    run    google.storage.buckets.list    {"params":{"org":"123456789"},"tuning":{"Limit":1}}    --endpoint    ${ENDPOINT}    --out    ${GCP_ORG_OUT}
+    ...    env:GOOGLE_APPLICATION_CREDENTIALS=${GCP_SA}
+    ...    stdout=${OUTDIR}/run-lim.out    stderr=${OUTDIR}/run-lim.err
+    Should Be Equal As Integers    ${lim.rc}    0    omnicli failed: ${lim.stderr}
+    ${limout}=    Get File    ${GCP_ORG_OUT}
+    Should Contain X Times    ${limout}    "provider"    1
+
+Auth Flows From The DTO
+    [Documentation]    Credentials injected THROUGH the Auth DTO (inline values), with NO cred env vars
+    ...    set — proving a consumer (stackql) can pass secrets per-request. Resolution is inline → env → file.
+    ${result}=    Run Process    ${BINARY}    run    aws.s3.buckets.list    {"params":{"region":"us-east-1"},"auth":{"access_key_id":"AK","secret_access_key":"SK"}}    --endpoint    ${ENDPOINT}    --out    ${OUT}
+    ...    env:AWS_ACCESS_KEY_ID=${EMPTY}    env:AWS_SECRET_ACCESS_KEY=${EMPTY}
+    ...    stdout=${OUTDIR}/auth-dto.out    stderr=${OUTDIR}/auth-dto.err
+    Should Be Equal As Integers    ${result.rc}    0    omnicli failed: ${result.stderr}
+    ${out}=    Get File    ${OUT}
+    Should Contain    ${out}    "provider":"aws"
+
+Encryption Bowtie Matches Collateral
+    [Documentation]    ListBuckets ⋈ GetBucketEncryption against the mock must reproduce the captured output exactly.
+    ${result}=    Run Process    ${BINARY}    encryption    --endpoint    ${ENDPOINT}    --out    ${OUT}    --aws-region    us-east-1
+    ...    env:AWS_ACCESS_KEY_ID=test    env:AWS_SECRET_ACCESS_KEY=test
+    ...    stdout=${OUTDIR}/omnicli.out    stderr=${OUTDIR}/omnicli.err
+    Should Be Equal As Integers    ${result.rc}    0    omnicli failed: ${result.stderr}
+    Assert Jsonl Semantically Equal    ${OUT}    ${EXPECTED}
+
+Provision Creates Vpc Then Subnet Via Beta
+    [Documentation]    CreateVpc ⋈ CreateSubnet: ids match collateral; β proven because the mock 400s a
+    ...    CreateSubnet whose VpcId ≠ the created VPC. Descriptions carry a runtime timestamp, so only their
+    ...    format is asserted (exact match is impossible).
+    ${result}=    Run Process    ${BINARY}    provision    --endpoint    ${ENDPOINT}    --out    ${PROVISION_OUT}
+    ...    --vpc-cidr    10.0.0.0/16    --subnet-cidr    10.0.1.0/24    --aws-region    us-east-1
+    ...    env:AWS_ACCESS_KEY_ID=test    env:AWS_SECRET_ACCESS_KEY=test
+    ...    stdout=${OUTDIR}/omnicli-provision.out    stderr=${OUTDIR}/omnicli-provision.err
+    Should Be Equal As Integers    ${result.rc}    0    omnicli failed: ${result.stderr}
+    ${exp}=    Read Json    ${PROVISION_JSON}
+    ${row}=    Read Json Line    ${PROVISION_OUT}
+    Should Be Equal    ${row}[vpc_id]       ${exp}[vpc_id]
+    Should Be Equal    ${row}[subnet_id]    ${exp}[subnet_id]
+    Should Match Regexp    ${row}[vpc_description]       ^omnisdk vpc \\d{4}-\\d{2}-\\d{2}T
+    Should Match Regexp    ${row}[subnet_description]    ^omnisdk subnet \\d{4}-\\d{2}-\\d{2}T
+
+Provision Rejects Missing Required Cidr
+    [Documentation]    A required κ input (vpc-cidr) absent → the plan is rejected instantly, before
+    ...    any AWS call. Valid creds, no --vpc-cidr.
+    ${result}=    Run Process    ${BINARY}    provision    --endpoint    ${ENDPOINT}    --subnet-cidr    10.0.1.0/24    --aws-region    us-east-1
+    ...    env:AWS_ACCESS_KEY_ID=test    env:AWS_SECRET_ACCESS_KEY=test
+    ...    stdout=${OUTDIR}/omnicli-prov-missing.out    stderr=${OUTDIR}/omnicli-prov-missing.err
+    Should Not Be Equal As Integers    ${result.rc}    0
+    Should Contain    ${result.stderr}    vpc_cidr
+
+GCP Provision Chains OAuth Network Subnet
+    [Documentation]    OAuth → CreateNetwork → poll → CreateSubnet → poll, against the GCP mock.
+    ...    β(token) fans to every call (bearer); network/subnet ops are polled to DONE; the output
+    ...    projects the returned ids + selfLinks (and never the token).
+    Write Gcp Service Account    ${GCP_SA}
+    ${result}=    Run Process    ${BINARY}    gcp-provision    --endpoint    ${ENDPOINT}    --project    mock-project    --out    ${GCP_OUT}    --log    ${GCP_LOG}
+    ...    env:GOOGLE_APPLICATION_CREDENTIALS=${GCP_SA}
+    ...    stdout=${OUTDIR}/gcp.out    stderr=${OUTDIR}/gcp.err
+    Should Be Equal As Integers    ${result.rc}    0    omnicli failed: ${result.stderr}
+    ${row}=    Read Json Line    ${GCP_OUT}
+    Should Be Equal    ${row}[vpc_id]       1111
+    Should Be Equal    ${row}[subnet_id]    2222
+    Should Not Be Empty    ${row}[network_link]
+    Should Not Be Empty    ${row}[subnet_link]
+    Should Not Contain    ${result.stdout}    token
+    # Every exchange has a β edge into the output: the output logs each one's output, redacted.
+    ${log}=    Get File    ${GCP_LOG}
+    Should Contain    ${log}    OAuth:
+    Should Contain    ${log}    CreateNetwork:
+    Should Contain    ${log}    PollNetwork:
+    Should Contain    ${log}    PollSubnet:
+    Should Not Contain    ${log}    mock-access-token
+
+GCP Provision Rejects Missing Required Input
+    [Documentation]    A required κ input (project) absent → the plan is rejected instantly, before
+    ...    any network call. Valid creds, no --project.
+    Write Gcp Service Account    ${GCP_SA}
+    ${result}=    Run Process    ${BINARY}    gcp-provision    --endpoint    ${ENDPOINT}
+    ...    env:GOOGLE_APPLICATION_CREDENTIALS=${GCP_SA}
+    ...    stdout=${OUTDIR}/gcp-missing.out    stderr=${OUTDIR}/gcp-missing.err
+    Should Not Be Equal As Integers    ${result.rc}    0
+    Should Contain    ${result.stderr}    project
+
+Azure Enumerates Subnets Across Org
+    [Documentation]    Token → Subscriptions (paginated via nextLink) → VNets per sub → Subnets per VNet,
+    ...    fanned out in parallel. Output must match the captured collateral (order-independent).
+    ${result}=    Run Process    ${BINARY}    azure-vnets    --endpoint    ${ENDPOINT}    --out    ${AZURE_OUT}
+    ...    env:AZURE_TENANT_ID=mock-tenant    env:AZURE_CLIENT_ID=mock-client    env:AZURE_CLIENT_SECRET=mock-secret
+    ...    stdout=${OUTDIR}/azure.out    stderr=${OUTDIR}/azure.err
+    Should Be Equal As Integers    ${result.rc}    0    omnicli failed: ${result.stderr}
+    Assert Jsonl Semantically Equal    ${AZURE_OUT}    ${AZURE_EXPECTED}
+
+Blob Audit Shallow Across Majors
+    [Documentation]    Three disjoint DAGs (AWS S3, Azure storage accounts, GCP buckets) under
+    ...    separate controllers, merged into one JSONL of {provider, name, encryption_status}.
+    Write Gcp Service Account    ${GCP_SA}
+    ${result}=    Run Process    ${BINARY}    blob-audit-shallow    --endpoint    ${ENDPOINT}    --out    ${BLOB_OUT}
+    ...    --project    mock-project    --aws-region    us-east-1
+    ...    env:AWS_ACCESS_KEY_ID=test    env:AWS_SECRET_ACCESS_KEY=test
+    ...    env:AZURE_TENANT_ID=t    env:AZURE_CLIENT_ID=c    env:AZURE_CLIENT_SECRET=s
+    ...    env:GOOGLE_APPLICATION_CREDENTIALS=${GCP_SA}
+    ...    stdout=${OUTDIR}/blob.out    stderr=${OUTDIR}/blob.err
+    Should Be Equal As Integers    ${result.rc}    0    omnicli failed: ${result.stderr}
+    ${blob}=    Get File    ${BLOB_OUT}
+    Should Contain    ${blob}    "provider":"aws"
+    Should Contain    ${blob}    "provider":"azure"
+    Should Contain    ${blob}    "provider":"gcp"
+    Should Contain    ${blob}    "encryption_status":"Microsoft.Keyvault"
+    Should Contain    ${blob}    gcs-cmek
+    # normalized, consistent-across-clouds rendition
+    Should Contain    ${blob}    "encryption_class":"customer-managed"
+    Should Contain    ${blob}    "encryption_class":"provider-managed"
+    Should Contain    ${blob}    "public":true
+    Should Contain    ${blob}    "public":false
+    Should Contain    ${blob}    "versioning":true
+    Should Contain    ${blob}    "https":true
+
+Blob Audit Shallow Org Across Majors
+    [Documentation]    All-providers ORG-WIDE audit in one shot: AWS (account) + Azure (all subs) +
+    ...    GCP (whole org, recursive via --gcp-org) as three disjoint DAGs. GCP contributes its full
+    ...    org (4 rows: proj-root + proj-100, two buckets each); every provider present; no 400.
+    Write Gcp Service Account    ${GCP_SA}
+    ${result}=    Run Process    ${BINARY}    blob-audit-shallow-org    --endpoint    ${ENDPOINT}    --out    ${BLOB_OUT}    --log    ${GCP_ORG_LOG}
+    ...    --gcp-org    123456789    --aws-region    us-east-1
+    ...    env:AWS_ACCESS_KEY_ID=test    env:AWS_SECRET_ACCESS_KEY=test
+    ...    env:AZURE_TENANT_ID=t    env:AZURE_CLIENT_ID=c    env:AZURE_CLIENT_SECRET=s
+    ...    env:GOOGLE_APPLICATION_CREDENTIALS=${GCP_SA}
+    ...    stdout=${OUTDIR}/blob-org.out    stderr=${OUTDIR}/blob-org.err
+    Should Be Equal As Integers    ${result.rc}    0    omnicli failed: ${result.stderr}
+    ${blob}=    Get File    ${BLOB_OUT}
+    Should Contain    ${blob}    "provider":"aws"
+    Should Contain    ${blob}    "provider":"azure"
+    Should Contain X Times    ${blob}    "provider":"gcp"    4
+    ${log}=    Get File    ${GCP_ORG_LOG}
+    Should Not Contain    ${log}    → 400
+
+Azure Blob Audit Config Driven Client Credentials
+    [Documentation]    Auth is switchable by JSON: type=client_credentials runs a token exchange
+    ...    (Auth → {token}) then the same Subscriptions → StorageAccounts audit. Same result as the
+    ...    hardcoded azure path, but selected by config.
+    ${result}=    Run Process    ${BINARY}    blob-audit-shallow-azure-auth    --endpoint    ${ENDPOINT}    --out    ${AZ_AUTH_OUT}
+    ...    --auth    {"type":"client_credentials","token_url":"${ENDPOINT}/mock-tenant/oauth2/v2.0/token","client_id_env_var":"AZURE_CLIENT_ID","client_secret_env_var":"AZURE_CLIENT_SECRET","scopes":["https://management.azure.com/.default"]}
+    ...    env:AZURE_CLIENT_ID=c    env:AZURE_CLIENT_SECRET=s
+    ...    stdout=${OUTDIR}/az-auth-cc.out    stderr=${OUTDIR}/az-auth-cc.err
+    Should Be Equal As Integers    ${result.rc}    0    omnicli failed: ${result.stderr}
+    ${blob}=    Get File    ${AZ_AUTH_OUT}
+    Should Contain    ${blob}    "provider":"azure"
+    Should Contain    ${blob}    "encryption_status":"Microsoft.Keyvault"
+    Should Contain    ${blob}    "encryption_class":"customer-managed"
+
+Azure Blob Audit Config Driven Bearer
+    [Documentation]    Same audit, type=bearer (a pre-obtained OIDC token from env) — no token
+    ...    exchange, the static {token} is injected as a κ input. Proves the auth swap is JSON-only.
+    ${result}=    Run Process    ${BINARY}    blob-audit-shallow-azure-auth    --endpoint    ${ENDPOINT}    --out    ${AZ_AUTH_OUT}
+    ...    --auth    {"type":"bearer","credentialsenvvar":"AZURE_OIDC_TOKEN"}
+    ...    env:AZURE_OIDC_TOKEN=mock-azure-token
+    ...    stdout=${OUTDIR}/az-auth-bearer.out    stderr=${OUTDIR}/az-auth-bearer.err
+    Should Be Equal As Integers    ${result.rc}    0    omnicli failed: ${result.stderr}
+    ${blob}=    Get File    ${AZ_AUTH_OUT}
+    Should Contain    ${blob}    "provider":"azure"
+    Should Contain    ${blob}    "encryption_class":"customer-managed"
+
+Blob Audit Shallow GCP Org Descends Whole Hierarchy
+    [Documentation]    Recursive folder descent (org → folders/100 → folders/200, depth ≥2) finds a
+    ...    project at nodes that have one (proj-root, proj-100). folders/200 has NO project — that
+    ...    empty scope must NOT leak a ?project= call (the real 400). Two projects × two buckets ⇒
+    ...    four rows, and no 400 anywhere.
+    Write Gcp Service Account    ${GCP_SA}
+    ${result}=    Run Process    ${BINARY}    blob-audit-shallow-gcp-org    --endpoint    ${ENDPOINT}    --gcp-org    123456789    --out    ${GCP_ORG_OUT}    --log    ${GCP_ORG_LOG}
+    ...    env:GOOGLE_APPLICATION_CREDENTIALS=${GCP_SA}
+    ...    stdout=${OUTDIR}/blob-gcp-org.out    stderr=${OUTDIR}/blob-gcp-org.err
+    Should Be Equal As Integers    ${result.rc}    0    omnicli failed: ${result.stderr}
+    ${blob}=    Get File    ${GCP_ORG_OUT}
+    Should Contain X Times    ${blob}    "provider":"gcp"    4
+    # the empty-scope node (folders/200) must not have produced a bucket call → no 400 in the log
+    ${log}=    Get File    ${GCP_ORG_LOG}
+    Should Contain    ${log}    /v3/folders
+    Should Contain    ${log}    /v3/projects
+    Should Contain    ${log}    /storage/v1/b
+    Should Contain    ${log}    → 200
+    Should Not Contain    ${log}    → 400
+
+Result Limit Stops Query Cleanly
+    [Documentation]    --limit N terminates from the output side after exactly N records — a clean
+    ...    stop (rc 0), not a crash or hang. The org audit would emit four gcp rows; --limit 2 → 2.
+    Write Gcp Service Account    ${GCP_SA}
+    ${result}=    Run Process    ${BINARY}    blob-audit-shallow-gcp-org    --endpoint    ${ENDPOINT}    --gcp-org    123456789    --limit    2    --out    ${GCP_ORG_OUT}
+    ...    env:GOOGLE_APPLICATION_CREDENTIALS=${GCP_SA}
+    ...    stdout=${OUTDIR}/limit.out    stderr=${OUTDIR}/limit.err
+    Should Be Equal As Integers    ${result.rc}    0    omnicli failed: ${result.stderr}
+    ${blob}=    Get File    ${GCP_ORG_OUT}
+    Should Contain X Times    ${blob}    "provider":"gcp"    2
+
+Result Limit Is Global Across Disconnected DAGs
+    [Documentation]    --limit caps the WHOLE query, not each DAG: the multi-provider audit runs three
+    ...    DISJOINT trees into one file, yet --limit 2 emits exactly 2 rows total and aborts the rest
+    ...    cleanly — proving the output-triggered abort reaches disconnected nodes (the other sub-DAGs).
+    Write Gcp Service Account    ${GCP_SA}
+    ${result}=    Run Process    ${BINARY}    blob-audit-shallow-org    --endpoint    ${ENDPOINT}    --out    ${BLOB_OUT}    --limit    2
+    ...    --gcp-org    123456789    --aws-region    us-east-1
+    ...    env:AWS_ACCESS_KEY_ID=test    env:AWS_SECRET_ACCESS_KEY=test
+    ...    env:AZURE_TENANT_ID=t    env:AZURE_CLIENT_ID=c    env:AZURE_CLIENT_SECRET=s
+    ...    env:GOOGLE_APPLICATION_CREDENTIALS=${GCP_SA}
+    ...    stdout=${OUTDIR}/limit-org.out    stderr=${OUTDIR}/limit-org.err
+    Should Be Equal As Integers    ${result.rc}    0    omnicli failed: ${result.stderr}
+    ${blob}=    Get File    ${BLOB_OUT}
+    Should Contain X Times    ${blob}    "provider"    2
+
+Blob Audit Shallow GCP Org 403 Lands In Log
+    [Documentation]    Reproduces the real failure: org-level hierarchy listing denied (grants at
+    ...    project, not org). The 403 must fail loudly AND be captured at the wire level in the traffic
+    ...    log — it never reaches a decoded exchange output, which is why it was previously invisible.
+    Write Gcp Service Account    ${GCP_SA}
+    ${result}=    Run Process    ${BINARY}    blob-audit-shallow-gcp-org    --endpoint    ${ENDPOINT}    --gcp-org    000000000    --out    ${GCP_ORG_OUT}    --log    ${GCP_ORG_LOG}
+    ...    env:GOOGLE_APPLICATION_CREDENTIALS=${GCP_SA}
+    ...    stdout=${OUTDIR}/blob-gcp-403.out    stderr=${OUTDIR}/blob-gcp-403.err
+    Should Not Be Equal As Integers    ${result.rc}    0
+    Should Contain    ${result.stderr}    403
+    # the error names the failing site, not just a bare status
+    Should Contain    ${result.stderr}    /v3/folders
+    ${log}=    Get File    ${GCP_ORG_LOG}
+    Should Contain    ${log}    → 403
+    Should Contain    ${log}    /v3/folders
+
+Blob Audit Shallow GCP Requires Explicit Project
+    [Documentation]    --project is compulsory user input (never inferred from env or the key's
+    ...    project_id) — the single-project audit must fail loudly when it is absent.
+    Write Gcp Service Account    ${GCP_SA}
+    ${result}=    Run Process    ${BINARY}    blob-audit-shallow-gcp    --endpoint    ${ENDPOINT}
+    ...    env:GOOGLE_APPLICATION_CREDENTIALS=${GCP_SA}
+    ...    stdout=${OUTDIR}/blob-gcp-noproj.out    stderr=${OUTDIR}/blob-gcp-noproj.err
+    Should Not Be Equal As Integers    ${result.rc}    0
+    Should Contain    ${result.stderr}    project
+
+Blob Audit Shallow GCP Org Requires Explicit Org
+    [Documentation]    --gcp-org is compulsory scope input (never "whatever the SA can see") — the org
+    ...    audit must fail loudly when it is absent.
+    Write Gcp Service Account    ${GCP_SA}
+    ${result}=    Run Process    ${BINARY}    blob-audit-shallow-gcp-org    --endpoint    ${ENDPOINT}
+    ...    env:GOOGLE_APPLICATION_CREDENTIALS=${GCP_SA}
+    ...    stdout=${OUTDIR}/blob-gcp-noorg.out    stderr=${OUTDIR}/blob-gcp-noorg.err
+    Should Not Be Equal As Integers    ${result.rc}    0
+    Should Contain    ${result.stderr}    gcp-org
+
+*** Keywords ***
+Start Mock
+    Create Directory    ${OUTDIR}
+    ${python}=    Python Executable
+    ${proc}=    Start Process    ${python}    ${MOCKDIR}/app.py
+    ...    env:PORT=${PORT}    stdout=${OUTDIR}/mock.out    stderr=${OUTDIR}/mock.err
+    Set Suite Variable    ${MOCK}    ${proc}
+    Wait For Server    ${ENDPOINT}/
+
+Stop Mock
+    Terminate Process    ${MOCK}

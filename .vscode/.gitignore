@@ -1,0 +1,6 @@
+*
+!.gitignore
+!launch.json
+!settings.json
+!example.env
+!mcp.json

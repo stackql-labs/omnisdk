@@ -1,0 +1,29 @@
+{
+  "files.associations": {
+    "*.iql": "sql",
+    "*.ddl": "sql"
+  },
+  "go.lintTool": "golangci-lint",
+  "go.lintFlags": [
+    "--fast"
+  ],
+  "editor.insertSpaces": true,
+  "cmake.configureOnOpen": false,
+  "go.buildFlags": [
+    "-tags=sqlite_stackql"
+  ],
+  "go.testTags": "sqlite_stackql",
+  "todohighlight.keywordsPattern": "TODO:|FIXME:|BLOCK|END_BLOCK", //highlight `TODO:`,`FIXME:` or commented content between parentheses
+  "todohighlight.exclude": [
+    "**/*.json"
+  ],
+  "todohighlight.defaultStyle": {
+      "color": "red",
+      // "backgroundColor": "#ffab00",
+      "overviewRulerColor": "#ffab00",
+      "cursor": "pointer",
+      "border": "1px solid #eee",
+      "borderRadius": "2px",
+      // "isWholeLine": true
+  },
+}
