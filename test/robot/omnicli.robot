@@ -1,6 +1,7 @@
 *** Settings ***
 Library           Process
 Library           OperatingSystem
+Library           String
 Library           mocklib.py
 Suite Setup       Start Mock
 Suite Teardown    Stop Mock
@@ -24,6 +25,14 @@ ${BLOB_OUT}          ${OUTDIR}/omnicli-blob.jsonl
 ${GCP_ORG_OUT}       ${OUTDIR}/omnicli-blob-gcp-org.jsonl
 ${GCP_ORG_LOG}       ${OUTDIR}/omnicli-blob-gcp-org.log
 ${AZ_AUTH_OUT}       ${OUTDIR}/omnicli-azure-auth.jsonl
+${OMNI_OUT}          ${OUTDIR}/omnicli-omni-composite.jsonl
+${OMNI_MERGED_OUT}   ${OUTDIR}/omnicli-omni-merged.jsonl
+${OMNI_ORG_OUT}      ${OUTDIR}/omnicli-omni-composite-org.jsonl
+${OMNI_ORG_MERGED_OUT}    ${OUTDIR}/omnicli-omni-merged-org.jsonl
+# Input columns echoed onto rows. The composite publishes its OWN three; the hand-assembled merge
+# publishes the union of its legs' five. So equivalence is asserted on the provider data with these
+# dropped — the echo differing is the signatures differing, not the query.
+@{INPUT_COLS}        region    project    org    google_project    google_org    grpc_target    grpc_plaintext
 
 *** Test Cases ***
 Resources And Methods Discovery
@@ -45,6 +54,18 @@ Resources And Methods Discovery
     Should Contain    ${meth.stdout}    google.storage.buckets.list
     Should Contain    ${meth.stdout}    "name": "project"
     Should Contain    ${meth.stdout}    "encryption_class"
+    # -q/--quiet is the bare, pipeable form: dot-paths only, nothing else
+    ${methPaths}=    Run Process    ${BINARY}    methods    google.storage.buckets    --quiet
+    ...    stdout=${OUTDIR}/methods-paths.out    stderr=${OUTDIR}/methods-paths.err
+    Should Be Equal As Integers    ${methPaths.rc}    0    omnicli failed: ${methPaths.stderr}
+    Should Be Equal    ${methPaths.stdout.strip()}    google.storage.buckets.list
+    # ...and likewise for resources
+    ${resPaths}=    Run Process    ${BINARY}    resources    -q
+    ...    stdout=${OUTDIR}/resources-paths.out    stderr=${OUTDIR}/resources-paths.err
+    Should Be Equal As Integers    ${resPaths.rc}    0    omnicli failed: ${resPaths.stderr}
+    Should Contain    ${resPaths.stdout}    google.storage.buckets
+    Should Not Contain    ${resPaths.stdout}    "summary"
+    Should Not Contain    ${resPaths.stdout}    "$schema"
     ${one}=    Run Process    ${BINARY}    method    google.storage.buckets.list
     ...    stdout=${OUTDIR}/method.out    stderr=${OUTDIR}/method.err
     Should Be Equal As Integers    ${one.rc}    0    omnicli failed: ${one.stderr}
@@ -55,7 +76,7 @@ Generic Run Command Deserializes JSON Args
     [Documentation]    The generic `run <method> <json>` form: Args deserialized with Go's intrinsic
     ...    encoding/json. Same rows as the named command; tuning (limit) honored straight from the JSON.
     Write Gcp Service Account    ${GCP_SA}
-    ${result}=    Run Process    ${BINARY}    run    google.storage.buckets.list    {"params":{"project":"mock-project"}}    --endpoint    ${ENDPOINT}    --out    ${GCP_OUT}
+    ${result}=    Run Process    ${BINARY}    run    google.storage.buckets.list    {"params":{"google_project":"mock-project"}}    --endpoint    ${ENDPOINT}    --out    ${GCP_OUT}
     ...    env:GOOGLE_APPLICATION_CREDENTIALS=${GCP_SA}
     ...    stdout=${OUTDIR}/run.out    stderr=${OUTDIR}/run.err
     Should Be Equal As Integers    ${result.rc}    0    omnicli failed: ${result.stderr}
@@ -63,7 +84,7 @@ Generic Run Command Deserializes JSON Args
     Should Contain    ${out}    "provider":"gcp"
     Should Contain    ${out}    gcs-cmek
     # tuning (limit) rides in the SAME JSON object — org scope capped to 1 row
-    ${lim}=    Run Process    ${BINARY}    run    google.storage.buckets.list    {"params":{"org":"123456789"},"tuning":{"Limit":1}}    --endpoint    ${ENDPOINT}    --out    ${GCP_ORG_OUT}
+    ${lim}=    Run Process    ${BINARY}    run    google.storage.buckets.list    {"params":{"google_org":"123456789"},"tuning":{"Limit":1}}    --endpoint    ${ENDPOINT}    --out    ${GCP_ORG_OUT}
     ...    env:GOOGLE_APPLICATION_CREDENTIALS=${GCP_SA}
     ...    stdout=${OUTDIR}/run-lim.out    stderr=${OUTDIR}/run-lim.err
     Should Be Equal As Integers    ${lim.rc}    0    omnicli failed: ${lim.stderr}
@@ -199,6 +220,164 @@ Blob Audit Shallow Org Across Majors
     ${log}=    Get File    ${GCP_ORG_LOG}
     Should Not Contain    ${log}    → 400
 
+Cross Cloud Composite Discovery And Signature
+    [Documentation]    The cross-cloud audit is a FIRST-CLASS catalog entry: one resource
+    ...    (omni.storage.buckets) carrying the uniform blob schema, and one composite method whose
+    ...    signature is the union of its legs' scope inputs. A consumer discovers it exactly like a
+    ...    single-provider resource — the member list is never its concern.
+    ${list}=    Run Process    ${BINARY}    resources    --filter    ^omni
+    ...    stdout=${OUTDIR}/omni-resources.out    stderr=${OUTDIR}/omni-resources.err
+    Should Be Equal As Integers    ${list.rc}    0    omnicli failed: ${list.stderr}
+    Should Contain    ${list.stdout}    omni.storage.buckets
+    ${meth}=    Run Process    ${BINARY}    methods    omni.storage.buckets
+    ...    stdout=${OUTDIR}/omni-methods.out    stderr=${OUTDIR}/omni-methods.err
+    Should Be Equal As Integers    ${meth.rc}    0    omnicli failed: ${meth.stderr}
+    Should Contain    ${meth.stdout}    omni.storage.buckets.list
+    Should Contain    ${meth.stdout}    "name": "region"
+    Should Contain    ${meth.stdout}    "name": "google_project"
+    Should Contain    ${meth.stdout}    "name": "google_org"
+    # one name for one thing: the leg declares these too, so nothing translates between them
+    Should Not Contain    ${meth.stdout}    "name": "project"
+    # it publishes the same uniform blob schema every leg normalizes to
+    Should Contain    ${meth.stdout}    "encryption_class"
+    Should Contain    ${meth.stdout}    "provider"
+    # ...and the schema also carries the method's INPUTS as columns, marked as echoed input
+    Should Contain    ${meth.stdout}    "x-omnisdk-input"
+
+Method Response Schema Publishes Its Input Params
+    [Documentation]    Signature and result contract are ONE: a method's declared inputs appear as
+    ...    columns of its response schema (required input = plain type, optional = nullable), marked
+    ...    x-omnisdk-input to separate them from provider data. Derived from Params, so they cannot
+    ...    drift apart. Rows then carry those values, so every row states the scope that produced it.
+    ${one}=    Run Process    ${BINARY}    method    omni.storage.buckets.list
+    ...    stdout=${OUTDIR}/omni-signature.out    stderr=${OUTDIR}/omni-signature.err
+    Should Be Equal As Integers    ${one.rc}    0    omnicli failed: ${one.stderr}
+    ${sig}=    Evaluate    json.loads(r'''${one.stdout}''')    json
+    ${props}=    Set Variable    ${sig}[schema][properties]
+    # required input → plain string column; optional inputs → nullable
+    Should Be Equal    ${props}[region][type]    string
+    Should Be True    ${props}[region][x-omnisdk-input]
+    Should Be Equal    ${props}[google_project][type]    ${{['string', 'null']}}
+    Should Be Equal    ${props}[google_org][type]    ${{['string', 'null']}}
+    # provider data columns are untouched by the echo
+    Should Be Equal    ${props}[provider][type]    string
+    Should Not Contain    ${props}[provider]    x-omnisdk-input
+    # every input column is declared present on every row
+    Should Contain    ${sig}[schema][required]    region
+    Should Contain    ${sig}[schema][required]    google_project
+    Should Contain    ${sig}[schema][required]    google_org
+
+Rows Carry The Input Params That Produced Them
+    [Documentation]    Each row states its own scope — which region/project/org produced it. For the
+    ...    cross-cloud composite that is the ONLY way to attribute a row, since the legs are merged
+    ...    into one cursor. An optional input that was not supplied is null, matching its schema.
+    Write Gcp Service Account    ${GCP_SA}
+    ${result}=    Run Process    ${BINARY}    run    omni.storage.buckets.list    {"params":{"region":"us-east-1","google_org":"123456789"}}
+    ...    --endpoint    ${ENDPOINT}    --out    ${OMNI_OUT}
+    ...    env:AWS_ACCESS_KEY_ID=test    env:AWS_SECRET_ACCESS_KEY=test
+    ...    env:AZURE_TENANT_ID=t    env:AZURE_CLIENT_ID=c    env:AZURE_CLIENT_SECRET=s
+    ...    env:GOOGLE_APPLICATION_CREDENTIALS=${GCP_SA}
+    ...    stdout=${OUTDIR}/omni-echo.out    stderr=${OUTDIR}/omni-echo.err
+    Should Be Equal As Integers    ${result.rc}    0    omnicli failed: ${result.stderr}
+    ${rows}=    Get File    ${OMNI_OUT}
+    ${lines}=    Split To Lines    ${rows}
+    # EVERY row, from every leg, carries the scope — not just the leg the param belongs to
+    FOR    ${line}    IN    @{lines}
+        ${row}=    Evaluate    json.loads(r'''${line}''')    json
+        Should Be Equal    ${row}[region]    us-east-1
+        Should Be Equal    ${row}[google_org]    123456789
+        Should Be Equal    ${row}[google_project]    ${None}    an unsupplied optional input must be null
+    END
+    # a method that declares NO params is untouched — no echoed columns appear
+    ${az}=    Run Process    ${BINARY}    run    azure.storage.accounts.list    {}
+    ...    --endpoint    ${ENDPOINT}    --out    ${AZ_AUTH_OUT}
+    ...    env:AZURE_TENANT_ID=t    env:AZURE_CLIENT_ID=c    env:AZURE_CLIENT_SECRET=s
+    ...    stdout=${OUTDIR}/omni-noparams.out    stderr=${OUTDIR}/omni-noparams.err
+    Should Be Equal As Integers    ${az.rc}    0    omnicli failed: ${az.stderr}
+    ${azRows}=    Get File    ${AZ_AUTH_OUT}
+    Should Not Contain    ${azRows}    "region"
+
+Cross Cloud Composite Enforces Its Own And Its Legs Params
+    [Documentation]    Scope is required and never inferred. Required params AND the declared
+    ...    exactly-one rule (google_project XOR google_org) are both enforced from the published
+    ...    signature, before any leg is built — no credentials needed to reach the error.
+    ${noRegion}=    Run Process    ${BINARY}    run    omni.storage.buckets.list    {"params":{"project":"mock-project"}}    --endpoint    ${ENDPOINT}
+    ...    stdout=${OUTDIR}/omni-noregion.out    stderr=${OUTDIR}/omni-noregion.err
+    Should Not Be Equal As Integers    ${noRegion.rc}    0    composite without region must fail
+    Should Contain    ${noRegion.stderr}    requires param "region"
+    ${noScope}=    Run Process    ${BINARY}    run    omni.storage.buckets.list    {"params":{"region":"us-east-1"}}    --endpoint    ${ENDPOINT}
+    ...    env:AWS_ACCESS_KEY_ID=test    env:AWS_SECRET_ACCESS_KEY=test
+    ...    env:AZURE_TENANT_ID=t    env:AZURE_CLIENT_ID=c    env:AZURE_CLIENT_SECRET=s
+    ...    stdout=${OUTDIR}/omni-noscope.out    stderr=${OUTDIR}/omni-noscope.err
+    Should Not Be Equal As Integers    ${noScope.rc}    0    composite without project/org must fail
+    Should Contain    ${noScope.stderr}    omni.storage.buckets.list
+    # the exactly-one rule is DECLARED on the method, so it is reported in the method's own param
+    # names and enforced before any leg is built — no leg internals leak into the message
+    Should Contain    ${noScope.stderr}    'google_project', 'google_org' 
+
+Cross Cloud Composite Equals The Merged Audit
+    [Documentation]    The composite method and the hand-assembled merge are the SAME query: one
+    ...    method path produces byte-for-byte the same row set as blob-audit-shallow's explicit
+    ...    three-method NewMerged. Asserted for both project scope and org scope, so the composite is
+    ...    proven to delegate scope through to its legs rather than reimplement them.
+    Write Gcp Service Account    ${GCP_SA}
+    # (a) project scope — the composite, selected as ONE method
+    ${composite}=    Run Process    ${BINARY}    run    omni.storage.buckets.list    {"params":{"region":"us-east-1","google_project":"mock-project"}}
+    ...    --endpoint    ${ENDPOINT}    --out    ${OMNI_OUT}
+    ...    env:AWS_ACCESS_KEY_ID=test    env:AWS_SECRET_ACCESS_KEY=test
+    ...    env:AZURE_TENANT_ID=t    env:AZURE_CLIENT_ID=c    env:AZURE_CLIENT_SECRET=s
+    ...    env:GOOGLE_APPLICATION_CREDENTIALS=${GCP_SA}
+    ...    stdout=${OUTDIR}/omni.out    stderr=${OUTDIR}/omni.err
+    Should Be Equal As Integers    ${composite.rc}    0    omnicli failed: ${composite.stderr}
+    # ...and the same audit assembled the old way, three method paths merged by the consumer
+    ${merged}=    Run Process    ${BINARY}    blob-audit-shallow    --endpoint    ${ENDPOINT}    --out    ${OMNI_MERGED_OUT}
+    ...    --project    mock-project    --aws-region    us-east-1
+    ...    env:AWS_ACCESS_KEY_ID=test    env:AWS_SECRET_ACCESS_KEY=test
+    ...    env:AZURE_TENANT_ID=t    env:AZURE_CLIENT_ID=c    env:AZURE_CLIENT_SECRET=s
+    ...    env:GOOGLE_APPLICATION_CREDENTIALS=${GCP_SA}
+    ...    stdout=${OUTDIR}/omni-merged.out    stderr=${OUTDIR}/omni-merged.err
+    Should Be Equal As Integers    ${merged.rc}    0    omnicli failed: ${merged.stderr}
+    Assert Jsonl Data Equal    ${OMNI_OUT}    ${OMNI_MERGED_OUT}    ${INPUT_COLS}
+    # every provider really is in there (guards against an empty-equals-empty pass)
+    ${omni}=    Get File    ${OMNI_OUT}
+    Should Contain    ${omni}    "provider":"aws"
+    Should Contain    ${omni}    "provider":"azure"
+    Should Contain    ${omni}    "provider":"gcp"
+
+    # (b) org scope — GCP leg descends the whole org; AWS/Azure unchanged
+    ${compositeOrg}=    Run Process    ${BINARY}    run    omni.storage.buckets.list    {"params":{"region":"us-east-1","google_org":"123456789"}}
+    ...    --endpoint    ${ENDPOINT}    --out    ${OMNI_ORG_OUT}
+    ...    env:AWS_ACCESS_KEY_ID=test    env:AWS_SECRET_ACCESS_KEY=test
+    ...    env:AZURE_TENANT_ID=t    env:AZURE_CLIENT_ID=c    env:AZURE_CLIENT_SECRET=s
+    ...    env:GOOGLE_APPLICATION_CREDENTIALS=${GCP_SA}
+    ...    stdout=${OUTDIR}/omni-org.out    stderr=${OUTDIR}/omni-org.err
+    Should Be Equal As Integers    ${compositeOrg.rc}    0    omnicli failed: ${compositeOrg.stderr}
+    ${mergedOrg}=    Run Process    ${BINARY}    blob-audit-shallow-org    --endpoint    ${ENDPOINT}    --out    ${OMNI_ORG_MERGED_OUT}
+    ...    --gcp-org    123456789    --aws-region    us-east-1
+    ...    env:AWS_ACCESS_KEY_ID=test    env:AWS_SECRET_ACCESS_KEY=test
+    ...    env:AZURE_TENANT_ID=t    env:AZURE_CLIENT_ID=c    env:AZURE_CLIENT_SECRET=s
+    ...    env:GOOGLE_APPLICATION_CREDENTIALS=${GCP_SA}
+    ...    stdout=${OUTDIR}/omni-org-merged.out    stderr=${OUTDIR}/omni-org-merged.err
+    Should Be Equal As Integers    ${mergedOrg.rc}    0    omnicli failed: ${mergedOrg.stderr}
+    Assert Jsonl Data Equal    ${OMNI_ORG_OUT}    ${OMNI_ORG_MERGED_OUT}    ${INPUT_COLS}
+    ${omniOrg}=    Get File    ${OMNI_ORG_OUT}
+    Should Contain X Times    ${omniOrg}    "provider":"gcp"    4
+
+Cross Cloud Composite Limit Caps The Union Globally
+    [Documentation]    --limit is a GLOBAL result budget, not per-leg: the composite's three disjoint
+    ...    DAGs sit under one output node, so N caps the union. Supplied in the same Args JSON.
+    Write Gcp Service Account    ${GCP_SA}
+    ${result}=    Run Process    ${BINARY}    run    omni.storage.buckets.list    {"params":{"region":"us-east-1","google_project":"mock-project"},"tuning":{"limit":3}}
+    ...    --endpoint    ${ENDPOINT}    --out    ${OMNI_OUT}
+    ...    env:AWS_ACCESS_KEY_ID=test    env:AWS_SECRET_ACCESS_KEY=test
+    ...    env:AZURE_TENANT_ID=t    env:AZURE_CLIENT_ID=c    env:AZURE_CLIENT_SECRET=s
+    ...    env:GOOGLE_APPLICATION_CREDENTIALS=${GCP_SA}
+    ...    stdout=${OUTDIR}/omni-limit.out    stderr=${OUTDIR}/omni-limit.err
+    Should Be Equal As Integers    ${result.rc}    0    omnicli failed: ${result.stderr}
+    ${rows}=    Get File    ${OMNI_OUT}
+    ${lines}=    Split To Lines    ${rows}
+    Length Should Be    ${lines}    3    --limit must cap the UNION, not each leg
+
 Azure Blob Audit Config Driven Client Credentials
     [Documentation]    Auth is switchable by JSON: type=client_credentials runs a token exchange
     ...    (Auth → {token}) then the same Subscriptions → StorageAccounts audit. Same result as the
@@ -306,6 +485,30 @@ Blob Audit Shallow GCP Org Requires Explicit Org
     ...    stdout=${OUTDIR}/blob-gcp-noorg.out    stderr=${OUTDIR}/blob-gcp-noorg.err
     Should Not Be Equal As Integers    ${result.rc}    0
     Should Contain    ${result.stderr}    gcp-org
+
+Composite Signature Is Authoritative Over Its Legs
+    [Documentation]    Composite and legs share one name per input (google_project/google_org), so
+    ...    nothing translates between them. The published signature is authoritative: a param the
+    ...    composite does NOT declare cannot slip through to a leg and quietly steer the query while
+    ...    the row's echoed scope columns say it was never supplied.
+    Write Gcp Service Account    ${GCP_SA}
+    # a param the composite does not declare must not steer a leg
+    ${stale}=    Run Process    ${BINARY}    run    omni.storage.buckets.list    {"params":{"region":"us-east-1","org":"123456789"}}
+    ...    --endpoint    ${ENDPOINT}
+    ...    env:AWS_ACCESS_KEY_ID=test    env:AWS_SECRET_ACCESS_KEY=test
+    ...    env:AZURE_TENANT_ID=t    env:AZURE_CLIENT_ID=c    env:AZURE_CLIENT_SECRET=s
+    ...    env:GOOGLE_APPLICATION_CREDENTIALS=${GCP_SA}
+    ...    stdout=${OUTDIR}/omni-stale.out    stderr=${OUTDIR}/omni-stale.err
+    Should Not Be Equal As Integers    ${stale.rc}    0    an undeclared param must not steer a leg
+    Should Contain    ${stale.stderr}    'google_project', 'google_org' 
+    # ...and the leg answers to the SAME names, so nothing has to translate
+    ${leg}=    Run Process    ${BINARY}    run    google.storage.buckets.list    {"params":{"google_org":"123456789"}}
+    ...    --endpoint    ${ENDPOINT}    --out    ${GCP_ORG_OUT}
+    ...    env:GOOGLE_APPLICATION_CREDENTIALS=${GCP_SA}
+    ...    stdout=${OUTDIR}/omni-leg.out    stderr=${OUTDIR}/omni-leg.err
+    Should Be Equal As Integers    ${leg.rc}    0    omnicli failed: ${leg.stderr}
+    ${legRows}=    Get File    ${GCP_ORG_OUT}
+    Should Contain    ${legRows}    "provider":"gcp"
 
 *** Keywords ***
 Start Mock

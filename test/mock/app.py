@@ -109,8 +109,25 @@ def azure_token(tenant):
     return jsonify(access_token="mock-azure-token", expires_in=3600, token_type="Bearer")
 
 
+def require_azure_token():
+    """Reject a request whose bearer is absent or empty, exactly as real ARM does. Without this the
+    mock answers 200 to an unauthenticated call, so a plan that binds an EMPTY {token} — e.g. a token
+    exchange that yielded no access_token — passes here and only fails against the real cloud with
+    `AuthenticationFailedMissingToken`. Returns an error response, or None when the token is good."""
+    header = request.headers.get("Authorization", "")
+    token = header[len("Bearer "):].strip() if header.startswith("Bearer ") else ""
+    if not token:
+        return jsonify(error={
+            "code": "AuthenticationFailedMissingToken",
+            "message": "Authentication failed. The 'Authorization' header is missing the access token.",
+        }), 401
+    return None
+
+
 @app.get("/subscriptions")
 def azure_subscriptions():
+    if (err := require_azure_token()):
+        return err
     base = request.host_url.rstrip("/")
     if request.args.get("_page") == "2":
         return jsonify(value=[{"subscriptionId": "sub-2"}])
@@ -136,6 +153,8 @@ def azure_subnets(sub, rg, vnet):
 
 @app.get("/subscriptions/<sub>/providers/Microsoft.Storage/storageAccounts")
 def azure_storage_accounts(sub):
+    if (err := require_azure_token()):
+        return err
     return jsonify(value=[
         {"name": f"stor{sub}a", "properties": {
             "encryption": {"keySource": "Microsoft.Storage"},

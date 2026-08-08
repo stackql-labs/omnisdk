@@ -27,10 +27,12 @@ go build -o build/omnicli ./cmd/omnicli
 source cicd/vol/vendor-secrets/secrets.sh # populate accordingly
 
 # Discover the facade catalog (dot-path grammar, e.g. google.storage.buckets.list):
+./build/omnicli resources -q                       # JUST the names, one per line (pipeable)
 ./build/omnicli resources                          # list resources (things)
 ./build/omnicli resources --filter storage         # regex-filter by path
-./build/omnicli resources google.storage.buckets   # a resource's canonical schema
-./build/omnicli methods google.storage.buckets       # a resource's methods + signatures
+./build/omnicli resources omni.storage.buckets   # a resource's canonical schema
+./build/omnicli methods omni.storage.buckets -q    # just this resource's method names
+./build/omnicli methods omni.storage.buckets       # a resource's methods + signatures
 ./build/omnicli method google.storage.buckets.list   # one method's signature
 
 _now="$(date +%s)" && ./build/omnicli encryption --aws-region "${_AWS_REGION}" --out "./cicd/out/bucket-encryption-${_now}.jsonl" --log "./cicd/out/bucket-encryption-${_now}.log"
@@ -69,6 +71,14 @@ _now="$(date +%s)" && ./build/omnicli blob-audit-shallow-gcp-org --gcp-org "${_G
 _now="$(date +%s)" && ./build/omnicli blob-audit-shallow --aws-region us-east-1 --project "${_GOOGLE_PROJECT_ID}" --out "./cicd/out/blob-all-${_now}.jsonl"
 ```
 
+> The same cross-cloud audit is also a **single catalog method** — `omni.storage.buckets.list` on the
+> `omni.storage.buckets` resource — so a consumer selects one path instead of assembling the member
+> list itself (`./build/omnicli methods omni.storage.buckets`). It is a *composite*: its plan is the
+> forest of `aws.s3.buckets.list` + `azure.storage.accounts.list` + `google.storage.buckets.list`
+> merged into one cursor, defined by reference to those legs so it cannot drift from them. Rows,
+> schema, and the global `--limit` are identical to `blob-audit-shallow`. Run it with the generic
+> `run` command (case 6 below) — the CLI deliberately gains no new verb.
+
 > gRPC transport (dynamic, proto-only serde over an embedded minimal `google.storage.v2` proto) is NOT
 > a separate verb — it is a transport choice behind `google.storage.buckets.list`, selected by the
 > optional `grpc_target` param (see the Generic DTO command section). The row shape is identical to
@@ -77,7 +87,11 @@ _now="$(date +%s)" && ./build/omnicli blob-audit-shallow --aws-region us-east-1 
 
 Scope is single-account by default: AWS = the creds' account, GCP = the required `--project`, Azure = every subscription the SP can read. `blob-audit-shallow-gcp-org` audits a specific org (`--gcp-org`, required) — its direct-child projects for now; folder-nested projects await the recursive folder descent.
 
+A method's **response schema carries its own input params as columns**, so signature and result contract read as one: a required input is a plain-typed column, an optional one is nullable and `null` when not supplied, and each is marked `"x-omnisdk-input": true` to separate it from provider data. Rows carry those values, so every row states the scope that produced it — for the cross-cloud composite that is the only way to attribute a row, since the legs are merged into one cursor. The columns are derived from `Params` at read time, so they cannot drift from the signature; a provider column of the same name always wins. A method that declares no params (e.g. `azure.storage.accounts.list`) is untouched.
+
 Tuning (any subcommand): `--parallelism` (fan-out concurrency), `--max-per-host`, `--retry-tries`, `--retry-rate`, `--limit` (stop cleanly after N output records, 0 = unlimited; a GLOBAL cap even across the multi-provider audit's disjoint DAGs).
+
+> `--limit` is a budget, **not a sample**: it has no fairness across legs, so any value below the full result set biases toward whichever provider emits first. On a real org-wide run, `"tuning":{"Limit":25}` returned 24 GCP + 1 Azure rows and **zero** AWS — the AWS leg fans out three detail calls per bucket before its first row, and the budget was gone. To bound a multi-cloud look, run the legs separately with their own limits.
 Credentials resolve direct flag → env var → file; env vars are never required. Scope (e.g. `--project`) is **required and never inferred** — no env or key-embedded fallback.
 
 
@@ -90,21 +104,21 @@ Credentials resolve direct flag → env var → file; env vars are never require
 ```bash
 # 1) All buckets across the WHOLE GCP org (every project under the org) — REST.
 _now="$(date +%s)" && ./build/omnicli run google.storage.buckets.list \
-  '{"params":{"org":"'"${_GOOGLE_ORG_ID}"'"}}' \
+  '{"params":{"google_org":"'"${_GOOGLE_ORG_ID}"'"}}' \
   --out "./cicd/out/dto-buckets-org-${_now}.jsonl" --log "./cicd/out/dto-buckets-org-${_now}.log"
 
 # 2) Same whole-org audit over the gRPC Storage API (proto-only serde). Transport is chosen by config
 #    (grpc_target); rows are IDENTICAL to (1). Same SA key (GOOGLE_APPLICATION_CREDENTIALS) → in-process OAuth.
 _now="$(date +%s)" && ./build/omnicli run google.storage.buckets.list \
-  '{"params":{"org":"'"${_GOOGLE_ORG_ID}"'","grpc_target":"storage.googleapis.com:443"}}' \
+  '{"params":{"google_org":"'"${_GOOGLE_ORG_ID}"'","grpc_target":"storage.googleapis.com:443"}}' \
   --out "./cicd/out/dto-buckets-org-grpc-${_now}.jsonl" --log "./cicd/out/dto-buckets-org-grpc-${_now}.log"
 
 # 3) A single project — REST, then the same project over gRPC.
 _now="$(date +%s)" && ./build/omnicli run google.storage.buckets.list \
-  '{"params":{"project":"'"${_GOOGLE_PROJECT_ID}"'"}}' --out "./cicd/out/dto-buckets-proj-${_now}.jsonl"
+  '{"params":{"google_project":"'"${_GOOGLE_PROJECT_ID}"'"}}' --out "./cicd/out/dto-buckets-proj-${_now}.jsonl"
 
 _now="$(date +%s)" && ./build/omnicli run google.storage.buckets.list \
-  '{"params":{"project":"'"${_GOOGLE_PROJECT_ID}"'","grpc_target":"storage.googleapis.com:443"}}' \
+  '{"params":{"google_project":"'"${_GOOGLE_PROJECT_ID}"'","grpc_target":"storage.googleapis.com:443"}}' \
   --out "./cicd/out/dto-buckets-proj-grpc-${_now}.jsonl"
 
 # 4) AWS S3 buckets, with run tuning (--limit) supplied IN the same JSON object.
@@ -115,4 +129,21 @@ _now="$(date +%s)" && ./build/omnicli run aws.s3.buckets.list \
 _now="$(date +%s)" && ./build/omnicli run azure.storage.accounts.list \
   '{"auth":{"type":"client_credentials","token_url":"https://login.microsoftonline.com/'"${AZURE_TENANT_ID}"'/oauth2/v2.0/token","client_id_env_var":"AZURE_CLIENT_ID","client_secret_env_var":"AZURE_CLIENT_SECRET","scopes":["https://management.azure.com/.default"]}}' \
   --out "./cicd/out/dto-azure-cc-${_now}.jsonl"
+
+# 6) The CROSS-CLOUD COMPOSITE as one method: AWS + Azure + GCP in a single select. Params are the
+#    union of the legs' scope inputs (region required; exactly one of google_project/google_org for
+#    the GCP leg; Azure needs none — its scope is the SP's reach). Same rows as blob-audit-shallow.
+_now="$(date +%s)" && ./build/omnicli run omni.storage.buckets.list \
+  '{"params":{"region":"'"${_AWS_REGION}"'","google_project":"'"${_GOOGLE_PROJECT_ID}"'"}}' \
+  --out "./cicd/out/dto-omni-${_now}.jsonl" --log "./cicd/out/dto-omni-${_now}.log"
+
+# ...or org-wide for the GCP leg.
+_now="$(date +%s)" && ./build/omnicli run omni.storage.buckets.list \
+  '{"params":{"region":"'"${_AWS_REGION}"'","google_org":"'"${_GOOGLE_ORG_ID}"'"}}' \
+  --out "./cicd/out/dto-omni-org-${_now}.jsonl"
+
+# 
+_now="$(date +%s)" && ./build/omnicli run omni.storage.buckets.list \
+  '{"params":{"region":"'"${_AWS_REGION}"'","org":"'"${_GOOGLE_ORG_ID}"'"}}' \
+  --out "./cicd/out/dto-omni-org-${_now}.jsonl"
 ```
