@@ -201,7 +201,12 @@ func jsonSchema(cols []sdk.BlobColumn) map[string]any {
 
 type methodDef struct {
 	Method
+	// build plans this method's single query graph. Set on a leaf method; nil on a composite.
 	build func(args Args) (plan.Plan, error)
+	// members, when non-empty, makes this a COMPOSITE method: its plan is the FOREST of these member
+	// methods' plans, merged into ONE cursor. A composite is defined BY REFERENCE to its legs, so it
+	// cannot drift from them — adding a provider is one entry here, not a new hand-rolled plan.
+	members []string
 }
 
 // resources is the hand-authored resource catalog (the "things", with a canonical schema each).
@@ -219,6 +224,14 @@ var resources = map[string]Resource{
 	"azure.storage.accounts": {
 		Path:    "azure.storage.accounts",
 		Summary: "Azure storage accounts",
+		Schema:  blobSchema,
+	},
+	// The cross-cloud composite as a FIRST-CLASS thing: blob stores wherever they live. Every provider
+	// leg already normalizes to the one blob schema, so the union is a single coherent resource — not a
+	// client-side stitch-up — and it carries that same canonical schema.
+	"omni.storage.buckets": {
+		Path:    "omni.storage.buckets",
+		Summary: "Blob stores across every cloud (AWS S3 + Azure storage accounts + GCP buckets)",
 		Schema:  blobSchema,
 	},
 	"aws.ec2.networks": {
@@ -312,6 +325,29 @@ var methods = map[string]methodDef{
 				return sdk.GCPBlobOrgPlan(args.Endpoint, creds, org), nil
 			}
 			return sdk.GCPBlobPlan(args.Endpoint, creds, project), nil
+		},
+	},
+	// The cross-cloud bucket composite, named and discoverable as ONE method: its plan is the forest of
+	// the three per-cloud legs fanned into a single cursor — the same shape NewMerged produces, but the
+	// consumer selects one path instead of assembling (and having to know) the member list. Its Params
+	// are the union of the legs' scope inputs; Azure contributes none (its scope is the principal's
+	// reach). Each leg still validates its own params when built, so this signature cannot drift.
+	"omni.storage.buckets.list": {
+		Method: Method{
+			Path:     "omni.storage.buckets.list",
+			Resource: "omni.storage.buckets",
+			Summary:  "List blob stores (encryption/public/versioning) across AWS+Azure+GCP as one uniform result set",
+			Params: []Param{
+				{Name: "region", Required: true, Description: "AWS region (AWS leg)"},
+				{Name: "project", Required: false, Description: "single GCP project (mutually exclusive with org)"},
+				{Name: "org", Required: false, Description: "audit the whole GCP org, recursive folder→project descent (mutually exclusive with project)"},
+			},
+			Schema: blobSchema,
+		},
+		members: []string{
+			"aws.s3.buckets.list",
+			"azure.storage.accounts.list",
+			"google.storage.buckets.list",
 		},
 	},
 	"aws.s3.buckets.enumerate": {
@@ -468,11 +504,16 @@ func (builtin) GetMethod(path string) (Method, bool) {
 }
 
 func (builtin) New(method string, args Args) (Plan, error) {
-	pl, err := buildPlan(method, args)
+	plans, err := buildPlans(method, args, map[string]bool{})
 	if err != nil {
 		return nil, err
 	}
-	return &cannedPlan{plan: pl, args: args}, nil
+	// A leaf is one graph, a composite a forest — both open as one Plan, so a consumer selecting
+	// omni.storage.buckets.list cannot tell it apart from a single-provider method.
+	if len(plans) == 1 {
+		return &cannedPlan{plan: plans[0], args: args}, nil
+	}
+	return &mergedPlan{plans: plans, args: args}, nil
 }
 
 func (builtin) NewMerged(methodPaths []string, args Args) (Plan, error) {
@@ -481,27 +522,50 @@ func (builtin) NewMerged(methodPaths []string, args Args) (Plan, error) {
 	}
 	plans := make([]plan.Plan, 0, len(methodPaths))
 	for _, m := range methodPaths {
-		pl, err := buildPlan(m, args)
+		pls, err := buildPlans(m, args, map[string]bool{})
 		if err != nil {
 			return nil, err
 		}
-		plans = append(plans, pl)
+		plans = append(plans, pls...)
 	}
 	return &mergedPlan{plans: plans, args: args}, nil
 }
 
-// buildPlan looks up a method, enforces its required params (never inferred), and builds its plan.
-func buildPlan(method string, args Args) (plan.Plan, error) {
+// buildPlans looks up a method, enforces its required params (never inferred), and builds its plan(s).
+// A leaf method yields exactly one plan; a COMPOSITE yields its members' plans — the forest the caller
+// presents as one cursor. Recursion lets a composite name composites; seen breaks a catalog cycle
+// rather than overflowing the stack (the catalog is hand-authored today, generated later).
+func buildPlans(method string, args Args, seen map[string]bool) ([]plan.Plan, error) {
 	def, ok := methods[method]
 	if !ok {
 		return nil, fmt.Errorf("omnisdk: unknown method %q", method)
+	}
+	if seen[method] {
+		return nil, fmt.Errorf("omnisdk: composite method cycle at %q", method)
 	}
 	for _, p := range def.Params {
 		if p.Required && args.param(p.Name) == "" {
 			return nil, fmt.Errorf("omnisdk: method %q requires param %q", method, p.Name)
 		}
 	}
-	return def.build(args)
+	if len(def.members) == 0 {
+		pl, err := def.build(args)
+		if err != nil {
+			return nil, err
+		}
+		return []plan.Plan{pl}, nil
+	}
+	seen[method] = true
+	defer delete(seen, method)
+	out := make([]plan.Plan, 0, len(def.members))
+	for _, m := range def.members {
+		pls, err := buildPlans(m, args, seen)
+		if err != nil {
+			return nil, fmt.Errorf("omnisdk: method %q: %w", method, err)
+		}
+		out = append(out, pls...)
+	}
+	return out, nil
 }
 
 // Package-level convenience over the Default catalog (consumers may inject their own instead).
@@ -563,6 +627,21 @@ func azureAuth(args Args) (auth.AuthStruct, error) {
 	cfg.Type = "client_credentials"
 	cfg.ClientIDEnvVar = orStr(cfg.ClientIDEnvVar, "AZURE_CLIENT_ID")
 	cfg.ClientSecretEnvVar = orStr(cfg.ClientSecretEnvVar, "AZURE_CLIENT_SECRET")
+	// Resolve id/secret HERE, requiring them. The exchange treats them as OPTIONAL, so an unresolved
+	// credential would otherwise POST an empty client_id, get no access_token back, and bind an empty
+	// {token} into every ARM request — surfacing as an opaque provider 401 ("the 'Authorization' header
+	// is missing the access token") instead of naming the credential that is actually absent.
+	id, err := secret.Require("Azure client id",
+		secret.Literal(cfg.ClientID), secret.Env(cfg.ClientIDEnvVar)).Resolve()
+	if err != nil {
+		return auth.AuthStruct{}, err
+	}
+	sec, err := secret.Require("Azure client secret",
+		secret.Literal(cfg.ClientSecret), secret.Env(cfg.ClientSecretEnvVar)).Resolve()
+	if err != nil {
+		return auth.AuthStruct{}, err
+	}
+	cfg.ClientID, cfg.ClientSecret = id, sec
 	if len(cfg.Scopes) == 0 {
 		cfg.Scopes = []string{"https://management.azure.com/.default"}
 	}

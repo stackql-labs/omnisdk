@@ -1,6 +1,7 @@
 *** Settings ***
 Library           Process
 Library           OperatingSystem
+Library           String
 Library           mocklib.py
 Suite Setup       Start Mock
 Suite Teardown    Stop Mock
@@ -24,6 +25,10 @@ ${BLOB_OUT}          ${OUTDIR}/omnicli-blob.jsonl
 ${GCP_ORG_OUT}       ${OUTDIR}/omnicli-blob-gcp-org.jsonl
 ${GCP_ORG_LOG}       ${OUTDIR}/omnicli-blob-gcp-org.log
 ${AZ_AUTH_OUT}       ${OUTDIR}/omnicli-azure-auth.jsonl
+${OMNI_OUT}          ${OUTDIR}/omnicli-omni-composite.jsonl
+${OMNI_MERGED_OUT}   ${OUTDIR}/omnicli-omni-merged.jsonl
+${OMNI_ORG_OUT}      ${OUTDIR}/omnicli-omni-composite-org.jsonl
+${OMNI_ORG_MERGED_OUT}    ${OUTDIR}/omnicli-omni-merged-org.jsonl
 
 *** Test Cases ***
 Resources And Methods Discovery
@@ -198,6 +203,105 @@ Blob Audit Shallow Org Across Majors
     Should Contain X Times    ${blob}    "provider":"gcp"    4
     ${log}=    Get File    ${GCP_ORG_LOG}
     Should Not Contain    ${log}    → 400
+
+Cross Cloud Composite Discovery And Signature
+    [Documentation]    The cross-cloud audit is a FIRST-CLASS catalog entry: one resource
+    ...    (omni.storage.buckets) carrying the uniform blob schema, and one composite method whose
+    ...    signature is the union of its legs' scope inputs. A consumer discovers it exactly like a
+    ...    single-provider resource — the member list is never its concern.
+    ${list}=    Run Process    ${BINARY}    resources    --filter    ^omni
+    ...    stdout=${OUTDIR}/omni-resources.out    stderr=${OUTDIR}/omni-resources.err
+    Should Be Equal As Integers    ${list.rc}    0    omnicli failed: ${list.stderr}
+    Should Contain    ${list.stdout}    omni.storage.buckets
+    ${meth}=    Run Process    ${BINARY}    methods    omni.storage.buckets
+    ...    stdout=${OUTDIR}/omni-methods.out    stderr=${OUTDIR}/omni-methods.err
+    Should Be Equal As Integers    ${meth.rc}    0    omnicli failed: ${meth.stderr}
+    Should Contain    ${meth.stdout}    omni.storage.buckets.list
+    Should Contain    ${meth.stdout}    "name": "region"
+    Should Contain    ${meth.stdout}    "name": "project"
+    Should Contain    ${meth.stdout}    "name": "org"
+    # it publishes the same uniform blob schema every leg normalizes to
+    Should Contain    ${meth.stdout}    "encryption_class"
+    Should Contain    ${meth.stdout}    "provider"
+
+Cross Cloud Composite Enforces Its Own And Its Legs Params
+    [Documentation]    Scope is required and never inferred. The composite enforces its OWN required
+    ...    params up front, and each leg still validates its own when built — so the composite's
+    ...    published signature cannot silently drift from its members.
+    ${noRegion}=    Run Process    ${BINARY}    run    omni.storage.buckets.list    {"params":{"project":"mock-project"}}    --endpoint    ${ENDPOINT}
+    ...    stdout=${OUTDIR}/omni-noregion.out    stderr=${OUTDIR}/omni-noregion.err
+    Should Not Be Equal As Integers    ${noRegion.rc}    0    composite without region must fail
+    Should Contain    ${noRegion.stderr}    requires param "region"
+    ${noScope}=    Run Process    ${BINARY}    run    omni.storage.buckets.list    {"params":{"region":"us-east-1"}}    --endpoint    ${ENDPOINT}
+    ...    env:AWS_ACCESS_KEY_ID=test    env:AWS_SECRET_ACCESS_KEY=test
+    ...    env:AZURE_TENANT_ID=t    env:AZURE_CLIENT_ID=c    env:AZURE_CLIENT_SECRET=s
+    ...    stdout=${OUTDIR}/omni-noscope.out    stderr=${OUTDIR}/omni-noscope.err
+    Should Not Be Equal As Integers    ${noScope.rc}    0    composite without project/org must fail
+    Should Contain    ${noScope.stderr}    omni.storage.buckets.list
+    Should Contain    ${noScope.stderr}    google.storage.buckets.list
+
+Cross Cloud Composite Equals The Merged Audit
+    [Documentation]    The composite method and the hand-assembled merge are the SAME query: one
+    ...    method path produces byte-for-byte the same row set as blob-audit-shallow's explicit
+    ...    three-method NewMerged. Asserted for both project scope and org scope, so the composite is
+    ...    proven to delegate scope through to its legs rather than reimplement them.
+    Write Gcp Service Account    ${GCP_SA}
+    # (a) project scope — the composite, selected as ONE method
+    ${composite}=    Run Process    ${BINARY}    run    omni.storage.buckets.list    {"params":{"region":"us-east-1","project":"mock-project"}}
+    ...    --endpoint    ${ENDPOINT}    --out    ${OMNI_OUT}
+    ...    env:AWS_ACCESS_KEY_ID=test    env:AWS_SECRET_ACCESS_KEY=test
+    ...    env:AZURE_TENANT_ID=t    env:AZURE_CLIENT_ID=c    env:AZURE_CLIENT_SECRET=s
+    ...    env:GOOGLE_APPLICATION_CREDENTIALS=${GCP_SA}
+    ...    stdout=${OUTDIR}/omni.out    stderr=${OUTDIR}/omni.err
+    Should Be Equal As Integers    ${composite.rc}    0    omnicli failed: ${composite.stderr}
+    # ...and the same audit assembled the old way, three method paths merged by the consumer
+    ${merged}=    Run Process    ${BINARY}    blob-audit-shallow    --endpoint    ${ENDPOINT}    --out    ${OMNI_MERGED_OUT}
+    ...    --project    mock-project    --aws-region    us-east-1
+    ...    env:AWS_ACCESS_KEY_ID=test    env:AWS_SECRET_ACCESS_KEY=test
+    ...    env:AZURE_TENANT_ID=t    env:AZURE_CLIENT_ID=c    env:AZURE_CLIENT_SECRET=s
+    ...    env:GOOGLE_APPLICATION_CREDENTIALS=${GCP_SA}
+    ...    stdout=${OUTDIR}/omni-merged.out    stderr=${OUTDIR}/omni-merged.err
+    Should Be Equal As Integers    ${merged.rc}    0    omnicli failed: ${merged.stderr}
+    Assert Jsonl Semantically Equal    ${OMNI_OUT}    ${OMNI_MERGED_OUT}
+    # every provider really is in there (guards against an empty-equals-empty pass)
+    ${omni}=    Get File    ${OMNI_OUT}
+    Should Contain    ${omni}    "provider":"aws"
+    Should Contain    ${omni}    "provider":"azure"
+    Should Contain    ${omni}    "provider":"gcp"
+
+    # (b) org scope — GCP leg descends the whole org; AWS/Azure unchanged
+    ${compositeOrg}=    Run Process    ${BINARY}    run    omni.storage.buckets.list    {"params":{"region":"us-east-1","org":"123456789"}}
+    ...    --endpoint    ${ENDPOINT}    --out    ${OMNI_ORG_OUT}
+    ...    env:AWS_ACCESS_KEY_ID=test    env:AWS_SECRET_ACCESS_KEY=test
+    ...    env:AZURE_TENANT_ID=t    env:AZURE_CLIENT_ID=c    env:AZURE_CLIENT_SECRET=s
+    ...    env:GOOGLE_APPLICATION_CREDENTIALS=${GCP_SA}
+    ...    stdout=${OUTDIR}/omni-org.out    stderr=${OUTDIR}/omni-org.err
+    Should Be Equal As Integers    ${compositeOrg.rc}    0    omnicli failed: ${compositeOrg.stderr}
+    ${mergedOrg}=    Run Process    ${BINARY}    blob-audit-shallow-org    --endpoint    ${ENDPOINT}    --out    ${OMNI_ORG_MERGED_OUT}
+    ...    --gcp-org    123456789    --aws-region    us-east-1
+    ...    env:AWS_ACCESS_KEY_ID=test    env:AWS_SECRET_ACCESS_KEY=test
+    ...    env:AZURE_TENANT_ID=t    env:AZURE_CLIENT_ID=c    env:AZURE_CLIENT_SECRET=s
+    ...    env:GOOGLE_APPLICATION_CREDENTIALS=${GCP_SA}
+    ...    stdout=${OUTDIR}/omni-org-merged.out    stderr=${OUTDIR}/omni-org-merged.err
+    Should Be Equal As Integers    ${mergedOrg.rc}    0    omnicli failed: ${mergedOrg.stderr}
+    Assert Jsonl Semantically Equal    ${OMNI_ORG_OUT}    ${OMNI_ORG_MERGED_OUT}
+    ${omniOrg}=    Get File    ${OMNI_ORG_OUT}
+    Should Contain X Times    ${omniOrg}    "provider":"gcp"    4
+
+Cross Cloud Composite Limit Caps The Union Globally
+    [Documentation]    --limit is a GLOBAL result budget, not per-leg: the composite's three disjoint
+    ...    DAGs sit under one output node, so N caps the union. Supplied in the same Args JSON.
+    Write Gcp Service Account    ${GCP_SA}
+    ${result}=    Run Process    ${BINARY}    run    omni.storage.buckets.list    {"params":{"region":"us-east-1","project":"mock-project"},"tuning":{"limit":3}}
+    ...    --endpoint    ${ENDPOINT}    --out    ${OMNI_OUT}
+    ...    env:AWS_ACCESS_KEY_ID=test    env:AWS_SECRET_ACCESS_KEY=test
+    ...    env:AZURE_TENANT_ID=t    env:AZURE_CLIENT_ID=c    env:AZURE_CLIENT_SECRET=s
+    ...    env:GOOGLE_APPLICATION_CREDENTIALS=${GCP_SA}
+    ...    stdout=${OUTDIR}/omni-limit.out    stderr=${OUTDIR}/omni-limit.err
+    Should Be Equal As Integers    ${result.rc}    0    omnicli failed: ${result.stderr}
+    ${rows}=    Get File    ${OMNI_OUT}
+    ${lines}=    Split To Lines    ${rows}
+    Length Should Be    ${lines}    3    --limit must cap the UNION, not each leg
 
 Azure Blob Audit Config Driven Client Credentials
     [Documentation]    Auth is switchable by JSON: type=client_credentials runs a token exchange

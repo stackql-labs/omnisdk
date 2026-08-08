@@ -95,3 +95,42 @@ func TestFacadeRequiresScopeParam(t *testing.T) {
 		t.Fatal("google.storage.buckets.list with no project/org should error")
 	}
 }
+
+// The cross-cloud composite is discoverable and planned exactly like any other method: one resource,
+// one method path, the same canonical blob schema — the consumer never assembles the member list.
+func TestFacadeCrossCloudComposite(t *testing.T) {
+	r, ok := omnisdk.GetResource("omni.storage.buckets")
+	if !ok || r.Schema["properties"] == nil {
+		t.Fatalf("GetResource(omni.storage.buckets) = %+v, ok=%v", r, ok)
+	}
+	ms, err := omnisdk.Methods("omni.storage.buckets")
+	if err != nil || len(ms) != 1 || ms[0].Path != "omni.storage.buckets.list" {
+		t.Fatalf("Methods(omni.storage.buckets) = %v, err=%v", ms, err)
+	}
+	// the composite publishes the uniform blob schema its legs already normalize to
+	props, _ := ms[0].Schema["properties"].(map[string]any)
+	if props["provider"] == nil || props["encryption_class"] == nil {
+		t.Fatalf("composite schema is not the blob schema: %+v", ms[0].Schema)
+	}
+
+	// its own required params are enforced up front...
+	if _, err := omnisdk.New("omni.storage.buckets.list", omnisdk.Args{
+		Params: map[string]string{"project": "p"},
+	}); err == nil {
+		t.Fatal("composite without region should error")
+	}
+	// ...and each leg still validates its own on build, so the signature cannot drift from the members.
+	// The AWS/Azure legs plan first, so give them enough to get past their own credential resolution —
+	// nothing is dialled here, only planned.
+	t.Setenv("AWS_ACCESS_KEY_ID", "x")
+	t.Setenv("AWS_SECRET_ACCESS_KEY", "y")
+	t.Setenv("AZURE_TENANT_ID", "t")
+	t.Setenv("AZURE_CLIENT_ID", "c")
+	t.Setenv("AZURE_CLIENT_SECRET", "s")
+	_, err = omnisdk.New("omni.storage.buckets.list", omnisdk.Args{
+		Params: map[string]string{"region": "us-east-1"},
+	})
+	if err == nil || !strings.Contains(err.Error(), "google.storage.buckets.list") {
+		t.Fatalf("composite should surface the GCP leg's project/org rule, got %v", err)
+	}
+}

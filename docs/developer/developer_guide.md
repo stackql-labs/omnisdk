@@ -69,6 +69,14 @@ _now="$(date +%s)" && ./build/omnicli blob-audit-shallow-gcp-org --gcp-org "${_G
 _now="$(date +%s)" && ./build/omnicli blob-audit-shallow --aws-region us-east-1 --project "${_GOOGLE_PROJECT_ID}" --out "./cicd/out/blob-all-${_now}.jsonl"
 ```
 
+> The same cross-cloud audit is also a **single catalog method** — `omni.storage.buckets.list` on the
+> `omni.storage.buckets` resource — so a consumer selects one path instead of assembling the member
+> list itself (`./build/omnicli methods omni.storage.buckets`). It is a *composite*: its plan is the
+> forest of `aws.s3.buckets.list` + `azure.storage.accounts.list` + `google.storage.buckets.list`
+> merged into one cursor, defined by reference to those legs so it cannot drift from them. Rows,
+> schema, and the global `--limit` are identical to `blob-audit-shallow`. Run it with the generic
+> `run` command (case 6 below) — the CLI deliberately gains no new verb.
+
 > gRPC transport (dynamic, proto-only serde over an embedded minimal `google.storage.v2` proto) is NOT
 > a separate verb — it is a transport choice behind `google.storage.buckets.list`, selected by the
 > optional `grpc_target` param (see the Generic DTO command section). The row shape is identical to
@@ -115,4 +123,21 @@ _now="$(date +%s)" && ./build/omnicli run aws.s3.buckets.list \
 _now="$(date +%s)" && ./build/omnicli run azure.storage.accounts.list \
   '{"auth":{"type":"client_credentials","token_url":"https://login.microsoftonline.com/'"${AZURE_TENANT_ID}"'/oauth2/v2.0/token","client_id_env_var":"AZURE_CLIENT_ID","client_secret_env_var":"AZURE_CLIENT_SECRET","scopes":["https://management.azure.com/.default"]}}' \
   --out "./cicd/out/dto-azure-cc-${_now}.jsonl"
+
+# 6) The CROSS-CLOUD COMPOSITE as one method: AWS + Azure + GCP in a single select. Params are the
+#    union of the legs' scope inputs (region required; exactly one of project/org for the GCP leg;
+#    Azure needs none — its scope is the SP's reach). Same rows as blob-audit-shallow.
+_now="$(date +%s)" && ./build/omnicli run omni.storage.buckets.list \
+  '{"params":{"region":"'"${_AWS_REGION}"'","project":"'"${_GOOGLE_PROJECT_ID}"'"}}' \
+  --out "./cicd/out/dto-omni-${_now}.jsonl" --log "./cicd/out/dto-omni-${_now}.log"
+
+# ...or org-wide for the GCP leg, with the global result budget in the same JSON.
+_now="$(date +%s)" && ./build/omnicli run omni.storage.buckets.list \
+  '{"params":{"region":"'"${_AWS_REGION}"'","org":"'"${_GOOGLE_ORG_ID}"'"},"tuning":{"Limit":25}}' \
+  --out "./cicd/out/dto-omni-org-${_now}.jsonl"
+
+# 
+_now="$(date +%s)" && ./build/omnicli run omni.storage.buckets.list \
+  '{"params":{"region":"'"${_AWS_REGION}"'","org":"'"${_GOOGLE_ORG_ID}"'"}}' \
+  --out "./cicd/out/dto-omni-org-${_now}.jsonl"
 ```

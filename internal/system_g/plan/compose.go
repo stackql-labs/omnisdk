@@ -76,6 +76,14 @@ func composePipeline(id int64, p Plan) (facade.Operator, error) {
 	stages := order
 	if len(p.Inputs()) > 0 {
 		op = tap(&nid, seedOp{rec: bind.NewDocRecord(p.Inputs())}, "inputs")
+	} else if byName[order[0]].Flatten() != nil {
+		// The root DECLARES how its output merges into the running row — so it needs a row to merge
+		// INTO. Seed an empty one and run it as an ordinary stage. Made a bare root instead, its
+		// Flatten was silently dropped: whatever it declares in Out was never extracted, and every β
+		// edge reading that attribute bound nothing. That is how a client_credentials Auth root
+		// obtained a token and still issued unauthenticated requests — the provider's 401 was the
+		// first sign, three hops from the cause.
+		op = tap(&nid, seedOp{rec: bind.NewDocRecord(map[string]any{})}, "inputs")
 	} else {
 		op = tap(&nid, byName[order[0]].Make(nil), order[0])
 		stages = order[1:]
