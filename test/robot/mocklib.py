@@ -81,14 +81,34 @@ def read_json_line(path):
     raise AssertionError(f"no JSON line in {path}")
 
 
-def _canon(path):
+def _canon(path, drop=()):
     rows = []
+    drop = set(drop)
     with open(path) as fh:
         for line in fh:
             line = line.strip()
             if line:
-                rows.append(json.dumps(json.loads(line), sort_keys=True))
+                row = {k: v for k, v in json.loads(line).items() if k not in drop}
+                rows.append(json.dumps(row, sort_keys=True))
     return sorted(rows)
+
+
+def assert_jsonl_data_equal(actual, expected, drop):
+    """Assert two JSONL files hold the same objects once the named keys are dropped from both.
+
+    Used to compare two methods that run the SAME query but publish different signatures: each row
+    echoes the inputs of the method that produced it, so the input columns legitimately differ while
+    the provider data must not."""
+    a, e = _canon(actual, drop), _canon(expected, drop)
+    if a == e:
+        return
+    only_actual = sorted(set(a) - set(e))
+    only_expected = sorted(set(e) - set(a))
+    raise AssertionError(
+        f"jsonl data mismatch (ignoring {sorted(drop)}): {len(a)} actual vs {len(e)} expected rows\n"
+        f"only-in-actual ({len(only_actual)}): {only_actual[:3]}\n"
+        f"only-in-expected ({len(only_expected)}): {only_expected[:3]}"
+    )
 
 
 def assert_jsonl_semantically_equal(actual, expected):

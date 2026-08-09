@@ -199,6 +199,86 @@ func jsonSchema(cols []sdk.BlobColumn) map[string]any {
 	}
 }
 
+// withParams publishes a method's declared INPUTS as columns of its response schema, so the signature
+// and the result contract are one thing: a consumer reads the schema and sees the scope that produced
+// each row — which region/project/org a bucket came from — without holding onto the request. For the
+// cross-cloud composite this is the only way to attribute a row to its scope at all. Derived from
+// Params at read time, so it cannot drift from the signature. A required input is always present
+// (plain type); an optional one is nullable and null when it was not supplied. x-omnisdk-input marks
+// the column as echoed input rather than provider data. A provider column of the same name always
+// wins — the response never loses data to an input echo. Rows carry these values (see echoParams).
+func withParams(base map[string]any, params []Param) map[string]any {
+	if len(params) == 0 {
+		return base
+	}
+	out := make(map[string]any, len(base)+1)
+	for k, v := range base {
+		out[k] = v
+	}
+	props := map[string]any{}
+	if p, ok := base["properties"].(map[string]any); ok {
+		for k, v := range p {
+			props[k] = v
+		}
+	}
+	var required []string
+	if r, ok := base["required"].([]string); ok {
+		required = append(required, r...)
+	}
+	for _, p := range params {
+		if _, clash := props[p.Name]; clash {
+			continue // a provider column of this name already exists; data wins
+		}
+		var typ any = "string"
+		if !p.Required {
+			typ = []any{"string", "null"}
+		}
+		props[p.Name] = map[string]any{
+			"type": typ, "description": p.Description, "x-omnisdk-input": true,
+		}
+		required = append(required, p.Name)
+	}
+	out["properties"], out["required"] = props, required
+	// The echo adds keys the base schema never declared, so a closed base must reopen to stay truthful.
+	if _, ok := base["properties"]; !ok {
+		out["additionalProperties"] = true
+	}
+	return out
+}
+
+// echoParams are a method's declared inputs as they were actually supplied, for stamping onto every
+// row. nil when the method takes none — then rows are untouched. An absent optional input is null,
+// matching the nullable column withParams publishes for it.
+func echoParams(params []Param, args Args) map[string]any {
+	if len(params) == 0 {
+		return nil
+	}
+	out := make(map[string]any, len(params))
+	for _, p := range params {
+		if v := args.param(p.Name); v != "" {
+			out[p.Name] = v
+		} else {
+			out[p.Name] = nil
+		}
+	}
+	return out
+}
+
+// unionParams is the deduplicated signature of several methods — what a merged run echoes.
+func unionParams(methodPaths []string) []Param {
+	var out []Param
+	seen := map[string]bool{}
+	for _, path := range methodPaths {
+		for _, p := range methods[path].Params {
+			if !seen[p.Name] {
+				seen[p.Name] = true
+				out = append(out, p)
+			}
+		}
+	}
+	return out
+}
+
 type methodDef struct {
 	Method
 	// build plans this method's single query graph. Set on a leaf method; nil on a composite.
@@ -486,11 +566,19 @@ func (builtin) Methods(resource string) ([]Method, error) {
 	var out []Method
 	for _, m := range methods {
 		if m.Resource == resource {
-			out = append(out, m.Method)
+			out = append(out, m.published())
 		}
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Path < out[j].Path })
 	return out, nil
+}
+
+// published is the method as a consumer sees it: the response schema carries the method's declared
+// inputs as columns (withParams), so signature and result contract are read as one.
+func (d methodDef) published() Method {
+	m := d.Method
+	m.Schema = withParams(m.Schema, m.Params)
+	return m
 }
 
 func (builtin) GetResource(path string) (Resource, bool) {
@@ -500,7 +588,10 @@ func (builtin) GetResource(path string) (Resource, bool) {
 
 func (builtin) GetMethod(path string) (Method, bool) {
 	m, ok := methods[path]
-	return m.Method, ok
+	if !ok {
+		return Method{}, false
+	}
+	return m.published(), true
 }
 
 func (builtin) New(method string, args Args) (Plan, error) {
@@ -508,12 +599,13 @@ func (builtin) New(method string, args Args) (Plan, error) {
 	if err != nil {
 		return nil, err
 	}
+	echo := echoParams(methods[method].Params, args)
 	// A leaf is one graph, a composite a forest — both open as one Plan, so a consumer selecting
 	// omni.storage.buckets.list cannot tell it apart from a single-provider method.
 	if len(plans) == 1 {
-		return &cannedPlan{plan: plans[0], args: args}, nil
+		return &cannedPlan{plan: plans[0], args: args, echo: echo}, nil
 	}
-	return &mergedPlan{plans: plans, args: args}, nil
+	return &mergedPlan{plans: plans, args: args, echo: echo}, nil
 }
 
 func (builtin) NewMerged(methodPaths []string, args Args) (Plan, error) {
@@ -528,7 +620,7 @@ func (builtin) NewMerged(methodPaths []string, args Args) (Plan, error) {
 		}
 		plans = append(plans, pls...)
 	}
-	return &mergedPlan{plans: plans, args: args}, nil
+	return &mergedPlan{plans: plans, args: args, echo: echoParams(unionParams(methodPaths), args)}, nil
 }
 
 // buildPlans looks up a method, enforces its required params (never inferred), and builds its plan(s).
@@ -707,6 +799,7 @@ func gcpCreds(args Args) (sdk.GCPCredentials, error) {
 type cannedPlan struct {
 	plan plan.Plan
 	args Args
+	echo map[string]any // the method's declared inputs, stamped onto every row (see withParams)
 }
 
 func (c *cannedPlan) Open(parent context.Context) (Rows, error) {
@@ -715,7 +808,7 @@ func (c *cannedPlan) Open(parent context.Context) (Rows, error) {
 	// The engine runs on runCtx (cancelled by abort/limit/timeout to stop PRODUCERS). The cursor is
 	// read on the caller's ctx, so already-buffered rows are drained even after an internal abort —
 	// abort means "stop producing", not "discard produced rows".
-	return &rows{recs: op.Open(runCtx), read: parent, cancel: cancel}, nil
+	return &rows{recs: op.Open(runCtx), read: parent, cancel: cancel, echo: c.echo}, nil
 }
 
 // decorate carries the run policies (retry, admission, fan-out, abort, result budget, trace) and an
@@ -757,6 +850,7 @@ func logSink(w io.Writer) (io.Writer, func()) {
 type mergedPlan struct {
 	plans []plan.Plan
 	args  Args
+	echo  map[string]any // the union signature's inputs, stamped onto every row (see withParams)
 }
 
 func (m *mergedPlan) Open(parent context.Context) (Rows, error) {
@@ -765,20 +859,33 @@ func (m *mergedPlan) Open(parent context.Context) (Rows, error) {
 	// Engine on runCtx (abort/limit stop PRODUCERS); cursor read on parent so a limit-abort drains the
 	// already-produced rows rather than discarding them (mirrors cannedPlan.Open).
 	op := plan.MergeComposeRows(1, m.plans...)
-	return &rows{recs: op.Open(runCtx), read: parent, cancel: cancel}, nil
+	return &rows{recs: op.Open(runCtx), read: parent, cancel: cancel, echo: m.echo}, nil
 }
 
 type rows struct {
 	recs   facade.Records
 	read   context.Context
 	cancel context.CancelFunc
+	echo   map[string]any
 }
 
 func (r *rows) Next() bool { return r.recs.Next(r.read) }
 
 func (r *rows) Row() Row {
 	m, _ := bind.DocMap(r.recs.Record())
-	return m
+	if len(r.echo) == 0 {
+		return m
+	}
+	// Copy rather than mutate what the engine handed back, and let provider data win any name clash —
+	// mirrors the schema withParams publishes.
+	out := make(Row, len(m)+len(r.echo))
+	for k, v := range r.echo {
+		out[k] = v
+	}
+	for k, v := range m {
+		out[k] = v
+	}
+	return out
 }
 
 // Err reports a genuine failure; an intentional stop (abort / limit / Close) surfaces as

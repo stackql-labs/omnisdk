@@ -240,23 +240,38 @@ func main() {
 			if err != nil {
 				return err
 			}
+			if quiet, _ := cmd.Flags().GetBool("quiet"); quiet {
+				for _, r := range rs {
+					fmt.Println(r.Path)
+				}
+				return nil
+			}
 			return printJSON(rs)
 		},
 	}
 	resCmd.Flags().String("filter", "", "regex to filter resource paths")
+	resCmd.Flags().BoolP("quiet", "q", false, "print bare dot-paths, one per line (pipeable)")
 	root.AddCommand(resCmd)
-	root.AddCommand(&cobra.Command{
+	methodsCmd := &cobra.Command{
 		Use:   "methods <resource-path>",
 		Short: "List a resource's methods and signatures (e.g. methods google.storage.buckets)",
 		Args:  cobra.ExactArgs(1),
-		RunE: func(_ *cobra.Command, args []string) error {
+		RunE: func(cmd *cobra.Command, args []string) error {
 			ms, err := omnisdk.Methods(args[0])
 			if err != nil {
 				return err
 			}
+			if quiet, _ := cmd.Flags().GetBool("quiet"); quiet {
+				for _, m := range ms {
+					fmt.Println(m.Path)
+				}
+				return nil
+			}
 			return printJSON(ms)
 		},
-	})
+	}
+	methodsCmd.Flags().BoolP("quiet", "q", false, "print bare dot-paths, one per line (pipeable)")
+	root.AddCommand(methodsCmd)
 	root.AddCommand(&cobra.Command{
 		Use:   "method <method-path>",
 		Short: "Show one method's signature (input params + output schema)",

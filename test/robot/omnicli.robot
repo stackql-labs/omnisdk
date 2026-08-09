@@ -29,6 +29,10 @@ ${OMNI_OUT}          ${OUTDIR}/omnicli-omni-composite.jsonl
 ${OMNI_MERGED_OUT}   ${OUTDIR}/omnicli-omni-merged.jsonl
 ${OMNI_ORG_OUT}      ${OUTDIR}/omnicli-omni-composite-org.jsonl
 ${OMNI_ORG_MERGED_OUT}    ${OUTDIR}/omnicli-omni-merged-org.jsonl
+# Input columns echoed onto rows. The composite publishes its OWN three; the hand-assembled merge
+# publishes the union of its legs' five. So equivalence is asserted on the provider data with these
+# dropped — the echo differing is the signatures differing, not the query.
+@{INPUT_COLS}        region    project    org    grpc_target    grpc_plaintext
 
 *** Test Cases ***
 Resources And Methods Discovery
@@ -50,6 +54,18 @@ Resources And Methods Discovery
     Should Contain    ${meth.stdout}    google.storage.buckets.list
     Should Contain    ${meth.stdout}    "name": "project"
     Should Contain    ${meth.stdout}    "encryption_class"
+    # -q/--quiet is the bare, pipeable form: dot-paths only, nothing else
+    ${methPaths}=    Run Process    ${BINARY}    methods    google.storage.buckets    --quiet
+    ...    stdout=${OUTDIR}/methods-paths.out    stderr=${OUTDIR}/methods-paths.err
+    Should Be Equal As Integers    ${methPaths.rc}    0    omnicli failed: ${methPaths.stderr}
+    Should Be Equal    ${methPaths.stdout.strip()}    google.storage.buckets.list
+    # ...and likewise for resources
+    ${resPaths}=    Run Process    ${BINARY}    resources    -q
+    ...    stdout=${OUTDIR}/resources-paths.out    stderr=${OUTDIR}/resources-paths.err
+    Should Be Equal As Integers    ${resPaths.rc}    0    omnicli failed: ${resPaths.stderr}
+    Should Contain    ${resPaths.stdout}    google.storage.buckets
+    Should Not Contain    ${resPaths.stdout}    "summary"
+    Should Not Contain    ${resPaths.stdout}    "$schema"
     ${one}=    Run Process    ${BINARY}    method    google.storage.buckets.list
     ...    stdout=${OUTDIR}/method.out    stderr=${OUTDIR}/method.err
     Should Be Equal As Integers    ${one.rc}    0    omnicli failed: ${one.stderr}
@@ -223,6 +239,61 @@ Cross Cloud Composite Discovery And Signature
     # it publishes the same uniform blob schema every leg normalizes to
     Should Contain    ${meth.stdout}    "encryption_class"
     Should Contain    ${meth.stdout}    "provider"
+    # ...and the schema also carries the method's INPUTS as columns, marked as echoed input
+    Should Contain    ${meth.stdout}    "x-omnisdk-input"
+
+Method Response Schema Publishes Its Input Params
+    [Documentation]    Signature and result contract are ONE: a method's declared inputs appear as
+    ...    columns of its response schema (required input = plain type, optional = nullable), marked
+    ...    x-omnisdk-input to separate them from provider data. Derived from Params, so they cannot
+    ...    drift apart. Rows then carry those values, so every row states the scope that produced it.
+    ${one}=    Run Process    ${BINARY}    method    omni.storage.buckets.list
+    ...    stdout=${OUTDIR}/omni-signature.out    stderr=${OUTDIR}/omni-signature.err
+    Should Be Equal As Integers    ${one.rc}    0    omnicli failed: ${one.stderr}
+    ${sig}=    Evaluate    json.loads(r'''${one.stdout}''')    json
+    ${props}=    Set Variable    ${sig}[schema][properties]
+    # required input → plain string column; optional inputs → nullable
+    Should Be Equal    ${props}[region][type]    string
+    Should Be True    ${props}[region][x-omnisdk-input]
+    Should Be Equal    ${props}[project][type]    ${{['string', 'null']}}
+    Should Be Equal    ${props}[org][type]    ${{['string', 'null']}}
+    # provider data columns are untouched by the echo
+    Should Be Equal    ${props}[provider][type]    string
+    Should Not Contain    ${props}[provider]    x-omnisdk-input
+    # every input column is declared present on every row
+    Should Contain    ${sig}[schema][required]    region
+    Should Contain    ${sig}[schema][required]    project
+    Should Contain    ${sig}[schema][required]    org
+
+Rows Carry The Input Params That Produced Them
+    [Documentation]    Each row states its own scope — which region/project/org produced it. For the
+    ...    cross-cloud composite that is the ONLY way to attribute a row, since the legs are merged
+    ...    into one cursor. An optional input that was not supplied is null, matching its schema.
+    Write Gcp Service Account    ${GCP_SA}
+    ${result}=    Run Process    ${BINARY}    run    omni.storage.buckets.list    {"params":{"region":"us-east-1","org":"123456789"}}
+    ...    --endpoint    ${ENDPOINT}    --out    ${OMNI_OUT}
+    ...    env:AWS_ACCESS_KEY_ID=test    env:AWS_SECRET_ACCESS_KEY=test
+    ...    env:AZURE_TENANT_ID=t    env:AZURE_CLIENT_ID=c    env:AZURE_CLIENT_SECRET=s
+    ...    env:GOOGLE_APPLICATION_CREDENTIALS=${GCP_SA}
+    ...    stdout=${OUTDIR}/omni-echo.out    stderr=${OUTDIR}/omni-echo.err
+    Should Be Equal As Integers    ${result.rc}    0    omnicli failed: ${result.stderr}
+    ${rows}=    Get File    ${OMNI_OUT}
+    ${lines}=    Split To Lines    ${rows}
+    # EVERY row, from every leg, carries the scope — not just the leg the param belongs to
+    FOR    ${line}    IN    @{lines}
+        ${row}=    Evaluate    json.loads(r'''${line}''')    json
+        Should Be Equal    ${row}[region]    us-east-1
+        Should Be Equal    ${row}[org]    123456789
+        Should Be Equal    ${row}[project]    ${None}    an unsupplied optional input must be null
+    END
+    # a method that declares NO params is untouched — no echoed columns appear
+    ${az}=    Run Process    ${BINARY}    run    azure.storage.accounts.list    {}
+    ...    --endpoint    ${ENDPOINT}    --out    ${AZ_AUTH_OUT}
+    ...    env:AZURE_TENANT_ID=t    env:AZURE_CLIENT_ID=c    env:AZURE_CLIENT_SECRET=s
+    ...    stdout=${OUTDIR}/omni-noparams.out    stderr=${OUTDIR}/omni-noparams.err
+    Should Be Equal As Integers    ${az.rc}    0    omnicli failed: ${az.stderr}
+    ${azRows}=    Get File    ${AZ_AUTH_OUT}
+    Should Not Contain    ${azRows}    "region"
 
 Cross Cloud Composite Enforces Its Own And Its Legs Params
     [Documentation]    Scope is required and never inferred. The composite enforces its OWN required
@@ -262,7 +333,7 @@ Cross Cloud Composite Equals The Merged Audit
     ...    env:GOOGLE_APPLICATION_CREDENTIALS=${GCP_SA}
     ...    stdout=${OUTDIR}/omni-merged.out    stderr=${OUTDIR}/omni-merged.err
     Should Be Equal As Integers    ${merged.rc}    0    omnicli failed: ${merged.stderr}
-    Assert Jsonl Semantically Equal    ${OMNI_OUT}    ${OMNI_MERGED_OUT}
+    Assert Jsonl Data Equal    ${OMNI_OUT}    ${OMNI_MERGED_OUT}    ${INPUT_COLS}
     # every provider really is in there (guards against an empty-equals-empty pass)
     ${omni}=    Get File    ${OMNI_OUT}
     Should Contain    ${omni}    "provider":"aws"
@@ -284,7 +355,7 @@ Cross Cloud Composite Equals The Merged Audit
     ...    env:GOOGLE_APPLICATION_CREDENTIALS=${GCP_SA}
     ...    stdout=${OUTDIR}/omni-org-merged.out    stderr=${OUTDIR}/omni-org-merged.err
     Should Be Equal As Integers    ${mergedOrg.rc}    0    omnicli failed: ${mergedOrg.stderr}
-    Assert Jsonl Semantically Equal    ${OMNI_ORG_OUT}    ${OMNI_ORG_MERGED_OUT}
+    Assert Jsonl Data Equal    ${OMNI_ORG_OUT}    ${OMNI_ORG_MERGED_OUT}    ${INPUT_COLS}
     ${omniOrg}=    Get File    ${OMNI_ORG_OUT}
     Should Contain X Times    ${omniOrg}    "provider":"gcp"    4
 

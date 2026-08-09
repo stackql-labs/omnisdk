@@ -27,10 +27,12 @@ go build -o build/omnicli ./cmd/omnicli
 source cicd/vol/vendor-secrets/secrets.sh # populate accordingly
 
 # Discover the facade catalog (dot-path grammar, e.g. google.storage.buckets.list):
+./build/omnicli resources -q                       # JUST the names, one per line (pipeable)
 ./build/omnicli resources                          # list resources (things)
 ./build/omnicli resources --filter storage         # regex-filter by path
-./build/omnicli resources google.storage.buckets   # a resource's canonical schema
-./build/omnicli methods google.storage.buckets       # a resource's methods + signatures
+./build/omnicli resources omni.storage.buckets   # a resource's canonical schema
+./build/omnicli methods omni.storage.buckets -q    # just this resource's method names
+./build/omnicli methods omni.storage.buckets       # a resource's methods + signatures
 ./build/omnicli method google.storage.buckets.list   # one method's signature
 
 _now="$(date +%s)" && ./build/omnicli encryption --aws-region "${_AWS_REGION}" --out "./cicd/out/bucket-encryption-${_now}.jsonl" --log "./cicd/out/bucket-encryption-${_now}.log"
@@ -85,7 +87,11 @@ _now="$(date +%s)" && ./build/omnicli blob-audit-shallow --aws-region us-east-1 
 
 Scope is single-account by default: AWS = the creds' account, GCP = the required `--project`, Azure = every subscription the SP can read. `blob-audit-shallow-gcp-org` audits a specific org (`--gcp-org`, required) — its direct-child projects for now; folder-nested projects await the recursive folder descent.
 
+A method's **response schema carries its own input params as columns**, so signature and result contract read as one: a required input is a plain-typed column, an optional one is nullable and `null` when not supplied, and each is marked `"x-omnisdk-input": true` to separate it from provider data. Rows carry those values, so every row states the scope that produced it — for the cross-cloud composite that is the only way to attribute a row, since the legs are merged into one cursor. The columns are derived from `Params` at read time, so they cannot drift from the signature; a provider column of the same name always wins. A method that declares no params (e.g. `azure.storage.accounts.list`) is untouched.
+
 Tuning (any subcommand): `--parallelism` (fan-out concurrency), `--max-per-host`, `--retry-tries`, `--retry-rate`, `--limit` (stop cleanly after N output records, 0 = unlimited; a GLOBAL cap even across the multi-provider audit's disjoint DAGs).
+
+> `--limit` is a budget, **not a sample**: it has no fairness across legs, so any value below the full result set biases toward whichever provider emits first. On a real org-wide run, `"tuning":{"Limit":25}` returned 24 GCP + 1 Azure rows and **zero** AWS — the AWS leg fans out three detail calls per bucket before its first row, and the budget was gone. To bound a multi-cloud look, run the legs separately with their own limits.
 Credentials resolve direct flag → env var → file; env vars are never required. Scope (e.g. `--project`) is **required and never inferred** — no env or key-embedded fallback.
 
 
