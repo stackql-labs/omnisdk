@@ -107,11 +107,18 @@ type Resource struct {
 // e.g. "google.storage.buckets.list". Its signature is Params (input) + Schema (output JSON Schema).
 // Methods are discovered per-resource.
 type Method struct {
-	Path     string         `json:"path"`
-	Resource string         `json:"resource"`
-	Summary  string         `json:"summary"`
-	Params   []Param        `json:"params"`
-	Schema   map[string]any `json:"schema"`
+	Path     string  `json:"path"`
+	Resource string  `json:"resource"`
+	Summary  string  `json:"summary"`
+	Params   []Param `json:"params"`
+	// ExactlyOne names groups of params of which EXACTLY ONE must be supplied — mutually exclusive
+	// alternatives that `Required` cannot express (a GCP audit is scoped by project OR by org, never
+	// both, never neither). Declared here rather than checked inside a plan builder so the constraint
+	// is part of the published signature: discoverable, enforced in one place for every method, and
+	// stated in each method's OWN param names — a composite that renames an input reports its name,
+	// not its leg's.
+	ExactlyOne [][]string     `json:"exactly_one,omitempty"`
+	Schema     map[string]any `json:"schema"`
 }
 
 // Args are the inputs to run a resource: explicit scope Params, optional Auth (config-driven-auth
@@ -264,24 +271,16 @@ func echoParams(params []Param, args Args) map[string]any {
 	return out
 }
 
-// memberArgs is what a composite hands its legs: ONLY its own declared params, each under the name
-// the legs declare (google_org → org). Two things follow. A composite can publish provider-scoped
-// input names while each leg keeps the name that is unambiguous inside its own namespace. And the
-// composite's published signature is authoritative — an undeclared param cannot slip through to a leg
-// and quietly steer the query while the row's echoed scope columns say it was never supplied. Auth,
-// endpoint and tuning are untouched; they are not part of the signature.
+// memberArgs is what a composite hands its legs: ONLY its own declared params. The published
+// signature is therefore authoritative — an undeclared param cannot slip through to a leg and quietly
+// steer the query while the row's echoed scope columns say it was never supplied. Auth, endpoint and
+// tuning are untouched; they are not part of the signature.
 func memberArgs(args Args, def methodDef) Args {
 	params := make(map[string]string, len(def.Params))
 	for _, p := range def.Params {
-		v := args.param(p.Name)
-		if v == "" {
-			continue // absent optional input: the leg's own validation must see it as absent
+		if v := args.param(p.Name); v != "" {
+			params[p.Name] = v
 		}
-		name := p.Name
-		if to, ok := def.alias[p.Name]; ok {
-			name = to
-		}
-		params[name] = v
 	}
 	out := args
 	out.Params = params
@@ -311,11 +310,6 @@ type methodDef struct {
 	// methods' plans, merged into ONE cursor. A composite is defined BY REFERENCE to its legs, so it
 	// cannot drift from them — adding a provider is one entry here, not a new hand-rolled plan.
 	members []string
-	// alias translates THIS method's param names to the names its members declare, applied when
-	// delegating. A composite spans providers, so its inputs want provider-scoped names
-	// (google_project); a leg is a reusable method in its own right and keeps the name natural in its
-	// own namespace (project). Aliasing lets both be true without either side compromising.
-	alias map[string]string
 }
 
 // resources is the hand-authored resource catalog (the "things", with a canonical schema each).
@@ -406,13 +400,11 @@ var methods = map[string]methodDef{
 				{Name: "grpc_target", Required: false, Description: "run the bucket audit over the gRPC Storage API at this host:port instead of REST (transport only; identical rows)"},
 				{Name: "grpc_plaintext", Required: false, Description: "\"true\" to dial grpc_target without TLS (for a local mock); default TLS"},
 			},
-			Schema: blobSchema,
+			ExactlyOne: [][]string{{"google_project", "google_org"}}, // one project or a whole org, never both
+			Schema:     blobSchema,
 		},
 		build: func(args Args) (plan.Plan, error) {
-			project, org := args.param("project"), args.param("org")
-			if (project == "") == (org == "") {
-				return nil, fmt.Errorf("omnisdk: google.storage.buckets.list needs exactly one of param 'project' or 'org'")
-			}
+			project, org := args.param("google_project"), args.param("google_org")
 			creds, err := gcpCreds(args)
 			if err != nil {
 				return nil, err
@@ -451,16 +443,14 @@ var methods = map[string]methodDef{
 				{Name: "google_project", Required: false, Description: "single GCP project (mutually exclusive with google_org)"},
 				{Name: "google_org", Required: false, Description: "audit the whole GCP org, recursive folder→project descent (mutually exclusive with google_project)"},
 			},
-			Schema: blobSchema,
+			ExactlyOne: [][]string{{"google_project", "google_org"}},
+			Schema:     blobSchema,
 		},
 		members: []string{
 			"aws.s3.buckets.list",
 			"azure.storage.accounts.list",
 			"google.storage.buckets.list",
 		},
-		// Spanning providers, the composite names its GCP-scoped inputs for the provider they steer;
-		// the GCP leg keeps the plain names that are unambiguous inside its own namespace.
-		alias: map[string]string{"google_project": "project", "google_org": "org"},
 	},
 	"aws.s3.buckets.enumerate": {
 		Method: Method{
@@ -670,6 +660,18 @@ func buildPlans(method string, args Args, seen map[string]bool) ([]plan.Plan, er
 	for _, p := range def.Params {
 		if p.Required && args.param(p.Name) == "" {
 			return nil, fmt.Errorf("omnisdk: method %q requires param %q", method, p.Name)
+		}
+	}
+	for _, group := range def.ExactlyOne {
+		var supplied []string
+		for _, name := range group {
+			if args.param(name) != "" {
+				supplied = append(supplied, name)
+			}
+		}
+		if len(supplied) != 1 {
+			return nil, fmt.Errorf("omnisdk: method %q requires exactly one of params %s (got %d)",
+				method, quoteAll(group), len(supplied))
 		}
 	}
 	if len(def.members) == 0 {
@@ -947,4 +949,13 @@ func orFloat(v, def float64) float64 {
 		return def
 	}
 	return v
+}
+
+// quoteAll renders param names for an error: 'a', 'b', 'c'.
+func quoteAll(names []string) string {
+	out := make([]string, len(names))
+	for i, n := range names {
+		out[i] = "'" + n + "'"
+	}
+	return strings.Join(out, ", ")
 }

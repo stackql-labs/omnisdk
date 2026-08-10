@@ -76,7 +76,7 @@ Generic Run Command Deserializes JSON Args
     [Documentation]    The generic `run <method> <json>` form: Args deserialized with Go's intrinsic
     ...    encoding/json. Same rows as the named command; tuning (limit) honored straight from the JSON.
     Write Gcp Service Account    ${GCP_SA}
-    ${result}=    Run Process    ${BINARY}    run    google.storage.buckets.list    {"params":{"project":"mock-project"}}    --endpoint    ${ENDPOINT}    --out    ${GCP_OUT}
+    ${result}=    Run Process    ${BINARY}    run    google.storage.buckets.list    {"params":{"google_project":"mock-project"}}    --endpoint    ${ENDPOINT}    --out    ${GCP_OUT}
     ...    env:GOOGLE_APPLICATION_CREDENTIALS=${GCP_SA}
     ...    stdout=${OUTDIR}/run.out    stderr=${OUTDIR}/run.err
     Should Be Equal As Integers    ${result.rc}    0    omnicli failed: ${result.stderr}
@@ -84,7 +84,7 @@ Generic Run Command Deserializes JSON Args
     Should Contain    ${out}    "provider":"gcp"
     Should Contain    ${out}    gcs-cmek
     # tuning (limit) rides in the SAME JSON object — org scope capped to 1 row
-    ${lim}=    Run Process    ${BINARY}    run    google.storage.buckets.list    {"params":{"org":"123456789"},"tuning":{"Limit":1}}    --endpoint    ${ENDPOINT}    --out    ${GCP_ORG_OUT}
+    ${lim}=    Run Process    ${BINARY}    run    google.storage.buckets.list    {"params":{"google_org":"123456789"},"tuning":{"Limit":1}}    --endpoint    ${ENDPOINT}    --out    ${GCP_ORG_OUT}
     ...    env:GOOGLE_APPLICATION_CREDENTIALS=${GCP_SA}
     ...    stdout=${OUTDIR}/run-lim.out    stderr=${OUTDIR}/run-lim.err
     Should Be Equal As Integers    ${lim.rc}    0    omnicli failed: ${lim.stderr}
@@ -236,8 +236,7 @@ Cross Cloud Composite Discovery And Signature
     Should Contain    ${meth.stdout}    "name": "region"
     Should Contain    ${meth.stdout}    "name": "google_project"
     Should Contain    ${meth.stdout}    "name": "google_org"
-    # the composite names its GCP-scoped inputs for the provider they steer; the legs keep the plain
-    # names inside their own namespace, and the composite translates when it delegates
+    # one name for one thing: the leg declares these too, so nothing translates between them
     Should Not Contain    ${meth.stdout}    "name": "project"
     # it publishes the same uniform blob schema every leg normalizes to
     Should Contain    ${meth.stdout}    "encryption_class"
@@ -299,9 +298,9 @@ Rows Carry The Input Params That Produced Them
     Should Not Contain    ${azRows}    "region"
 
 Cross Cloud Composite Enforces Its Own And Its Legs Params
-    [Documentation]    Scope is required and never inferred. The composite enforces its OWN required
-    ...    params up front, and each leg still validates its own when built — so the composite's
-    ...    published signature cannot silently drift from its members.
+    [Documentation]    Scope is required and never inferred. Required params AND the declared
+    ...    exactly-one rule (google_project XOR google_org) are both enforced from the published
+    ...    signature, before any leg is built — no credentials needed to reach the error.
     ${noRegion}=    Run Process    ${BINARY}    run    omni.storage.buckets.list    {"params":{"project":"mock-project"}}    --endpoint    ${ENDPOINT}
     ...    stdout=${OUTDIR}/omni-noregion.out    stderr=${OUTDIR}/omni-noregion.err
     Should Not Be Equal As Integers    ${noRegion.rc}    0    composite without region must fail
@@ -312,7 +311,9 @@ Cross Cloud Composite Enforces Its Own And Its Legs Params
     ...    stdout=${OUTDIR}/omni-noscope.out    stderr=${OUTDIR}/omni-noscope.err
     Should Not Be Equal As Integers    ${noScope.rc}    0    composite without project/org must fail
     Should Contain    ${noScope.stderr}    omni.storage.buckets.list
-    Should Contain    ${noScope.stderr}    google.storage.buckets.list
+    # the exactly-one rule is DECLARED on the method, so it is reported in the method's own param
+    # names and enforced before any leg is built — no leg internals leak into the message
+    Should Contain    ${noScope.stderr}    'google_project', 'google_org' 
 
 Cross Cloud Composite Equals The Merged Audit
     [Documentation]    The composite method and the hand-assembled merge are the SAME query: one
@@ -486,12 +487,12 @@ Blob Audit Shallow GCP Org Requires Explicit Org
     Should Contain    ${result.stderr}    gcp-org
 
 Composite Signature Is Authoritative Over Its Legs
-    [Documentation]    A composite publishes provider-scoped input names (google_org) while each leg
-    ...    keeps the name natural in its own namespace (org), translating when it delegates. The
-    ...    published signature is authoritative: a param the composite does NOT declare cannot slip
-    ...    through to a leg and quietly steer the query while the row's echoed scope says otherwise.
+    [Documentation]    Composite and legs share one name per input (google_project/google_org), so
+    ...    nothing translates between them. The published signature is authoritative: a param the
+    ...    composite does NOT declare cannot slip through to a leg and quietly steer the query while
+    ...    the row's echoed scope columns say it was never supplied.
     Write Gcp Service Account    ${GCP_SA}
-    # the leg's own name, passed to the COMPOSITE, is not its signature — it must not steer the query
+    # a param the composite does not declare must not steer a leg
     ${stale}=    Run Process    ${BINARY}    run    omni.storage.buckets.list    {"params":{"region":"us-east-1","org":"123456789"}}
     ...    --endpoint    ${ENDPOINT}
     ...    env:AWS_ACCESS_KEY_ID=test    env:AWS_SECRET_ACCESS_KEY=test
@@ -499,9 +500,9 @@ Composite Signature Is Authoritative Over Its Legs
     ...    env:GOOGLE_APPLICATION_CREDENTIALS=${GCP_SA}
     ...    stdout=${OUTDIR}/omni-stale.out    stderr=${OUTDIR}/omni-stale.err
     Should Not Be Equal As Integers    ${stale.rc}    0    an undeclared param must not steer a leg
-    Should Contain    ${stale.stderr}    exactly one of param
-    # ...while the leg itself still takes its own names, unchanged
-    ${leg}=    Run Process    ${BINARY}    run    google.storage.buckets.list    {"params":{"org":"123456789"}}
+    Should Contain    ${stale.stderr}    'google_project', 'google_org' 
+    # ...and the leg answers to the SAME names, so nothing has to translate
+    ${leg}=    Run Process    ${BINARY}    run    google.storage.buckets.list    {"params":{"google_org":"123456789"}}
     ...    --endpoint    ${ENDPOINT}    --out    ${GCP_ORG_OUT}
     ...    env:GOOGLE_APPLICATION_CREDENTIALS=${GCP_SA}
     ...    stdout=${OUTDIR}/omni-leg.out    stderr=${OUTDIR}/omni-leg.err

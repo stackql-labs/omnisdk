@@ -187,7 +187,7 @@ func main() {
 		Use:   "blob-audit-shallow-gcp",
 		Short: "GCP Cloud Storage bucket audit in a project (google.storage.buckets.list)",
 		RunE: runFacade("google.storage.buckets.list", func(cmd *cobra.Command) (omnisdk.Args, error) {
-			return omnisdk.Args{Params: map[string]string{"project": mustFlag(cmd, "project")}}, nil
+			return omnisdk.Args{Params: map[string]string{"google_project": mustFlag(cmd, "project")}}, nil
 		}),
 	}
 	requireProject(gcpBlob)
@@ -196,7 +196,7 @@ func main() {
 		Use:   "blob-audit-shallow-gcp-org",
 		Short: "GCP bucket audit across an ENTIRE org (google.storage.buckets.list, org scope)",
 		RunE: runFacade("google.storage.buckets.list", func(cmd *cobra.Command) (omnisdk.Args, error) {
-			return omnisdk.Args{Params: map[string]string{"org": mustFlag(cmd, "gcp-org")}}, nil
+			return omnisdk.Args{Params: map[string]string{"google_org": mustFlag(cmd, "gcp-org")}}, nil
 		}),
 	}
 	requireGcpOrg(gcpBlobOrg)
@@ -209,7 +209,7 @@ func main() {
 		Use:   "blob-audit-shallow",
 		Short: "Blob-store encryption status across AWS+Azure+GCP, merged into one cursor",
 		RunE: runMerged(blobMethods, func(cmd *cobra.Command) (omnisdk.Args, error) {
-			return omnisdk.Args{Params: map[string]string{"region": awsRegion, "project": mustFlag(cmd, "project")}}, nil
+			return omnisdk.Args{Params: map[string]string{"region": awsRegion, "google_project": mustFlag(cmd, "project")}}, nil
 		}),
 	}
 	requireProject(allBlob)
@@ -218,7 +218,7 @@ func main() {
 		Use:   "blob-audit-shallow-org",
 		Short: "Org-wide blob audit across AWS+Azure+GCP (Azure=all subs, GCP=whole org via --gcp-org)",
 		RunE: runMerged(blobMethods, func(cmd *cobra.Command) (omnisdk.Args, error) {
-			return omnisdk.Args{Params: map[string]string{"region": awsRegion, "org": mustFlag(cmd, "gcp-org")}}, nil
+			return omnisdk.Args{Params: map[string]string{"region": awsRegion, "google_org": mustFlag(cmd, "gcp-org")}}, nil
 		}),
 	}
 	requireGcpOrg(allBlobOrg)

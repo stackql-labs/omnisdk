@@ -104,21 +104,21 @@ Credentials resolve direct flag → env var → file; env vars are never require
 ```bash
 # 1) All buckets across the WHOLE GCP org (every project under the org) — REST.
 _now="$(date +%s)" && ./build/omnicli run google.storage.buckets.list \
-  '{"params":{"org":"'"${_GOOGLE_ORG_ID}"'"}}' \
+  '{"params":{"google_org":"'"${_GOOGLE_ORG_ID}"'"}}' \
   --out "./cicd/out/dto-buckets-org-${_now}.jsonl" --log "./cicd/out/dto-buckets-org-${_now}.log"
 
 # 2) Same whole-org audit over the gRPC Storage API (proto-only serde). Transport is chosen by config
 #    (grpc_target); rows are IDENTICAL to (1). Same SA key (GOOGLE_APPLICATION_CREDENTIALS) → in-process OAuth.
 _now="$(date +%s)" && ./build/omnicli run google.storage.buckets.list \
-  '{"params":{"org":"'"${_GOOGLE_ORG_ID}"'","grpc_target":"storage.googleapis.com:443"}}' \
+  '{"params":{"google_org":"'"${_GOOGLE_ORG_ID}"'","grpc_target":"storage.googleapis.com:443"}}' \
   --out "./cicd/out/dto-buckets-org-grpc-${_now}.jsonl" --log "./cicd/out/dto-buckets-org-grpc-${_now}.log"
 
 # 3) A single project — REST, then the same project over gRPC.
 _now="$(date +%s)" && ./build/omnicli run google.storage.buckets.list \
-  '{"params":{"project":"'"${_GOOGLE_PROJECT_ID}"'"}}' --out "./cicd/out/dto-buckets-proj-${_now}.jsonl"
+  '{"params":{"google_project":"'"${_GOOGLE_PROJECT_ID}"'"}}' --out "./cicd/out/dto-buckets-proj-${_now}.jsonl"
 
 _now="$(date +%s)" && ./build/omnicli run google.storage.buckets.list \
-  '{"params":{"project":"'"${_GOOGLE_PROJECT_ID}"'","grpc_target":"storage.googleapis.com:443"}}' \
+  '{"params":{"google_project":"'"${_GOOGLE_PROJECT_ID}"'","grpc_target":"storage.googleapis.com:443"}}' \
   --out "./cicd/out/dto-buckets-proj-grpc-${_now}.jsonl"
 
 # 4) AWS S3 buckets, with run tuning (--limit) supplied IN the same JSON object.
@@ -132,9 +132,7 @@ _now="$(date +%s)" && ./build/omnicli run azure.storage.accounts.list \
 
 # 6) The CROSS-CLOUD COMPOSITE as one method: AWS + Azure + GCP in a single select. Params are the
 #    union of the legs' scope inputs (region required; exactly one of google_project/google_org for
-#    the GCP leg; Azure needs none — its scope is the SP's reach). The composite names its GCP-scoped
-#    inputs for the provider they steer; the legs keep the plain names inside their own namespace and
-#    the composite translates when it delegates. Same rows as blob-audit-shallow.
+#    the GCP leg; Azure needs none — its scope is the SP's reach). Same rows as blob-audit-shallow.
 _now="$(date +%s)" && ./build/omnicli run omni.storage.buckets.list \
   '{"params":{"region":"'"${_AWS_REGION}"'","google_project":"'"${_GOOGLE_PROJECT_ID}"'"}}' \
   --out "./cicd/out/dto-omni-${_now}.jsonl" --log "./cicd/out/dto-omni-${_now}.log"

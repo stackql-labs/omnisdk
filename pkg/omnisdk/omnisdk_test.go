@@ -119,18 +119,34 @@ func TestFacadeCrossCloudComposite(t *testing.T) {
 	}); err == nil {
 		t.Fatal("composite without region should error")
 	}
-	// ...and each leg still validates its own on build, so the signature cannot drift from the members.
-	// The AWS/Azure legs plan first, so give them enough to get past their own credential resolution —
-	// nothing is dialled here, only planned.
-	t.Setenv("AWS_ACCESS_KEY_ID", "x")
-	t.Setenv("AWS_SECRET_ACCESS_KEY", "y")
-	t.Setenv("AZURE_TENANT_ID", "t")
-	t.Setenv("AZURE_CLIENT_ID", "c")
-	t.Setenv("AZURE_CLIENT_SECRET", "s")
+	// ...and its exactly-one rule is declared, not hand-rolled in a plan builder: enforced before any
+	// leg is built, so no credentials are needed to reach it, and reported in the method's own names.
 	_, err = omnisdk.New("omni.storage.buckets.list", omnisdk.Args{
 		Params: map[string]string{"region": "us-east-1"},
 	})
-	if err == nil || !strings.Contains(err.Error(), "google.storage.buckets.list") {
-		t.Fatalf("composite should surface the GCP leg's project/org rule, got %v", err)
+	if err == nil || !strings.Contains(err.Error(), "'google_project', 'google_org'") {
+		t.Fatalf("composite should report its own exactly-one rule, got %v", err)
+	}
+	// supplying BOTH alternatives is just as wrong as supplying neither
+	_, err = omnisdk.New("omni.storage.buckets.list", omnisdk.Args{
+		Params: map[string]string{"region": "us-east-1", "google_project": "p", "google_org": "o"},
+	})
+	if err == nil || !strings.Contains(err.Error(), "exactly one") {
+		t.Fatalf("composite should reject both alternatives at once, got %v", err)
+	}
+}
+
+// The exactly-one rule is part of the published signature, so a consumer can see it without running.
+func TestFacadeExactlyOneIsDiscoverable(t *testing.T) {
+	m, ok := omnisdk.GetMethod("google.storage.buckets.list")
+	if !ok || len(m.ExactlyOne) != 1 {
+		t.Fatalf("GetMethod(google.storage.buckets.list).ExactlyOne = %v, ok=%v", m.ExactlyOne, ok)
+	}
+	if got := strings.Join(m.ExactlyOne[0], ","); got != "google_project,google_org" {
+		t.Fatalf("ExactlyOne group = %q, want google_project,google_org", got)
+	}
+	c, _ := omnisdk.GetMethod("omni.storage.buckets.list")
+	if got := strings.Join(c.ExactlyOne[0], ","); got != "google_project,google_org" {
+		t.Fatalf("composite ExactlyOne group = %q, want the same names as its leg", got)
 	}
 }
