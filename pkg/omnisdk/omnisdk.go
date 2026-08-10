@@ -264,6 +264,30 @@ func echoParams(params []Param, args Args) map[string]any {
 	return out
 }
 
+// memberArgs is what a composite hands its legs: ONLY its own declared params, each under the name
+// the legs declare (google_org → org). Two things follow. A composite can publish provider-scoped
+// input names while each leg keeps the name that is unambiguous inside its own namespace. And the
+// composite's published signature is authoritative — an undeclared param cannot slip through to a leg
+// and quietly steer the query while the row's echoed scope columns say it was never supplied. Auth,
+// endpoint and tuning are untouched; they are not part of the signature.
+func memberArgs(args Args, def methodDef) Args {
+	params := make(map[string]string, len(def.Params))
+	for _, p := range def.Params {
+		v := args.param(p.Name)
+		if v == "" {
+			continue // absent optional input: the leg's own validation must see it as absent
+		}
+		name := p.Name
+		if to, ok := def.alias[p.Name]; ok {
+			name = to
+		}
+		params[name] = v
+	}
+	out := args
+	out.Params = params
+	return out
+}
+
 // unionParams is the deduplicated signature of several methods — what a merged run echoes.
 func unionParams(methodPaths []string) []Param {
 	var out []Param
@@ -287,6 +311,11 @@ type methodDef struct {
 	// methods' plans, merged into ONE cursor. A composite is defined BY REFERENCE to its legs, so it
 	// cannot drift from them — adding a provider is one entry here, not a new hand-rolled plan.
 	members []string
+	// alias translates THIS method's param names to the names its members declare, applied when
+	// delegating. A composite spans providers, so its inputs want provider-scoped names
+	// (google_project); a leg is a reusable method in its own right and keeps the name natural in its
+	// own namespace (project). Aliasing lets both be true without either side compromising.
+	alias map[string]string
 }
 
 // resources is the hand-authored resource catalog (the "things", with a canonical schema each).
@@ -419,8 +448,8 @@ var methods = map[string]methodDef{
 			Summary:  "List blob stores (encryption/public/versioning) across AWS+Azure+GCP as one uniform result set",
 			Params: []Param{
 				{Name: "region", Required: true, Description: "AWS region (AWS leg)"},
-				{Name: "project", Required: false, Description: "single GCP project (mutually exclusive with org)"},
-				{Name: "org", Required: false, Description: "audit the whole GCP org, recursive folder→project descent (mutually exclusive with project)"},
+				{Name: "google_project", Required: false, Description: "single GCP project (mutually exclusive with google_org)"},
+				{Name: "google_org", Required: false, Description: "audit the whole GCP org, recursive folder→project descent (mutually exclusive with google_project)"},
 			},
 			Schema: blobSchema,
 		},
@@ -429,6 +458,9 @@ var methods = map[string]methodDef{
 			"azure.storage.accounts.list",
 			"google.storage.buckets.list",
 		},
+		// Spanning providers, the composite names its GCP-scoped inputs for the provider they steer;
+		// the GCP leg keeps the plain names that are unambiguous inside its own namespace.
+		alias: map[string]string{"google_project": "project", "google_org": "org"},
 	},
 	"aws.s3.buckets.enumerate": {
 		Method: Method{
@@ -649,9 +681,10 @@ func buildPlans(method string, args Args, seen map[string]bool) ([]plan.Plan, er
 	}
 	seen[method] = true
 	defer delete(seen, method)
+	inner := memberArgs(args, def)
 	out := make([]plan.Plan, 0, len(def.members))
 	for _, m := range def.members {
-		pls, err := buildPlans(m, args, seen)
+		pls, err := buildPlans(m, inner, seen)
 		if err != nil {
 			return nil, fmt.Errorf("omnisdk: method %q: %w", method, err)
 		}

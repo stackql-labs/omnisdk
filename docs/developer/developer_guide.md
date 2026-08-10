@@ -131,15 +131,17 @@ _now="$(date +%s)" && ./build/omnicli run azure.storage.accounts.list \
   --out "./cicd/out/dto-azure-cc-${_now}.jsonl"
 
 # 6) The CROSS-CLOUD COMPOSITE as one method: AWS + Azure + GCP in a single select. Params are the
-#    union of the legs' scope inputs (region required; exactly one of project/org for the GCP leg;
-#    Azure needs none — its scope is the SP's reach). Same rows as blob-audit-shallow.
+#    union of the legs' scope inputs (region required; exactly one of google_project/google_org for
+#    the GCP leg; Azure needs none — its scope is the SP's reach). The composite names its GCP-scoped
+#    inputs for the provider they steer; the legs keep the plain names inside their own namespace and
+#    the composite translates when it delegates. Same rows as blob-audit-shallow.
 _now="$(date +%s)" && ./build/omnicli run omni.storage.buckets.list \
-  '{"params":{"region":"'"${_AWS_REGION}"'","project":"'"${_GOOGLE_PROJECT_ID}"'"}}' \
+  '{"params":{"region":"'"${_AWS_REGION}"'","google_project":"'"${_GOOGLE_PROJECT_ID}"'"}}' \
   --out "./cicd/out/dto-omni-${_now}.jsonl" --log "./cicd/out/dto-omni-${_now}.log"
 
-# ...or org-wide for the GCP leg, with the global result budget in the same JSON.
+# ...or org-wide for the GCP leg.
 _now="$(date +%s)" && ./build/omnicli run omni.storage.buckets.list \
-  '{"params":{"region":"'"${_AWS_REGION}"'","org":"'"${_GOOGLE_ORG_ID}"'"},"tuning":{"Limit":25}}' \
+  '{"params":{"region":"'"${_AWS_REGION}"'","google_org":"'"${_GOOGLE_ORG_ID}"'"}}' \
   --out "./cicd/out/dto-omni-org-${_now}.jsonl"
 
 # 
