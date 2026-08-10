@@ -107,11 +107,18 @@ type Resource struct {
 // e.g. "google.storage.buckets.list". Its signature is Params (input) + Schema (output JSON Schema).
 // Methods are discovered per-resource.
 type Method struct {
-	Path     string         `json:"path"`
-	Resource string         `json:"resource"`
-	Summary  string         `json:"summary"`
-	Params   []Param        `json:"params"`
-	Schema   map[string]any `json:"schema"`
+	Path     string  `json:"path"`
+	Resource string  `json:"resource"`
+	Summary  string  `json:"summary"`
+	Params   []Param `json:"params"`
+	// ExactlyOne names groups of params of which EXACTLY ONE must be supplied — mutually exclusive
+	// alternatives that `Required` cannot express (a GCP audit is scoped by project OR by org, never
+	// both, never neither). Declared here rather than checked inside a plan builder so the constraint
+	// is part of the published signature: discoverable, enforced in one place for every method, and
+	// stated in each method's OWN param names — a composite that renames an input reports its name,
+	// not its leg's.
+	ExactlyOne [][]string     `json:"exactly_one,omitempty"`
+	Schema     map[string]any `json:"schema"`
 }
 
 // Args are the inputs to run a resource: explicit scope Params, optional Auth (config-driven-auth
@@ -199,9 +206,110 @@ func jsonSchema(cols []sdk.BlobColumn) map[string]any {
 	}
 }
 
+// withParams publishes a method's declared INPUTS as columns of its response schema, so the signature
+// and the result contract are one thing: a consumer reads the schema and sees the scope that produced
+// each row — which region/project/org a bucket came from — without holding onto the request. For the
+// cross-cloud composite this is the only way to attribute a row to its scope at all. Derived from
+// Params at read time, so it cannot drift from the signature. A required input is always present
+// (plain type); an optional one is nullable and null when it was not supplied. x-omnisdk-input marks
+// the column as echoed input rather than provider data. A provider column of the same name always
+// wins — the response never loses data to an input echo. Rows carry these values (see echoParams).
+func withParams(base map[string]any, params []Param) map[string]any {
+	if len(params) == 0 {
+		return base
+	}
+	out := make(map[string]any, len(base)+1)
+	for k, v := range base {
+		out[k] = v
+	}
+	props := map[string]any{}
+	if p, ok := base["properties"].(map[string]any); ok {
+		for k, v := range p {
+			props[k] = v
+		}
+	}
+	var required []string
+	if r, ok := base["required"].([]string); ok {
+		required = append(required, r...)
+	}
+	for _, p := range params {
+		if _, clash := props[p.Name]; clash {
+			continue // a provider column of this name already exists; data wins
+		}
+		var typ any = "string"
+		if !p.Required {
+			typ = []any{"string", "null"}
+		}
+		props[p.Name] = map[string]any{
+			"type": typ, "description": p.Description, "x-omnisdk-input": true,
+		}
+		required = append(required, p.Name)
+	}
+	out["properties"], out["required"] = props, required
+	// The echo adds keys the base schema never declared, so a closed base must reopen to stay truthful.
+	if _, ok := base["properties"]; !ok {
+		out["additionalProperties"] = true
+	}
+	return out
+}
+
+// echoParams are a method's declared inputs as they were actually supplied, for stamping onto every
+// row. nil when the method takes none — then rows are untouched. An absent optional input is null,
+// matching the nullable column withParams publishes for it.
+func echoParams(params []Param, args Args) map[string]any {
+	if len(params) == 0 {
+		return nil
+	}
+	out := make(map[string]any, len(params))
+	for _, p := range params {
+		if v := args.param(p.Name); v != "" {
+			out[p.Name] = v
+		} else {
+			out[p.Name] = nil
+		}
+	}
+	return out
+}
+
+// memberArgs is what a composite hands its legs: ONLY its own declared params. The published
+// signature is therefore authoritative — an undeclared param cannot slip through to a leg and quietly
+// steer the query while the row's echoed scope columns say it was never supplied. Auth, endpoint and
+// tuning are untouched; they are not part of the signature.
+func memberArgs(args Args, def methodDef) Args {
+	params := make(map[string]string, len(def.Params))
+	for _, p := range def.Params {
+		if v := args.param(p.Name); v != "" {
+			params[p.Name] = v
+		}
+	}
+	out := args
+	out.Params = params
+	return out
+}
+
+// unionParams is the deduplicated signature of several methods — what a merged run echoes.
+func unionParams(methodPaths []string) []Param {
+	var out []Param
+	seen := map[string]bool{}
+	for _, path := range methodPaths {
+		for _, p := range methods[path].Params {
+			if !seen[p.Name] {
+				seen[p.Name] = true
+				out = append(out, p)
+			}
+		}
+	}
+	return out
+}
+
 type methodDef struct {
 	Method
+	// build plans this method's single query graph. Set on a leaf method; nil on a composite.
 	build func(args Args) (plan.Plan, error)
+	// members, when non-empty, makes this a COMPOSITE method: its plan is the FOREST of these member
+	// methods' plans, merged into ONE cursor. A composite is defined BY REFERENCE to its legs, so it
+	// cannot drift from them — adding a provider is one entry here, not a new hand-rolled plan.
+	members []string
 }
 
 // resources is the hand-authored resource catalog (the "things", with a canonical schema each).
@@ -219,6 +327,14 @@ var resources = map[string]Resource{
 	"azure.storage.accounts": {
 		Path:    "azure.storage.accounts",
 		Summary: "Azure storage accounts",
+		Schema:  blobSchema,
+	},
+	// The cross-cloud composite as a FIRST-CLASS thing: blob stores wherever they live. Every provider
+	// leg already normalizes to the one blob schema, so the union is a single coherent resource — not a
+	// client-side stitch-up — and it carries that same canonical schema.
+	"omni.storage.buckets": {
+		Path:    "omni.storage.buckets",
+		Summary: "Blob stores across every cloud (AWS S3 + Azure storage accounts + GCP buckets)",
 		Schema:  blobSchema,
 	},
 	"aws.ec2.networks": {
@@ -284,13 +400,11 @@ var methods = map[string]methodDef{
 				{Name: "grpc_target", Required: false, Description: "run the bucket audit over the gRPC Storage API at this host:port instead of REST (transport only; identical rows)"},
 				{Name: "grpc_plaintext", Required: false, Description: "\"true\" to dial grpc_target without TLS (for a local mock); default TLS"},
 			},
-			Schema: blobSchema,
+			ExactlyOne: [][]string{{"google_project", "google_org"}}, // one project or a whole org, never both
+			Schema:     blobSchema,
 		},
 		build: func(args Args) (plan.Plan, error) {
-			project, org := args.param("project"), args.param("org")
-			if (project == "") == (org == "") {
-				return nil, fmt.Errorf("omnisdk: google.storage.buckets.list needs exactly one of param 'project' or 'org'")
-			}
+			project, org := args.param("google_project"), args.param("google_org")
 			creds, err := gcpCreds(args)
 			if err != nil {
 				return nil, err
@@ -312,6 +426,30 @@ var methods = map[string]methodDef{
 				return sdk.GCPBlobOrgPlan(args.Endpoint, creds, org), nil
 			}
 			return sdk.GCPBlobPlan(args.Endpoint, creds, project), nil
+		},
+	},
+	// The cross-cloud bucket composite, named and discoverable as ONE method: its plan is the forest of
+	// the three per-cloud legs fanned into a single cursor — the same shape NewMerged produces, but the
+	// consumer selects one path instead of assembling (and having to know) the member list. Its Params
+	// are the union of the legs' scope inputs; Azure contributes none (its scope is the principal's
+	// reach). Each leg still validates its own params when built, so this signature cannot drift.
+	"omni.storage.buckets.list": {
+		Method: Method{
+			Path:     "omni.storage.buckets.list",
+			Resource: "omni.storage.buckets",
+			Summary:  "List blob stores (encryption/public/versioning) across AWS+Azure+GCP as one uniform result set",
+			Params: []Param{
+				{Name: "region", Required: true, Description: "AWS region (AWS leg)"},
+				{Name: "google_project", Required: false, Description: "single GCP project (mutually exclusive with google_org)"},
+				{Name: "google_org", Required: false, Description: "audit the whole GCP org, recursive folder→project descent (mutually exclusive with google_project)"},
+			},
+			ExactlyOne: [][]string{{"google_project", "google_org"}},
+			Schema:     blobSchema,
+		},
+		members: []string{
+			"aws.s3.buckets.list",
+			"azure.storage.accounts.list",
+			"google.storage.buckets.list",
 		},
 	},
 	"aws.s3.buckets.enumerate": {
@@ -450,11 +588,19 @@ func (builtin) Methods(resource string) ([]Method, error) {
 	var out []Method
 	for _, m := range methods {
 		if m.Resource == resource {
-			out = append(out, m.Method)
+			out = append(out, m.published())
 		}
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Path < out[j].Path })
 	return out, nil
+}
+
+// published is the method as a consumer sees it: the response schema carries the method's declared
+// inputs as columns (withParams), so signature and result contract are read as one.
+func (d methodDef) published() Method {
+	m := d.Method
+	m.Schema = withParams(m.Schema, m.Params)
+	return m
 }
 
 func (builtin) GetResource(path string) (Resource, bool) {
@@ -464,15 +610,24 @@ func (builtin) GetResource(path string) (Resource, bool) {
 
 func (builtin) GetMethod(path string) (Method, bool) {
 	m, ok := methods[path]
-	return m.Method, ok
+	if !ok {
+		return Method{}, false
+	}
+	return m.published(), true
 }
 
 func (builtin) New(method string, args Args) (Plan, error) {
-	pl, err := buildPlan(method, args)
+	plans, err := buildPlans(method, args, map[string]bool{})
 	if err != nil {
 		return nil, err
 	}
-	return &cannedPlan{plan: pl, args: args}, nil
+	echo := echoParams(methods[method].Params, args)
+	// A leaf is one graph, a composite a forest — both open as one Plan, so a consumer selecting
+	// omni.storage.buckets.list cannot tell it apart from a single-provider method.
+	if len(plans) == 1 {
+		return &cannedPlan{plan: plans[0], args: args, echo: echo}, nil
+	}
+	return &mergedPlan{plans: plans, args: args, echo: echo}, nil
 }
 
 func (builtin) NewMerged(methodPaths []string, args Args) (Plan, error) {
@@ -481,27 +636,63 @@ func (builtin) NewMerged(methodPaths []string, args Args) (Plan, error) {
 	}
 	plans := make([]plan.Plan, 0, len(methodPaths))
 	for _, m := range methodPaths {
-		pl, err := buildPlan(m, args)
+		pls, err := buildPlans(m, args, map[string]bool{})
 		if err != nil {
 			return nil, err
 		}
-		plans = append(plans, pl)
+		plans = append(plans, pls...)
 	}
-	return &mergedPlan{plans: plans, args: args}, nil
+	return &mergedPlan{plans: plans, args: args, echo: echoParams(unionParams(methodPaths), args)}, nil
 }
 
-// buildPlan looks up a method, enforces its required params (never inferred), and builds its plan.
-func buildPlan(method string, args Args) (plan.Plan, error) {
+// buildPlans looks up a method, enforces its required params (never inferred), and builds its plan(s).
+// A leaf method yields exactly one plan; a COMPOSITE yields its members' plans — the forest the caller
+// presents as one cursor. Recursion lets a composite name composites; seen breaks a catalog cycle
+// rather than overflowing the stack (the catalog is hand-authored today, generated later).
+func buildPlans(method string, args Args, seen map[string]bool) ([]plan.Plan, error) {
 	def, ok := methods[method]
 	if !ok {
 		return nil, fmt.Errorf("omnisdk: unknown method %q", method)
+	}
+	if seen[method] {
+		return nil, fmt.Errorf("omnisdk: composite method cycle at %q", method)
 	}
 	for _, p := range def.Params {
 		if p.Required && args.param(p.Name) == "" {
 			return nil, fmt.Errorf("omnisdk: method %q requires param %q", method, p.Name)
 		}
 	}
-	return def.build(args)
+	for _, group := range def.ExactlyOne {
+		var supplied []string
+		for _, name := range group {
+			if args.param(name) != "" {
+				supplied = append(supplied, name)
+			}
+		}
+		if len(supplied) != 1 {
+			return nil, fmt.Errorf("omnisdk: method %q requires exactly one of params %s (got %d)",
+				method, quoteAll(group), len(supplied))
+		}
+	}
+	if len(def.members) == 0 {
+		pl, err := def.build(args)
+		if err != nil {
+			return nil, err
+		}
+		return []plan.Plan{pl}, nil
+	}
+	seen[method] = true
+	defer delete(seen, method)
+	inner := memberArgs(args, def)
+	out := make([]plan.Plan, 0, len(def.members))
+	for _, m := range def.members {
+		pls, err := buildPlans(m, inner, seen)
+		if err != nil {
+			return nil, fmt.Errorf("omnisdk: method %q: %w", method, err)
+		}
+		out = append(out, pls...)
+	}
+	return out, nil
 }
 
 // Package-level convenience over the Default catalog (consumers may inject their own instead).
@@ -563,6 +754,21 @@ func azureAuth(args Args) (auth.AuthStruct, error) {
 	cfg.Type = "client_credentials"
 	cfg.ClientIDEnvVar = orStr(cfg.ClientIDEnvVar, "AZURE_CLIENT_ID")
 	cfg.ClientSecretEnvVar = orStr(cfg.ClientSecretEnvVar, "AZURE_CLIENT_SECRET")
+	// Resolve id/secret HERE, requiring them. The exchange treats them as OPTIONAL, so an unresolved
+	// credential would otherwise POST an empty client_id, get no access_token back, and bind an empty
+	// {token} into every ARM request — surfacing as an opaque provider 401 ("the 'Authorization' header
+	// is missing the access token") instead of naming the credential that is actually absent.
+	id, err := secret.Require("Azure client id",
+		secret.Literal(cfg.ClientID), secret.Env(cfg.ClientIDEnvVar)).Resolve()
+	if err != nil {
+		return auth.AuthStruct{}, err
+	}
+	sec, err := secret.Require("Azure client secret",
+		secret.Literal(cfg.ClientSecret), secret.Env(cfg.ClientSecretEnvVar)).Resolve()
+	if err != nil {
+		return auth.AuthStruct{}, err
+	}
+	cfg.ClientID, cfg.ClientSecret = id, sec
 	if len(cfg.Scopes) == 0 {
 		cfg.Scopes = []string{"https://management.azure.com/.default"}
 	}
@@ -628,6 +834,7 @@ func gcpCreds(args Args) (sdk.GCPCredentials, error) {
 type cannedPlan struct {
 	plan plan.Plan
 	args Args
+	echo map[string]any // the method's declared inputs, stamped onto every row (see withParams)
 }
 
 func (c *cannedPlan) Open(parent context.Context) (Rows, error) {
@@ -636,7 +843,7 @@ func (c *cannedPlan) Open(parent context.Context) (Rows, error) {
 	// The engine runs on runCtx (cancelled by abort/limit/timeout to stop PRODUCERS). The cursor is
 	// read on the caller's ctx, so already-buffered rows are drained even after an internal abort —
 	// abort means "stop producing", not "discard produced rows".
-	return &rows{recs: op.Open(runCtx), read: parent, cancel: cancel}, nil
+	return &rows{recs: op.Open(runCtx), read: parent, cancel: cancel, echo: c.echo}, nil
 }
 
 // decorate carries the run policies (retry, admission, fan-out, abort, result budget, trace) and an
@@ -678,6 +885,7 @@ func logSink(w io.Writer) (io.Writer, func()) {
 type mergedPlan struct {
 	plans []plan.Plan
 	args  Args
+	echo  map[string]any // the union signature's inputs, stamped onto every row (see withParams)
 }
 
 func (m *mergedPlan) Open(parent context.Context) (Rows, error) {
@@ -686,20 +894,33 @@ func (m *mergedPlan) Open(parent context.Context) (Rows, error) {
 	// Engine on runCtx (abort/limit stop PRODUCERS); cursor read on parent so a limit-abort drains the
 	// already-produced rows rather than discarding them (mirrors cannedPlan.Open).
 	op := plan.MergeComposeRows(1, m.plans...)
-	return &rows{recs: op.Open(runCtx), read: parent, cancel: cancel}, nil
+	return &rows{recs: op.Open(runCtx), read: parent, cancel: cancel, echo: m.echo}, nil
 }
 
 type rows struct {
 	recs   facade.Records
 	read   context.Context
 	cancel context.CancelFunc
+	echo   map[string]any
 }
 
 func (r *rows) Next() bool { return r.recs.Next(r.read) }
 
 func (r *rows) Row() Row {
 	m, _ := bind.DocMap(r.recs.Record())
-	return m
+	if len(r.echo) == 0 {
+		return m
+	}
+	// Copy rather than mutate what the engine handed back, and let provider data win any name clash —
+	// mirrors the schema withParams publishes.
+	out := make(Row, len(m)+len(r.echo))
+	for k, v := range r.echo {
+		out[k] = v
+	}
+	for k, v := range m {
+		out[k] = v
+	}
+	return out
 }
 
 // Err reports a genuine failure; an intentional stop (abort / limit / Close) surfaces as
@@ -728,4 +949,13 @@ func orFloat(v, def float64) float64 {
 		return def
 	}
 	return v
+}
+
+// quoteAll renders param names for an error: 'a', 'b', 'c'.
+func quoteAll(names []string) string {
+	out := make([]string, len(names))
+	for i, n := range names {
+		out[i] = "'" + n + "'"
+	}
+	return strings.Join(out, ", ")
 }

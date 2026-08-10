@@ -95,3 +95,58 @@ func TestFacadeRequiresScopeParam(t *testing.T) {
 		t.Fatal("google.storage.buckets.list with no project/org should error")
 	}
 }
+
+// The cross-cloud composite is discoverable and planned exactly like any other method: one resource,
+// one method path, the same canonical blob schema — the consumer never assembles the member list.
+func TestFacadeCrossCloudComposite(t *testing.T) {
+	r, ok := omnisdk.GetResource("omni.storage.buckets")
+	if !ok || r.Schema["properties"] == nil {
+		t.Fatalf("GetResource(omni.storage.buckets) = %+v, ok=%v", r, ok)
+	}
+	ms, err := omnisdk.Methods("omni.storage.buckets")
+	if err != nil || len(ms) != 1 || ms[0].Path != "omni.storage.buckets.list" {
+		t.Fatalf("Methods(omni.storage.buckets) = %v, err=%v", ms, err)
+	}
+	// the composite publishes the uniform blob schema its legs already normalize to
+	props, _ := ms[0].Schema["properties"].(map[string]any)
+	if props["provider"] == nil || props["encryption_class"] == nil {
+		t.Fatalf("composite schema is not the blob schema: %+v", ms[0].Schema)
+	}
+
+	// its own required params are enforced up front...
+	if _, err := omnisdk.New("omni.storage.buckets.list", omnisdk.Args{
+		Params: map[string]string{"project": "p"},
+	}); err == nil {
+		t.Fatal("composite without region should error")
+	}
+	// ...and its exactly-one rule is declared, not hand-rolled in a plan builder: enforced before any
+	// leg is built, so no credentials are needed to reach it, and reported in the method's own names.
+	_, err = omnisdk.New("omni.storage.buckets.list", omnisdk.Args{
+		Params: map[string]string{"region": "us-east-1"},
+	})
+	if err == nil || !strings.Contains(err.Error(), "'google_project', 'google_org'") {
+		t.Fatalf("composite should report its own exactly-one rule, got %v", err)
+	}
+	// supplying BOTH alternatives is just as wrong as supplying neither
+	_, err = omnisdk.New("omni.storage.buckets.list", omnisdk.Args{
+		Params: map[string]string{"region": "us-east-1", "google_project": "p", "google_org": "o"},
+	})
+	if err == nil || !strings.Contains(err.Error(), "exactly one") {
+		t.Fatalf("composite should reject both alternatives at once, got %v", err)
+	}
+}
+
+// The exactly-one rule is part of the published signature, so a consumer can see it without running.
+func TestFacadeExactlyOneIsDiscoverable(t *testing.T) {
+	m, ok := omnisdk.GetMethod("google.storage.buckets.list")
+	if !ok || len(m.ExactlyOne) != 1 {
+		t.Fatalf("GetMethod(google.storage.buckets.list).ExactlyOne = %v, ok=%v", m.ExactlyOne, ok)
+	}
+	if got := strings.Join(m.ExactlyOne[0], ","); got != "google_project,google_org" {
+		t.Fatalf("ExactlyOne group = %q, want google_project,google_org", got)
+	}
+	c, _ := omnisdk.GetMethod("omni.storage.buckets.list")
+	if got := strings.Join(c.ExactlyOne[0], ","); got != "google_project,google_org" {
+		t.Fatalf("composite ExactlyOne group = %q, want the same names as its leg", got)
+	}
+}
