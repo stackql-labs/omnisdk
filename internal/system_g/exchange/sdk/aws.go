@@ -9,6 +9,7 @@ import (
 
 	"github.com/stackql-labs/omnisdk/internal/system_g/bind"
 	encoder "github.com/stackql-labs/omnisdk/internal/system_g/endec"
+	ep "github.com/stackql-labs/omnisdk/internal/system_g/endpoint"
 	"github.com/stackql-labs/omnisdk/internal/system_g/exchange"
 	"github.com/stackql-labs/omnisdk/internal/system_g/facade"
 	"github.com/stackql-labs/omnisdk/internal/system_g/httpx"
@@ -25,10 +26,7 @@ import (
 // addressing is used so a single host serves every bucket.
 
 func s3ListBase(endpoint, region string) string {
-	if endpoint != "" {
-		return strings.TrimRight(endpoint, "/") + "/"
-	}
-	return "https://s3." + region + ".amazonaws.com/"
+	return resolve(endpoint, ep.AWSS3, map[string]string{"region": region}) + "/"
 }
 
 func s3EncryptionURL(endpoint, region, bucket string) string {
@@ -37,10 +35,23 @@ func s3EncryptionURL(endpoint, region, bucket string) string {
 
 // s3SubURL is a bucket sub-resource URL (?encryption, ?versioning, ?publicAccessBlock, …).
 func s3SubURL(endpoint, region, bucket, sub string) string {
-	if endpoint != "" {
-		return strings.TrimRight(endpoint, "/") + "/" + bucket + "?" + sub
+	base := resolve(endpoint, ep.AWSS3, map[string]string{"region": region})
+	if overridden(endpoint, ep.AWSS3) {
+		// A redirected S3 is one host serving every bucket, so buckets address PATH-style. Virtual-host
+		// addressing (bucket as a subdomain) only works against the real service.
+		return base + "/" + bucket + "?" + sub
 	}
-	return "https://" + bucket + ".s3." + region + ".amazonaws.com/?" + sub
+	return insertBucketHost(base, bucket) + "/?" + sub
+}
+
+// insertBucketHost turns https://s3.<region>.amazonaws.com into the bucket's virtual host,
+// https://<bucket>.s3.<region>.amazonaws.com — S3's real addressing.
+func insertBucketHost(base, bucket string) string {
+	const scheme = "https://"
+	if strings.HasPrefix(base, scheme) {
+		return scheme + bucket + "." + strings.TrimPrefix(base, scheme)
+	}
+	return base + "/" + bucket
 }
 
 // s3SubInner fetches a bucket sub-resource for one bound bucket, emitting raw {status, raw}.
@@ -205,10 +216,7 @@ func ec2Signer(region string, creds Credentials) Signer {
 }
 
 func ec2Base(endpoint, region string) string {
-	if endpoint != "" {
-		return strings.TrimRight(endpoint, "/") + "/"
-	}
-	return "https://ec2." + region + ".amazonaws.com/"
+	return resolve(endpoint, ep.AWSEC2, map[string]string{"region": region}) + "/"
 }
 
 // ec2Params builds the shared Query-API params for a create action tagged with description.

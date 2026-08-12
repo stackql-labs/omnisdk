@@ -2,10 +2,10 @@ package sdk
 
 import (
 	"io"
-	"strings"
 
 	"github.com/stackql-labs/omnisdk/internal/system_g/bind"
 	encoder "github.com/stackql-labs/omnisdk/internal/system_g/endec"
+	ep "github.com/stackql-labs/omnisdk/internal/system_g/endpoint"
 	"github.com/stackql-labs/omnisdk/internal/system_g/exchange"
 	"github.com/stackql-labs/omnisdk/internal/system_g/facade"
 	"github.com/stackql-labs/omnisdk/internal/system_g/httpx"
@@ -22,17 +22,11 @@ const (
 )
 
 func azureLoginBase(endpoint string) string {
-	if endpoint != "" {
-		return strings.TrimRight(endpoint, "/")
-	}
-	return azureLoginDefault
+	return resolve(endpoint, ep.AzureLogin, nil)
 }
 
 func azureMgmtBase(endpoint string) string {
-	if endpoint != "" {
-		return strings.TrimRight(endpoint, "/")
-	}
-	return azureMgmtDefault
+	return resolve(endpoint, ep.AzureMgmt, nil)
 }
 
 // jsonListInner is the inner for a paginated JSON list API: send req (a bearer GET with its own
