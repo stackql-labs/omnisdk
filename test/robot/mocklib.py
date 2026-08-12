@@ -1,5 +1,6 @@
 """Robot keywords: wait for the mock, and compare JSONL output semantically."""
 
+from urllib.parse import urlsplit
 import json
 import sys
 import time
@@ -123,3 +124,32 @@ def assert_jsonl_semantically_equal(actual, expected):
         f"only-in-actual ({len(only_actual)}): {only_actual[:3]}\n"
         f"only-in-expected ({len(only_expected)}): {only_expected[:3]}"
     )
+
+
+# Endpoint specs for the omnisdk `endpoint` resolver, in the three forms it accepts. All three must
+# steer the same run at the same mock, which is what the robot case asserts.
+_SERVICES = ["aws.s3", "aws.ec2", "azure.login", "azure.mgmt",
+             "gcp.oauth", "gcp.storage", "gcp.crm", "gcp.compute"]
+
+# Each service's registered path, kept by a FRAGMENT override and restated by a WHOLE one.
+_PATHS = {"gcp.oauth": "/token", "gcp.storage": "/storage/v1",
+          "gcp.crm": "/v3", "gcp.compute": "/compute/v1/projects"}
+
+
+def fragment_endpoint_spec(base):
+    """Per-service FRAGMENT override: scheme/host/port replaced, each service keeps its own path."""
+    u = urlsplit(base)
+    frag = {"scheme": u.scheme, "host": u.hostname, "port": str(u.port)}
+    return json.dumps({s: frag for s in _SERVICES})
+
+
+def whole_endpoint_spec(base):
+    """Per-service WHOLE-url override: the full URL given outright, path included."""
+    base = base.rstrip("/")
+    return json.dumps({s: base + _PATHS.get(s, "") for s in _SERVICES})
+
+
+def omni_run_args(endpoint_spec, region="us-east-1", org="123456789"):
+    """Args JSON for the cross-cloud composite, carrying an endpoint spec."""
+    return json.dumps({"params": {"region": region, "google_org": org},
+                       "endpoint": endpoint_spec})
