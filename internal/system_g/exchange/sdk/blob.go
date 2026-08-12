@@ -11,6 +11,7 @@ import (
 	"github.com/stackql-labs/omnisdk/internal/system_g/bind"
 	"github.com/stackql-labs/omnisdk/internal/system_g/descent"
 	encoder "github.com/stackql-labs/omnisdk/internal/system_g/endec"
+	ep "github.com/stackql-labs/omnisdk/internal/system_g/endpoint"
 	"github.com/stackql-labs/omnisdk/internal/system_g/exchange"
 	"github.com/stackql-labs/omnisdk/internal/system_g/facade"
 	"github.com/stackql-labs/omnisdk/internal/system_g/httpx"
@@ -74,19 +75,13 @@ func blobColNames() []string {
 }
 
 func gcpStorageBase(endpoint string) string {
-	if endpoint != "" {
-		return strings.TrimRight(endpoint, "/") + "/storage/v1"
-	}
-	return "https://storage.googleapis.com/storage/v1"
+	return resolve(endpoint, ep.GCPStorage, nil)
 }
 
 // gcpCRMv3Base is Cloud Resource Manager v3 (the org→folder→project hierarchy) — v3 addresses every
 // node uniformly as "<type>/<id>" (organizations/…, folders/…), so one descent walks the whole tree.
 func gcpCRMv3Base(endpoint string) string {
-	if endpoint != "" {
-		return strings.TrimRight(endpoint, "/") + "/v3"
-	}
-	return "https://cloudresourcemanager.googleapis.com/v3"
+	return resolve(endpoint, ep.GCPCRM, nil)
 }
 
 // gcpOrgProjectSpecs is the reusable GCP org SCOPE SOURCE: a recursive folder descent (Folders, via

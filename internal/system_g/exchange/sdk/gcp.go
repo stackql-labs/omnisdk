@@ -11,11 +11,11 @@ import (
 	"encoding/pem"
 	"fmt"
 	"io"
-	"strings"
 	"time"
 
 	"github.com/stackql-labs/omnisdk/internal/system_g/bind"
 	encoder "github.com/stackql-labs/omnisdk/internal/system_g/endec"
+	ep "github.com/stackql-labs/omnisdk/internal/system_g/endpoint"
 	"github.com/stackql-labs/omnisdk/internal/system_g/facade"
 	"github.com/stackql-labs/omnisdk/internal/system_g/httpx"
 	"github.com/stackql-labs/omnisdk/internal/system_g/plan"
@@ -98,19 +98,20 @@ func (c GCPCredentials) signedJWT(aud, scope string, now time.Time) (string, err
 
 // gcpTokenURL resolves the token endpoint (override → path-style mock).
 func gcpTokenURL(endpoint string, creds GCPCredentials) string {
-	if endpoint != "" {
-		return strings.TrimRight(endpoint, "/") + "/token"
+	// The SA key names its own token_uri; honour it unless this run redirects the service.
+	if overridden(endpoint, ep.GCPOAuth) {
+		return resolve(endpoint, ep.GCPOAuth, nil)
 	}
-	return creds.TokenURI
+	if creds.TokenURI != "" {
+		return creds.TokenURI
+	}
+	return resolve(endpoint, ep.GCPOAuth, nil)
 }
 
 // gcpComputeBase is the compute endpoint up to /projects (project supplied via {project} in the
 // URL template). Override → path-style for the mock.
 func gcpComputeBase(endpoint string) string {
-	if endpoint != "" {
-		return strings.TrimRight(endpoint, "/") + "/compute/v1/projects"
-	}
-	return "https://compute.googleapis.com/compute/v1/projects"
+	return resolve(endpoint, ep.GCPCompute, nil)
 }
 
 // ---- Provision (config) -----------------------------------------------------

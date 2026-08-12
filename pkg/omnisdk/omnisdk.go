@@ -11,6 +11,7 @@ package omnisdk
 import (
 	"context"
 	"crypto/tls"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -28,6 +29,7 @@ import (
 	"github.com/stackql-labs/omnisdk/internal/system_g/admit"
 	"github.com/stackql-labs/omnisdk/internal/system_g/auth"
 	"github.com/stackql-labs/omnisdk/internal/system_g/bind"
+	"github.com/stackql-labs/omnisdk/internal/system_g/endpoint"
 	"github.com/stackql-labs/omnisdk/internal/system_g/exchange/sdk"
 	"github.com/stackql-labs/omnisdk/internal/system_g/facade"
 	"github.com/stackql-labs/omnisdk/internal/system_g/grpcx"
@@ -132,6 +134,33 @@ type Args struct {
 }
 
 func (a Args) param(name string) string { return a.Params[name] }
+
+// UnmarshalJSON lets Endpoint be written either way a consumer would naturally write it: a URL
+// string, or the per-service object inline. Both land in the same string field the engine resolves,
+// so nothing downstream branches — but a caller never has to embed escaped JSON inside JSON.
+//
+//	"endpoint": "http://127.0.0.1:8085"
+//	"endpoint": {"aws.s3": {"host": "127.0.0.1", "port": "8085", "scheme": "http"}}
+func (a *Args) UnmarshalJSON(data []byte) error {
+	type alias Args // shed this method, so the rest of the DTO decodes normally
+	aux := struct {
+		Endpoint json.RawMessage `json:"endpoint"`
+		*alias
+	}{alias: (*alias)(a)}
+	if err := json.Unmarshal(data, &aux); err != nil {
+		return err
+	}
+	if len(aux.Endpoint) == 0 {
+		return nil
+	}
+	var asURL string
+	if err := json.Unmarshal(aux.Endpoint, &asURL); err == nil {
+		a.Endpoint = asURL
+		return nil
+	}
+	a.Endpoint = string(aux.Endpoint) // the object form, verbatim — endpoint.Parse reads it
+	return nil
+}
 
 // Tuning are the run knobs; a zero value uses sensible defaults.
 type Tuning struct {
@@ -617,6 +646,9 @@ func (builtin) GetMethod(path string) (Method, bool) {
 }
 
 func (builtin) New(method string, args Args) (Plan, error) {
+	if err := checkEndpoint(args); err != nil {
+		return nil, err
+	}
 	plans, err := buildPlans(method, args, map[string]bool{})
 	if err != nil {
 		return nil, err
@@ -633,6 +665,9 @@ func (builtin) New(method string, args Args) (Plan, error) {
 func (builtin) NewMerged(methodPaths []string, args Args) (Plan, error) {
 	if len(methodPaths) == 0 {
 		return nil, fmt.Errorf("omnisdk: NewMerged needs at least one method")
+	}
+	if err := checkEndpoint(args); err != nil {
+		return nil, err
 	}
 	plans := make([]plan.Plan, 0, len(methodPaths))
 	for _, m := range methodPaths {
@@ -703,6 +738,18 @@ func GetMethod(path string) (Method, bool)        { return Default().GetMethod(p
 func New(method string, args Args) (Plan, error)  { return Default().New(method, args) }
 func NewMerged(methods []string, args Args) (Plan, error) {
 	return Default().NewMerged(methods, args)
+}
+
+// checkEndpoint rejects a malformed Endpoint spec HERE, where the error can name the caller. Request
+// construction resolves the same spec far too deep to fail usefully, so it degrades to the real clouds
+// — which is exactly the silent-wrong-target this catches. Endpoint is either empty (the real clouds),
+// a base URL (every service at that one host), or a JSON object of service → base URL for pointing one
+// provider at a mock while another stays real.
+func checkEndpoint(args Args) error {
+	if _, err := endpoint.Parse(args.Endpoint); err != nil {
+		return fmt.Errorf("omnisdk: %w", err)
+	}
+	return nil
 }
 
 // authOf returns args.Auth, or a zero Auth when none was supplied — so resolution always reads from a
@@ -784,10 +831,13 @@ func azureAuth(args Args) (auth.AuthStruct, error) {
 }
 
 // azureTokenURL is the OAuth2 token endpoint for a tenant, targeting an endpoint override when set.
-func azureTokenURL(endpoint, tenant string) string {
-	base := "https://login.microsoftonline.com"
-	if endpoint != "" {
-		base = strings.TrimRight(endpoint, "/")
+func azureTokenURL(spec, tenant string) string {
+	// Resolve through the SAME service resolver the engine uses, not by treating the spec as a URL.
+	// This is the one host assembled up here (client_credentials needs the tenant spliced in), so it is
+	// also the one that can silently disagree with the engine about where Azure lives.
+	base := endpoint.Default(endpoint.AzureLogin)
+	if ep, err := endpoint.Parse(spec); err == nil {
+		base = ep.Resolve(endpoint.AzureLogin, nil)
 	}
 	return base + "/" + tenant + "/oauth2/v2.0/token"
 }

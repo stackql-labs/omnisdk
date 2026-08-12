@@ -32,6 +32,10 @@ ${OMNI_ORG_MERGED_OUT}    ${OUTDIR}/omnicli-omni-merged-org.jsonl
 # Input columns echoed onto rows. The composite publishes its OWN three; the hand-assembled merge
 # publishes the union of its legs' five. So equivalence is asserted on the provider data with these
 # dropped — the echo differing is the signatures differing, not the query.
+${OMNI_EXPECTED}      ${MOCKDIR}/expected/omni-blob-org.jsonl
+${EP_UNIFORM_OUT}     ${OUTDIR}/omnicli-ep-uniform.jsonl
+${EP_FRAGMENT_OUT}    ${OUTDIR}/omnicli-ep-fragment.jsonl
+${EP_WHOLE_OUT}       ${OUTDIR}/omnicli-ep-whole.jsonl
 @{INPUT_COLS}        region    project    org    google_project    google_org    grpc_target    grpc_plaintext
 
 *** Test Cases ***
@@ -509,6 +513,56 @@ Composite Signature Is Authoritative Over Its Legs
     Should Be Equal As Integers    ${leg.rc}    0    omnicli failed: ${leg.stderr}
     ${legRows}=    Get File    ${GCP_ORG_OUT}
     Should Contain    ${legRows}    "provider":"gcp"
+
+Endpoint Overrides Retarget Every Service
+    [Documentation]    Mockability is a config decision, not a code path. The cross-cloud composite
+    ...    reaches all eight registered services in one run, so it is the query that proves it: the
+    ...    same audit is steered at the mock three ways — a bare URL, a per-service FRAGMENT override
+    ...    (scheme/host/port replaced, each service keeping its own registered path), and a per-service
+    ...    WHOLE-url override — and all three must yield identical rows. A typo'd service must fail
+    ...    loudly rather than silently leaving the run pointed at the real cloud.
+    Write Gcp Service Account    ${GCP_SA}
+    # 1) bare URL: fragments applied to every service
+    ${uniform}=    Run Process    ${BINARY}    run    omni.storage.buckets.list
+    ...    {"params":{"region":"us-east-1","google_org":"123456789"}}
+    ...    --endpoint    ${ENDPOINT}    --out    ${EP_UNIFORM_OUT}
+    ...    env:AWS_ACCESS_KEY_ID=test    env:AWS_SECRET_ACCESS_KEY=test
+    ...    env:AZURE_TENANT_ID=t    env:AZURE_CLIENT_ID=c    env:AZURE_CLIENT_SECRET=s
+    ...    env:GOOGLE_APPLICATION_CREDENTIALS=${GCP_SA}
+    ...    stdout=${OUTDIR}/ep-uniform.out    stderr=${OUTDIR}/ep-uniform.err
+    Should Be Equal As Integers    ${uniform.rc}    0    omnicli failed: ${uniform.stderr}
+    # 2) per-service FRAGMENT override — no service restates its own path
+    ${fragSpec}=    Fragment Endpoint Spec    ${ENDPOINT}
+    ${fragArgs}=    Omni Run Args    ${fragSpec}
+    ${frag}=    Run Process    ${BINARY}    run    omni.storage.buckets.list    ${fragArgs}
+    ...    --out    ${EP_FRAGMENT_OUT}
+    ...    env:AWS_ACCESS_KEY_ID=test    env:AWS_SECRET_ACCESS_KEY=test
+    ...    env:AZURE_TENANT_ID=t    env:AZURE_CLIENT_ID=c    env:AZURE_CLIENT_SECRET=s
+    ...    env:GOOGLE_APPLICATION_CREDENTIALS=${GCP_SA}
+    ...    stdout=${OUTDIR}/ep-frag.out    stderr=${OUTDIR}/ep-frag.err
+    Should Be Equal As Integers    ${frag.rc}    0    omnicli failed: ${frag.stderr}
+    # 3) per-service WHOLE-url override — full URL given outright
+    ${wholeSpec}=    Whole Endpoint Spec    ${ENDPOINT}
+    ${wholeArgs}=    Omni Run Args    ${wholeSpec}
+    ${whole}=    Run Process    ${BINARY}    run    omni.storage.buckets.list    ${wholeArgs}
+    ...    --out    ${EP_WHOLE_OUT}
+    ...    env:AWS_ACCESS_KEY_ID=test    env:AWS_SECRET_ACCESS_KEY=test
+    ...    env:AZURE_TENANT_ID=t    env:AZURE_CLIENT_ID=c    env:AZURE_CLIENT_SECRET=s
+    ...    env:GOOGLE_APPLICATION_CREDENTIALS=${GCP_SA}
+    ...    stdout=${OUTDIR}/ep-whole.out    stderr=${OUTDIR}/ep-whole.err
+    Should Be Equal As Integers    ${whole.rc}    0    omnicli failed: ${whole.stderr}
+    # every form must reproduce the CAPTURED collateral — not merely agree with each other, which
+    # would pass just as happily if all three were broken the same way
+    Assert Jsonl Semantically Equal    ${EP_UNIFORM_OUT}     ${OMNI_EXPECTED}
+    Assert Jsonl Semantically Equal    ${EP_FRAGMENT_OUT}    ${OMNI_EXPECTED}
+    Assert Jsonl Semantically Equal    ${EP_WHOLE_OUT}       ${OMNI_EXPECTED}
+    # an unknown service is rejected up front, naming the known set
+    ${bad}=    Run Process    ${BINARY}    run    omni.storage.buckets.list
+    ...    {"params":{"region":"us-east-1","google_org":"1"},"endpoint":"{\\"aws.s4\\":\\"http://x\\"}"}
+    ...    stdout=${OUTDIR}/ep-bad.out    stderr=${OUTDIR}/ep-bad.err
+    Should Not Be Equal As Integers    ${bad.rc}    0    an unknown service must fail loudly
+    Should Contain    ${bad.stderr}    unknown service "aws.s4"
+
 
 *** Keywords ***
 Start Mock

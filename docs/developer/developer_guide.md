@@ -95,6 +95,53 @@ Tuning (any subcommand): `--parallelism` (fan-out concurrency), `--max-per-host`
 Credentials resolve direct flag → env var → file; env vars are never required. Scope (e.g. `--project`) is **required and never inferred** — no env or key-embedded fallback.
 
 
+## Endpoints (mocking)
+
+Every provider host is registered once, at exchange init, with `{vars}` expanded per request — so
+retargeting a run is config, not a code path. The eight services:
+
+```
+aws.s3  aws.ec2  azure.login  azure.mgmt  gcp.oauth  gcp.storage  gcp.crm  gcp.compute
+```
+
+`endpoint` takes a URL string or a per-service object. Omitted services stay REAL, so you can mock one
+provider and genuinely call another. Examples use the composite, which reaches every service at once;
+`$M` is the mock `test/robot/run.sh` starts.
+
+```bash
+source cicd/vol/vendor-secrets/secrets.sh
+M=http://127.0.0.1:8085
+
+# whole run at the mock: scheme/host/port replaced, each service KEEPS its registered path
+# (gcp.storage → $M/storage/v1, gcp.crm → $M/v3)
+./build/omnicli run omni.storage.buckets.list \
+  '{"params":{"region":"us-east-1","google_org":"'"${_GOOGLE_ORG_ID}"'"}}' --endpoint "$M"
+
+# FRAGMENT override, per service — only the named parts change. Naming ONE service mocks only that
+# one; anything you leave out really does call the cloud, so scope the method to match.
+./build/omnicli run aws.s3.buckets.list \
+  '{"params":{"region":"us-east-1"},
+    "endpoint":{"aws.s3":{"scheme":"http","host":"127.0.0.1","port":"8085"}}}'
+
+# WHOLE-url override — the full URL outright, for a mock whose layout differs from the provider's
+./build/omnicli run google.storage.buckets.list \
+  '{"params":{"google_org":"123456789"},
+    "endpoint":{"gcp.storage":"'"$M"'/storage/v1","gcp.oauth":"'"$M"'/token","gcp.crm":"'"$M"'/v3"}}'
+
+# one fragment at a time
+#   {"gcp.crm":{"port":"7000"}}  → https://cloudresourcemanager.googleapis.com:7000/v3
+#   {"gcp.crm":{"path":"/v4"}}   → https://cloudresourcemanager.googleapis.com/v4
+```
+
+A typo fails up front rather than silently leaving the run on the real cloud:
+
+```
+omnisdk: endpoint: unknown service "aws.s4" (known: aws.ec2, aws.s3, azure.login, ...)
+```
+
+`Endpoint Overrides Retarget Every Service` runs the composite through all three forms and asserts
+identical rows — the release gate for mockability.
+
 ## Generic DTO command
 
 `run <method-path> '<args-json>'` — the JSON deserializes straight into `omnisdk.Args` via Go's intrinsic `encoding/json` (`{"params":{…},"auth":{…},"endpoint":"…","tuning":{…}}`, field names case-insensitive). `--out`/`--log` and any tuning flags still apply; the JSON may also carry `endpoint`/`tuning`. Discover a method's params first with `./build/omnicli method <path>`.
