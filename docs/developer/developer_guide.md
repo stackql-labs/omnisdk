@@ -139,8 +139,25 @@ A typo fails up front rather than silently leaving the run on the real cloud:
 omnisdk: endpoint: unknown service "aws.s4" (known: aws.ec2, aws.s3, azure.login, ...)
 ```
 
+Auth exchanges are services too — `azure.login` and `gcp.oauth` are in the list — so a mocked run
+performs a real token exchange against the mock and carries the resulting bearer downstream. Nothing
+is stubbed out; the mock rejects an unauthenticated call exactly as the provider does.
+
+**For a consumer (e.g. stackql), this is a field, not a flag.** The CLI only passes it through:
+
+```go
+omnisdk.New("omni.storage.buckets.list", omnisdk.Args{
+    Params:   map[string]string{"region": "us-east-1", "google_org": orgID},
+    Endpoint: mockBaseURL, // or the per-service JSON object, as a string
+})
+```
+
+So a consumer's own integration tests can point the whole cross-cloud audit at their mock without the
+facade, the catalog, or the plan knowing a test is running.
+
 `Endpoint Overrides Retarget Every Service` runs the composite through all three forms and asserts
-identical rows — the release gate for mockability.
+each against captured collateral (`test/mock/expected/omni-blob-org.jsonl`) — the release gate for
+mockability.
 
 ## Generic DTO command
 
