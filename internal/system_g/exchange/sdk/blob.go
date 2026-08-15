@@ -61,6 +61,8 @@ var BlobSchema = []BlobColumn{
 	{Name: "public", Type: "boolean", Nullable: true},           // null where not surfaced (e.g. Azure allowBlobPublicAccess unset)
 	{Name: "versioning", Type: "boolean", Nullable: true},       // null where not surfaced shallowly (Azure)
 	{Name: "https", Type: "boolean", Nullable: true},            // null where not surfaced shallowly (AWS)
+	{Name: "access_logging", Type: "boolean", Nullable: true},   // is access/audit logging turned on
+	{Name: "access_log_target", Type: "string", Nullable: true}, // where those logs land; null when off
 }
 
 // blobCols is the column-name list the egress select projects to (derived from BlobSchema).
@@ -143,6 +145,9 @@ func (blobNormalize) Apply(in facade.Page) (facade.Record, error) {
 		}
 	}
 	p := str(row["provider"])
+	if p == "azure" {
+		azureContainerGrain(row)
+	}
 	if row["name"] == nil {
 		// Left-outer row: this scope (account / subscription / project) has NO bucket. Do not run
 		// the classifiers over absent values — that fabricates attributes (e.g. public=true) for a
@@ -151,13 +156,48 @@ func (blobNormalize) Apply(in facade.Page) (facade.Record, error) {
 		row["public"] = nil
 		row["versioning"] = nil
 		row["https"] = nil
+		row["access_logging"] = nil
+		row["access_log_target"] = nil
 		return record.NewRecord(map[string]facade.Value{facade.AnonymousPayload: value.NewDocValue(row)}), nil
 	}
 	row["encryption_class"] = classifyKey(p, str(row["encryption_status"]))
 	row["public"] = classifyPublic(p, row["public"])
 	row["versioning"] = classifyVersioning(p, row["versioning"])
 	row["https"] = classifyHTTPS(p, row["https"])
+	row["access_logging"] = classifyLogging(p, row)
 	return record.NewRecord(map[string]facade.Value{facade.AnonymousPayload: value.NewDocValue(row)}), nil
+}
+
+// classifyLogging renders "is access logging on" from each provider's own signal. All three express it
+// as a DESTINATION, so presence of a target is the answer: S3 names a target bucket, GCS a log bucket,
+// Azure a diagnostic-setting sink. null only where the provider did not surface it at all.
+// azureContainerGrain rewrites an Azure row from ACCOUNT grain to CONTAINER grain, so an Azure row
+// names the same kind of thing as an AWS/GCS one. The account's own attributes (encryption, https,
+// diagnostic logging) are properties of the account and are inherited by every container in it;
+// public access is overridden by the container when it sets its own.
+func azureContainerGrain(row map[string]any) {
+	container := str(row["container"])
+	if container == "" {
+		// Account with no containers: keep the account row, but do not claim it is a bucket.
+		row["name"] = nil
+		return
+	}
+	row["name"] = str(row["name"]) + "/" + container
+	if cp := str(row["container_public"]); cp != "" {
+		// "None" means no anonymous access; "Blob"/"Container" both expose data publicly.
+		row["public"] = !strings.EqualFold(cp, "None")
+	}
+}
+
+func classifyLogging(provider string, row map[string]any) any {
+	switch provider {
+	case "aws", "gcp", "azure":
+		if t := str(row["access_log_target"]); t != "" {
+			return true
+		}
+		return false
+	}
+	return nil
 }
 
 func truthy(v any) bool {
@@ -255,6 +295,13 @@ func AWSBlobPlan(region string, creds Credentials, endpoint string) plan.Plan {
 			httpx.NewStatusBranch(map[string]facade.Transform{
 				"200": httpx.NewExtract(xml, map[string]string{"versioning": "VersioningConfiguration.Status"}, nil),
 			}, nil)),
+		plan.NewExchangeSpec("GetBucketLogging", []string{"name", "region"}, []string{"status", "raw"},
+			s3SubInner("logging", creds, region, endpoint),
+			httpx.NewStatusBranch(map[string]facade.Transform{
+				// No <LoggingEnabled> element means logging is off — S3 returns 200 with an empty
+				// BucketLoggingStatus rather than a 404, so absence is the signal.
+				"200": httpx.NewExtract(xml, map[string]string{"access_log_target": "BucketLoggingStatus.LoggingEnabled.TargetBucket"}, nil),
+			}, nil)),
 		plan.NewExchangeSpec("GetBucketPublicAccess", []string{"name", "region"}, []string{"status", "raw"},
 			s3SubInner("publicAccessBlock", creds, region, endpoint),
 			httpx.NewStatusBranch(map[string]facade.Transform{
@@ -267,6 +314,8 @@ func AWSBlobPlan(region string, creds Credentials, endpoint string) plan.Plan {
 		plan.NewBetaEdge("ListBuckets", "GetBucketEncryption", "region", "region"),
 		plan.NewBetaEdge("ListBuckets", "GetBucketVersioning", "name", "name"),
 		plan.NewBetaEdge("ListBuckets", "GetBucketVersioning", "region", "region"),
+		plan.NewBetaEdge("ListBuckets", "GetBucketLogging", "name", "name"),
+		plan.NewBetaEdge("ListBuckets", "GetBucketLogging", "region", "region"),
 		plan.NewBetaEdge("ListBuckets", "GetBucketPublicAccess", "name", "name"),
 		plan.NewBetaEdge("ListBuckets", "GetBucketPublicAccess", "region", "region"),
 	}
@@ -281,11 +330,7 @@ func NewAzureBlobEncryption(id int64, endpoint, tenant, clientID, clientSecret s
 			httpx.MakeAgnostic(azureTokenReq(azureLoginBase(endpoint))),
 			httpx.NewJSONExtract(map[string]string{"token": "access_token"})),
 	}, azureStorageAuditSpecs(endpoint)...)
-	betas := []plan.BetaEdge{
-		plan.NewBetaEdge("Token", "Subscriptions", "token", "token"),
-		plan.NewBetaEdge("Token", "StorageAccounts", "token", "token"),
-		plan.NewBetaEdge("Subscriptions", "StorageAccounts", "subscription_id", "subscription_id"),
-	}
+	betas := append(azureStorageAuditBetas(), azureStorageAuditTokenBetas("Token")...)
 	inputs := map[string]any{"tenant": tenant, "client_id": clientID, "client_secret": clientSecret}
 	return plan.Compose(id, plan.NewPlan(specs, betas, nil, inputs, blobEgress("azure"), encoder.NewJSONLEncoder()), w)
 }
@@ -293,20 +338,67 @@ func NewAzureBlobEncryption(id int64, endpoint, tenant, clientID, clientSecret s
 // azureStorageAuditSpecs is the Azure storage-account SCOPE+VISITOR: subscriptions the SP can read →
 // storage accounts per subscription. Both bind {token}; how {token} is obtained (a native token
 // exchange, a config-driven client-credentials exchange, or a static bearer κ) is the caller's choice.
+// azureStorageAuditBetas are the edges INTERNAL to the storage audit. The caller adds the {token}
+// fan-out, since it owns where the token comes from (a static bearer vs a token exchange).
+func azureStorageAuditBetas() []plan.BetaEdge {
+	return []plan.BetaEdge{
+		plan.NewBetaEdge("Subscriptions", "StorageAccounts", "subscription_id", "subscription_id"),
+		plan.NewBetaEdge("StorageAccounts", "DiagnosticSettings", "account_id", "account_id"),
+		plan.NewBetaEdge("StorageAccounts", "Containers", "account_id", "account_id"),
+		plan.NewBetaEdge("StorageAccounts", "Containers", "name", "name"),
+	}
+}
+
+// azureStorageAuditTokenBetas fans {token} from src to every exchange in the audit that calls ARM.
+func azureStorageAuditTokenBetas(src string) []plan.BetaEdge {
+	return []plan.BetaEdge{
+		plan.NewBetaEdge(src, "Subscriptions", "token", "token"),
+		plan.NewBetaEdge(src, "StorageAccounts", "token", "token"),
+		plan.NewBetaEdge(src, "DiagnosticSettings", "token", "token"),
+		plan.NewBetaEdge(src, "Containers", "token", "token"),
+	}
+}
+
 func azureStorageAuditSpecs(endpoint string) []plan.ExchangeSpec {
 	mgmt := azureMgmtBase(endpoint)
 	return []plan.ExchangeSpec{
 		plan.NewExchangeSpec("Subscriptions", []string{"token"}, []string{"subscription_id"},
 			azureList(mgmt+"/subscriptions?api-version="+azureSubsAPI,
 				[]transform.Column{{Out: "subscription_id", Path: "subscriptionId"}}), nil),
-		plan.NewExchangeSpec("StorageAccounts", []string{"token", "subscription_id"}, []string{"name"},
+		plan.NewExchangeSpec("StorageAccounts", []string{"token", "subscription_id"}, []string{"name", "account_id"},
 			azureList(mgmt+"/subscriptions/{subscription_id}/providers/Microsoft.Storage/storageAccounts?api-version="+azureStorageAPI,
 				[]transform.Column{
 					{Out: "name", Path: "name"},
+					{Out: "account_id", Path: "id"}, // the ARM resource path; diagnostic settings hang off it
 					{Out: "encryption_status", Path: "properties.encryption.keySource"},
 					{Out: "public", Path: "properties.allowBlobPublicAccess"},
 					{Out: "https", Path: "properties.supportsHttpsTrafficOnly"},
 				}), bind.NewInnerFlatten()), // a subscription with no storage accounts contributes no row
+		// Azure has no "access logging" field on the account. The equivalent is whether the blob
+		// service exports diagnostic logs, which lives in Azure Monitor — a per-account sub-resource
+		// on the SAME management host and the SAME bearer, so it costs one extra call, not new auth.
+		plan.NewExchangeSpec("DiagnosticSettings", []string{"token", "account_id"}, []string{"access_log_target"},
+			azureList(mgmt+"{account_id}/blobServices/default/providers/Microsoft.Insights/diagnosticSettings?api-version="+azureDiagnosticAPI,
+				[]transform.Column{
+					{Out: "access_log_target", Path: "properties.storageAccountId"},
+				}),
+			// LEFT-OUTER deliberately: an account with no diagnostic settings is the common case and
+			// the interesting one ("logging is off"). An inner join would delete exactly those rows.
+			bind.NewTupleFlatten()),
+		// The BUCKET analogue. An S3/GCS bucket is a blob CONTAINER, not a storage account — the
+		// account is the level above (subscription → account → blob service → container). Auditing at
+		// account grain would report a different kind of thing from the other clouds in the same
+		// column. Container names are unique only WITHIN an account, so name is qualified
+		// "<account>/<container>" to stay meaningful next to globally unique S3/GCS names.
+		plan.NewExchangeSpec("Containers", []string{"token", "account_id", "name"}, []string{"container", "public"},
+			azureList(mgmt+"{account_id}/blobServices/default/containers?api-version="+azureStorageAPI,
+				[]transform.Column{
+					{Out: "container", Path: "name"},
+					// Container-level public access overrides the account's allowBlobPublicAccess.
+					{Out: "container_public", Path: "properties.publicAccess"},
+				}),
+			// LEFT-OUTER: an account with no containers is still a real audit finding.
+			bind.NewTupleFlatten()),
 	}
 }
 
@@ -332,7 +424,7 @@ func AzureBlobAuthPlan(endpoint string, cfg auth.AuthStruct) (plan.Plan, error) 
 		return nil, err
 	}
 	specs := azureStorageAuditSpecs(endpoint)
-	betas := []plan.BetaEdge{plan.NewBetaEdge("Subscriptions", "StorageAccounts", "subscription_id", "subscription_id")}
+	betas := azureStorageAuditBetas()
 	inputs := map[string]any{}
 
 	if m.NeedsTokenExchange() {
@@ -344,9 +436,7 @@ func AzureBlobAuthPlan(endpoint string, cfg auth.AuthStruct) (plan.Plan, error) 
 			httpx.MakeAgnostic(auth.ClientCredentialsRequest(tr)),
 			httpx.NewJSONExtract(map[string]string{"token": "access_token"}))
 		specs = append([]plan.ExchangeSpec{authSpec}, specs...)
-		betas = append(betas,
-			plan.NewBetaEdge("Auth", "Subscriptions", "token", "token"),
-			plan.NewBetaEdge("Auth", "StorageAccounts", "token", "token"))
+		betas = append(betas, azureStorageAuditTokenBetas("Auth")...)
 	} else {
 		tok, ok := auth.BearerToken(m)
 		if !ok {
@@ -385,6 +475,8 @@ func gcpListBucketsSpec(endpoint string) plan.ExchangeSpec {
 			{Out: "encryption_status", Path: "encryption.defaultKmsKeyName"},
 			{Out: "public", Path: "iamConfiguration.publicAccessPrevention"},
 			{Out: "versioning", Path: "versioning.enabled"},
+			// GCS carries usage/storage log config on the bucket resource itself — no extra call.
+			{Out: "access_log_target", Path: "logging.logBucket"},
 		}), bind.NewInnerFlatten()) // a project with no buckets contributes no row
 }
 

@@ -74,7 +74,7 @@ _now="$(date +%s)" && ./build/omnicli blob-audit-shallow --aws-region us-east-1 
 > The same cross-cloud audit is also a **single catalog method** — `omni.storage.buckets.list` on the
 > `omni.storage.buckets` resource — so a consumer selects one path instead of assembling the member
 > list itself (`./build/omnicli methods omni.storage.buckets`). It is a *composite*: its plan is the
-> forest of `aws.s3.buckets.list` + `azure.storage.accounts.list` + `google.storage.buckets.list`
+> forest of `aws.s3.buckets.list` + `azure.storage.containers.list` + `google.storage.buckets.list`
 > merged into one cursor, defined by reference to those legs so it cannot drift from them. Rows,
 > schema, and the global `--limit` are identical to `blob-audit-shallow`. Run it with the generic
 > `run` command (case 6 below) — the CLI deliberately gains no new verb.
@@ -87,7 +87,25 @@ _now="$(date +%s)" && ./build/omnicli blob-audit-shallow --aws-region us-east-1 
 
 Scope is single-account by default: AWS = the creds' account, GCP = the required `--project`, Azure = every subscription the SP can read. `blob-audit-shallow-gcp-org` audits a specific org (`--gcp-org`, required) — its direct-child projects for now; folder-nested projects await the recursive folder descent.
 
-A method's **response schema carries its own input params as columns**, so signature and result contract read as one: a required input is a plain-typed column, an optional one is nullable and `null` when not supplied, and each is marked `"x-omnisdk-input": true` to separate it from provider data. Rows carry those values, so every row states the scope that produced it — for the cross-cloud composite that is the only way to attribute a row, since the legs are merged into one cursor. The columns are derived from `Params` at read time, so they cannot drift from the signature; a provider column of the same name always wins. A method that declares no params (e.g. `azure.storage.accounts.list`) is untouched.
+**Grain.** Every row in the blob audit is one *bucket*. Azure's bucket analogue is a blob
+**container**, not a storage account — the hierarchy is subscription → account → blob service →
+container — so `azure.storage.containers.list` descends to containers and inherits the account's
+encryption, HTTPS and diagnostic-logging settings. Container names are unique only within an account,
+so `name` is qualified `<account>/<container>`; `public` is the container's own `publicAccess` where
+it sets one, otherwise the account's `allowBlobPublicAccess`. An account with no containers still
+yields a row, with `name` null.
+
+**Access logging** is in the uniform blob schema as `access_logging` (boolean) + `access_log_target`
+(where the logs land, null when off). All three clouds express it as a destination, so presence of a
+target is the answer — but they surface it very differently:
+
+| cloud | source | cost |
+|---|---|---|
+| AWS S3 | `GET /<bucket>?logging` → `BucketLoggingStatus.LoggingEnabled.TargetBucket`; 200 with an empty body means off | one extra call per bucket |
+| GCS | `logging.logBucket` on the bucket resource, already in `buckets.list` | free |
+| Azure | no such field on the storage account — the analogue is Azure Monitor **diagnostic settings** on the blob service, same ARM host and bearer | one extra call per account |
+
+A method's **response schema carries its own input params as columns**, so signature and result contract read as one: a required input is a plain-typed column, an optional one is nullable and `null` when not supplied, and each is marked `"x-omnisdk-input": true` to separate it from provider data. Rows carry those values, so every row states the scope that produced it — for the cross-cloud composite that is the only way to attribute a row, since the legs are merged into one cursor. The columns are derived from `Params` at read time, so they cannot drift from the signature; a provider column of the same name always wins. A method that declares no params (e.g. `azure.storage.containers.list`) is untouched.
 
 Tuning (any subcommand): `--parallelism` (fan-out concurrency), `--max-per-host`, `--retry-tries`, `--retry-rate`, `--limit` (stop cleanly after N output records, 0 = unlimited; a GLOBAL cap even across the multi-provider audit's disjoint DAGs).
 
@@ -187,10 +205,11 @@ _now="$(date +%s)" && ./build/omnicli run google.storage.buckets.list \
 
 # 4) AWS S3 buckets, with run tuning (--limit) supplied IN the same JSON object.
 _now="$(date +%s)" && ./build/omnicli run aws.s3.buckets.list \
-  '{"params":{"region":"'"${_AWS_REGION}"'"},"tuning":{"Limit":25}}' --out "./cicd/out/dto-aws-${_now}.jsonl"
+  '{"params":{"region":"'"${_AWS_REGION}"'"},"tuning":{"Limit":25}}' --out "./cicd/out/dto-aws-${_now}.jsonl" \
+  --log "./cicd/out/dto-aws-${_now}.log"
 
 # 5) Azure storage accounts with config-driven auth carried IN the DTO (no --auth flag).
-_now="$(date +%s)" && ./build/omnicli run azure.storage.accounts.list \
+_now="$(date +%s)" && ./build/omnicli run azure.storage.containers.list \
   '{"auth":{"type":"client_credentials","token_url":"https://login.microsoftonline.com/'"${AZURE_TENANT_ID}"'/oauth2/v2.0/token","client_id_env_var":"AZURE_CLIENT_ID","client_secret_env_var":"AZURE_CLIENT_SECRET","scopes":["https://management.azure.com/.default"]}}' \
   --out "./cicd/out/dto-azure-cc-${_now}.jsonl"
 

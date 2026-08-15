@@ -169,13 +169,13 @@ func main() {
 	root.AddCommand(awsBlob)
 	root.AddCommand(&cobra.Command{
 		Use:   "blob-audit-shallow-azure",
-		Short: "Azure storage-account audit (azure.storage.accounts.list, env creds)",
-		RunE:  runFacade("azure.storage.accounts.list", func(_ *cobra.Command) (omnisdk.Args, error) { return omnisdk.Args{}, nil }),
+		Short: "Azure blob-container audit (azure.storage.containers.list, env creds)",
+		RunE:  runFacade("azure.storage.containers.list", func(_ *cobra.Command) (omnisdk.Args, error) { return omnisdk.Args{}, nil }),
 	})
 	azAuth := &cobra.Command{
 		Use:   "blob-audit-shallow-azure-auth",
-		Short: "Azure storage-account audit with config-driven auth (--auth JSON: client_credentials | bearer)",
-		RunE: runFacade("azure.storage.accounts.list", func(cmd *cobra.Command) (omnisdk.Args, error) {
+		Short: "Azure blob-container audit with config-driven auth (--auth JSON: client_credentials | bearer)",
+		RunE: runFacade("azure.storage.containers.list", func(cmd *cobra.Command) (omnisdk.Args, error) {
 			a, err := loadFacadeAuth(mustFlag(cmd, "auth"))
 			return omnisdk.Args{Auth: &a}, err
 		}),
@@ -204,7 +204,7 @@ func main() {
 
 	// Combined = NewMerged: three disjoint DAGs fanned into ONE output cursor (System-G owns even
 	// disconnected graphs under a single output node; the consumer opens one Plan).
-	blobMethods := []string{"aws.s3.buckets.list", "azure.storage.accounts.list", "google.storage.buckets.list"}
+	blobMethods := []string{"aws.s3.buckets.list", "azure.storage.containers.list", "google.storage.buckets.list"}
 	allBlob := &cobra.Command{
 		Use:   "blob-audit-shallow",
 		Short: "Blob-store encryption status across AWS+Azure+GCP, merged into one cursor",

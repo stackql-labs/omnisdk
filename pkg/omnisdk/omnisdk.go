@@ -353,9 +353,9 @@ var resources = map[string]Resource{
 		Summary: "GCP Cloud Storage buckets",
 		Schema:  blobSchema,
 	},
-	"azure.storage.accounts": {
-		Path:    "azure.storage.accounts",
-		Summary: "Azure storage accounts",
+	"azure.storage.containers": {
+		Path:    "azure.storage.containers",
+		Summary: "Azure blob containers (the bucket analogue: subscription → account → container)",
 		Schema:  blobSchema,
 	},
 	// The cross-cloud composite as a FIRST-CLASS thing: blob stores wherever they live. Every provider
@@ -402,11 +402,11 @@ var methods = map[string]methodDef{
 			return sdk.AWSBlobPlan(args.param("region"), creds, args.Endpoint), nil
 		},
 	},
-	"azure.storage.accounts.list": {
+	"azure.storage.containers.list": {
 		Method: Method{
-			Path:     "azure.storage.accounts.list",
-			Resource: "azure.storage.accounts",
-			Summary:  "List storage accounts (encryption/public/https) across every subscription the principal can read",
+			Path:     "azure.storage.containers.list",
+			Resource: "azure.storage.containers",
+			Summary:  "List blob containers (encryption/public/https/logging) across every subscription the principal can read",
 			Params:   nil, // scope is the SP's reach; auth carries the identity
 			Schema:   blobSchema,
 		},
@@ -477,7 +477,7 @@ var methods = map[string]methodDef{
 		},
 		members: []string{
 			"aws.s3.buckets.list",
-			"azure.storage.accounts.list",
+			"azure.storage.containers.list",
 			"google.storage.buckets.list",
 		},
 	},
