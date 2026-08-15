@@ -14,11 +14,12 @@ import (
 )
 
 const (
-	azureScope        = "https://management.azure.com/.default"
-	azureSubsAPI      = "2020-01-01"
-	azureNetworkAPI   = "2023-09-01"
-	azureLoginDefault = "https://login.microsoftonline.com"
-	azureMgmtDefault  = "https://management.azure.com"
+	azureScope         = "https://management.azure.com/.default"
+	azureSubsAPI       = "2020-01-01"
+	azureNetworkAPI    = "2023-09-01"
+	azureDiagnosticAPI = "2021-05-01-preview"
+	azureLoginDefault  = "https://login.microsoftonline.com"
+	azureMgmtDefault   = "https://management.azure.com"
 )
 
 func azureLoginBase(endpoint string) string {

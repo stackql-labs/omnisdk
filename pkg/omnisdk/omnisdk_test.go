@@ -22,20 +22,20 @@ func TestFacadeCatalogAndRun(t *testing.T) {
 	for _, r := range got {
 		paths[r.Path] = true
 	}
-	if !paths["azure.storage.accounts"] || !paths["google.storage.buckets"] {
+	if !paths["azure.storage.containers"] || !paths["google.storage.buckets"] {
 		t.Fatalf("resources(storage) = %v, want azure + google storage resources", got)
 	}
 
 	// a resource carries a canonical JSON Schema and no input params
-	az, ok := omnisdk.GetResource("azure.storage.accounts")
+	az, ok := omnisdk.GetResource("azure.storage.containers")
 	if !ok || az.Schema["$schema"] == nil || az.Schema["properties"] == nil {
-		t.Fatalf("GetResource(azure.storage.accounts) = %+v, ok=%v", az, ok)
+		t.Fatalf("GetResource(azure.storage.containers) = %+v, ok=%v", az, ok)
 	}
 
 	// methods hang off a resource, each with a signature (params + output schema)
-	ms, err := omnisdk.Methods("azure.storage.accounts")
-	if err != nil || len(ms) == 0 || ms[0].Path != "azure.storage.accounts.list" {
-		t.Fatalf("Methods(azure.storage.accounts) = %v, err=%v", ms, err)
+	ms, err := omnisdk.Methods("azure.storage.containers")
+	if err != nil || len(ms) == 0 || ms[0].Path != "azure.storage.containers.list" {
+		t.Fatalf("Methods(azure.storage.containers) = %v, err=%v", ms, err)
 	}
 	props, _ := ms[0].Schema["properties"].(map[string]any)
 	if props["encryption_class"] == nil {
@@ -47,8 +47,17 @@ func TestFacadeCatalogAndRun(t *testing.T) {
 		switch {
 		case r.URL.Path == "/subscriptions":
 			_, _ = w.Write([]byte(`{"value":[{"subscriptionId":"sub1"}]}`))
+		// Diagnostic settings hang off the account id — the Azure analogue of S3 access logging.
+		// Matched before the account list, whose path is a prefix of this one.
+		// Containers are the bucket analogue, one level below the account. Matched before the account
+		// list, whose path is a prefix of this one.
+		case strings.HasSuffix(r.URL.Path, "/blobServices/default/containers"):
+			_, _ = w.Write([]byte(`{"value":[{"name":"data","properties":{"publicAccess":"Blob"}}]}`))
+		case strings.Contains(r.URL.Path, "/providers/Microsoft.Insights/diagnosticSettings"):
+			_, _ = w.Write([]byte(`{"value":[{"properties":{"storageAccountId":"/subscriptions/sub1/logsink"}}]}`))
 		case strings.Contains(r.URL.Path, "/providers/Microsoft.Storage/storageAccounts"):
-			_, _ = w.Write([]byte(`{"value":[{"name":"s1","properties":{` +
+			_, _ = w.Write([]byte(`{"value":[{"name":"s1","id":"/subscriptions/sub1/providers/Microsoft.Storage/storageAccounts/s1",` +
+				`"properties":{` +
 				`"encryption":{"keySource":"Microsoft.Keyvault"},` +
 				`"allowBlobPublicAccess":true,"supportsHttpsTrafficOnly":true}}]}`))
 		default:
@@ -58,7 +67,7 @@ func TestFacadeCatalogAndRun(t *testing.T) {
 	defer srv.Close()
 	t.Setenv("OMNISDK_TEST_TOK", "mock-token")
 
-	pl, err := omnisdk.New("azure.storage.accounts.list", omnisdk.Args{
+	pl, err := omnisdk.New("azure.storage.containers.list", omnisdk.Args{
 		Endpoint: srv.URL,
 		Auth:     &omnisdk.Auth{Type: "bearer", CredentialsEnvVar: "OMNISDK_TEST_TOK"},
 	})
@@ -80,6 +89,15 @@ func TestFacadeCatalogAndRun(t *testing.T) {
 	}
 	if len(out) != 1 || out[0]["provider"] != "azure" || out[0]["encryption_class"] != "customer-managed" {
 		t.Fatalf("rows = %v", out)
+	}
+	// the row names a CONTAINER, qualified by its account — container names are unique only within
+	// an account, unlike globally unique S3/GCS bucket names
+	if out[0]["name"] != "s1/data" {
+		t.Fatalf("azure row should be at container grain, got name=%v", out[0]["name"])
+	}
+	// access logging is reported from the account's diagnostic settings, not from the account itself
+	if out[0]["access_logging"] != true || out[0]["access_log_target"] != "/subscriptions/sub1/logsink" {
+		t.Fatalf("access logging not surfaced: %v", out[0])
 	}
 }
 

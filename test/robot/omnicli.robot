@@ -46,7 +46,7 @@ Resources And Methods Discovery
     ${list}=    Run Process    ${BINARY}    resources    --filter    storage
     ...    stdout=${OUTDIR}/resources.out    stderr=${OUTDIR}/resources.err
     Should Be Equal As Integers    ${list.rc}    0    omnicli failed: ${list.stderr}
-    Should Contain    ${list.stdout}    azure.storage.accounts
+    Should Contain    ${list.stdout}    azure.storage.containers
     Should Contain    ${list.stdout}    google.storage.buckets
     ${res}=    Run Process    ${BINARY}    resources    google.storage.buckets
     ...    stdout=${OUTDIR}/resource.out    stderr=${OUTDIR}/resource.err
@@ -204,6 +204,11 @@ Blob Audit Shallow Across Majors
     Should Contain    ${blob}    "public":false
     Should Contain    ${blob}    "versioning":true
     Should Contain    ${blob}    "https":true
+    # access logging, uniform across clouds: S3 ?logging, GCS bucket logging, Azure diagnostic settings
+    Should Contain    ${blob}    "access_logging":true
+    Should Contain    ${blob}    "access_logging":false
+    Should Contain    ${blob}    "access_log_target":"audit-logs"
+    Should Contain    ${blob}    "access_log_target":"gcs-usage-logs"
 
 Blob Audit Shallow Org Across Majors
     [Documentation]    All-providers ORG-WIDE audit in one shot: AWS (account) + Azure (all subs) +
@@ -293,7 +298,7 @@ Rows Carry The Input Params That Produced Them
         Should Be Equal    ${row}[google_project]    ${None}    an unsupplied optional input must be null
     END
     # a method that declares NO params is untouched — no echoed columns appear
-    ${az}=    Run Process    ${BINARY}    run    azure.storage.accounts.list    {}
+    ${az}=    Run Process    ${BINARY}    run    azure.storage.containers.list    {}
     ...    --endpoint    ${ENDPOINT}    --out    ${AZ_AUTH_OUT}
     ...    env:AZURE_TENANT_ID=t    env:AZURE_CLIENT_ID=c    env:AZURE_CLIENT_SECRET=s
     ...    stdout=${OUTDIR}/omni-noparams.out    stderr=${OUTDIR}/omni-noparams.err
