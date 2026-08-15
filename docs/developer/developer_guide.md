@@ -177,6 +177,37 @@ facade, the catalog, or the plan knowing a test is running.
 each against captured collateral (`test/mock/expected/omni-blob-org.jsonl`) — the release gate for
 mockability.
 
+## Document-driven (no catalog entry)
+
+`doc-select <doc.yaml> <resource>` runs a resource's SELECT straight from a stackql provider
+document. Nothing is hand-authored: the verb, path, form body, response program and item path all come
+out of the document, and the auth scheme it declares (`security: [hmac]` →
+`x-amazon-apigateway-authtype: awsSigv4`) is applied **implicitly** — SigV4 region from `--aws-region`,
+service from the document's own host.
+
+```bash
+source cicd/vol/vendor-secrets/secrets.sh
+
+_now="$(date +%s)" && ./build/omnicli doc-select \
+  pkg/docparse/stackqldoc/testdata/ec2.yaml instances \
+  --aws-region "${_AWS_REGION}" \
+  --out "./cicd/out/doc-instances-${_now}.jsonl" --log "./cicd/out/doc-instances-${_now}.log"
+```
+
+Credentials are never optional when the document declares signing — an unsigned request is not a
+fallback:
+
+```
+omnicli: docx: exchange "instances" declares aws.sigv4 ("hmac") but no credentials were supplied
+```
+
+A SELECT over an empty set is zero rows, not a row of bare inputs. `--endpoint` retargets the
+document's server (keeping each operation's path) so a document runs against a mock unedited.
+
+Known gap: **one page only.** The document reads its next-page token from `$.next_page_token` — the
+*transformed* body — while the HTTP layer's continuation reads the decoded wire response. Bridging
+those is the next piece.
+
 ## Generic DTO command
 
 `run <method-path> '<args-json>'` — the JSON deserializes straight into `omnisdk.Args` via Go's intrinsic `encoding/json` (`{"params":{…},"auth":{…},"endpoint":"…","tuning":{…}}`, field names case-insensitive). `--out`/`--log` and any tuning flags still apply; the JSON may also carry `endpoint`/`tuning`. Discover a method's params first with `./build/omnicli method <path>`.

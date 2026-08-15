@@ -1,4 +1,4 @@
-package sdk
+package awsv4
 
 import (
 	"net/http"

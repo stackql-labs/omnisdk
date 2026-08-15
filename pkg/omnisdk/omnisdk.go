@@ -30,6 +30,7 @@ import (
 	"github.com/stackql-labs/omnisdk/internal/system_g/auth"
 	"github.com/stackql-labs/omnisdk/internal/system_g/bind"
 	"github.com/stackql-labs/omnisdk/internal/system_g/endpoint"
+	"github.com/stackql-labs/omnisdk/internal/system_g/exchange/docx"
 	"github.com/stackql-labs/omnisdk/internal/system_g/exchange/sdk"
 	"github.com/stackql-labs/omnisdk/internal/system_g/facade"
 	"github.com/stackql-labs/omnisdk/internal/system_g/grpcx"
@@ -39,6 +40,8 @@ import (
 	"github.com/stackql-labs/omnisdk/internal/system_g/secret"
 	"github.com/stackql-labs/omnisdk/internal/system_g/sink"
 	"github.com/stackql-labs/omnisdk/internal/system_g/trace"
+	"github.com/stackql-labs/omnisdk/pkg/docparse/dsl"
+	"github.com/stackql-labs/omnisdk/pkg/docparse/dsl/gotemplate"
 )
 
 // Auth is the caller-supplied authentication config (a pared, stackql-shaped auth struct). It is the
@@ -750,6 +753,38 @@ func checkEndpoint(args Args) error {
 		return fmt.Errorf("omnisdk: %w", err)
 	}
 	return nil
+}
+
+// NewFromDoc plans a resource's SELECT straight from a provider DOCUMENT, with no catalog entry: the
+// document supplies the call, and the declared auth scheme is applied implicitly. This is the same
+// Plan a catalog method returns, so a consumer runs it identically — the difference is only where the
+// metadata came from, which is the whole point of the document path.
+func NewFromDoc(doc []byte, resource string, args Args) (Plan, error) {
+	if err := checkEndpoint(args); err != nil {
+		return nil, err
+	}
+	reg, err := dsl.NewRegistry(gotemplate.Evaluators()...)
+	if err != nil {
+		return nil, err
+	}
+	opts := []docx.Option{}
+	if args.Endpoint != "" {
+		opts = append(opts, docx.WithBaseURL(args.Endpoint))
+	}
+	// AWS credentials resolve exactly as they do for a catalog method; a document that declares SigV4
+	// but finds no credentials fails at plan time rather than sending an unsigned request.
+	if creds, err := awsCreds(args); err == nil {
+		opts = append(opts, docx.WithAWSCredentials(creds))
+	}
+	inputs := map[string]any{}
+	for k, v := range args.Params {
+		inputs[k] = v
+	}
+	pl, err := docx.SelectPlan(doc, resource, inputs, reg, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return &cannedPlan{plan: pl, args: args}, nil
 }
 
 // authOf returns args.Auth, or a zero Auth when none was supplied — so resolution always reads from a

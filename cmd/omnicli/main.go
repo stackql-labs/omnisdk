@@ -224,6 +224,32 @@ func main() {
 	requireGcpOrg(allBlobOrg)
 	root.AddCommand(allBlobOrg)
 
+	// ---- document-driven: no catalog entry, the provider doc IS the metadata ---
+	docCmd := &cobra.Command{
+		Use:   "doc-select <doc.yaml> <resource>",
+		Short: "Run a resource's SELECT straight from a stackql provider document (e.g. doc-select ec2.yaml instances)",
+		Args:  cobra.ExactArgs(2),
+		RunE: withSinks(func(cmd *cobra.Command, w, logw io.Writer) error {
+			pos := cmd.Flags().Args()
+			doc, err := os.ReadFile(pos[0])
+			if err != nil {
+				return err
+			}
+			a := omnisdk.Args{
+				Params:   map[string]string{"region": awsRegion},
+				Endpoint: endpoint,
+				Log:      logw,
+				Tuning:   t.facade(),
+			}
+			pl, err := omnisdk.NewFromDoc(doc, pos[1], a)
+			if err != nil {
+				return err
+			}
+			return streamRows(pl, w)
+		}),
+	}
+	root.AddCommand(docCmd)
+
 	// ---- discovery (straight off the facade catalog) --------------------------
 	resCmd := &cobra.Command{
 		Use:   "resources [resource-path]",

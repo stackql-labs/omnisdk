@@ -1,5 +1,6 @@
 // Package stackqldoc parses a stackql provider document (OpenAPI plus the x-stackQL-resources
-// extension) into AOT exchanges. Input is document BYTES; output is a collection of exchanges.
+// extension) into AOT exchanges. It IMPLEMENTS the pkg/docparse/aot contract; it is one dialect, and
+// a consumer depends on that contract rather than on this parser. Input is document BYTES; output is a collection of exchanges.
 //
 // An AOT exchange is a DESCRIPTION, not a binding: what the document says the call is. It is
 // deliberately not the engine's plan-time exchange, which is an executable thing (Make → Operator,
@@ -15,63 +16,9 @@ import (
 	"strings"
 
 	"gopkg.in/yaml.v3"
+
+	"github.com/stackql-labs/omnisdk/pkg/docparse/aot"
 )
-
-// AOTExchange is one operation as the document declares it, ahead of any plan.
-type AOTExchange interface {
-	// Name identifies the exchange (the resource it serves, e.g. "instances").
-	Name() string
-	// Inputs are the values the call needs bound — server variables and required parameters.
-	Inputs() []string
-	// OperationID is the document's own name for the backing operation.
-	OperationID() string
-	// Request is the call to make.
-	Request() Request
-	// Response is how the document says to read what comes back.
-	Response() Response
-}
-
-// Request is the declared call: a URL template, verb, and the body/query the document specifies.
-type Request interface {
-	Method() string
-	// URL is a template; {name} placeholders are bound from Inputs.
-	URL() string
-	MediaType() string
-	// Params are the body parameters the document declares, already stripped of its own markers.
-	Params() map[string]string
-}
-
-// Response is how the document says to read the reply. MediaType is what the wire carries;
-// OverrideMediaType is what the declared Transform turns it into.
-type Response interface {
-	MediaType() string
-	OverrideMediaType() string
-	// ObjectKey is the path to the item list WITHIN the transformed body — so it is meaningful only
-	// after Transform has run.
-	ObjectKey() string
-	// Transform is the document's response transform, attached here at the SOURCE. A compile step
-	// decides where it actually runs.
-	Transform() Transform
-	Pagination() Pagination
-}
-
-// Transform is a declared body transformation: a program and the language it is written in.
-type Transform interface {
-	// Type names the evaluator (e.g. golang_template_mxj_v0.2.0). Empty means none declared.
-	Type() string
-	Body() string
-}
-
-// Pagination is how the document says pages continue. Token keys are paths into the TRANSFORMED
-// body, and locations say whether a token travels in the body or the query.
-type Pagination interface {
-	// RequestToken is the key and location the next-page token is SENT as.
-	RequestToken() (key, location string)
-	// ResponseToken is the key and location the next-page token is READ from.
-	ResponseToken() (key, location string)
-	// Declared reports whether the document specifies pagination at all.
-	Declared() bool
-}
 
 // Doc is a parsed provider document.
 type Doc interface {
@@ -79,7 +26,7 @@ type Doc interface {
 	Resources() []string
 	// Select returns the exchange backing a resource's SELECT verb. A resource with no SELECT is an
 	// error — a real answer about the provider, not an empty result.
-	Select(resource string) (AOTExchange, error)
+	Select(resource string) (aot.AOTExchange, error)
 }
 
 // Parse reads a stackql provider document.
@@ -99,9 +46,19 @@ func Parse(b []byte) (Doc, error) {
 type document struct {
 	Servers    []server                     `yaml:"servers"`
 	Paths      map[string]map[string]pathOp `yaml:"paths"`
+	Security   []map[string][]string        `yaml:"security"`
 	Components struct {
-		Resources map[string]resource `yaml:"x-stackQL-resources"`
+		Resources       map[string]resource       `yaml:"x-stackQL-resources"`
+		SecuritySchemes map[string]securityScheme `yaml:"securitySchemes"`
 	} `yaml:"components"`
+}
+
+// securityScheme is an OpenAPI scheme. AWS documents describe SigV4 as an apiKey scheme carrying the
+// Authorization header, and say what it REALLY is only in the vendor extension — so that extension is
+// the thing to read, not the type.
+type securityScheme struct {
+	Type     string `yaml:"type"`
+	AuthType string `yaml:"x-amazon-apigateway-authtype"`
 }
 
 type server struct {
@@ -175,7 +132,7 @@ func (d *document) Resources() []string {
 	return out
 }
 
-func (d *document) Select(name string) (AOTExchange, error) {
+func (d *document) Select(name string) (aot.AOTExchange, error) {
 	res, ok := d.Components.Resources[name]
 	if !ok {
 		return nil, fmt.Errorf("stackqldoc: no resource %q", name)
@@ -211,7 +168,7 @@ func (d *document) Select(name string) (AOTExchange, error) {
 }
 
 // build turns a resolved (server, path, operation, method) into an AOT exchange.
-func (d *document) build(name, verb, path string, op pathOp, m method) AOTExchange {
+func (d *document) build(name, verb, path string, op pathOp, m method) aot.AOTExchange {
 	srv := d.Servers[0]
 
 	// The path key carries the operation's identity as __-prefixed pseudo-parameters
@@ -222,6 +179,7 @@ func (d *document) build(name, verb, path string, op pathOp, m method) AOTExchan
 
 	return &aotExchange{
 		name:   name,
+		sec:    d.security(),
 		inputs: serverVars(srv),
 		opID:   op.OperationID,
 		req: request{
@@ -239,6 +197,31 @@ func (d *document) build(name, verb, path string, op pathOp, m method) AOTExchan
 		},
 	}
 }
+
+// security resolves the document-level requirement to a normalized scheme. Document-level is the only
+// level these documents use; an operation-level override would resolve here too.
+func (d *document) security() security {
+	for _, req := range d.Security {
+		for schemeName := range req {
+			s, ok := d.Components.SecuritySchemes[schemeName]
+			if !ok {
+				continue
+			}
+			if strings.EqualFold(s.AuthType, "awsSigv4") {
+				return security{scheme: aot.SchemeAWSSigV4, name: schemeName}
+			}
+		}
+	}
+	return security{}
+}
+
+type security struct {
+	scheme aot.Scheme
+	name   string
+}
+
+func (s security) Scheme() aot.Scheme { return s.scheme }
+func (s security) Name() string       { return s.name }
 
 // serverVars are the server URL's {variables}, which become bound inputs — a region is a scope
 // decision the caller makes, never something a parser invents. Sorted for a stable signature.
@@ -308,17 +291,19 @@ func lastSegment(ref string) string {
 
 type aotExchange struct {
 	name   string
+	sec    security
 	inputs []string
 	opID   string
 	req    request
 	resp   response
 }
 
-func (e *aotExchange) Name() string        { return e.name }
-func (e *aotExchange) Inputs() []string    { return e.inputs }
-func (e *aotExchange) OperationID() string { return e.opID }
-func (e *aotExchange) Request() Request    { return e.req }
-func (e *aotExchange) Response() Response  { return e.resp }
+func (e *aotExchange) Name() string           { return e.name }
+func (e *aotExchange) Inputs() []string       { return e.inputs }
+func (e *aotExchange) OperationID() string    { return e.opID }
+func (e *aotExchange) Request() aot.Request   { return e.req }
+func (e *aotExchange) Response() aot.Response { return e.resp }
+func (e *aotExchange) Security() aot.Security { return e.sec }
 
 type request struct {
 	method    string
@@ -347,11 +332,11 @@ type response struct {
 	pagination pagination
 }
 
-func (r response) MediaType() string         { return r.mediaType }
-func (r response) OverrideMediaType() string { return r.override }
-func (r response) ObjectKey() string         { return r.objectKey }
-func (r response) Transform() Transform      { return r.transform }
-func (r response) Pagination() Pagination    { return r.pagination }
+func (r response) MediaType() string          { return r.mediaType }
+func (r response) OverrideMediaType() string  { return r.override }
+func (r response) ObjectKey() string          { return r.objectKey }
+func (r response) Transform() aot.Transform   { return r.transform }
+func (r response) Pagination() aot.Pagination { return r.pagination }
 
 type transformDeclType struct{ typ, body string }
 
