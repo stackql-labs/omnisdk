@@ -5,7 +5,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/stackql-labs/omnisdk/internal/system_g/httpx"
 	"github.com/stackql-labs/omnisdk/pkg/docparse/stackqldoc"
 )
 
@@ -34,24 +33,58 @@ func TestSelectInstancesResolvesFromDocument(t *testing.T) {
 	}
 	// the server URL's {region} variable becomes a bound input — scope the caller supplies, never
 	// something the parser invents
-	if got := strings.Join(ex.In(), ","); got != "region" {
-		t.Fatalf("In() = %q, want region", got)
+	if got := strings.Join(ex.Inputs(), ","); got != "region" {
+		t.Fatalf("Inputs() = %q, want region", got)
 	}
 
-	type resolved interface {
-		OperationID() string
-		ObjectKey() string
-	}
-	r, ok := ex.(resolved)
-	if !ok {
-		t.Fatal("exchange does not expose what it resolved")
-	}
 	// sqlVerbs.select → methods/describe → #/paths/...DescribeInstances.../post
-	if r.OperationID() != "GET_DescribeInstances" {
-		t.Fatalf("OperationID() = %q, want the operation SELECT points at", r.OperationID())
+	if ex.OperationID() != "GET_DescribeInstances" {
+		t.Fatalf("OperationID() = %q, want the operation SELECT points at", ex.OperationID())
 	}
-	if r.ObjectKey() != "$.line_items" {
-		t.Fatalf("ObjectKey() = %q", r.ObjectKey())
+	if ex.Response().ObjectKey() != "$.line_items" {
+		t.Fatalf("ObjectKey() = %q", ex.Response().ObjectKey())
+	}
+}
+
+// The document attaches its response transform to the SOURCE. An AOT exchange reports it as a
+// declaration — an evaluator name and a program — and does not run it or decide where it runs.
+func TestResponseTransformIsDeclaredNotApplied(t *testing.T) {
+	ex, err := load(t).Select("instances")
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp := ex.Response()
+	if resp.MediaType() != "text/xml" || resp.OverrideMediaType() != "application/json" {
+		t.Fatalf("media types = %q → %q", resp.MediaType(), resp.OverrideMediaType())
+	}
+	tr := resp.Transform()
+	if tr.Type() != "golang_template_mxj_v0.2.0" {
+		t.Fatalf("Transform().Type() = %q", tr.Type())
+	}
+	if !strings.Contains(tr.Body(), "line_items") {
+		t.Fatalf("Transform().Body() does not look like the declared program: %.80q", tr.Body())
+	}
+	// ObjectKey addresses the TRANSFORMED body, which is why the two travel together
+	if !strings.Contains(resp.ObjectKey(), "line_items") {
+		t.Fatalf("ObjectKey %q should address the transform's output", resp.ObjectKey())
+	}
+}
+
+// Pagination tokens are declared against the transformed body too.
+func TestPaginationIsDeclared(t *testing.T) {
+	ex, err := load(t).Select("instances")
+	if err != nil {
+		t.Fatal(err)
+	}
+	p := ex.Response().Pagination()
+	if !p.Declared() {
+		t.Fatal("DescribeInstances declares pagination")
+	}
+	if k, loc := p.RequestToken(); k != "NextToken" || loc != "body" {
+		t.Fatalf("RequestToken = %q/%q", k, loc)
+	}
+	if k, loc := p.ResponseToken(); k != "$.next_page_token" || loc != "body" {
+		t.Fatalf("ResponseToken = %q/%q", k, loc)
 	}
 }
 
@@ -63,28 +96,26 @@ func TestResolvedRequestIsTheRealCall(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	req := ex.(interface{ Request() httpx.Request }).Request()
-	if req.Method != "POST" {
-		t.Fatalf("Method = %q", req.Method)
+	req := ex.Request()
+	if req.Method() != "POST" {
+		t.Fatalf("Method = %q", req.Method())
 	}
-	// {region} survives as a template — the engine substitutes it from the bound row
-	if req.URL != "https://ec2.{region}.amazonaws.com/" {
-		t.Fatalf("URL = %q", req.URL)
+	// {region} survives as a template — a binder substitutes it from the bound row
+	if req.URL() != "https://ec2.{region}.amazonaws.com/" {
+		t.Fatalf("URL = %q", req.URL())
 	}
-	if got := req.Body.Params["Action"]; got != "DescribeInstances" {
-		t.Fatalf("body Action = %v, want the action lifted out of the path key", got)
-	}
-	if got := req.Body.Params["Version"]; got != "2016-11-15" {
-		t.Fatalf("body Version = %v", got)
+	params := req.Params()
+	if params["Action"] != "DescribeInstances" || params["Version"] != "2016-11-15" {
+		t.Fatalf("params = %v, want the action lifted out of the path key", params)
 	}
 	// no __-prefixed marker may survive into the wire request
-	for k := range req.Body.Params {
+	for k := range params {
 		if strings.HasPrefix(k, "__") {
 			t.Fatalf("pseudo-parameter %q leaked into the request", k)
 		}
 	}
-	if strings.Contains(req.URL, "__") {
-		t.Fatalf("pseudo-parameter leaked into the URL: %q", req.URL)
+	if strings.Contains(req.URL(), "__") {
+		t.Fatalf("pseudo-parameter leaked into the URL: %q", req.URL())
 	}
 }
 

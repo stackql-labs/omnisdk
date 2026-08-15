@@ -1,13 +1,12 @@
 // Package stackqldoc parses a stackql provider document (OpenAPI plus the x-stackQL-resources
-// extension) into exchanges the engine can run. Input is document BYTES; output is a collection of
-// exchanges. Nothing here reaches back into the engine's catalog — a document is data, and this
-// package is the only thing that knows its shape.
+// extension) into AOT exchanges. Input is document BYTES; output is a collection of exchanges.
 //
-// The document already states, declaratively, everything an exchange needs: which operation backs a
-// resource's SELECT, which path and verb that operation is, the server URL and its variables, and how
-// pages continue. So parsing is a resolution problem — follow the document's own $refs — not a
-// translation problem, and the result is an Exchange built from the same finite request vocabulary
-// hand-authored exchanges use.
+// An AOT exchange is a DESCRIPTION, not a binding: what the document says the call is. It is
+// deliberately not the engine's plan-time exchange, which is an executable thing (Make → Operator,
+// Flatten) whose transforms are evaluated lazily at the sink. The document attaches its response
+// transform to the SOURCE; the plan applies transforms at the SINK. Relocating one to the other is a
+// real decision, so it belongs in an explicit compile step against these interfaces — not smuggled in
+// by hanging both concerns off one type. Nothing here imports the engine.
 package stackqldoc
 
 import (
@@ -16,36 +15,71 @@ import (
 	"strings"
 
 	"gopkg.in/yaml.v3"
-
-	"github.com/stackql-labs/omnisdk/internal/system_g/facade"
-	"github.com/stackql-labs/omnisdk/internal/system_g/httpx"
-	"github.com/stackql-labs/omnisdk/internal/system_g/transform"
 )
 
-// Exchange is one runnable operation parsed out of a document. The method set is deliberately the
-// engine's exchange declaration, so a parsed exchange can be handed straight to the planner without
-// this package importing the planner or the planner knowing documents exist.
-type Exchange interface {
-	// Name identifies the exchange within a plan (e.g. "instances").
+// AOTExchange is one operation as the document declares it, ahead of any plan.
+type AOTExchange interface {
+	// Name identifies the exchange (the resource it serves, e.g. "instances").
 	Name() string
-	// In are the inputs it binds — server variables and required parameters (e.g. "region").
-	In() []string
-	// Out are the attributes it publishes to downstream exchanges.
-	Out() []string
-	// Make builds the operator for a bound input row.
-	Make(bound map[string]any) facade.Operator
-	// Flatten is how its output merges into the running row; nil means the generic merge.
-	Flatten() facade.Transform
+	// Inputs are the values the call needs bound — server variables and required parameters.
+	Inputs() []string
+	// OperationID is the document's own name for the backing operation.
+	OperationID() string
+	// Request is the call to make.
+	Request() Request
+	// Response is how the document says to read what comes back.
+	Response() Response
+}
+
+// Request is the declared call: a URL template, verb, and the body/query the document specifies.
+type Request interface {
+	Method() string
+	// URL is a template; {name} placeholders are bound from Inputs.
+	URL() string
+	MediaType() string
+	// Params are the body parameters the document declares, already stripped of its own markers.
+	Params() map[string]string
+}
+
+// Response is how the document says to read the reply. MediaType is what the wire carries;
+// OverrideMediaType is what the declared Transform turns it into.
+type Response interface {
+	MediaType() string
+	OverrideMediaType() string
+	// ObjectKey is the path to the item list WITHIN the transformed body — so it is meaningful only
+	// after Transform has run.
+	ObjectKey() string
+	// Transform is the document's response transform, attached here at the SOURCE. A compile step
+	// decides where it actually runs.
+	Transform() Transform
+	Pagination() Pagination
+}
+
+// Transform is a declared body transformation: a program and the language it is written in.
+type Transform interface {
+	// Type names the evaluator (e.g. golang_template_mxj_v0.2.0). Empty means none declared.
+	Type() string
+	Body() string
+}
+
+// Pagination is how the document says pages continue. Token keys are paths into the TRANSFORMED
+// body, and locations say whether a token travels in the body or the query.
+type Pagination interface {
+	// RequestToken is the key and location the next-page token is SENT as.
+	RequestToken() (key, location string)
+	// ResponseToken is the key and location the next-page token is READ from.
+	ResponseToken() (key, location string)
+	// Declared reports whether the document specifies pagination at all.
+	Declared() bool
 }
 
 // Doc is a parsed provider document.
 type Doc interface {
 	// Resources are the resource names the document declares, sorted.
 	Resources() []string
-	// Select returns the exchange backing a resource's SELECT verb — the "list this thing" operation.
-	// It is an error if the resource has no SELECT, which is a real answer about the provider rather
-	// than an empty result.
-	Select(resource string) (Exchange, error)
+	// Select returns the exchange backing a resource's SELECT verb. A resource with no SELECT is an
+	// error — a real answer about the provider, not an empty result.
+	Select(resource string) (AOTExchange, error)
 }
 
 // Parse reads a stackql provider document.
@@ -102,10 +136,16 @@ type method struct {
 		MediaType string `yaml:"mediaType"`
 	} `yaml:"request"`
 	Response struct {
-		MediaType         string `yaml:"mediaType"`
-		OverrideMediaType string `yaml:"overrideMediaType"`
-		ObjectKey         string `yaml:"objectKey"`
+		MediaType         string        `yaml:"mediaType"`
+		OverrideMediaType string        `yaml:"overrideMediaType"`
+		ObjectKey         string        `yaml:"objectKey"`
+		Transform         transformSpec `yaml:"transform"`
 	} `yaml:"response"`
+}
+
+type transformSpec struct {
+	Type string `yaml:"type"`
+	Body string `yaml:"body"`
 }
 
 type tokenSpec struct {
@@ -135,7 +175,7 @@ func (d *document) Resources() []string {
 	return out
 }
 
-func (d *document) Select(name string) (Exchange, error) {
+func (d *document) Select(name string) (AOTExchange, error) {
 	res, ok := d.Components.Resources[name]
 	if !ok {
 		return nil, fmt.Errorf("stackqldoc: no resource %q", name)
@@ -167,41 +207,41 @@ func (d *document) Select(name string) (Exchange, error) {
 	if len(d.Servers) == 0 {
 		return nil, fmt.Errorf("stackqldoc: document declares no servers")
 	}
-	return d.build(name, verb, path, op, m)
+	return d.build(name, verb, path, op, m), nil
 }
 
-// build turns a resolved (server, path, operation, method) into an Exchange.
-func (d *document) build(name, verb, path string, op pathOp, m method) (Exchange, error) {
+// build turns a resolved (server, path, operation, method) into an AOT exchange.
+func (d *document) build(name, verb, path string, op pathOp, m method) AOTExchange {
 	srv := d.Servers[0]
-	base, vars := srv.URL, serverVars(srv)
 
 	// The path key carries the operation's identity as __-prefixed pseudo-parameters
 	// (/?__Action=DescribeInstances&__Version=2016-11-15). stackql's requestTranslate
 	// drop_double_underscore_params says they are NOT query parameters: with a form request they are
 	// the body that names the action. Stripping the marker prefix recovers the real call.
-	route, action := splitPseudoParams(path)
-	req := httpx.Request{
-		Method: strings.ToUpper(verb),
-		URL:    strings.TrimRight(base, "/") + route,
-	}
-	if len(action) > 0 && encodingOf(m.Request.MediaType) == httpx.EncodingForm {
-		req.Body = httpx.Body{Encoding: httpx.EncodingForm, Params: action}
-	}
+	route, params := splitPseudoParams(path)
 
-	return &exchange{
-		name:    name,
-		in:      vars,
-		req:     req,
-		decode:  decoderFor(m.Response.MediaType),
-		objKey:  m.Response.ObjectKey,
-		pageIn:  m.Config.Pagination.RequestToken,
-		pageOut: m.Config.Pagination.ResponseToken,
-		opID:    op.OperationID,
-	}, nil
+	return &aotExchange{
+		name:   name,
+		inputs: serverVars(srv),
+		opID:   op.OperationID,
+		req: request{
+			method:    strings.ToUpper(verb),
+			url:       strings.TrimRight(srv.URL, "/") + route,
+			mediaType: m.Request.MediaType,
+			params:    params,
+		},
+		resp: response{
+			mediaType:  m.Response.MediaType,
+			override:   m.Response.OverrideMediaType,
+			objectKey:  m.Response.ObjectKey,
+			transform:  transformDecl(m.Response.Transform),
+			pagination: pagination{req: m.Config.Pagination.RequestToken, resp: m.Config.Pagination.ResponseToken},
+		},
+	}
 }
 
-// serverVars are the server URL's {variables}, which the exchange binds as inputs — a region is a
-// scope decision the caller makes, never something a parser invents. Sorted for a stable signature.
+// serverVars are the server URL's {variables}, which become bound inputs — a region is a scope
+// decision the caller makes, never something a parser invents. Sorted for a stable signature.
 func serverVars(s server) []string {
 	out := make([]string, 0, len(s.Variables))
 	for k := range s.Variables {
@@ -215,17 +255,17 @@ func serverVars(s server) []string {
 
 // splitPseudoParams separates a path key's real route from its __-prefixed pseudo-parameters,
 // returning the route and the parameters with the marker prefix removed.
-func splitPseudoParams(path string) (route string, params map[string]any) {
+func splitPseudoParams(path string) (route string, params map[string]string) {
 	route, query, found := strings.Cut(path, "?")
 	if !found {
 		return path, nil
 	}
-	params = map[string]any{}
+	params = map[string]string{}
 	var kept []string
 	for _, kv := range strings.Split(query, "&") {
 		k, v, _ := strings.Cut(kv, "=")
-		if name, isPseudo := strings.CutPrefix(k, "__"); isPseudo {
-			params[name] = v
+		if pname, isPseudo := strings.CutPrefix(k, "__"); isPseudo {
+			params[pname] = v
 			continue
 		}
 		kept = append(kept, kv)
@@ -264,65 +304,66 @@ func lastSegment(ref string) string {
 	return ref[i+1:]
 }
 
-func encodingOf(mediaType string) httpx.Encoding {
-	switch {
-	case strings.Contains(mediaType, "x-www-form-urlencoded"):
-		return httpx.EncodingForm
-	case strings.Contains(mediaType, "json"):
-		return httpx.EncodingJSON
-	default:
-		return httpx.EncodingNone
+// ---- AOT exchange -----------------------------------------------------------
+
+type aotExchange struct {
+	name   string
+	inputs []string
+	opID   string
+	req    request
+	resp   response
+}
+
+func (e *aotExchange) Name() string        { return e.name }
+func (e *aotExchange) Inputs() []string    { return e.inputs }
+func (e *aotExchange) OperationID() string { return e.opID }
+func (e *aotExchange) Request() Request    { return e.req }
+func (e *aotExchange) Response() Response  { return e.resp }
+
+type request struct {
+	method    string
+	url       string
+	mediaType string
+	params    map[string]string
+}
+
+func (r request) Method() string    { return r.method }
+func (r request) URL() string       { return r.url }
+func (r request) MediaType() string { return r.mediaType }
+
+func (r request) Params() map[string]string {
+	out := make(map[string]string, len(r.params))
+	for k, v := range r.params {
+		out[k] = v
 	}
+	return out
 }
 
-// decoderFor is the transform that turns a response body of this media type into an agnostic
-// document. nil when the type is not one we decode, so the body passes through raw rather than
-// being silently mangled.
-func decoderFor(mediaType string) facade.Transform {
-	switch {
-	case strings.Contains(mediaType, "xml"):
-		return transform.NewXMLToAgnostic()
-	case strings.Contains(mediaType, "json"):
-		return transform.NewJSONToAgnostic()
-	default:
-		return nil
-	}
+type response struct {
+	mediaType  string
+	override   string
+	objectKey  string
+	transform  transformDeclType
+	pagination pagination
 }
 
-// ---- exchange ---------------------------------------------------------------
+func (r response) MediaType() string         { return r.mediaType }
+func (r response) OverrideMediaType() string { return r.override }
+func (r response) ObjectKey() string         { return r.objectKey }
+func (r response) Transform() Transform      { return r.transform }
+func (r response) Pagination() Pagination    { return r.pagination }
 
-type exchange struct {
-	name    string
-	in      []string
-	req     httpx.Request
-	decode  facade.Transform
-	objKey  string
-	pageIn  tokenSpec
-	pageOut tokenSpec
-	opID    string
+type transformDeclType struct{ typ, body string }
+
+func transformDecl(t transformSpec) transformDeclType {
+	return transformDeclType{typ: t.Type, body: t.Body}
 }
 
-func (e *exchange) Name() string { return e.name }
-func (e *exchange) In() []string { return e.in }
+func (t transformDeclType) Type() string { return t.typ }
+func (t transformDeclType) Body() string { return t.body }
 
-// Out is empty: this exchange publishes the decoded response document rather than named attributes.
-// Naming attributes means projecting the provider's payload, which the document expresses as a
-// response transform — see Request/ObjectKey on the parsed method.
-func (e *exchange) Out() []string { return nil }
+type pagination struct{ req, resp tokenSpec }
 
-func (e *exchange) Make(bound map[string]any) facade.Operator {
-	return httpx.MakeAgnostic(e.req)(bound)
-}
-
-// Flatten is nil: the generic merge applies.
-func (e *exchange) Flatten() facade.Transform { return nil }
-
-// OperationID is the document's own name for the backing operation, for tracing what was resolved.
-func (e *exchange) OperationID() string { return e.opID }
-
-// Request is the resolved request this exchange issues, exposed so a caller (or a test) can assert
-// what the document resolved to without running it.
-func (e *exchange) Request() httpx.Request { return e.req }
-
-// ObjectKey is the document's declared path to the item list within the transformed response.
-func (e *exchange) ObjectKey() string { return e.objKey }
+func (p pagination) RequestToken() (string, string)  { return p.req.Key, p.req.Location }
+func (p pagination) ResponseToken() (string, string) { return p.resp.Key, p.resp.Location }
+func (p pagination) Declared() bool                  { return p.req.Key != "" || p.resp.Key != "" }
