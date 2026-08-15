@@ -190,7 +190,7 @@ source cicd/vol/vendor-secrets/secrets.sh
 
 _now="$(date +%s)" && ./build/omnicli doc-select \
   pkg/docparse/stackqldoc/testdata/ec2.yaml instances \
-  --aws-region "${_AWS_REGION}" \
+  --aws-region "ap-southeast-2" \
   --out "./cicd/out/doc-instances-${_now}.jsonl" --log "./cicd/out/doc-instances-${_now}.log"
 ```
 
