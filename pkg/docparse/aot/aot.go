@@ -88,3 +88,64 @@ type Pagination interface {
 	// Declared reports whether the document specifies pagination at all.
 	Declared() bool
 }
+
+// Provider is a provider document: the catalogue of services it offers and how calls to them
+// authenticate. It is the level ABOVE a service document — the signing algorithm is declared once for
+// the whole provider, so deriving it per service document would re-derive a decision already made.
+type Provider interface {
+	ID() string
+	Name() string
+	Version() string
+	// Services are the services the provider offers, sorted by name.
+	Services() []Service
+	// Service looks one up by name.
+	Service(name string) (Service, bool)
+	// Security is the provider-wide scheme every call inherits.
+	Security() Security
+	// Credentials names the environment the document expects credentials in. Names only: a document
+	// says where to look, never what the value is.
+	Credentials() CredentialSource
+}
+
+// Service is one service in a provider's catalogue, and where its document lives.
+type Service interface {
+	Name() string
+	Title() string
+	Version() string
+	// Ref is the service document's location as the provider states it, provider-relative.
+	Ref() string
+}
+
+// CredentialSource names the environment variables a document expects credentials in.
+type CredentialSource interface {
+	KeyIDEnvVar() string
+	SecretEnvVar() string
+}
+
+// Catalog is a whole provider bundle resolved to ADDRESSABLE exchanges: a provider document plus the
+// service documents present alongside it. An address is "<provider>.<service>.<resource>", the same
+// dot-path the documents give their resources, so what a caller names is what the document called it.
+type Catalog interface {
+	Provider() Provider
+	// Services are the services whose documents are actually present, sorted. The provider lists many
+	// more; a listed service with no document is not addressable, and saying so beats pretending.
+	Services() []string
+	// Resources are a service's resources, sorted — every one it declares, not only those with a
+	// runnable SELECT.
+	Resources(service string) ([]string, error)
+	// Methods are a resource's methods, sorted.
+	Methods(service, resource string) ([]Method, error)
+	// Paths are every addressable exchange, sorted.
+	Paths() []string
+	// Exchange resolves one address.
+	Exchange(path string) (AOTExchange, error)
+}
+
+// Method is one operation a resource declares, and the SQL verb (if any) the document maps it to.
+// A method with no verb is reachable by name but not by a SQL statement.
+type Method interface {
+	Name() string
+	// SQLVerb is select/insert/update/delete/exec, or empty when the document maps it to none.
+	SQLVerb() string
+	OperationID() string
+}

@@ -250,6 +250,82 @@ func main() {
 	}
 	root.AddCommand(docCmd)
 
+	// doc-catalog: what a provider BUNDLE makes addressable.
+	// doc-catalog drills DOWN by how many arguments you give it: bundle → services, +service →
+	// resources, +resource → methods. Documents are parsed on demand and not retained by a listing,
+	// so walking a 232-service bundle costs one document at a time.
+	catCmd := &cobra.Command{
+		Use:   "doc-catalog <bundle-dir> [service] [resource]",
+		Short: "List a bundle's services, a service's resources, or a resource's methods",
+		Args:  cobra.RangeArgs(1, 3),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			quiet, _ := cmd.Flags().GetBool("quiet")
+			switch len(args) {
+			case 3:
+				ms, err := omnisdk.DocMethods(args[0], args[1], args[2])
+				if err != nil {
+					return err
+				}
+				if quiet {
+					for _, m := range ms {
+						fmt.Println(m.Name)
+					}
+					return nil
+				}
+				return printJSON(ms)
+			case 2:
+				rs, err := omnisdk.DocResources(args[0], args[1])
+				if err != nil {
+					return err
+				}
+				if quiet {
+					for _, r := range rs {
+						fmt.Println(r)
+					}
+					return nil
+				}
+				return printJSON(rs)
+			default:
+				services, addresses, err := omnisdk.DocCatalog(args[0])
+				if err != nil {
+					return err
+				}
+				if quiet {
+					for _, a := range addresses {
+						fmt.Println(a)
+					}
+					return nil
+				}
+				return printJSON(map[string]any{
+					"services": services, "service_count": len(services),
+					"addresses": addresses, "address_count": len(addresses),
+				})
+			}
+		},
+	}
+	catCmd.Flags().BoolP("quiet", "q", false, "print bare addresses, one per line")
+	root.AddCommand(catCmd)
+
+	// doc-run: run one address out of a bundle.
+	root.AddCommand(&cobra.Command{
+		Use:   "doc-run <bundle-dir> <address>",
+		Short: `Run an addressed exchange from a provider bundle, e.g. doc-run ./testdata aws.ec2.instances`,
+		Args:  cobra.ExactArgs(2),
+		RunE: withSinks(func(cmd *cobra.Command, w, logw io.Writer) error {
+			pos := cmd.Flags().Args()
+			pl, err := omnisdk.NewFromCatalog(pos[0], pos[1], omnisdk.Args{
+				Params:   map[string]string{"region": awsRegion},
+				Endpoint: endpoint,
+				Log:      logw,
+				Tuning:   t.facade(),
+			})
+			if err != nil {
+				return err
+			}
+			return streamRows(pl, w)
+		}),
+	})
+
 	// ---- discovery (straight off the facade catalog) --------------------------
 	resCmd := &cobra.Command{
 		Use:   "resources [resource-path]",

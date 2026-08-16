@@ -177,36 +177,79 @@ facade, the catalog, or the plan knowing a test is running.
 each against captured collateral (`test/mock/expected/omni-blob-org.jsonl`) — the release gate for
 mockability.
 
-## Document-driven (no catalog entry)
+## Document-driven: browsing and running a provider bundle
 
-`doc-select <doc.yaml> <resource>` runs a resource's SELECT straight from a stackql provider
-document. Nothing is hand-authored: the verb, path, form body, response program and item path all come
-out of the document, and the auth scheme it declares (`security: [hmac]` →
-`x-amazon-apigateway-authtype: awsSigv4`) is applied **implicitly** — SigV4 region from `--aws-region`,
-service from the document's own host.
+A **bundle** is a directory holding `provider.yaml` and its `services/`. Nothing is hand-authored —
+the services, resources, methods, the call itself and its auth all come out of the documents.
+
+### Browse
+
+`doc-catalog` drills down by how many arguments you give it. `-q` prints bare names, one per line.
+
+```bash
+D=pkg/docparse/stackqldoc/testdata
+
+./build/omnicli doc-catalog $D                # services present + every addressable exchange
+./build/omnicli doc-catalog $D -q             # just the addresses, pipeable
+./build/omnicli doc-catalog $D ec2            # that service's resources
+./build/omnicli doc-catalog $D ec2 instances  # that resource's methods + the SQL verb each is bound to
+```
+
+```json
+[
+  {"name": "describe",  "sql_verb": "select", "operation_id": "GET_DescribeInstances"},
+  {"name": "run",       "sql_verb": "insert", "operation_id": "GET_RunInstances"},
+  {"name": "terminate", "sql_verb": "delete", "operation_id": "GET_TerminateInstances"},
+  {"name": "stop",      "sql_verb": "exec",   "operation_id": "GET_StopInstances"}
+]
+```
+
+An address is `<provider>.<service>.<resource>`. The AWS bundle has 232 services and 400 addressable
+exchanges — a resource is addressable only if its SELECT is backed by an **operation**. Many
+`cloud_control` resources define SELECT as a SQL **view** instead, and those say so rather than
+appearing and then failing:
+
+```
+stackqldoc: resource "buckets" declares no select verb
+```
+
+### Run
 
 ```bash
 source cicd/vol/vendor-secrets/secrets.sh
 
-_now="$(date +%s)" && ./build/omnicli doc-select \
-  pkg/docparse/stackqldoc/testdata/ec2.yaml instances \
-  --aws-region "ap-southeast-2" \
+_now="$(date +%s)" && ./build/omnicli doc-run $D aws.ec2.instances \
+  --aws-region "${_AWS_REGION}" \
   --out "./cicd/out/doc-instances-${_now}.jsonl" --log "./cicd/out/doc-instances-${_now}.log"
 ```
 
-Credentials are never optional when the document declares signing — an unsigned request is not a
-fallback:
+Signing is **implicit**: `provider.yaml` declares `config.auth.type: aws_signing_v4`, so SigV4 is
+applied to every call in the bundle — region from `--aws-region`, service from the document's own
+host. Credentials are never optional, and an unsigned request is not a fallback:
 
 ```
 omnicli: docx: exchange "instances" declares aws.sigv4 ("hmac") but no credentials were supplied
 ```
 
-A SELECT over an empty set is zero rows, not a row of bare inputs. `--endpoint` retargets the
-document's server (keeping each operation's path) so a document runs against a mock unedited.
+`--endpoint` retargets the document's server (keeping each operation's path), so a bundle runs against
+a mock unedited.
 
-Known gap: **one page only.** The document reads its next-page token from `$.next_page_token` — the
-*transformed* body — while the HTTP layer's continuation reads the decoded wire response. Bridging
-those is the next piece.
+### Memory
+
+Documents never outlive planning. A document is parsed, its exchange resolved, and the document
+dropped; a resolved exchange is self-contained (~7 KB of templates and programs). So a query spanning
+several services and providers costs one exchange each, not one document each — 20 methods ≈ 140 KB,
+whatever the documents weighed. Execution holds no documents at all.
+
+### Known gaps
+
+- **Rows only where `objectKey` is declared** (244 of the methods). Where it is absent the row path
+  lives in the response schema at `openAPIDocKey`, which is not walked yet — those return one row of
+  the whole response envelope.
+- **One page only.** The document reads its next-page token from the *transformed* body
+  (`$.next_page_token`) while the HTTP layer's continuation reads the decoded wire response.
+- **Listing parses documents.** Browsing is correct but re-parses to enumerate; the metadata is a few
+  hundred KB and wants an index.
 
 ## Generic DTO command
 

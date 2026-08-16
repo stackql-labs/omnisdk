@@ -35,7 +35,7 @@ var testCreds = docx.WithAWSCredentials(awsv4.Credentials{AccessKeyID: "AK", Sec
 
 func doc(t *testing.T) []byte {
 	t.Helper()
-	b, err := os.ReadFile("../../../../pkg/docparse/stackqldoc/testdata/ec2.yaml")
+	b, err := os.ReadFile("../../../../pkg/docparse/stackqldoc/testdata/services/ec2.yaml")
 	if err != nil {
 		t.Fatal(err)
 	}

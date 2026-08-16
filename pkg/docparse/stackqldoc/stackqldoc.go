@@ -27,6 +27,8 @@ type Doc interface {
 	// Select returns the exchange backing a resource's SELECT verb. A resource with no SELECT is an
 	// error — a real answer about the provider, not an empty result.
 	Select(resource string) (aot.AOTExchange, error)
+	// Methods are a resource's methods with the SQL verb each is mapped to, sorted.
+	Methods(resource string) ([]aot.Method, error)
 }
 
 // Parse reads a stackql provider document.
@@ -44,9 +46,11 @@ func Parse(b []byte) (Doc, error) {
 // ---- document shape (only the parts an exchange needs) ----------------------
 
 type document struct {
-	Servers    []server                     `yaml:"servers"`
-	Paths      map[string]map[string]pathOp `yaml:"paths"`
-	Security   []map[string][]string        `yaml:"security"`
+	Servers []server `yaml:"servers"`
+	// A path item holds verbs alongside non-operation keys (an OpenAPI path-level `parameters`
+	// list, vendor extensions), so verbs are decoded on demand rather than assumed.
+	Paths      map[string]map[string]yaml.Node `yaml:"paths"`
+	Security   []map[string][]string           `yaml:"security"`
 	Components struct {
 		Resources       map[string]resource       `yaml:"x-stackQL-resources"`
 		SecuritySchemes map[string]securityScheme `yaml:"securitySchemes"`
@@ -157,15 +161,65 @@ func (d *document) Select(name string) (aot.AOTExchange, error) {
 	if !ok {
 		return nil, fmt.Errorf("stackqldoc: resource %q method %q: no path %q", name, mName, path)
 	}
-	op, ok := ops[verb]
+	node, ok := ops[verb]
 	if !ok {
 		return nil, fmt.Errorf("stackqldoc: resource %q method %q: path %q has no %q", name, mName, path, verb)
+	}
+	var op pathOp
+	if err := node.Decode(&op); err != nil {
+		return nil, fmt.Errorf("stackqldoc: resource %q method %q: decode %s %s: %w", name, mName, verb, path, err)
 	}
 	if len(d.Servers) == 0 {
 		return nil, fmt.Errorf("stackqldoc: document declares no servers")
 	}
 	return d.build(name, verb, path, op, m), nil
 }
+
+// Methods lists a resource's methods and the verb each is bound to. The verb comes from sqlVerbs,
+// which points at methods by $ref — so the mapping is read the same way SELECT is resolved, and a
+// method the document maps to nothing is reported as exactly that rather than omitted.
+func (d *document) Methods(name string) ([]aot.Method, error) {
+	res, ok := d.Components.Resources[name]
+	if !ok {
+		return nil, fmt.Errorf("stackqldoc: no resource %q", name)
+	}
+	verbOf := map[string]string{}
+	for verb, refs := range res.SQLVerbs {
+		for _, r := range refs {
+			verbOf[lastSegment(r.Ref)] = verb
+		}
+	}
+	out := make([]aot.Method, 0, len(res.Methods))
+	for mName, m := range res.Methods {
+		out = append(out, methodInfo{name: mName, verb: verbOf[mName], opID: d.operationID(m)})
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Name() < out[j].Name() })
+	return out, nil
+}
+
+// operationID resolves a method's backing operation id, empty when it cannot be resolved — a listing
+// must not fail because one method's pointer is broken.
+func (d *document) operationID(m method) string {
+	path, verb, err := splitOperationRef(m.Operation.Ref)
+	if err != nil {
+		return ""
+	}
+	node, ok := d.Paths[path][verb]
+	if !ok {
+		return ""
+	}
+	var op pathOp
+	if err := node.Decode(&op); err != nil {
+		return ""
+	}
+	return op.OperationID
+}
+
+type methodInfo struct{ name, verb, opID string }
+
+func (m methodInfo) Name() string        { return m.name }
+func (m methodInfo) SQLVerb() string     { return m.verb }
+func (m methodInfo) OperationID() string { return m.opID }
 
 // build turns a resolved (server, path, operation, method) into an AOT exchange.
 func (d *document) build(name, verb, path string, op pathOp, m method) aot.AOTExchange {

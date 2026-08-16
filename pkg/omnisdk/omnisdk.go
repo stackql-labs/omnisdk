@@ -42,6 +42,7 @@ import (
 	"github.com/stackql-labs/omnisdk/internal/system_g/trace"
 	"github.com/stackql-labs/omnisdk/pkg/docparse/dsl"
 	"github.com/stackql-labs/omnisdk/pkg/docparse/dsl/gotemplate"
+	"github.com/stackql-labs/omnisdk/pkg/docparse/stackqldoc"
 )
 
 // Auth is the caller-supplied authentication config (a pared, stackql-shaped auth struct). It is the
@@ -767,24 +768,105 @@ func NewFromDoc(doc []byte, resource string, args Args) (Plan, error) {
 	if err != nil {
 		return nil, err
 	}
-	opts := []docx.Option{}
-	if args.Endpoint != "" {
-		opts = append(opts, docx.WithBaseURL(args.Endpoint))
-	}
-	// AWS credentials resolve exactly as they do for a catalog method; a document that declares SigV4
-	// but finds no credentials fails at plan time rather than sending an unsigned request.
-	if creds, err := awsCreds(args); err == nil {
-		opts = append(opts, docx.WithAWSCredentials(creds))
-	}
-	inputs := map[string]any{}
-	for k, v := range args.Params {
-		inputs[k] = v
-	}
-	pl, err := docx.SelectPlan(doc, resource, inputs, reg, opts...)
+	pl, err := docx.SelectPlan(doc, resource, docInputs(args), reg, docOptions(args)...)
 	if err != nil {
 		return nil, err
 	}
 	return &cannedPlan{plan: pl, args: args}, nil
+}
+
+// DocCatalog lists a provider BUNDLE (a directory holding provider.yaml and its services/): the
+// services whose documents are present, and every addressable exchange. An address is
+// "<provider>.<service>.<resource>". The provider lists more services than any bundle ships, and only
+// the present ones are addressable.
+func DocCatalog(dir string) (services []string, addresses []string, err error) {
+	c, err := stackqldoc.Open(os.DirFS(dir))
+	if err != nil {
+		return nil, nil, err
+	}
+	return c.Services(), c.Paths(), nil
+}
+
+// DocResources lists a service's resources — every one it declares, not only those with a runnable
+// SELECT.
+func DocResources(dir, service string) ([]string, error) {
+	c, err := stackqldoc.Open(os.DirFS(dir))
+	if err != nil {
+		return nil, err
+	}
+	return c.Resources(service)
+}
+
+// DocMethod is a method as a document declares it: its name, the SQL verb it is bound to (empty when
+// none), and the operation behind it.
+type DocMethod struct {
+	Name        string `json:"name"`
+	SQLVerb     string `json:"sql_verb,omitempty"`
+	OperationID string `json:"operation_id,omitempty"`
+}
+
+// DocMethods lists a resource's methods.
+func DocMethods(dir, service, resource string) ([]DocMethod, error) {
+	c, err := stackqldoc.Open(os.DirFS(dir))
+	if err != nil {
+		return nil, err
+	}
+	ms, err := c.Methods(service, resource)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]DocMethod, len(ms))
+	for i, m := range ms {
+		out[i] = DocMethod{Name: m.Name(), SQLVerb: m.SQLVerb(), OperationID: m.OperationID()}
+	}
+	return out, nil
+}
+
+// NewFromCatalog plans one addressed exchange out of a provider bundle. Same Plan a catalog method
+// returns, so a consumer runs it identically.
+func NewFromCatalog(dir, address string, args Args) (Plan, error) {
+	if err := checkEndpoint(args); err != nil {
+		return nil, err
+	}
+	c, err := stackqldoc.Open(os.DirFS(dir))
+	if err != nil {
+		return nil, err
+	}
+	ex, err := c.Exchange(address)
+	if err != nil {
+		return nil, err
+	}
+	reg, err := dsl.NewRegistry(gotemplate.Evaluators()...)
+	if err != nil {
+		return nil, err
+	}
+	pl, err := docx.PlanFor(ex, docInputs(args), reg, docOptions(args)...)
+	if err != nil {
+		return nil, err
+	}
+	return &cannedPlan{plan: pl, args: args}, nil
+}
+
+// docInputs are the caller's params as κ inputs.
+func docInputs(args Args) map[string]any {
+	out := map[string]any{}
+	for k, v := range args.Params {
+		out[k] = v
+	}
+	return out
+}
+
+// docOptions carry the endpoint override and AWS credentials, resolved exactly as for a catalog
+// method — a document that declares signing but finds no credentials fails at plan time.
+func docOptions(args Args) []docx.Option {
+	var opts []docx.Option
+	if args.Endpoint != "" {
+		opts = append(opts, docx.WithBaseURL(args.Endpoint))
+	}
+	if creds, err := awsCreds(args); err == nil {
+		opts = append(opts, docx.WithAWSCredentials(creds))
+	}
+	return opts
 }
 
 // authOf returns args.Auth, or a zero Auth when none was supplied — so resolution always reads from a

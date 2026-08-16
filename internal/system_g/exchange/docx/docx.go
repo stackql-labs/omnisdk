@@ -78,13 +78,19 @@ func SelectPlan(doc []byte, resource string, inputs map[string]any, reg dsl.Regi
 	if err != nil {
 		return nil, err
 	}
+	return PlanFor(ex, inputs, reg, opts...)
+}
+
+// PlanFor builds a plan from an already-resolved exchange — the path a catalog takes, where the
+// address has already done the resolving.
+func PlanFor(ex aot.AOTExchange, inputs map[string]any, reg dsl.Registry, opts ...Option) (plan.Plan, error) {
 	spec, err := Spec(ex, reg, opts...)
 	if err != nil {
 		return nil, err
 	}
 	for _, in := range ex.Inputs() {
 		if v, ok := inputs[in]; !ok || v == "" {
-			return nil, fmt.Errorf("docx: resource %q requires input %q", resource, in)
+			return nil, fmt.Errorf("docx: exchange %q requires input %q", ex.Name(), in)
 		}
 	}
 	return plan.NewPlan([]plan.ExchangeSpec{spec}, nil, nil, inputs, nil, encoder.NewJSONLEncoder()), nil
@@ -104,10 +110,8 @@ func Spec(ex aot.AOTExchange, reg dsl.Registry, opts ...Option) (plan.ExchangeSp
 	if _, ok := reg.Get(tr.Type()); !ok {
 		return nil, fmt.Errorf("docx: exchange %q needs evaluator %q (have: %v)", ex.Name(), tr.Type(), reg.Types())
 	}
-	rowPath := itemPath(resp.ObjectKey())
-	if rowPath == "" {
-		return nil, fmt.Errorf("docx: exchange %q declares no objectKey", ex.Name())
-	}
+	// The document states where the rows are, in one of two syntaxes it uses interchangeably.
+	rowPath := parseObjectKey(resp.ObjectKey())
 
 	url := retarget(req.URL(), o.baseURL)
 	hreq := httpx.Request{Method: req.Method(), URL: url}
@@ -175,37 +179,81 @@ func (t programTransform) Apply(in facade.Page) (facade.Record, error) {
 	}), nil
 }
 
-// itemsAt lifts the document's item list out of the program's output. Unlike a column projection it
-// selects nothing: the document's program has ALREADY decided each item's shape, so imposing a column
-// list here would silently drop fields it chose to emit.
-func itemsAt(path string) facade.Transform { return items{path: path} }
+// parseObjectKey reads a declared objectKey into steps. The corpus uses two syntaxes and they are
+// distinguishable by their first character: "$" is JSONPath ($.line_items), "/" is XPath
+// (/*/vpcSet/item), and empty means the root. "*" is the XPath wildcard for the single root element.
+func parseObjectKey(key string) []string {
+	k := strings.TrimSpace(key)
+	switch {
+	case k == "":
+		return nil
+	case strings.HasPrefix(k, "$"):
+		return splitNonEmpty(strings.TrimPrefix(k, "$"), ".")
+	default:
+		return splitNonEmpty(k, "/")
+	}
+}
 
-type items struct{ path string }
+func splitNonEmpty(s, sep string) []string {
+	var out []string
+	for _, p := range strings.Split(s, sep) {
+		if p != "" {
+			out = append(out, p)
+		}
+	}
+	return out
+}
+
+// itemsAt lifts the document's rows out of the program's output. It selects no columns: the
+// document's program has ALREADY decided each item's shape, so imposing a column list would silently
+// drop fields it chose to emit. Cardinality is whatever the path lands on — an array is many rows, an
+// object is one. That too is the document's statement, not a guess: /*/vpcSet/item names a repeated
+// element, /*/GetAccountSummaryResult names a single one.
+func itemsAt(steps []string) facade.Transform { return items{steps: steps} }
+
+type items struct{ steps []string }
 
 func (t items) Apply(in facade.Page) (facade.Record, error) {
 	doc, ok := in.Doc(facade.AnonymousPayload)
 	if !ok {
 		return nil, fmt.Errorf("docx: transformed body is not an agnostic document")
 	}
-	m, ok := doc.(map[string]any)
-	if !ok {
-		return nil, fmt.Errorf("docx: transformed body is not a map")
+	cur := doc
+	for _, step := range t.steps {
+		if cur == nil {
+			break
+		}
+		m, isMap := cur.(map[string]any)
+		if !isMap {
+			cur = nil
+			break
+		}
+		if step == "*" {
+			// The XPath wildcard addresses the single root element, which is what an XML document
+			// always has exactly one of.
+			if len(m) != 1 {
+				cur = nil
+				break
+			}
+			for _, v := range m {
+				cur = v
+			}
+			continue
+		}
+		cur = m[step]
 	}
-	list, ok := m[t.path].([]any)
-	if !ok {
-		// A page with no items is an answer, not a failure.
-		return record.NewRecord(map[string]facade.Value{
-			facade.AnonymousPayload: value.NewDocValue([]any{}),
-		}), nil
+	switch v := cur.(type) {
+	case []any:
+		return docRecord(v), nil
+	case map[string]any:
+		return docRecord([]any{v}), nil // a single element is one row
+	default:
+		return docRecord([]any{}), nil // absent is an answer, not a failure
 	}
-	return record.NewRecord(map[string]facade.Value{
-		facade.AnonymousPayload: value.NewDocValue(list),
-	}), nil
 }
 
-// itemPath strips the JSONPath root from a declared objectKey ("$.line_items" → "line_items").
-func itemPath(objectKey string) string {
-	return strings.TrimPrefix(strings.TrimPrefix(objectKey, "$"), ".")
+func docRecord(list []any) facade.Record {
+	return record.NewRecord(map[string]facade.Value{facade.AnonymousPayload: value.NewDocValue(list)})
 }
 
 // serviceOf is the AWS service a host names (ec2.{region}.amazonaws.com → "ec2"), which SigV4 signs

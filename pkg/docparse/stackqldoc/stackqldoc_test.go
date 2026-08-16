@@ -10,7 +10,7 @@ import (
 
 func load(t *testing.T) stackqldoc.Doc {
 	t.Helper()
-	b, err := os.ReadFile("testdata/ec2.yaml")
+	b, err := os.ReadFile("testdata/services/ec2.yaml")
 	if err != nil {
 		t.Fatal(err)
 	}

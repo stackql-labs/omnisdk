@@ -24,7 +24,7 @@ func registry(t *testing.T) dsl.Registry {
 // EC2-shaped XML, and get the document's own JSON shape out. Nothing here is a fixture program —
 // it is read straight from ec2.yaml.
 func TestDocumentsOwnResponseProgram(t *testing.T) {
-	b, err := os.ReadFile("../../stackqldoc/testdata/ec2.yaml")
+	b, err := os.ReadFile("../../stackqldoc/testdata/services/ec2.yaml")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -85,7 +85,7 @@ func TestDocumentsOwnResponseProgram(t *testing.T) {
 // A single XML element decodes to a scalar, not a one-element slice — the ambiguity the documents
 // branch on with kindOf. The same program must handle it.
 func TestSingleItemIsNotASlice(t *testing.T) {
-	b, _ := os.ReadFile("../../stackqldoc/testdata/ec2.yaml")
+	b, _ := os.ReadFile("../../stackqldoc/testdata/services/ec2.yaml")
 	doc, err := stackqldoc.Parse(b)
 	if err != nil {
 		t.Fatal(err)
