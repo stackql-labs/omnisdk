@@ -242,13 +242,30 @@ stackqldoc: resource "buckets" declares no select verb
 
 ### Run
 
+`doc-run <dir> <address> [args-json]`. The args JSON is the same `omnisdk.Args` the `run` command
+takes; `--aws-region` fills in `region` when the JSON omits it.
+
 ```bash
 source cicd/vol/vendor-secrets/secrets.sh
+R=test/corpus/registry            # or ~/.stackql/src
 
-_now="$(date +%s)" && ./build/omnicli doc-run $D stackql_unstable_aws.ec2.instances \
+# AWS — signed with SigV4, per the provider document
+_now="$(date +%s)" && ./build/omnicli doc-run $R stackql_unstable_aws.ec2.instances \
   --aws-region "${_AWS_REGION}" \
   --out "./cicd/out/doc-instances-${_now}.jsonl" --log "./cicd/out/doc-instances-${_now}.log"
+
+# Google — service-account key exchanged for an access token, per the provider document
+_now="$(date +%s)" && ./build/omnicli doc-run $R stackql_unstable_google.storage.buckets \
+  '{"params":{"project":"'"${_GOOGLE_PROJECT_ID}"'"}}' \
+  --out "./cicd/out/doc-buckets-${_now}.jsonl" --log "./cicd/out/doc-buckets-${_now}.log"
 ```
+
+Auth is whatever the provider document declares — `aws_signing_v4` signs the request,
+`service_account` adds a token exchange to the plan and binds its bearer into the call. Credentials
+are never optional: a document that declares a scheme and finds no credentials fails at plan time.
+
+Implemented so far: `aws_signing_v4`, `service_account`. Not yet: `oauth2` (entra_id),
+`azure_default`, `custom` (api key).
 
 Signing is **implicit**: `provider.yaml` declares `config.auth.type: aws_signing_v4`, so SigV4 is
 applied to every call in the bundle — region from `--aws-region`, service from the document's own

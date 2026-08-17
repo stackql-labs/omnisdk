@@ -22,14 +22,29 @@ func OpenRegistry(fsys fs.FS, opts ...Option) (aot.Registry, error) {
 	if err != nil {
 		return nil, fmt.Errorf("stackqldoc: open registry: %w", err)
 	}
-	r := &registry{fsys: fsys, versions: map[string]string{}, catalogs: map[string]aot.Catalog{}, opts: opts, prefix: resolveSettings(opts).prefix}
+	r := &registry{
+		fsys: fsys, versions: map[string]string{}, dirs: map[string]string{},
+		catalogs: map[string]aot.Catalog{}, opts: opts, prefix: resolveSettings(opts).prefix,
+	}
 	for _, e := range entries {
 		if !e.IsDir() {
 			continue
 		}
-		if v, ok := latestVersion(fsys, e.Name()); ok {
-			r.versions[e.Name()] = v
+		v, ok := latestVersion(fsys, e.Name())
+		if !ok {
+			continue
 		}
+		r.versions[e.Name()] = v
+		// A provider is addressed by the name it DECLARES, which is not always its directory:
+		// googleapis.com/ declares itself "google", and its resources' own ids say google too.
+		// Addressing by directory would name something the documents never call it.
+		name := e.Name()
+		if b, err := fs.ReadFile(fsys, e.Name()+"/"+v+"/provider.yaml"); err == nil {
+			if p, err := ParseProvider(b); err == nil && p.Name() != "" {
+				name = p.Name()
+			}
+		}
+		r.dirs[name] = e.Name()
 	}
 	if len(r.versions) == 0 {
 		return nil, fmt.Errorf("stackqldoc: no providers under registry root " +
@@ -64,7 +79,8 @@ func latestVersion(fsys fs.FS, provider string) (string, bool) {
 
 type registry struct {
 	fsys     fs.FS
-	versions map[string]string
+	versions map[string]string // directory → version
+	dirs     map[string]string // declared provider name → directory
 	opts     []Option
 	prefix   string
 
@@ -76,20 +92,38 @@ type registry struct {
 // package should have to know a directory is called "aws" while its addresses say
 // "stackql_preview_aws".
 func (r *registry) Providers() []string {
-	out := make([]string, 0, len(r.versions))
-	for p := range r.versions {
-		out = append(out, r.prefix+p)
+	out := make([]string, 0, len(r.dirs))
+	for name := range r.dirs {
+		out = append(out, r.prefix+name)
 	}
 	sort.Strings(out)
 	return out
 }
 
 func (r *registry) Version(provider string) (string, bool) {
-	v, ok := r.versions[r.dirName(provider)]
+	dir, ok := r.dirs[r.dirName(provider)]
+	if !ok {
+		return "", false
+	}
+	v, ok := r.versions[dir]
 	return v, ok
 }
 
-// dirName maps a namespaced provider back to its directory. Accepting the bare name too means a
+// providerOf finds which provider an address names. A provider name may itself contain dots
+// (googleapis.com), so the FIRST dot is not the boundary — the longest declared name that the address
+// starts with is.
+func (r *registry) providerOf(address string) (string, bool) {
+	best := ""
+	for name := range r.dirs {
+		full := r.prefix + name
+		if strings.HasPrefix(address, full+".") && len(full) > len(best) {
+			best = full
+		}
+	}
+	return best, best != ""
+}
+
+// dirName maps a namespaced provider back to its declared name. Accepting the bare name too means a
 // caller browsing the filesystem is not punished for it.
 func (r *registry) dirName(provider string) string {
 	return strings.TrimPrefix(provider, r.prefix)
@@ -101,11 +135,21 @@ func (r *registry) Catalog(provider string) (aot.Catalog, error) {
 	if c, ok := r.catalogs[r.dirName(provider)]; ok {
 		return c, nil
 	}
-	dir := r.dirName(provider)
-	version, ok := r.versions[dir]
+	name := r.dirName(provider)
+	dir, ok := r.dirs[name]
 	if !ok {
-		return nil, fmt.Errorf("stackqldoc: no provider %q in registry (have %d)", provider, len(r.versions))
+		// Callers reach for a catalog by provider name, but often hold a full address; resolving one
+		// from the other here saves every caller re-deriving where the provider name ends.
+		if full, found := r.providerOf(provider); found {
+			name = r.dirName(full)
+			dir, ok = r.dirs[name]
+		}
 	}
+	if !ok {
+		return nil, fmt.Errorf("stackqldoc: no provider %q in registry (have %d: %v)",
+			provider, len(r.dirs), r.Providers())
+	}
+	version := r.versions[dir]
 	sub, err := fs.Sub(r.fsys, dir+"/"+version)
 	if err != nil {
 		return nil, err
@@ -121,9 +165,10 @@ func (r *registry) Catalog(provider string) (aot.Catalog, error) {
 }
 
 func (r *registry) Exchange(address string) (aot.AOTExchange, error) {
-	provider, _, ok := strings.Cut(address, ".")
+	provider, ok := r.providerOf(address)
 	if !ok {
-		return nil, fmt.Errorf("stackqldoc: address %q is not <provider>.<service>.<resource>", address)
+		return nil, fmt.Errorf("stackqldoc: address %q names no provider in this registry (have %v)",
+			address, r.Providers())
 	}
 	c, err := r.Catalog(provider)
 	if err != nil {

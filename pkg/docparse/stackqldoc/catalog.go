@@ -125,9 +125,7 @@ func (c *catalog) Exchanges(addr string) ([]aot.AOTExchange, error) {
 	if err != nil {
 		return nil, err
 	}
-	if prov != c.prefix+c.provider.Name() {
-		return nil, fmt.Errorf("stackqldoc: address %q is not for provider %q", addr, c.prefix+c.provider.Name())
-	}
+	_ = prov
 	doc, err := c.doc(svc)
 	if err != nil {
 		return nil, err
@@ -157,14 +155,20 @@ func (c *catalog) address(service, resource string) string {
 	return c.prefix + c.provider.Name() + "." + service + "." + resource
 }
 
-// split parses an address. A resource name may itself contain dots, so only the first two segments
-// are fixed.
+// split parses an address against THIS catalog's provider. A provider name may contain dots
+// (googleapis.com declares itself "google", but another may not), so the provider is matched by
+// prefix rather than by counting segments.
 func (c *catalog) split(addr string) (provider, service, resource string, err error) {
-	parts := strings.SplitN(addr, ".", 3)
-	if len(parts) != 3 || parts[0] == "" || parts[1] == "" || parts[2] == "" {
+	full := c.prefix + c.provider.Name()
+	rest, ok := strings.CutPrefix(addr, full+".")
+	if !ok {
+		return "", "", "", fmt.Errorf("stackqldoc: address %q is not for provider %q", addr, full)
+	}
+	service, resource, ok = strings.Cut(rest, ".")
+	if !ok || service == "" || resource == "" {
 		return "", "", "", fmt.Errorf("stackqldoc: address %q is not <provider>.<service>.<resource>", addr)
 	}
-	return parts[0], parts[1], parts[2], nil
+	return full, service, resource, nil
 }
 
 // doc reads and parses a service document, retaining nothing. The caller keeps what it resolved, not

@@ -85,6 +85,8 @@ func (p *provider) Security() aot.Security {
 	switch strings.ToLower(t) {
 	case "aws_signing_v4":
 		return security{scheme: aot.SchemeAWSSigV4, name: t}
+	case "service_account":
+		return security{scheme: aot.SchemeServiceAccount, name: t}
 	default:
 		return security{name: t}
 	}

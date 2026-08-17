@@ -38,6 +38,8 @@ const (
 	SchemeNone Scheme = ""
 	// SchemeAWSSigV4 is AWS Signature V4 request signing.
 	SchemeAWSSigV4 Scheme = "aws.sigv4"
+	// SchemeServiceAccount is a Google service-account key exchanged for an OAuth access token.
+	SchemeServiceAccount Scheme = "google.service_account"
 )
 
 // Security is the declared authentication for a call.

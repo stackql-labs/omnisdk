@@ -21,6 +21,7 @@ import (
 	"github.com/stackql-labs/omnisdk/internal/system_g/bind"
 	encoder "github.com/stackql-labs/omnisdk/internal/system_g/endec"
 	"github.com/stackql-labs/omnisdk/internal/system_g/exchange"
+	"github.com/stackql-labs/omnisdk/internal/system_g/exchange/sdk"
 	"github.com/stackql-labs/omnisdk/internal/system_g/facade"
 	"github.com/stackql-labs/omnisdk/internal/system_g/httpx"
 	"github.com/stackql-labs/omnisdk/internal/system_g/plan"
@@ -41,6 +42,14 @@ type options struct {
 	signer   facade.Transform
 	noSign   bool
 	security aot.Security
+	gcpCreds *sdk.GCPCredentials
+}
+
+// WithGoogleCredentials supplies the service-account key for documents that declare service_account
+// auth. As with SigV4, the document says a call is authenticated; whose identity it uses stays an
+// explicit caller decision.
+func WithGoogleCredentials(c sdk.GCPCredentials) Option {
+	return func(o *options) { o.gcpCreds = &c }
 }
 
 // WithProviderSecurity supplies the scheme the PROVIDER document declares. Auth is stated once for a
@@ -96,6 +105,15 @@ func PlanFor(ex aot.AOTExchange, inputs map[string]any, reg dsl.Registry, opts .
 	if err != nil {
 		return nil, err
 	}
+	specs := []plan.ExchangeSpec{spec}
+	var betas []plan.BetaEdge
+	if c, ok := spec.(compiled); ok && c.auth != nil {
+		// The token exchange runs FIRST and its {token} flows to the call, exactly as a hand-authored
+		// plan wires it.
+		specs = []plan.ExchangeSpec{c.auth, c.spec}
+		betas = append(betas, plan.NewBetaEdge(c.auth.Name(), c.spec.Name(), "token", "token"))
+		inputs["assertion"] = c.assertion
+	}
 	for _, in := range ex.Inputs() {
 		if v, ok := inputs[in]; !ok || v == "" {
 			return nil, fmt.Errorf("docx: exchange %q requires input %q", ex.Name(), in)
@@ -110,7 +128,10 @@ func PlanFor(ex aot.AOTExchange, inputs map[string]any, reg dsl.Registry, opts .
 				ex.Name(), p.Name(), p.In())
 		}
 	}
-	return plan.NewPlan([]plan.ExchangeSpec{spec}, nil, nil, inputs, nil, encoder.NewJSONLEncoder()), nil
+	// Auth κ inputs are plumbing, not data: a signed assertion and a bearer token travel on the row so
+	// the exchanges can bind them, and emitting them would put a live credential in every result.
+	return plan.NewPlan(specs, betas, nil, inputs,
+		[]facade.Transform{dropKeys{"assertion", "token"}}, encoder.NewJSONLEncoder()), nil
 }
 
 // Spec compiles one AOT exchange into the engine's exchange declaration. inputs are the values the
@@ -194,9 +215,33 @@ func Spec(ex aot.AOTExchange, inputs map[string]any, reg dsl.Registry, opts ...O
 	// silently skipped — a declared scheme with no way to satisfy it is an error, not a plain request.
 	service := serviceOf(req.URL())
 	sec := effectiveSecurity(ex.Security(), o.security)
-	if sec.Scheme() == aot.SchemeAWSSigV4 && !o.noSign && o.signer == nil && o.creds.AccessKeyID == "" {
-		return nil, fmt.Errorf("docx: exchange %q declares %s (%q) but no credentials were supplied",
-			ex.Name(), sec.Scheme(), sec.Name())
+	if !o.noSign && o.signer == nil {
+		switch sec.Scheme() {
+		case aot.SchemeAWSSigV4:
+			if o.creds.AccessKeyID == "" {
+				return nil, fmt.Errorf("docx: exchange %q declares %s (%q) but no credentials were supplied",
+					ex.Name(), sec.Scheme(), sec.Name())
+			}
+		case aot.SchemeServiceAccount:
+			if o.gcpCreds == nil {
+				return nil, fmt.Errorf("docx: exchange %q declares %s (%q) but no credentials were supplied",
+					ex.Name(), sec.Scheme(), sec.Name())
+			}
+		}
+	}
+
+	// A service account authenticates by TOKEN EXCHANGE, not by signing the request: the key buys an
+	// access token, which every call then carries. That is an extra exchange in the plan rather than a
+	// request transform, which is why it is built here and not alongside the signer.
+	var authSpec plan.ExchangeSpec
+	var assertion string
+	if sec.Scheme() == aot.SchemeServiceAccount && o.gcpCreds != nil && !o.noSign {
+		authSpec, assertion = sdk.GCPOAuthSpec(o.baseURL, *o.gcpCreds, googleScope)
+		if hreq.Headers == nil {
+			hreq.Headers = map[string]string{}
+		}
+		hreq.Headers["Authorization"] = "Bearer {token}"
+		bindings = withInput(bindings, "token")
 	}
 
 	// SigV4 always signs into a region, but a GLOBAL service (iam.amazonaws.com) declares no {region}
@@ -206,7 +251,7 @@ func Spec(ex aot.AOTExchange, inputs map[string]any, reg dsl.Registry, opts ...O
 		bindings = withInput(bindings, "region")
 	}
 
-	return plan.NewExchangeSpec(ex.Name(), bindings, nil, func(bound map[string]any) facade.Operator {
+	spec := plan.NewExchangeSpec(ex.Name(), bindings, nil, func(bound map[string]any) facade.Operator {
 		var reqT []facade.Transform
 		switch {
 		case o.noSign:
@@ -230,8 +275,52 @@ func Spec(ex aot.AOTExchange, inputs map[string]any, reg dsl.Registry, opts ...O
 		return exchange.NewExplodeRows(listed, 1)
 		// INNER, not left-outer: this is a SELECT, and an empty result set is zero rows. A left-outer
 		// would emit one row of bare inputs, which reads as "one instance with no fields".
-	}, bind.NewInnerFlatten()), nil
+	}, bind.NewInnerFlatten())
+	if authSpec != nil {
+		return compiled{spec: spec, auth: authSpec, assertion: assertion}, nil
+	}
+	return compiled{spec: spec}, nil
 }
+
+// compiled carries an exchange plus the auth exchange it depends on, so PlanFor can wire both into
+// one plan. A token exchange is part of the plan, not of the request.
+type compiled struct {
+	spec      plan.ExchangeSpec
+	auth      plan.ExchangeSpec
+	assertion string
+}
+
+func (c compiled) Name() string                              { return c.spec.Name() }
+func (c compiled) In() []string                              { return c.spec.In() }
+func (c compiled) Out() []string                             { return c.spec.Out() }
+func (c compiled) Make(bound map[string]any) facade.Operator { return c.spec.Make(bound) }
+func (c compiled) Flatten() facade.Transform                 { return c.spec.Flatten() }
+
+// dropKeys removes named attributes on the way out.
+type dropKeys []string
+
+func (d dropKeys) Apply(in facade.Page) (facade.Record, error) {
+	doc, ok := in.Doc(facade.AnonymousPayload)
+	if !ok {
+		return nil, nil
+	}
+	m, ok := doc.(map[string]any)
+	if !ok {
+		return record.NewRecord(map[string]facade.Value{facade.AnonymousPayload: value.NewDocValue(doc)}), nil
+	}
+	out := make(map[string]any, len(m))
+	for k, v := range m {
+		out[k] = v
+	}
+	for _, k := range d {
+		delete(out, k)
+	}
+	return record.NewRecord(map[string]facade.Value{facade.AnonymousPayload: value.NewDocValue(out)}), nil
+}
+
+// googleScope is the read scope a document-compiled Google call requests. The documents do not state
+// one, and cloud-platform.read-only is the least that serves a SELECT.
+const googleScope = "https://www.googleapis.com/auth/cloud-platform.read-only"
 
 // program runs a declared body program over the raw response, replacing the payload with its output.
 // It is the only place a document's embedded language touches the engine.

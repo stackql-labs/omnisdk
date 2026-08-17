@@ -935,7 +935,7 @@ func openDocs(dir, address string) (aot.Catalog, error) {
 	if err != nil {
 		return nil, err
 	}
-	provider, _, _ := strings.Cut(address, ".")
+	provider := address
 	if provider == "" {
 		return nil, fmt.Errorf("omnisdk: %q holds %d providers — name one, e.g. %q",
 			dir, len(reg.Providers()), firstOr(reg.Providers()))
@@ -1109,6 +1109,9 @@ func docOptions(args Args) []docx.Option {
 	}
 	if creds, err := awsCreds(args); err == nil {
 		opts = append(opts, docx.WithAWSCredentials(creds))
+	}
+	if creds, err := gcpCreds(args); err == nil {
+		opts = append(opts, docx.WithGoogleCredentials(creds))
 	}
 	return opts
 }
