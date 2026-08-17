@@ -1,0 +1,2486 @@
+openapi: 3.0.0
+servers:
+  - url: https://management.azure.com/
+info:
+  title: Azure Maintenance
+  description: Maintenance configurations, assignments and apply-update controls behind Azure Update Manager.
+  contact:
+    name: StackQL Studios
+    url: https://stackql.io/
+    email: info@stackql.io
+  version: 2023-10-01-preview-stackql-generated
+  x-serviceAlias: maintenance
+  x-sdkPackage: azure-mgmt-maintenance
+  x-plane: mgmt
+security:
+  - azure_auth:
+      - user_impersonation
+components:
+  securitySchemes:
+    azure_auth:
+      description: Azure Active Directory OAuth2 Flow.
+      type: oauth2
+      flows:
+        implicit:
+          authorizationUrl: https://login.microsoftonline.com/common/oauth2/authorize
+          scopes:
+            user_impersonation: impersonate your user account
+  schemas:
+    SystemData:
+      type: object
+      description: Metadata pertaining to creation and last modification of the resource.
+      properties:
+        createdBy:
+          type: string
+          description: The identity that created the resource.
+        createdByType:
+          $ref: "#/components/schemas/CreatedByType"
+          description: 'The type of identity that created the resource. Known values are: "User", "Application", "ManagedIdentity", and "Key".'
+        createdAt:
+          type: string
+          format: date-time
+          description: The timestamp of resource creation (UTC).
+        lastModifiedBy:
+          type: string
+          description: The identity that last modified the resource.
+        lastModifiedByType:
+          $ref: "#/components/schemas/CreatedByType"
+          description: 'The type of identity that last modified the resource. Known values are: "User", "Application", "ManagedIdentity", and "Key".'
+        lastModifiedAt:
+          type: string
+          format: date-time
+          description: The timestamp of resource last modification (UTC).
+    CreatedByType:
+      type: string
+      enum:
+        - User
+        - Application
+        - ManagedIdentity
+        - Key
+    ApplyUpdateProperties:
+      type: object
+      description: Properties for apply update.
+      properties:
+        status:
+          $ref: "#/components/schemas/UpdateStatus"
+          description: 'The status. Known values are: "Pending", "InProgress", "Completed", "RetryNow", "RetryLater", "NoUpdatesPending", "Cancel", and "Cancelled".'
+        resourceId:
+          type: string
+          description: The resourceId.
+        lastUpdateTime:
+          type: string
+          format: date-time
+          description: Last Update time.
+    UpdateStatus:
+      type: string
+      enum:
+        - Pending
+        - InProgress
+        - Completed
+        - RetryNow
+        - RetryLater
+        - NoUpdatesPending
+        - Cancel
+        - Cancelled
+    ApplyUpdateFlattened:
+      type: object
+      description: Flattened view of ApplyUpdate ('properties' hoisted to the top level).
+      properties:
+        id:
+          type: string
+          description: Fully qualified resource ID for the resource. Ex - /subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/providers/{resourceProviderNamespace}/{resourceType}/{resourceName}.
+        name:
+          type: string
+          description: The name of the resource.
+        type:
+          type: string
+          description: The type of the resource. E.g. "Microsoft.Compute/virtualMachines" or "Microsoft.Storage/storageAccounts".
+        systemData:
+          $ref: "#/components/schemas/SystemData"
+          description: Azure Resource Manager metadata containing createdBy and modifiedBy information.
+        status:
+          $ref: "#/components/schemas/UpdateStatus"
+          description: 'The status. Known values are: "Pending", "InProgress", "Completed", "RetryNow", "RetryLater", "NoUpdatesPending", "Cancel", and "Cancelled".'
+        resourceId:
+          type: string
+          description: The resourceId.
+        lastUpdateTime:
+          type: string
+          format: date-time
+          description: Last Update time.
+    PagedApplyUpdateFlattened:
+      type: object
+      properties:
+        value:
+          type: array
+          items:
+            $ref: "#/components/schemas/ApplyUpdateFlattened"
+        nextLink:
+          type: string
+    ApplyUpdate:
+      type: object
+      description: Apply Update request.
+      properties:
+        id:
+          type: string
+          description: Fully qualified resource ID for the resource. Ex - /subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/providers/{resourceProviderNamespace}/{resourceType}/{resourceName}.
+        name:
+          type: string
+          description: The name of the resource.
+        type:
+          type: string
+          description: The type of the resource. E.g. "Microsoft.Compute/virtualMachines" or "Microsoft.Storage/storageAccounts".
+        systemData:
+          $ref: "#/components/schemas/SystemData"
+          description: Azure Resource Manager metadata containing createdBy and modifiedBy information.
+        properties:
+          $ref: "#/components/schemas/ApplyUpdateProperties"
+          description: Properties of the apply update.
+    ConfigurationAssignmentProperties:
+      type: object
+      description: Properties for configuration assignment.
+      properties:
+        maintenanceConfigurationId:
+          type: string
+          description: The maintenance configuration Id.
+        resourceId:
+          type: string
+          description: The unique resourceId.
+        filter:
+          $ref: "#/components/schemas/ConfigurationAssignmentFilterProperties"
+          description: Properties of the configuration assignment.
+    ConfigurationAssignmentFilterProperties:
+      type: object
+      description: Azure query for the update configuration.
+      properties:
+        resourceTypes:
+          type: array
+          items:
+            type: string
+          description: List of allowed resources.
+        resourceGroups:
+          type: array
+          items:
+            type: string
+          description: List of allowed resource groups.
+        osTypes:
+          type: array
+          items:
+            type: string
+          description: List of allowed operating systems.
+        locations:
+          type: array
+          items:
+            type: string
+          description: List of locations to scope the query to.
+        tagSettings:
+          $ref: "#/components/schemas/TagSettingsProperties"
+          description: Tag settings for the VM.
+    TagSettingsProperties:
+      type: object
+      description: Tag filter information for the VM.
+      properties:
+        tags:
+          type: object
+          properties: {}
+          description: Dictionary of tags with its list of values.
+        filterOperator:
+          $ref: "#/components/schemas/TagOperators"
+          description: 'Filter VMs by Any or All specified tags. Known values are: "All" and "Any".'
+    TagOperators:
+      type: string
+      enum:
+        - All
+        - Any
+    ConfigurationAssignmentFlattened:
+      type: object
+      description: Flattened view of ConfigurationAssignment ('properties' hoisted to the top level).
+      properties:
+        id:
+          type: string
+          description: Fully qualified resource ID for the resource. Ex - /subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/providers/{resourceProviderNamespace}/{resourceType}/{resourceName}.
+        name:
+          type: string
+          description: The name of the resource.
+        type:
+          type: string
+          description: The type of the resource. E.g. "Microsoft.Compute/virtualMachines" or "Microsoft.Storage/storageAccounts".
+        systemData:
+          $ref: "#/components/schemas/SystemData"
+          description: Azure Resource Manager metadata containing createdBy and modifiedBy information.
+        location:
+          type: string
+          description: Location of the resource.
+        maintenanceConfigurationId:
+          type: string
+          description: The maintenance configuration Id.
+        resourceId:
+          type: string
+          description: The unique resourceId.
+        filter:
+          $ref: "#/components/schemas/ConfigurationAssignmentFilterProperties"
+          description: Properties of the configuration assignment.
+    ConfigurationAssignment:
+      type: object
+      description: Configuration Assignment.
+      properties:
+        id:
+          type: string
+          description: Fully qualified resource ID for the resource. Ex - /subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/providers/{resourceProviderNamespace}/{resourceType}/{resourceName}.
+        name:
+          type: string
+          description: The name of the resource.
+        type:
+          type: string
+          description: The type of the resource. E.g. "Microsoft.Compute/virtualMachines" or "Microsoft.Storage/storageAccounts".
+        systemData:
+          $ref: "#/components/schemas/SystemData"
+          description: Azure Resource Manager metadata containing createdBy and modifiedBy information.
+        properties:
+          $ref: "#/components/schemas/ConfigurationAssignmentProperties"
+          description: Properties of the configuration assignment.
+        location:
+          type: string
+          description: Location of the resource.
+    PagedConfigurationAssignmentFlattened:
+      type: object
+      properties:
+        value:
+          type: array
+          items:
+            $ref: "#/components/schemas/ConfigurationAssignmentFlattened"
+        nextLink:
+          type: string
+    MaintenanceConfigurationProperties:
+      type: object
+      description: Properties for maintenance configuration.
+      properties:
+        namespace:
+          type: string
+          description: Gets or sets namespace of the resource.
+        extensionProperties:
+          type: object
+          properties: {}
+          description: Gets or sets extensionProperties of the maintenanceConfiguration.
+        maintenanceScope:
+          $ref: "#/components/schemas/MaintenanceScope"
+          description: 'Gets or sets maintenanceScope of the configuration. Known values are: "Host", "Resource", "OSImage", "Extension", "InGuestPatch", "SQLDB", and "SQLManagedInstance".'
+        maintenanceWindow:
+          $ref: "#/components/schemas/MaintenanceWindow"
+          description: Definition of a MaintenanceWindow.
+        visibility:
+          $ref: "#/components/schemas/Visibility"
+          description: "Gets or sets the visibility of the configuration. The default value is 'Custom'. Known values are: \"Custom\" and \"Public\"."
+        installPatches:
+          $ref: "#/components/schemas/InputPatchConfiguration"
+          description: The input parameters to be passed to the patch run operation.
+    MaintenanceScope:
+      type: string
+      enum:
+        - Host
+        - Resource
+        - OSImage
+        - Extension
+        - InGuestPatch
+        - SQLDB
+        - SQLManagedInstance
+    MaintenanceWindow:
+      type: object
+      description: Definition of a MaintenanceWindow.
+      properties:
+        startDateTime:
+          type: string
+          description: Effective start date of the maintenance window in YYYY-MM-DD hh:mm format. The start date can be set to either the current date or future date. The window will be created in the time zone provided and adjusted to daylight savings according to that time zone.
+        expirationDateTime:
+          type: string
+          description: Effective expiration date of the maintenance window in YYYY-MM-DD hh:mm format. The window will be created in the time zone provided and adjusted to daylight savings according to that time zone. Expiration date must be set to a future date. If not provided, it will be set to the maximum datetime 9999-12-31 23:59:59.
+        duration:
+          type: string
+          description: "Duration of the maintenance window in HH:mm format. If not provided, default value will be used based on maintenance scope provided. Example: 05:00."
+        timeZone:
+          type: string
+          description: "Name of the timezone. List of timezones can be obtained by executing [System.TimeZoneInfo]::GetSystemTimeZones() in PowerShell. Example: Pacific Standard Time, UTC, W. Europe Standard Time, Korea Standard Time, Cen. Australia Standard Time."
+        recurEvery:
+          type: string
+          description: "Rate at which a Maintenance window is expected to recur. The rate can be expressed as daily, weekly, or monthly schedules. Daily schedule are formatted as recurEvery: [Frequency as integer]['Day(s)']. If no frequency is provided, the default frequency is 1. Daily schedule examples are recurEvery: Day, recurEvery: 3Days. Weekly schedule are formatted as recurEvery: [Frequency as integer]['Week(s)'] [Optional comma separated list of weekdays Monday-Sunday]. Weekly schedule examples are recurEvery: 3Weeks, recurEvery: Week Saturday,Sunday. Monthly schedules are formatted as [Frequency as integer]['Month(s)'] [Comma separated list of month days] or [Frequency as integer]['Month(s)'] [Week of Month (First, Second, Third, Fourth, Last)] [Weekday Monday-Sunday] [Optional Offset(No. of days)]. Offset value must be between -6 to 6 inclusive. Monthly schedule examples are recurEvery: Month, recurEvery: 2Months, recurEvery: Month day23,day24, recurEvery: Month Last Sunday, recurEvery: Month Fourth Monday, recurEvery: Month Last Sunday Offset-3, recurEvery: Month Third Sunday Offset6."
+    Visibility:
+      type: string
+      enum:
+        - Custom
+        - Public
+    InputPatchConfiguration:
+      type: object
+      description: Input configuration for a patch run.
+      properties:
+        rebootSetting:
+          $ref: "#/components/schemas/RebootOptions"
+          description: 'Possible reboot preference as defined by the user based on which it would be decided to reboot the machine or not after the patch operation is completed. Known values are: "IfRequired", "Never", and "Always".'
+        windowsParameters:
+          $ref: "#/components/schemas/InputWindowsParameters"
+          description: Input parameters specific to patching a Windows machine. For Linux machines, do not pass this property.
+        linuxParameters:
+          $ref: "#/components/schemas/InputLinuxParameters"
+          description: Input parameters specific to patching Linux machine. For Windows machines, do not pass this property.
+    RebootOptions:
+      type: string
+      enum:
+        - IfRequired
+        - Never
+        - Always
+    InputWindowsParameters:
+      type: object
+      description: Input properties for patching a Windows machine.
+      properties:
+        kbNumbersToExclude:
+          type: array
+          items:
+            type: string
+          description: Windows KBID to be excluded for patching.
+        kbNumbersToInclude:
+          type: array
+          items:
+            type: string
+          description: Windows KBID to be included for patching.
+        classificationsToInclude:
+          type: array
+          items:
+            type: string
+          description: Classification category of patches to be patched. Allowed values are 'Critical', 'Security', 'UpdateRollup', 'FeaturePack', 'ServicePack', 'Definition', 'Tools', and 'Updates'.
+        excludeKbsRequiringReboot:
+          type: boolean
+          description: Exclude patches which need reboot.
+    InputLinuxParameters:
+      type: object
+      description: Input properties for patching a Linux machine.
+      properties:
+        packageNameMasksToExclude:
+          type: array
+          items:
+            type: string
+          description: Package names to be excluded for patching.
+        packageNameMasksToInclude:
+          type: array
+          items:
+            type: string
+          description: Package names to be included for patching.
+        classificationsToInclude:
+          type: array
+          items:
+            type: string
+          description: Classification category of patches to be patched. Allowed values are 'Critical', 'Security', and 'Other'.
+    MaintenanceConfigurationFlattened:
+      type: object
+      description: Flattened view of MaintenanceConfiguration ('properties' hoisted to the top level).
+      properties:
+        id:
+          type: string
+          description: Fully qualified resource ID for the resource. Ex - /subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/providers/{resourceProviderNamespace}/{resourceType}/{resourceName}.
+        name:
+          type: string
+          description: The name of the resource.
+        type:
+          type: string
+          description: The type of the resource. E.g. "Microsoft.Compute/virtualMachines" or "Microsoft.Storage/storageAccounts".
+        systemData:
+          $ref: "#/components/schemas/SystemData"
+          description: Azure Resource Manager metadata containing createdBy and modifiedBy information.
+        location:
+          type: string
+          description: Gets or sets location of the resource.
+        tags:
+          type: object
+          properties: {}
+          description: Gets or sets tags of the resource.
+        namespace:
+          type: string
+          description: Gets or sets namespace of the resource.
+        extensionProperties:
+          type: object
+          properties: {}
+          description: Gets or sets extensionProperties of the maintenanceConfiguration.
+        maintenanceScope:
+          $ref: "#/components/schemas/MaintenanceScope"
+          description: 'Gets or sets maintenanceScope of the configuration. Known values are: "Host", "Resource", "OSImage", "Extension", "InGuestPatch", "SQLDB", and "SQLManagedInstance".'
+        maintenanceWindow:
+          $ref: "#/components/schemas/MaintenanceWindow"
+          description: Definition of a MaintenanceWindow.
+        visibility:
+          $ref: "#/components/schemas/Visibility"
+          description: "Gets or sets the visibility of the configuration. The default value is 'Custom'. Known values are: \"Custom\" and \"Public\"."
+        installPatches:
+          $ref: "#/components/schemas/InputPatchConfiguration"
+          description: The input parameters to be passed to the patch run operation.
+    PagedMaintenanceConfigurationFlattened:
+      type: object
+      properties:
+        value:
+          type: array
+          items:
+            $ref: "#/components/schemas/MaintenanceConfigurationFlattened"
+        nextLink:
+          type: string
+    MaintenanceConfiguration:
+      type: object
+      description: Maintenance configuration record type.
+      properties:
+        id:
+          type: string
+          description: Fully qualified resource ID for the resource. Ex - /subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/providers/{resourceProviderNamespace}/{resourceType}/{resourceName}.
+        name:
+          type: string
+          description: The name of the resource.
+        type:
+          type: string
+          description: The type of the resource. E.g. "Microsoft.Compute/virtualMachines" or "Microsoft.Storage/storageAccounts".
+        systemData:
+          $ref: "#/components/schemas/SystemData"
+          description: Azure Resource Manager metadata containing createdBy and modifiedBy information.
+        properties:
+          $ref: "#/components/schemas/MaintenanceConfigurationProperties"
+          description: Gets or sets properties of the resource.
+        location:
+          type: string
+          description: Gets or sets location of the resource.
+        tags:
+          type: object
+          properties: {}
+          description: Gets or sets tags of the resource.
+    OperationInfo:
+      type: object
+      description: Localized display information for an operation.
+      properties:
+        provider:
+          type: string
+          description: The localized friendly form of the resource provider name, e.g. "Microsoft Monitoring Insights" or "Microsoft Compute".
+        resource:
+          type: string
+          description: The localized friendly name of the resource type related to this operation. E.g. "Virtual Machines" or "Job Schedule Collections".
+        operation:
+          type: string
+          description: The concise, localized friendly name for the operation; suitable for dropdowns. E.g. "Create or Update Virtual Machine", "Restart Virtual Machine".
+        description:
+          type: string
+          description: The short, localized friendly description of the operation; suitable for tool tips and detailed views.
+    Origin:
+      type: string
+      enum:
+        - user
+        - system
+        - user,system
+    ActionType:
+      type: string
+      enum:
+        - Internal
+    Operation:
+      type: object
+      description: REST API Operation.
+      properties:
+        name:
+          type: string
+          description: 'The name of the operation, as per Resource-Based Access Control (RBAC). Examples: "Microsoft.Compute/virtualMachines/write", "Microsoft.Compute/virtualMachines/capture/action".'
+        isDataAction:
+          type: boolean
+          description: Whether the operation applies to data-plane. This is "true" for data-plane operations and "false" for Azure Resource Manager/control-plane operations.
+        display:
+          $ref: "#/components/schemas/OperationInfo"
+          description: Localized display information for this particular operation.
+        origin:
+          $ref: "#/components/schemas/Origin"
+          description: 'The intended executor of the operation; as in Resource Based Access Control (RBAC) and audit logs UX. Default value is "user,system". Known values are: "user", "system", and "user,system".'
+        actionType:
+          $ref: "#/components/schemas/ActionType"
+          description: Extensible enum. Indicates the action type. "Internal" refers to actions that are for internal only APIs. "Internal"
+    PagedOperation:
+      type: object
+      properties:
+        value:
+          type: array
+          items:
+            $ref: "#/components/schemas/Operation"
+        nextLink:
+          type: string
+    ScheduledEventApproveResponse:
+      type: object
+      description: Response of scheduled event acknowledge.
+      properties:
+        value:
+          type: string
+          description: Successfully Approved.
+    ImpactType:
+      type: string
+      enum:
+        - None
+        - Freeze
+        - Restart
+        - Redeploy
+    UpdateProperties:
+      type: object
+      description: Properties for update.
+      properties:
+        resourceId:
+          type: string
+          description: The resourceId.
+    UpdateFlattened:
+      type: object
+      description: Flattened view of Update ('properties' hoisted to the top level).
+      properties:
+        maintenanceScope:
+          $ref: "#/components/schemas/MaintenanceScope"
+          description: 'The impact area. Known values are: "Host", "Resource", "OSImage", "Extension", "InGuestPatch", "SQLDB", and "SQLManagedInstance".'
+        impactType:
+          $ref: "#/components/schemas/ImpactType"
+          description: 'The impact type. Known values are: "None", "Freeze", "Restart", and "Redeploy".'
+        status:
+          $ref: "#/components/schemas/UpdateStatus"
+          description: 'The status. Known values are: "Pending", "InProgress", "Completed", "RetryNow", "RetryLater", "NoUpdatesPending", "Cancel", and "Cancelled".'
+        impactDurationInSec:
+          type: integer
+          description: Duration of impact in seconds.
+        notBefore:
+          type: string
+          format: date-time
+          description: Time when Azure will start force updates if not self-updated by customer before this time.
+        resourceId:
+          type: string
+          description: The resourceId.
+    PagedUpdateFlattened:
+      type: object
+      properties:
+        value:
+          type: array
+          items:
+            $ref: "#/components/schemas/UpdateFlattened"
+        nextLink:
+          type: string
+  x-stackQL-resources:
+    apply_update_for_resource_group:
+      id: azure.maintenance.apply_update_for_resource_group
+      name: apply_update_for_resource_group
+      title: apply_update_for_resource_group
+      methods:
+        list:
+          operation:
+            $ref: "#/paths/~1subscriptions~1{subscription_id}~1resourceGroups~1{resource_group_name}~1providers~1Microsoft.Maintenance~1applyUpdates?api-version=2023-10-01-preview/get"
+          response:
+            openAPIDocKey: "200"
+            mediaType: application/json
+            objectKey: $.value
+            overrideMediaType: application/json
+            transform:
+              type: golang_template_json_v0.3.0
+              body: |-
+                {"value": [
+                {{- range $i, $row := index . "value" }}{{ if $i }},{{ end }}
+                  { {{ $p := index $row "properties" }}{{ if eq (kindOf $p) "map" }}{{ range $k, $v := $p }}{{ printf "%q" $k }}: {{ toJson $v }}, {{ end }}{{ end }}{{ range $k, $v := $row }}{{ printf "%q" $k }}: {{ toJson $v }}, {{ end }}"_flattened": true }
+                {{- end }}
+                ], "nextLink": {{ toJson (index . "nextLink") }}}
+      sqlVerbs:
+        select:
+          - $ref: "#/components/x-stackQL-resources/apply_update_for_resource_group/methods/list"
+        insert: []
+        update: []
+        delete: []
+    apply_updates:
+      id: azure.maintenance.apply_updates
+      name: apply_updates
+      title: apply_updates
+      methods:
+        get:
+          operation:
+            $ref: "#/paths/~1subscriptions~1{subscription_id}~1resourceGroups~1{resource_group_name}~1providers~1{provider_name}~1{resource_type}~1{resource_name}~1providers~1Microsoft.Maintenance~1applyUpdates~1{apply_update_name}?api-version=2023-10-01-preview/get"
+          response:
+            openAPIDocKey: "200"
+            mediaType: application/json
+            overrideMediaType: application/json
+            transform:
+              type: golang_template_json_v0.3.0
+              body: '{{ $row := . }}{ {{ $p := index $row "properties" }}{{ if eq (kindOf $p) "map" }}{{ range $k, $v := $p }}{{ printf "%q" $k }}: {{ toJson $v }}, {{ end }}{{ end }}{{ range $k, $v := $row }}{{ printf "%q" $k }}: {{ toJson $v }}, {{ end }}"_flattened": true }'
+        create_or_update_or_cancel:
+          operation:
+            $ref: "#/paths/~1subscriptions~1{subscription_id}~1resourceGroups~1{resource_group_name}~1providers~1{provider_name}~1{resource_type}~1{resource_name}~1providers~1Microsoft.Maintenance~1applyUpdates~1{apply_update_name}?api-version=2023-10-01-preview/put"
+          response:
+            openAPIDocKey: "200"
+            mediaType: application/json
+          request:
+            nativeCasing: camel
+          config:
+            requestBodyTranslate:
+              algorithm: naive
+        list:
+          operation:
+            $ref: "#/paths/~1subscriptions~1{subscription_id}~1providers~1Microsoft.Maintenance~1applyUpdates?api-version=2023-10-01-preview/get"
+          response:
+            openAPIDocKey: "200"
+            mediaType: application/json
+            objectKey: $.value
+            overrideMediaType: application/json
+            transform:
+              type: golang_template_json_v0.3.0
+              body: |-
+                {"value": [
+                {{- range $i, $row := index . "value" }}{{ if $i }},{{ end }}
+                  { {{ $p := index $row "properties" }}{{ if eq (kindOf $p) "map" }}{{ range $k, $v := $p }}{{ printf "%q" $k }}: {{ toJson $v }}, {{ end }}{{ end }}{{ range $k, $v := $row }}{{ printf "%q" $k }}: {{ toJson $v }}, {{ end }}"_flattened": true }
+                {{- end }}
+                ], "nextLink": {{ toJson (index . "nextLink") }}}
+        create_or_update:
+          operation:
+            $ref: "#/paths/~1subscriptions~1{subscription_id}~1resourcegroups~1{resource_group_name}~1providers~1{provider_name}~1{resource_type}~1{resource_name}~1providers~1Microsoft.Maintenance~1applyUpdates~1default?api-version=2023-10-01-preview/put"
+          response:
+            openAPIDocKey: "200"
+            mediaType: application/json
+        get_parent:
+          operation:
+            $ref: "#/paths/~1subscriptions~1{subscription_id}~1resourceGroups~1{resource_group_name}~1providers~1{provider_name}~1{resource_parent_type}~1{resource_parent_name}~1{resource_type}~1{resource_name}~1providers~1Microsoft.Maintenance~1applyUpdates~1{apply_update_name}?api-version=2023-10-01-preview/get"
+          response:
+            openAPIDocKey: "200"
+            mediaType: application/json
+            overrideMediaType: application/json
+            transform:
+              type: golang_template_json_v0.3.0
+              body: '{{ $row := . }}{ {{ $p := index $row "properties" }}{{ if eq (kindOf $p) "map" }}{{ range $k, $v := $p }}{{ printf "%q" $k }}: {{ toJson $v }}, {{ end }}{{ end }}{{ range $k, $v := $row }}{{ printf "%q" $k }}: {{ toJson $v }}, {{ end }}"_flattened": true }'
+        create_or_update_parent:
+          operation:
+            $ref: "#/paths/~1subscriptions~1{subscription_id}~1resourcegroups~1{resource_group_name}~1providers~1{provider_name}~1{resource_parent_type}~1{resource_parent_name}~1{resource_type}~1{resource_name}~1providers~1Microsoft.Maintenance~1applyUpdates~1default?api-version=2023-10-01-preview/put"
+          response:
+            openAPIDocKey: "200"
+            mediaType: application/json
+      sqlVerbs:
+        select:
+          - $ref: "#/components/x-stackQL-resources/apply_updates/methods/get_parent"
+          - $ref: "#/components/x-stackQL-resources/apply_updates/methods/get"
+          - $ref: "#/components/x-stackQL-resources/apply_updates/methods/list"
+        insert:
+          - $ref: "#/components/x-stackQL-resources/apply_updates/methods/create_or_update"
+        update: []
+        replace:
+          - $ref: "#/components/x-stackQL-resources/apply_updates/methods/create_or_update"
+        delete: []
+    configuration_assignments_for_resource_group:
+      id: azure.maintenance.configuration_assignments_for_resource_group
+      name: configuration_assignments_for_resource_group
+      title: configuration_assignments_for_resource_group
+      methods:
+        get:
+          operation:
+            $ref: "#/paths/~1subscriptions~1{subscription_id}~1resourceGroups~1{resource_group_name}~1providers~1Microsoft.Maintenance~1configurationAssignments~1{configuration_assignment_name}?api-version=2023-10-01-preview/get"
+          response:
+            openAPIDocKey: "200"
+            mediaType: application/json
+            overrideMediaType: application/json
+            transform:
+              type: golang_template_json_v0.3.0
+              body: '{{ $row := . }}{ {{ $p := index $row "properties" }}{{ if eq (kindOf $p) "map" }}{{ range $k, $v := $p }}{{ printf "%q" $k }}: {{ toJson $v }}, {{ end }}{{ end }}{{ range $k, $v := $row }}{{ printf "%q" $k }}: {{ toJson $v }}, {{ end }}"_flattened": true }'
+        create_or_update:
+          operation:
+            $ref: "#/paths/~1subscriptions~1{subscription_id}~1resourceGroups~1{resource_group_name}~1providers~1Microsoft.Maintenance~1configurationAssignments~1{configuration_assignment_name}?api-version=2023-10-01-preview/put"
+          response:
+            openAPIDocKey: "200"
+            mediaType: application/json
+          request:
+            nativeCasing: camel
+          config:
+            requestBodyTranslate:
+              algorithm: naive
+        update:
+          operation:
+            $ref: "#/paths/~1subscriptions~1{subscription_id}~1resourceGroups~1{resource_group_name}~1providers~1Microsoft.Maintenance~1configurationAssignments~1{configuration_assignment_name}?api-version=2023-10-01-preview/patch"
+          response:
+            openAPIDocKey: "200"
+            mediaType: application/json
+          request:
+            nativeCasing: camel
+          config:
+            requestBodyTranslate:
+              algorithm: naive
+        delete:
+          operation:
+            $ref: "#/paths/~1subscriptions~1{subscription_id}~1resourceGroups~1{resource_group_name}~1providers~1Microsoft.Maintenance~1configurationAssignments~1{configuration_assignment_name}?api-version=2023-10-01-preview/delete"
+          response:
+            openAPIDocKey: "200"
+            mediaType: application/json
+      sqlVerbs:
+        select:
+          - $ref: "#/components/x-stackQL-resources/configuration_assignments_for_resource_group/methods/get"
+        insert:
+          - $ref: "#/components/x-stackQL-resources/configuration_assignments_for_resource_group/methods/create_or_update"
+        update:
+          - $ref: "#/components/x-stackQL-resources/configuration_assignments_for_resource_group/methods/update"
+        replace:
+          - $ref: "#/components/x-stackQL-resources/configuration_assignments_for_resource_group/methods/create_or_update"
+        delete:
+          - $ref: "#/components/x-stackQL-resources/configuration_assignments_for_resource_group/methods/delete"
+    configuration_assignments_for_subscriptions:
+      id: azure.maintenance.configuration_assignments_for_subscriptions
+      name: configuration_assignments_for_subscriptions
+      title: configuration_assignments_for_subscriptions
+      methods:
+        get:
+          operation:
+            $ref: "#/paths/~1subscriptions~1{subscription_id}~1providers~1Microsoft.Maintenance~1configurationAssignments~1{configuration_assignment_name}?api-version=2023-10-01-preview/get"
+          response:
+            openAPIDocKey: "200"
+            mediaType: application/json
+            overrideMediaType: application/json
+            transform:
+              type: golang_template_json_v0.3.0
+              body: '{{ $row := . }}{ {{ $p := index $row "properties" }}{{ if eq (kindOf $p) "map" }}{{ range $k, $v := $p }}{{ printf "%q" $k }}: {{ toJson $v }}, {{ end }}{{ end }}{{ range $k, $v := $row }}{{ printf "%q" $k }}: {{ toJson $v }}, {{ end }}"_flattened": true }'
+        create_or_update:
+          operation:
+            $ref: "#/paths/~1subscriptions~1{subscription_id}~1providers~1Microsoft.Maintenance~1configurationAssignments~1{configuration_assignment_name}?api-version=2023-10-01-preview/put"
+          response:
+            openAPIDocKey: "200"
+            mediaType: application/json
+          request:
+            nativeCasing: camel
+          config:
+            requestBodyTranslate:
+              algorithm: naive
+        update:
+          operation:
+            $ref: "#/paths/~1subscriptions~1{subscription_id}~1providers~1Microsoft.Maintenance~1configurationAssignments~1{configuration_assignment_name}?api-version=2023-10-01-preview/patch"
+          response:
+            openAPIDocKey: "200"
+            mediaType: application/json
+          request:
+            nativeCasing: camel
+          config:
+            requestBodyTranslate:
+              algorithm: naive
+        delete:
+          operation:
+            $ref: "#/paths/~1subscriptions~1{subscription_id}~1providers~1Microsoft.Maintenance~1configurationAssignments~1{configuration_assignment_name}?api-version=2023-10-01-preview/delete"
+          response:
+            openAPIDocKey: "200"
+            mediaType: application/json
+      sqlVerbs:
+        select:
+          - $ref: "#/components/x-stackQL-resources/configuration_assignments_for_subscriptions/methods/get"
+        insert:
+          - $ref: "#/components/x-stackQL-resources/configuration_assignments_for_subscriptions/methods/create_or_update"
+        update:
+          - $ref: "#/components/x-stackQL-resources/configuration_assignments_for_subscriptions/methods/update"
+        replace:
+          - $ref: "#/components/x-stackQL-resources/configuration_assignments_for_subscriptions/methods/create_or_update"
+        delete:
+          - $ref: "#/components/x-stackQL-resources/configuration_assignments_for_subscriptions/methods/delete"
+    configuration_assignments:
+      id: azure.maintenance.configuration_assignments
+      name: configuration_assignments
+      title: configuration_assignments
+      methods:
+        get:
+          operation:
+            $ref: "#/paths/~1subscriptions~1{subscription_id}~1resourceGroups~1{resource_group_name}~1providers~1{provider_name}~1{resource_type}~1{resource_name}~1providers~1Microsoft.Maintenance~1configurationAssignments~1{configuration_assignment_name}?api-version=2023-10-01-preview/get"
+          response:
+            openAPIDocKey: "200"
+            mediaType: application/json
+            overrideMediaType: application/json
+            transform:
+              type: golang_template_json_v0.3.0
+              body: '{{ $row := . }}{ {{ $p := index $row "properties" }}{{ if eq (kindOf $p) "map" }}{{ range $k, $v := $p }}{{ printf "%q" $k }}: {{ toJson $v }}, {{ end }}{{ end }}{{ range $k, $v := $row }}{{ printf "%q" $k }}: {{ toJson $v }}, {{ end }}"_flattened": true }'
+        create_or_update:
+          operation:
+            $ref: "#/paths/~1subscriptions~1{subscription_id}~1resourceGroups~1{resource_group_name}~1providers~1{provider_name}~1{resource_type}~1{resource_name}~1providers~1Microsoft.Maintenance~1configurationAssignments~1{configuration_assignment_name}?api-version=2023-10-01-preview/put"
+          response:
+            openAPIDocKey: "200"
+            mediaType: application/json
+          request:
+            nativeCasing: camel
+          config:
+            requestBodyTranslate:
+              algorithm: naive
+        delete:
+          operation:
+            $ref: "#/paths/~1subscriptions~1{subscription_id}~1resourceGroups~1{resource_group_name}~1providers~1{provider_name}~1{resource_type}~1{resource_name}~1providers~1Microsoft.Maintenance~1configurationAssignments~1{configuration_assignment_name}?api-version=2023-10-01-preview/delete"
+          response:
+            openAPIDocKey: "200"
+            mediaType: application/json
+        list:
+          operation:
+            $ref: "#/paths/~1subscriptions~1{subscription_id}~1resourcegroups~1{resource_group_name}~1providers~1{provider_name}~1{resource_type}~1{resource_name}~1providers~1Microsoft.Maintenance~1configurationAssignments?api-version=2023-10-01-preview/get"
+          response:
+            openAPIDocKey: "200"
+            mediaType: application/json
+            objectKey: $.value
+            overrideMediaType: application/json
+            transform:
+              type: golang_template_json_v0.3.0
+              body: |-
+                {"value": [
+                {{- range $i, $row := index . "value" }}{{ if $i }},{{ end }}
+                  { {{ $p := index $row "properties" }}{{ if eq (kindOf $p) "map" }}{{ range $k, $v := $p }}{{ printf "%q" $k }}: {{ toJson $v }}, {{ end }}{{ end }}{{ range $k, $v := $row }}{{ printf "%q" $k }}: {{ toJson $v }}, {{ end }}"_flattened": true }
+                {{- end }}
+                ], "nextLink": {{ toJson (index . "nextLink") }}}
+        list_parent:
+          operation:
+            $ref: "#/paths/~1subscriptions~1{subscription_id}~1resourceGroups~1{resource_group_name}~1providers~1{provider_name}~1{resource_parent_type}~1{resource_parent_name}~1{resource_type}~1{resource_name}~1providers~1Microsoft.Maintenance~1configurationAssignments?api-version=2023-10-01-preview/get"
+          response:
+            openAPIDocKey: "200"
+            mediaType: application/json
+            objectKey: $.value
+            overrideMediaType: application/json
+            transform:
+              type: golang_template_json_v0.3.0
+              body: |-
+                {"value": [
+                {{- range $i, $row := index . "value" }}{{ if $i }},{{ end }}
+                  { {{ $p := index $row "properties" }}{{ if eq (kindOf $p) "map" }}{{ range $k, $v := $p }}{{ printf "%q" $k }}: {{ toJson $v }}, {{ end }}{{ end }}{{ range $k, $v := $row }}{{ printf "%q" $k }}: {{ toJson $v }}, {{ end }}"_flattened": true }
+                {{- end }}
+                ], "nextLink": {{ toJson (index . "nextLink") }}}
+        get_parent:
+          operation:
+            $ref: "#/paths/~1subscriptions~1{subscription_id}~1resourceGroups~1{resource_group_name}~1providers~1{provider_name}~1{resource_parent_type}~1{resource_parent_name}~1{resource_type}~1{resource_name}~1providers~1Microsoft.Maintenance~1configurationAssignments~1{configuration_assignment_name}?api-version=2023-10-01-preview/get"
+          response:
+            openAPIDocKey: "200"
+            mediaType: application/json
+            overrideMediaType: application/json
+            transform:
+              type: golang_template_json_v0.3.0
+              body: '{{ $row := . }}{ {{ $p := index $row "properties" }}{{ if eq (kindOf $p) "map" }}{{ range $k, $v := $p }}{{ printf "%q" $k }}: {{ toJson $v }}, {{ end }}{{ end }}{{ range $k, $v := $row }}{{ printf "%q" $k }}: {{ toJson $v }}, {{ end }}"_flattened": true }'
+        create_or_update_parent:
+          operation:
+            $ref: "#/paths/~1subscriptions~1{subscription_id}~1resourceGroups~1{resource_group_name}~1providers~1{provider_name}~1{resource_parent_type}~1{resource_parent_name}~1{resource_type}~1{resource_name}~1providers~1Microsoft.Maintenance~1configurationAssignments~1{configuration_assignment_name}?api-version=2023-10-01-preview/put"
+          response:
+            openAPIDocKey: "200"
+            mediaType: application/json
+          request:
+            nativeCasing: camel
+          config:
+            requestBodyTranslate:
+              algorithm: naive
+        delete_parent:
+          operation:
+            $ref: "#/paths/~1subscriptions~1{subscription_id}~1resourceGroups~1{resource_group_name}~1providers~1{provider_name}~1{resource_parent_type}~1{resource_parent_name}~1{resource_type}~1{resource_name}~1providers~1Microsoft.Maintenance~1configurationAssignments~1{configuration_assignment_name}?api-version=2023-10-01-preview/delete"
+          response:
+            openAPIDocKey: "200"
+            mediaType: application/json
+      sqlVerbs:
+        select:
+          - $ref: "#/components/x-stackQL-resources/configuration_assignments/methods/get_parent"
+          - $ref: "#/components/x-stackQL-resources/configuration_assignments/methods/list_parent"
+          - $ref: "#/components/x-stackQL-resources/configuration_assignments/methods/get"
+          - $ref: "#/components/x-stackQL-resources/configuration_assignments/methods/list"
+        insert:
+          - $ref: "#/components/x-stackQL-resources/configuration_assignments/methods/create_or_update"
+        update: []
+        replace:
+          - $ref: "#/components/x-stackQL-resources/configuration_assignments/methods/create_or_update"
+        delete:
+          - $ref: "#/components/x-stackQL-resources/configuration_assignments/methods/delete"
+    configuration_assignments_within_subscription:
+      id: azure.maintenance.configuration_assignments_within_subscription
+      name: configuration_assignments_within_subscription
+      title: configuration_assignments_within_subscription
+      methods:
+        list:
+          operation:
+            $ref: "#/paths/~1subscriptions~1{subscription_id}~1providers~1Microsoft.Maintenance~1configurationAssignments?api-version=2023-10-01-preview/get"
+          response:
+            openAPIDocKey: "200"
+            mediaType: application/json
+            objectKey: $.value
+            overrideMediaType: application/json
+            transform:
+              type: golang_template_json_v0.3.0
+              body: |-
+                {"value": [
+                {{- range $i, $row := index . "value" }}{{ if $i }},{{ end }}
+                  { {{ $p := index $row "properties" }}{{ if eq (kindOf $p) "map" }}{{ range $k, $v := $p }}{{ printf "%q" $k }}: {{ toJson $v }}, {{ end }}{{ end }}{{ range $k, $v := $row }}{{ printf "%q" $k }}: {{ toJson $v }}, {{ end }}"_flattened": true }
+                {{- end }}
+                ], "nextLink": {{ toJson (index . "nextLink") }}}
+      sqlVerbs:
+        select:
+          - $ref: "#/components/x-stackQL-resources/configuration_assignments_within_subscription/methods/list"
+        insert: []
+        update: []
+        delete: []
+    maintenance_configurations_for_resource_group:
+      id: azure.maintenance.maintenance_configurations_for_resource_group
+      name: maintenance_configurations_for_resource_group
+      title: maintenance_configurations_for_resource_group
+      methods:
+        list:
+          operation:
+            $ref: "#/paths/~1subscriptions~1{subscription_id}~1resourceGroups~1{resource_group_name}~1providers~1Microsoft.Maintenance~1maintenanceConfigurations?api-version=2023-10-01-preview/get"
+          response:
+            openAPIDocKey: "200"
+            mediaType: application/json
+            objectKey: $.value
+            overrideMediaType: application/json
+            transform:
+              type: golang_template_json_v0.3.0
+              body: |-
+                {"value": [
+                {{- range $i, $row := index . "value" }}{{ if $i }},{{ end }}
+                  { {{ $p := index $row "properties" }}{{ if eq (kindOf $p) "map" }}{{ range $k, $v := $p }}{{ printf "%q" $k }}: {{ toJson $v }}, {{ end }}{{ end }}{{ range $k, $v := $row }}{{ printf "%q" $k }}: {{ toJson $v }}, {{ end }}"_flattened": true }
+                {{- end }}
+                ], "nextLink": {{ toJson (index . "nextLink") }}}
+      sqlVerbs:
+        select:
+          - $ref: "#/components/x-stackQL-resources/maintenance_configurations_for_resource_group/methods/list"
+        insert: []
+        update: []
+        delete: []
+    maintenance_configurations:
+      id: azure.maintenance.maintenance_configurations
+      name: maintenance_configurations
+      title: maintenance_configurations
+      methods:
+        get:
+          operation:
+            $ref: "#/paths/~1subscriptions~1{subscription_id}~1resourceGroups~1{resource_group_name}~1providers~1Microsoft.Maintenance~1maintenanceConfigurations~1{resource_name}?api-version=2023-10-01-preview/get"
+          response:
+            openAPIDocKey: "200"
+            mediaType: application/json
+            overrideMediaType: application/json
+            transform:
+              type: golang_template_json_v0.3.0
+              body: '{{ $row := . }}{ {{ $p := index $row "properties" }}{{ if eq (kindOf $p) "map" }}{{ range $k, $v := $p }}{{ printf "%q" $k }}: {{ toJson $v }}, {{ end }}{{ end }}{{ range $k, $v := $row }}{{ printf "%q" $k }}: {{ toJson $v }}, {{ end }}"_flattened": true }'
+        create_or_update:
+          operation:
+            $ref: "#/paths/~1subscriptions~1{subscription_id}~1resourceGroups~1{resource_group_name}~1providers~1Microsoft.Maintenance~1maintenanceConfigurations~1{resource_name}?api-version=2023-10-01-preview/put"
+          response:
+            openAPIDocKey: "200"
+            mediaType: application/json
+          request:
+            nativeCasing: camel
+          config:
+            requestBodyTranslate:
+              algorithm: naive
+        update:
+          operation:
+            $ref: "#/paths/~1subscriptions~1{subscription_id}~1resourceGroups~1{resource_group_name}~1providers~1Microsoft.Maintenance~1maintenanceConfigurations~1{resource_name}?api-version=2023-10-01-preview/patch"
+          response:
+            openAPIDocKey: "200"
+            mediaType: application/json
+          request:
+            nativeCasing: camel
+          config:
+            requestBodyTranslate:
+              algorithm: naive
+        delete:
+          operation:
+            $ref: "#/paths/~1subscriptions~1{subscription_id}~1resourceGroups~1{resource_group_name}~1providers~1Microsoft.Maintenance~1maintenanceConfigurations~1{resource_name}?api-version=2023-10-01-preview/delete"
+          response:
+            openAPIDocKey: "200"
+            mediaType: application/json
+        list:
+          operation:
+            $ref: "#/paths/~1subscriptions~1{subscription_id}~1providers~1Microsoft.Maintenance~1maintenanceConfigurations?api-version=2023-10-01-preview/get"
+          response:
+            openAPIDocKey: "200"
+            mediaType: application/json
+            objectKey: $.value
+            overrideMediaType: application/json
+            transform:
+              type: golang_template_json_v0.3.0
+              body: |-
+                {"value": [
+                {{- range $i, $row := index . "value" }}{{ if $i }},{{ end }}
+                  { {{ $p := index $row "properties" }}{{ if eq (kindOf $p) "map" }}{{ range $k, $v := $p }}{{ printf "%q" $k }}: {{ toJson $v }}, {{ end }}{{ end }}{{ range $k, $v := $row }}{{ printf "%q" $k }}: {{ toJson $v }}, {{ end }}"_flattened": true }
+                {{- end }}
+                ], "nextLink": {{ toJson (index . "nextLink") }}}
+      sqlVerbs:
+        select:
+          - $ref: "#/components/x-stackQL-resources/maintenance_configurations/methods/get"
+          - $ref: "#/components/x-stackQL-resources/maintenance_configurations/methods/list"
+        insert:
+          - $ref: "#/components/x-stackQL-resources/maintenance_configurations/methods/create_or_update"
+        update:
+          - $ref: "#/components/x-stackQL-resources/maintenance_configurations/methods/update"
+        replace:
+          - $ref: "#/components/x-stackQL-resources/maintenance_configurations/methods/create_or_update"
+        delete:
+          - $ref: "#/components/x-stackQL-resources/maintenance_configurations/methods/delete"
+    operations:
+      id: azure.maintenance.operations
+      name: operations
+      title: operations
+      methods:
+        list:
+          operation:
+            $ref: "#/paths/~1providers~1Microsoft.Maintenance~1operations?api-version=2023-10-01-preview/get"
+          response:
+            openAPIDocKey: "200"
+            mediaType: application/json
+            objectKey: $.value
+      sqlVerbs:
+        select:
+          - $ref: "#/components/x-stackQL-resources/operations/methods/list"
+        insert: []
+        update: []
+        delete: []
+    public_maintenance_configurations:
+      id: azure.maintenance.public_maintenance_configurations
+      name: public_maintenance_configurations
+      title: public_maintenance_configurations
+      methods:
+        get:
+          operation:
+            $ref: "#/paths/~1subscriptions~1{subscription_id}~1providers~1Microsoft.Maintenance~1publicMaintenanceConfigurations~1{resource_name}?api-version=2023-10-01-preview/get"
+          response:
+            openAPIDocKey: "200"
+            mediaType: application/json
+            overrideMediaType: application/json
+            transform:
+              type: golang_template_json_v0.3.0
+              body: '{{ $row := . }}{ {{ $p := index $row "properties" }}{{ if eq (kindOf $p) "map" }}{{ range $k, $v := $p }}{{ printf "%q" $k }}: {{ toJson $v }}, {{ end }}{{ end }}{{ range $k, $v := $row }}{{ printf "%q" $k }}: {{ toJson $v }}, {{ end }}"_flattened": true }'
+        list:
+          operation:
+            $ref: "#/paths/~1subscriptions~1{subscription_id}~1providers~1Microsoft.Maintenance~1publicMaintenanceConfigurations?api-version=2023-10-01-preview/get"
+          response:
+            openAPIDocKey: "200"
+            mediaType: application/json
+            objectKey: $.value
+            overrideMediaType: application/json
+            transform:
+              type: golang_template_json_v0.3.0
+              body: |-
+                {"value": [
+                {{- range $i, $row := index . "value" }}{{ if $i }},{{ end }}
+                  { {{ $p := index $row "properties" }}{{ if eq (kindOf $p) "map" }}{{ range $k, $v := $p }}{{ printf "%q" $k }}: {{ toJson $v }}, {{ end }}{{ end }}{{ range $k, $v := $row }}{{ printf "%q" $k }}: {{ toJson $v }}, {{ end }}"_flattened": true }
+                {{- end }}
+                ], "nextLink": {{ toJson (index . "nextLink") }}}
+      sqlVerbs:
+        select:
+          - $ref: "#/components/x-stackQL-resources/public_maintenance_configurations/methods/get"
+          - $ref: "#/components/x-stackQL-resources/public_maintenance_configurations/methods/list"
+        insert: []
+        update: []
+        delete: []
+    scheduled_event:
+      id: azure.maintenance.scheduled_event
+      name: scheduled_event
+      title: scheduled_event
+      methods:
+        acknowledge:
+          operation:
+            $ref: "#/paths/~1subscriptions~1{subscription_id}~1resourcegroups~1{resource_group_name}~1providers~1Microsoft.Compute~1{resource_type}~1{resource_name}~1providers~1Microsoft.Maintenance~1scheduledevents~1{scheduled_event_id}~1acknowledge?api-version=2023-10-01-preview/post"
+          response:
+            openAPIDocKey: "200"
+            mediaType: application/json
+      sqlVerbs:
+        select: []
+        insert: []
+        update: []
+        delete: []
+    updates:
+      id: azure.maintenance.updates
+      name: updates
+      title: updates
+      methods:
+        list:
+          operation:
+            $ref: "#/paths/~1subscriptions~1{subscription_id}~1resourcegroups~1{resource_group_name}~1providers~1{provider_name}~1{resource_type}~1{resource_name}~1providers~1Microsoft.Maintenance~1updates?api-version=2023-10-01-preview/get"
+          response:
+            openAPIDocKey: "200"
+            mediaType: application/json
+            objectKey: $.value
+            overrideMediaType: application/json
+            transform:
+              type: golang_template_json_v0.3.0
+              body: |-
+                {"value": [
+                {{- range $i, $row := index . "value" }}{{ if $i }},{{ end }}
+                  { {{ $p := index $row "properties" }}{{ if eq (kindOf $p) "map" }}{{ range $k, $v := $p }}{{ printf "%q" $k }}: {{ toJson $v }}, {{ end }}{{ end }}{{ range $k, $v := $row }}{{ printf "%q" $k }}: {{ toJson $v }}, {{ end }}"_flattened": true }
+                {{- end }}
+                ], "nextLink": {{ toJson (index . "nextLink") }}}
+        list_parent:
+          operation:
+            $ref: "#/paths/~1subscriptions~1{subscription_id}~1resourcegroups~1{resource_group_name}~1providers~1{provider_name}~1{resource_parent_type}~1{resource_parent_name}~1{resource_type}~1{resource_name}~1providers~1Microsoft.Maintenance~1updates?api-version=2023-10-01-preview/get"
+          response:
+            openAPIDocKey: "200"
+            mediaType: application/json
+            objectKey: $.value
+            overrideMediaType: application/json
+            transform:
+              type: golang_template_json_v0.3.0
+              body: |-
+                {"value": [
+                {{- range $i, $row := index . "value" }}{{ if $i }},{{ end }}
+                  { {{ $p := index $row "properties" }}{{ if eq (kindOf $p) "map" }}{{ range $k, $v := $p }}{{ printf "%q" $k }}: {{ toJson $v }}, {{ end }}{{ end }}{{ range $k, $v := $row }}{{ printf "%q" $k }}: {{ toJson $v }}, {{ end }}"_flattened": true }
+                {{- end }}
+                ], "nextLink": {{ toJson (index . "nextLink") }}}
+      sqlVerbs:
+        select:
+          - $ref: "#/components/x-stackQL-resources/updates/methods/list_parent"
+          - $ref: "#/components/x-stackQL-resources/updates/methods/list"
+        insert: []
+        update: []
+        delete: []
+paths:
+  /subscriptions/{subscription_id}/resourceGroups/{resource_group_name}/providers/Microsoft.Maintenance/applyUpdates?api-version=2023-10-01-preview:
+    get:
+      operationId: ApplyUpdateForResourceGroup_list
+      description: Get Configuration records within a subscription and resource group. Get Configuration records within a subscription and resource group.
+      parameters:
+        - name: resource_group_name
+          in: path
+          required: true
+          schema:
+            type: string
+          description: The name of the resource group. The name is case insensitive. Required.
+        - name: subscription_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PagedApplyUpdateFlattened"
+  /subscriptions/{subscription_id}/resourceGroups/{resource_group_name}/providers/{provider_name}/{resource_type}/{resource_name}/providers/Microsoft.Maintenance/applyUpdates/{apply_update_name}?api-version=2023-10-01-preview:
+    get:
+      operationId: ApplyUpdates_get
+      description: Track maintenance updates to resource.
+      parameters:
+        - name: resource_group_name
+          in: path
+          required: true
+          schema:
+            type: string
+          description: The name of the resource group. The name is case insensitive. Required.
+        - name: provider_name
+          in: path
+          required: true
+          schema:
+            type: string
+          description: Resource provider name. Required.
+        - name: resource_type
+          in: path
+          required: true
+          schema:
+            type: string
+          description: Resource parent type. Required.
+        - name: resource_name
+          in: path
+          required: true
+          schema:
+            type: string
+          description: Resource parent name. Required.
+        - name: apply_update_name
+          in: path
+          required: true
+          schema:
+            type: string
+          description: The name of the ApplyUpdate. Required.
+        - name: subscription_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApplyUpdateFlattened"
+    put:
+      operationId: ApplyUpdates_create_or_update_or_cancel
+      description: Apply maintenance updates to resource.
+      parameters:
+        - name: resource_group_name
+          in: path
+          required: true
+          schema:
+            type: string
+          description: The name of the resource group. The name is case insensitive. Required.
+        - name: provider_name
+          in: path
+          required: true
+          schema:
+            type: string
+          description: Resource provider name. Required.
+        - name: resource_type
+          in: path
+          required: true
+          schema:
+            type: string
+          description: Resource parent type. Required.
+        - name: resource_name
+          in: path
+          required: true
+          schema:
+            type: string
+          description: Resource parent name. Required.
+        - name: apply_update_name
+          in: path
+          required: true
+          schema:
+            type: string
+          description: The name of the ApplyUpdate. Required.
+        - name: subscription_id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                properties:
+                  $ref: "#/components/schemas/ApplyUpdateProperties"
+                  description: Properties of the apply update.
+      responses:
+        "200":
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApplyUpdate"
+  /subscriptions/{subscription_id}/providers/Microsoft.Maintenance/applyUpdates?api-version=2023-10-01-preview:
+    get:
+      operationId: ApplyUpdates_list
+      description: Get Configuration records within a subscription.
+      parameters:
+        - name: subscription_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PagedApplyUpdateFlattened"
+  /subscriptions/{subscription_id}/resourcegroups/{resource_group_name}/providers/{provider_name}/{resource_type}/{resource_name}/providers/Microsoft.Maintenance/applyUpdates/default?api-version=2023-10-01-preview:
+    put:
+      operationId: ApplyUpdates_create_or_update
+      description: Apply Updates to resource. Apply maintenance updates to resource.
+      parameters:
+        - name: resource_group_name
+          in: path
+          required: true
+          schema:
+            type: string
+          description: The name of the resource group. The name is case insensitive. Required.
+        - name: provider_name
+          in: path
+          required: true
+          schema:
+            type: string
+          description: Resource provider name. Required.
+        - name: resource_type
+          in: path
+          required: true
+          schema:
+            type: string
+          description: Resource type. Required.
+        - name: resource_name
+          in: path
+          required: true
+          schema:
+            type: string
+          description: Resource identifier. Required.
+        - name: subscription_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApplyUpdate"
+  /subscriptions/{subscription_id}/resourceGroups/{resource_group_name}/providers/{provider_name}/{resource_parent_type}/{resource_parent_name}/{resource_type}/{resource_name}/providers/Microsoft.Maintenance/applyUpdates/{apply_update_name}?api-version=2023-10-01-preview:
+    get:
+      operationId: ApplyUpdates_get_parent
+      description: Track maintenance updates to resource with parent.
+      parameters:
+        - name: resource_group_name
+          in: path
+          required: true
+          schema:
+            type: string
+          description: The name of the resource group. The name is case insensitive. Required.
+        - name: provider_name
+          in: path
+          required: true
+          schema:
+            type: string
+          description: Resource provider name. Required.
+        - name: resource_parent_type
+          in: path
+          required: true
+          schema:
+            type: string
+          description: Resource parent type. Required.
+        - name: resource_parent_name
+          in: path
+          required: true
+          schema:
+            type: string
+          description: Resource parent name. Required.
+        - name: resource_type
+          in: path
+          required: true
+          schema:
+            type: string
+          description: Resource type. Required.
+        - name: resource_name
+          in: path
+          required: true
+          schema:
+            type: string
+          description: Resource name. Required.
+        - name: apply_update_name
+          in: path
+          required: true
+          schema:
+            type: string
+          description: The name of the ApplyUpdate. Required.
+        - name: subscription_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApplyUpdateFlattened"
+  /subscriptions/{subscription_id}/resourcegroups/{resource_group_name}/providers/{provider_name}/{resource_parent_type}/{resource_parent_name}/{resource_type}/{resource_name}/providers/Microsoft.Maintenance/applyUpdates/default?api-version=2023-10-01-preview:
+    put:
+      operationId: ApplyUpdates_create_or_update_parent
+      description: Apply Updates to resource with parent. Apply maintenance updates to resource with parent.
+      parameters:
+        - name: resource_group_name
+          in: path
+          required: true
+          schema:
+            type: string
+          description: The name of the resource group. The name is case insensitive. Required.
+        - name: provider_name
+          in: path
+          required: true
+          schema:
+            type: string
+          description: Resource provider name. Required.
+        - name: resource_parent_type
+          in: path
+          required: true
+          schema:
+            type: string
+          description: Resource parent type. Required.
+        - name: resource_parent_name
+          in: path
+          required: true
+          schema:
+            type: string
+          description: Resource parent identifier. Required.
+        - name: resource_type
+          in: path
+          required: true
+          schema:
+            type: string
+          description: Resource type. Required.
+        - name: resource_name
+          in: path
+          required: true
+          schema:
+            type: string
+          description: Resource identifier. Required.
+        - name: subscription_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApplyUpdate"
+  /subscriptions/{subscription_id}/resourceGroups/{resource_group_name}/providers/Microsoft.Maintenance/configurationAssignments/{configuration_assignment_name}?api-version=2023-10-01-preview:
+    get:
+      operationId: ConfigurationAssignmentsForResourceGroup_get
+      description: Get configuration assignment for resource..
+      parameters:
+        - name: resource_group_name
+          in: path
+          required: true
+          schema:
+            type: string
+          description: The name of the resource group. The name is case insensitive. Required.
+        - name: configuration_assignment_name
+          in: path
+          required: true
+          schema:
+            type: string
+          description: The name of the ConfigurationAssignment. Required.
+        - name: subscription_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ConfigurationAssignmentFlattened"
+    put:
+      operationId: ConfigurationAssignmentsForResourceGroup_create_or_update
+      description: Register configuration for resource.
+      parameters:
+        - name: resource_group_name
+          in: path
+          required: true
+          schema:
+            type: string
+          description: The name of the resource group. The name is case insensitive. Required.
+        - name: configuration_assignment_name
+          in: path
+          required: true
+          schema:
+            type: string
+          description: The name of the ConfigurationAssignment. Required.
+        - name: subscription_id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                properties:
+                  $ref: "#/components/schemas/ConfigurationAssignmentProperties"
+                  description: Properties of the configuration assignment.
+                location:
+                  type: string
+                  description: Location of the resource.
+      responses:
+        "200":
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ConfigurationAssignment"
+    patch:
+      operationId: ConfigurationAssignmentsForResourceGroup_update
+      description: Register configuration for resource.
+      parameters:
+        - name: resource_group_name
+          in: path
+          required: true
+          schema:
+            type: string
+          description: The name of the resource group. The name is case insensitive. Required.
+        - name: configuration_assignment_name
+          in: path
+          required: true
+          schema:
+            type: string
+          description: The name of the ConfigurationAssignment. Required.
+        - name: subscription_id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                properties:
+                  $ref: "#/components/schemas/ConfigurationAssignmentProperties"
+                  description: Properties of the configuration assignment.
+                location:
+                  type: string
+                  description: Location of the resource.
+      responses:
+        "200":
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ConfigurationAssignment"
+    delete:
+      operationId: ConfigurationAssignmentsForResourceGroup_delete
+      description: Unregister configuration for resource.
+      parameters:
+        - name: resource_group_name
+          in: path
+          required: true
+          schema:
+            type: string
+          description: The name of the resource group. The name is case insensitive. Required.
+        - name: configuration_assignment_name
+          in: path
+          required: true
+          schema:
+            type: string
+          description: The name of the ConfigurationAssignment. Required.
+        - name: subscription_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ConfigurationAssignment"
+  /subscriptions/{subscription_id}/providers/Microsoft.Maintenance/configurationAssignments/{configuration_assignment_name}?api-version=2023-10-01-preview:
+    get:
+      operationId: ConfigurationAssignmentsForSubscriptions_get
+      description: Get configuration assignment for resource.
+      parameters:
+        - name: configuration_assignment_name
+          in: path
+          required: true
+          schema:
+            type: string
+          description: The name of the ConfigurationAssignment. Required.
+        - name: subscription_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ConfigurationAssignmentFlattened"
+    put:
+      operationId: ConfigurationAssignmentsForSubscriptions_create_or_update
+      description: Register configuration for resource.
+      parameters:
+        - name: configuration_assignment_name
+          in: path
+          required: true
+          schema:
+            type: string
+          description: The name of the ConfigurationAssignment. Required.
+        - name: subscription_id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                properties:
+                  $ref: "#/components/schemas/ConfigurationAssignmentProperties"
+                  description: Properties of the configuration assignment.
+                location:
+                  type: string
+                  description: Location of the resource.
+      responses:
+        "200":
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ConfigurationAssignment"
+    patch:
+      operationId: ConfigurationAssignmentsForSubscriptions_update
+      description: Register configuration for resource.
+      parameters:
+        - name: configuration_assignment_name
+          in: path
+          required: true
+          schema:
+            type: string
+          description: The name of the ConfigurationAssignment. Required.
+        - name: subscription_id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                properties:
+                  $ref: "#/components/schemas/ConfigurationAssignmentProperties"
+                  description: Properties of the configuration assignment.
+                location:
+                  type: string
+                  description: Location of the resource.
+      responses:
+        "200":
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ConfigurationAssignment"
+    delete:
+      operationId: ConfigurationAssignmentsForSubscriptions_delete
+      description: Unregister configuration for resource.
+      parameters:
+        - name: configuration_assignment_name
+          in: path
+          required: true
+          schema:
+            type: string
+          description: The name of the ConfigurationAssignment. Required.
+        - name: subscription_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ConfigurationAssignment"
+  /subscriptions/{subscription_id}/resourceGroups/{resource_group_name}/providers/{provider_name}/{resource_type}/{resource_name}/providers/Microsoft.Maintenance/configurationAssignments/{configuration_assignment_name}?api-version=2023-10-01-preview:
+    get:
+      operationId: ConfigurationAssignments_get
+      description: Get configuration assignment for resource..
+      parameters:
+        - name: resource_group_name
+          in: path
+          required: true
+          schema:
+            type: string
+          description: The name of the resource group. The name is case insensitive. Required.
+        - name: provider_name
+          in: path
+          required: true
+          schema:
+            type: string
+          description: Resource provider name. Required.
+        - name: resource_type
+          in: path
+          required: true
+          schema:
+            type: string
+          description: Resource parent type. Required.
+        - name: resource_name
+          in: path
+          required: true
+          schema:
+            type: string
+          description: Resource parent name. Required.
+        - name: configuration_assignment_name
+          in: path
+          required: true
+          schema:
+            type: string
+          description: The name of the ConfigurationAssignment. Required.
+        - name: subscription_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ConfigurationAssignmentFlattened"
+    put:
+      operationId: ConfigurationAssignments_create_or_update
+      description: Register configuration for resource.
+      parameters:
+        - name: resource_group_name
+          in: path
+          required: true
+          schema:
+            type: string
+          description: The name of the resource group. The name is case insensitive. Required.
+        - name: provider_name
+          in: path
+          required: true
+          schema:
+            type: string
+          description: Resource provider name. Required.
+        - name: resource_type
+          in: path
+          required: true
+          schema:
+            type: string
+          description: Resource parent type. Required.
+        - name: resource_name
+          in: path
+          required: true
+          schema:
+            type: string
+          description: Resource parent name. Required.
+        - name: configuration_assignment_name
+          in: path
+          required: true
+          schema:
+            type: string
+          description: The name of the ConfigurationAssignment. Required.
+        - name: subscription_id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                properties:
+                  $ref: "#/components/schemas/ConfigurationAssignmentProperties"
+                  description: Properties of the configuration assignment.
+                location:
+                  type: string
+                  description: Location of the resource.
+      responses:
+        "200":
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ConfigurationAssignment"
+    delete:
+      operationId: ConfigurationAssignments_delete
+      description: Unregister configuration for resource.
+      parameters:
+        - name: resource_group_name
+          in: path
+          required: true
+          schema:
+            type: string
+          description: The name of the resource group. The name is case insensitive. Required.
+        - name: provider_name
+          in: path
+          required: true
+          schema:
+            type: string
+          description: Resource provider name. Required.
+        - name: resource_type
+          in: path
+          required: true
+          schema:
+            type: string
+          description: Resource parent type. Required.
+        - name: resource_name
+          in: path
+          required: true
+          schema:
+            type: string
+          description: Resource parent name. Required.
+        - name: configuration_assignment_name
+          in: path
+          required: true
+          schema:
+            type: string
+          description: The name of the ConfigurationAssignment. Required.
+        - name: subscription_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ConfigurationAssignment"
+  /subscriptions/{subscription_id}/resourcegroups/{resource_group_name}/providers/{provider_name}/{resource_type}/{resource_name}/providers/Microsoft.Maintenance/configurationAssignments?api-version=2023-10-01-preview:
+    get:
+      operationId: ConfigurationAssignments_list
+      description: Get Configuration records within a subscription and resource group. Get Configuration records within a subscription and resource group.
+      parameters:
+        - name: resource_group_name
+          in: path
+          required: true
+          schema:
+            type: string
+          description: The name of the resource group. The name is case insensitive. Required.
+        - name: provider_name
+          in: path
+          required: true
+          schema:
+            type: string
+          description: Resource provider name. Required.
+        - name: resource_type
+          in: path
+          required: true
+          schema:
+            type: string
+          description: Resource type. Required.
+        - name: resource_name
+          in: path
+          required: true
+          schema:
+            type: string
+          description: Resource identifier. Required.
+        - name: subscription_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PagedConfigurationAssignmentFlattened"
+  /subscriptions/{subscription_id}/resourceGroups/{resource_group_name}/providers/{provider_name}/{resource_parent_type}/{resource_parent_name}/{resource_type}/{resource_name}/providers/Microsoft.Maintenance/configurationAssignments?api-version=2023-10-01-preview:
+    get:
+      operationId: ConfigurationAssignments_list_parent
+      description: List configurationAssignments for resource.
+      parameters:
+        - name: resource_group_name
+          in: path
+          required: true
+          schema:
+            type: string
+          description: The name of the resource group. The name is case insensitive. Required.
+        - name: provider_name
+          in: path
+          required: true
+          schema:
+            type: string
+          description: Resource provider name. Required.
+        - name: resource_parent_type
+          in: path
+          required: true
+          schema:
+            type: string
+          description: Resource parent type. Required.
+        - name: resource_parent_name
+          in: path
+          required: true
+          schema:
+            type: string
+          description: Resource parent name. Required.
+        - name: resource_type
+          in: path
+          required: true
+          schema:
+            type: string
+          description: Resource type. Required.
+        - name: resource_name
+          in: path
+          required: true
+          schema:
+            type: string
+          description: Resource name. Required.
+        - name: subscription_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PagedConfigurationAssignmentFlattened"
+  /subscriptions/{subscription_id}/resourceGroups/{resource_group_name}/providers/{provider_name}/{resource_parent_type}/{resource_parent_name}/{resource_type}/{resource_name}/providers/Microsoft.Maintenance/configurationAssignments/{configuration_assignment_name}?api-version=2023-10-01-preview:
+    get:
+      operationId: ConfigurationAssignments_get_parent
+      description: Get configuration assignment for resource..
+      parameters:
+        - name: resource_group_name
+          in: path
+          required: true
+          schema:
+            type: string
+          description: The name of the resource group. The name is case insensitive. Required.
+        - name: provider_name
+          in: path
+          required: true
+          schema:
+            type: string
+          description: Resource provider name. Required.
+        - name: resource_parent_type
+          in: path
+          required: true
+          schema:
+            type: string
+          description: Resource parent type. Required.
+        - name: resource_parent_name
+          in: path
+          required: true
+          schema:
+            type: string
+          description: Resource parent name. Required.
+        - name: resource_type
+          in: path
+          required: true
+          schema:
+            type: string
+          description: Resource type. Required.
+        - name: resource_name
+          in: path
+          required: true
+          schema:
+            type: string
+          description: Resource name. Required.
+        - name: configuration_assignment_name
+          in: path
+          required: true
+          schema:
+            type: string
+          description: The name of the ConfigurationAssignment. Required.
+        - name: subscription_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ConfigurationAssignmentFlattened"
+    put:
+      operationId: ConfigurationAssignments_create_or_update_parent
+      description: Register configuration for resource.
+      parameters:
+        - name: resource_group_name
+          in: path
+          required: true
+          schema:
+            type: string
+          description: The name of the resource group. The name is case insensitive. Required.
+        - name: provider_name
+          in: path
+          required: true
+          schema:
+            type: string
+          description: Resource provider name. Required.
+        - name: resource_parent_type
+          in: path
+          required: true
+          schema:
+            type: string
+          description: Resource parent type. Required.
+        - name: resource_parent_name
+          in: path
+          required: true
+          schema:
+            type: string
+          description: Resource parent name. Required.
+        - name: resource_type
+          in: path
+          required: true
+          schema:
+            type: string
+          description: Resource type. Required.
+        - name: resource_name
+          in: path
+          required: true
+          schema:
+            type: string
+          description: Resource name. Required.
+        - name: configuration_assignment_name
+          in: path
+          required: true
+          schema:
+            type: string
+          description: The name of the ConfigurationAssignment. Required.
+        - name: subscription_id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                properties:
+                  $ref: "#/components/schemas/ConfigurationAssignmentProperties"
+                  description: Properties of the configuration assignment.
+                location:
+                  type: string
+                  description: Location of the resource.
+      responses:
+        "200":
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ConfigurationAssignment"
+    delete:
+      operationId: ConfigurationAssignments_delete_parent
+      description: Unregister configuration for resource.
+      parameters:
+        - name: resource_group_name
+          in: path
+          required: true
+          schema:
+            type: string
+          description: The name of the resource group. The name is case insensitive. Required.
+        - name: provider_name
+          in: path
+          required: true
+          schema:
+            type: string
+          description: Resource provider name. Required.
+        - name: resource_parent_type
+          in: path
+          required: true
+          schema:
+            type: string
+          description: Resource parent type. Required.
+        - name: resource_parent_name
+          in: path
+          required: true
+          schema:
+            type: string
+          description: Resource parent name. Required.
+        - name: resource_type
+          in: path
+          required: true
+          schema:
+            type: string
+          description: Resource type. Required.
+        - name: resource_name
+          in: path
+          required: true
+          schema:
+            type: string
+          description: Resource name. Required.
+        - name: configuration_assignment_name
+          in: path
+          required: true
+          schema:
+            type: string
+          description: The name of the ConfigurationAssignment. Required.
+        - name: subscription_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ConfigurationAssignment"
+  /subscriptions/{subscription_id}/providers/Microsoft.Maintenance/configurationAssignments?api-version=2023-10-01-preview:
+    get:
+      operationId: ConfigurationAssignmentsWithinSubscription_list
+      description: "[UNSUPPORTED] Get configuration assignment within a subscription. This API is not implemented yet."
+      parameters:
+        - name: subscription_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PagedConfigurationAssignmentFlattened"
+  /subscriptions/{subscription_id}/resourceGroups/{resource_group_name}/providers/Microsoft.Maintenance/maintenanceConfigurations?api-version=2023-10-01-preview:
+    get:
+      operationId: MaintenanceConfigurationsForResourceGroup_list
+      description: Get Configuration records within a subscription and resource group.
+      parameters:
+        - name: resource_group_name
+          in: path
+          required: true
+          schema:
+            type: string
+          description: The name of the resource group. The name is case insensitive. Required.
+        - name: subscription_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PagedMaintenanceConfigurationFlattened"
+  /subscriptions/{subscription_id}/resourceGroups/{resource_group_name}/providers/Microsoft.Maintenance/maintenanceConfigurations/{resource_name}?api-version=2023-10-01-preview:
+    get:
+      operationId: MaintenanceConfigurations_get
+      description: Get Configuration record.
+      parameters:
+        - name: resource_group_name
+          in: path
+          required: true
+          schema:
+            type: string
+          description: The name of the resource group. The name is case insensitive. Required.
+        - name: resource_name
+          in: path
+          required: true
+          schema:
+            type: string
+          description: The name of the MaintenanceConfiguration. Required.
+        - name: subscription_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MaintenanceConfigurationFlattened"
+    put:
+      operationId: MaintenanceConfigurations_create_or_update
+      description: Create or Update configuration record.
+      parameters:
+        - name: resource_group_name
+          in: path
+          required: true
+          schema:
+            type: string
+          description: The name of the resource group. The name is case insensitive. Required.
+        - name: resource_name
+          in: path
+          required: true
+          schema:
+            type: string
+          description: The name of the MaintenanceConfiguration. Required.
+        - name: subscription_id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                properties:
+                  $ref: "#/components/schemas/MaintenanceConfigurationProperties"
+                  description: Gets or sets properties of the resource.
+                location:
+                  type: string
+                  description: Gets or sets location of the resource.
+                tags:
+                  type: object
+                  properties: {}
+                  description: Gets or sets tags of the resource.
+      responses:
+        "200":
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MaintenanceConfiguration"
+    patch:
+      operationId: MaintenanceConfigurations_update
+      description: Patch configuration record.
+      parameters:
+        - name: resource_group_name
+          in: path
+          required: true
+          schema:
+            type: string
+          description: The name of the resource group. The name is case insensitive. Required.
+        - name: resource_name
+          in: path
+          required: true
+          schema:
+            type: string
+          description: The name of the MaintenanceConfiguration. Required.
+        - name: subscription_id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                properties:
+                  $ref: "#/components/schemas/MaintenanceConfigurationProperties"
+                  description: Gets or sets properties of the resource.
+                location:
+                  type: string
+                  description: Gets or sets location of the resource.
+                tags:
+                  type: object
+                  properties: {}
+                  description: Gets or sets tags of the resource.
+      responses:
+        "200":
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MaintenanceConfiguration"
+    delete:
+      operationId: MaintenanceConfigurations_delete
+      description: Delete Configuration record.
+      parameters:
+        - name: resource_group_name
+          in: path
+          required: true
+          schema:
+            type: string
+          description: The name of the resource group. The name is case insensitive. Required.
+        - name: resource_name
+          in: path
+          required: true
+          schema:
+            type: string
+          description: The name of the MaintenanceConfiguration. Required.
+        - name: subscription_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MaintenanceConfiguration"
+  /subscriptions/{subscription_id}/providers/Microsoft.Maintenance/maintenanceConfigurations?api-version=2023-10-01-preview:
+    get:
+      operationId: MaintenanceConfigurations_list
+      description: Get Configuration records within a subscription.
+      parameters:
+        - name: subscription_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PagedMaintenanceConfigurationFlattened"
+  /providers/Microsoft.Maintenance/operations?api-version=2023-10-01-preview:
+    get:
+      operationId: maintenance_list
+      description: List available operations. List the operations for the provider.
+      parameters: []
+      responses:
+        "200":
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PagedOperation"
+  /subscriptions/{subscription_id}/providers/Microsoft.Maintenance/publicMaintenanceConfigurations/{resource_name}?api-version=2023-10-01-preview:
+    get:
+      operationId: PublicMaintenanceConfigurations_get
+      description: Get Public Maintenance Configuration record.
+      parameters:
+        - name: resource_name
+          in: path
+          required: true
+          schema:
+            type: string
+          description: The name of the MaintenanceConfiguration. Required.
+        - name: subscription_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MaintenanceConfigurationFlattened"
+  /subscriptions/{subscription_id}/providers/Microsoft.Maintenance/publicMaintenanceConfigurations?api-version=2023-10-01-preview:
+    get:
+      operationId: PublicMaintenanceConfigurations_list
+      description: Get Public Maintenance Configuration records.
+      parameters:
+        - name: subscription_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PagedMaintenanceConfigurationFlattened"
+  /subscriptions/{subscription_id}/resourcegroups/{resource_group_name}/providers/Microsoft.Compute/{resource_type}/{resource_name}/providers/Microsoft.Maintenance/scheduledevents/{scheduled_event_id}/acknowledge?api-version=2023-10-01-preview:
+    post:
+      operationId: ScheduledEvent_acknowledge
+      description: Post Scheduled Event Acknowledgement. Post Scheduled Event Acknowledgement.
+      parameters:
+        - name: resource_group_name
+          in: path
+          required: true
+          schema:
+            type: string
+          description: The name of the resource group. The name is case insensitive. Required.
+        - name: resource_type
+          in: path
+          required: true
+          schema:
+            type: string
+          description: Resource type. Required.
+        - name: resource_name
+          in: path
+          required: true
+          schema:
+            type: string
+          description: Resource Name. Required.
+        - name: scheduled_event_id
+          in: path
+          required: true
+          schema:
+            type: string
+          description: Scheduled Event Id. This is a GUID-formatted string (e.g. 00000000-0000-0000-0000-000000000000). Required.
+        - name: subscription_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ScheduledEventApproveResponse"
+  /subscriptions/{subscription_id}/resourcegroups/{resource_group_name}/providers/{provider_name}/{resource_type}/{resource_name}/providers/Microsoft.Maintenance/updates?api-version=2023-10-01-preview:
+    get:
+      operationId: Updates_list
+      description: Get Updates to resource. Get updates to resources.
+      parameters:
+        - name: resource_group_name
+          in: path
+          required: true
+          schema:
+            type: string
+          description: The name of the resource group. The name is case insensitive. Required.
+        - name: provider_name
+          in: path
+          required: true
+          schema:
+            type: string
+          description: Resource provider name. Required.
+        - name: resource_type
+          in: path
+          required: true
+          schema:
+            type: string
+          description: Resource type. Required.
+        - name: resource_name
+          in: path
+          required: true
+          schema:
+            type: string
+          description: Resource identifier. Required.
+        - name: subscription_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PagedUpdateFlattened"
+  /subscriptions/{subscription_id}/resourcegroups/{resource_group_name}/providers/{provider_name}/{resource_parent_type}/{resource_parent_name}/{resource_type}/{resource_name}/providers/Microsoft.Maintenance/updates?api-version=2023-10-01-preview:
+    get:
+      operationId: Updates_list_parent
+      description: Get Updates to resource. Get updates to resources.
+      parameters:
+        - name: resource_group_name
+          in: path
+          required: true
+          schema:
+            type: string
+          description: The name of the resource group. The name is case insensitive. Required.
+        - name: provider_name
+          in: path
+          required: true
+          schema:
+            type: string
+          description: Resource provider name. Required.
+        - name: resource_parent_type
+          in: path
+          required: true
+          schema:
+            type: string
+          description: Resource parent type. Required.
+        - name: resource_parent_name
+          in: path
+          required: true
+          schema:
+            type: string
+          description: Resource parent identifier. Required.
+        - name: resource_type
+          in: path
+          required: true
+          schema:
+            type: string
+          description: Resource type. Required.
+        - name: resource_name
+          in: path
+          required: true
+          schema:
+            type: string
+          description: Resource identifier. Required.
+        - name: subscription_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PagedUpdateFlattened"

@@ -1,0 +1,1787 @@
+openapi: 3.0.0
+info:
+  version: "2020-07-29"
+  title: Amazon AppIntegrations Service
+  description: Amazon AppIntegrations Service
+  x-serviceName: app-integrations
+  x-serviceAlias: appintegrations
+  x-protocol: rest-json
+  x-apiVersion: "2020-07-29"
+  x-endpointPrefix: app-integrations
+  x-jsonVersion: "1.1"
+servers:
+  - url: https://app-integrations.{region}.amazonaws.com
+    variables:
+      region:
+        default: us-east-1
+        description: AWS region
+    description: Regional endpoint for appintegrations
+paths:
+  /applications:
+    post:
+      operationId: CreateApplication
+      description: Creates and persists an Application resource.
+      parameters: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                Name:
+                  $ref: "#/components/schemas/ApplicationName"
+                Namespace:
+                  $ref: "#/components/schemas/ApplicationNamespace"
+                Description:
+                  $ref: "#/components/schemas/Description"
+                ApplicationSourceConfig:
+                  $ref: "#/components/schemas/ApplicationSourceConfig"
+                Subscriptions:
+                  $ref: "#/components/schemas/SubscriptionList"
+                Publications:
+                  $ref: "#/components/schemas/PublicationList"
+                ClientToken:
+                  $ref: "#/components/schemas/IdempotencyToken"
+                Tags:
+                  $ref: "#/components/schemas/TagMap"
+                Permissions:
+                  $ref: "#/components/schemas/PermissionList"
+                IsService:
+                  $ref: "#/components/schemas/Boolean"
+                InitializationTimeout:
+                  $ref: "#/components/schemas/InitializationTimeout"
+                ApplicationConfig:
+                  $ref: "#/components/schemas/ApplicationConfig"
+                IframeConfig:
+                  $ref: "#/components/schemas/IframeConfig"
+                ApplicationType:
+                  $ref: "#/components/schemas/ApplicationType"
+              required:
+                - ApplicationSourceConfig
+      responses:
+        "200":
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CreateApplicationResponse"
+    get:
+      operationId: ListApplications
+      description: Lists applications in the account.
+      parameters:
+        - name: nextToken
+          in: query
+          required: false
+          schema:
+            $ref: "#/components/schemas/NextToken"
+          description: The token for the next set of results. Use the value returned in the previous response in the next request to retrieve the next set of results.
+        - name: maxResults
+          in: query
+          required: false
+          schema:
+            $ref: "#/components/schemas/MaxResults"
+          description: The maximum number of results to return per page.
+        - name: applicationType
+          in: query
+          required: false
+          schema:
+            $ref: "#/components/schemas/ApplicationType"
+          description: The type of application.
+      responses:
+        "200":
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ListApplicationsResponse"
+  /dataIntegrations:
+    post:
+      operationId: CreateDataIntegration
+      description: Creates and persists a DataIntegration resource. You cannot create a DataIntegration association for a DataIntegration that has been previously associated. Use a different DataIntegration, or recreate the DataIntegration using the CreateDataIntegration API.
+      parameters: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                Name:
+                  $ref: "#/components/schemas/Name"
+                Description:
+                  $ref: "#/components/schemas/Description"
+                KmsKey:
+                  $ref: "#/components/schemas/NonBlankString"
+                SourceURI:
+                  $ref: "#/components/schemas/SourceURI"
+                ScheduleConfig:
+                  $ref: "#/components/schemas/ScheduleConfiguration"
+                Tags:
+                  $ref: "#/components/schemas/TagMap"
+                ClientToken:
+                  $ref: "#/components/schemas/IdempotencyToken"
+                FileConfiguration:
+                  $ref: "#/components/schemas/FileConfiguration"
+                ObjectConfiguration:
+                  $ref: "#/components/schemas/ObjectConfiguration"
+              required:
+                - KmsKey
+      responses:
+        "200":
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CreateDataIntegrationResponse"
+    get:
+      operationId: ListDataIntegrations
+      description: Returns a paginated list of DataIntegrations in the account. You cannot create a DataIntegration association for a DataIntegration that has been previously associated. Use a different DataIntegration, or recreate the DataIntegration using the CreateDataIntegration API.
+      parameters:
+        - name: nextToken
+          in: query
+          required: false
+          schema:
+            $ref: "#/components/schemas/NextToken"
+          description: The token for the next set of results. Use the value returned in the previous response in the next request to retrieve the next set of results.
+        - name: maxResults
+          in: query
+          required: false
+          schema:
+            $ref: "#/components/schemas/MaxResults"
+          description: The maximum number of results to return per page.
+      responses:
+        "200":
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ListDataIntegrationsResponse"
+  /dataIntegrations/{identifier}/associations:
+    post:
+      operationId: CreateDataIntegrationAssociation
+      description: Creates and persists a DataIntegrationAssociation resource.
+      parameters:
+        - name: identifier
+          in: path
+          required: true
+          schema:
+            $ref: "#/components/schemas/Identifier"
+          description: A unique identifier for the DataIntegration.
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                ClientId:
+                  $ref: "#/components/schemas/ClientId"
+                ObjectConfiguration:
+                  $ref: "#/components/schemas/ObjectConfiguration"
+                DestinationURI:
+                  $ref: "#/components/schemas/DestinationURI"
+                ClientAssociationMetadata:
+                  $ref: "#/components/schemas/ClientAssociationMetadata"
+                ClientToken:
+                  $ref: "#/components/schemas/IdempotencyToken"
+                ExecutionConfiguration:
+                  $ref: "#/components/schemas/ExecutionConfiguration"
+      responses:
+        "200":
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CreateDataIntegrationAssociationResponse"
+    get:
+      operationId: ListDataIntegrationAssociations
+      description: Returns a paginated list of DataIntegration associations in the account. You cannot create a DataIntegration association for a DataIntegration that has been previously associated. Use a different DataIntegration, or recreate the DataIntegration using the CreateDataIntegration API.
+      parameters:
+        - name: identifier
+          in: path
+          required: true
+          schema:
+            $ref: "#/components/schemas/Identifier"
+          description: A unique identifier for the DataIntegration.
+        - name: nextToken
+          in: query
+          required: false
+          schema:
+            $ref: "#/components/schemas/NextToken"
+          description: The token for the next set of results. Use the value returned in the previous response in the next request to retrieve the next set of results.
+        - name: maxResults
+          in: query
+          required: false
+          schema:
+            $ref: "#/components/schemas/MaxResults"
+          description: The maximum number of results to return per page.
+      responses:
+        "200":
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ListDataIntegrationAssociationsResponse"
+  /eventIntegrations:
+    post:
+      operationId: CreateEventIntegration
+      description: Creates an EventIntegration, given a specified name, description, and a reference to an Amazon EventBridge bus in your account and a partner event source that pushes events to that bus. No objects are created in the your account, only metadata that is persisted on the EventIntegration control plane.
+      parameters: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                Name:
+                  $ref: "#/components/schemas/Name"
+                Description:
+                  $ref: "#/components/schemas/Description"
+                EventFilter:
+                  $ref: "#/components/schemas/EventFilter"
+                EventBridgeBus:
+                  $ref: "#/components/schemas/EventBridgeBus"
+                ClientToken:
+                  $ref: "#/components/schemas/IdempotencyToken"
+                Tags:
+                  $ref: "#/components/schemas/TagMap"
+              required:
+                - EventFilter
+                - EventBridgeBus
+      responses:
+        "200":
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CreateEventIntegrationResponse"
+    get:
+      operationId: ListEventIntegrations
+      description: Returns a paginated list of event integrations in the account.
+      parameters:
+        - name: nextToken
+          in: query
+          required: false
+          schema:
+            $ref: "#/components/schemas/NextToken"
+          description: The token for the next set of results. Use the value returned in the previous response in the next request to retrieve the next set of results.
+        - name: maxResults
+          in: query
+          required: false
+          schema:
+            $ref: "#/components/schemas/MaxResults"
+          description: The maximum number of results to return per page.
+      responses:
+        "200":
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ListEventIntegrationsResponse"
+  /applications/{application_identifier}:
+    delete:
+      operationId: DeleteApplication
+      description: Deletes the Application. Only Applications that don't have any Application Associations can be deleted.
+      parameters:
+        - name: application_identifier
+          in: path
+          required: true
+          schema:
+            $ref: "#/components/schemas/ArnOrUUID"
+          description: The Amazon Resource Name (ARN) of the Application.
+      responses:
+        "200":
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DeleteApplicationResponse"
+    get:
+      operationId: GetApplication
+      description: Get an Application resource.
+      parameters:
+        - name: application_identifier
+          in: path
+          required: true
+          schema:
+            $ref: "#/components/schemas/ArnOrUUID"
+          description: The Amazon Resource Name (ARN) of the Application.
+      responses:
+        "200":
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/GetApplicationResponse"
+    patch:
+      operationId: UpdateApplication
+      description: Updates and persists an Application resource.
+      parameters:
+        - name: application_identifier
+          in: path
+          required: true
+          schema:
+            $ref: "#/components/schemas/ArnOrUUID"
+          description: The Amazon Resource Name (ARN) of the Application.
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                Name:
+                  $ref: "#/components/schemas/ApplicationName"
+                Description:
+                  $ref: "#/components/schemas/Description"
+                ApplicationSourceConfig:
+                  $ref: "#/components/schemas/ApplicationSourceConfig"
+                Subscriptions:
+                  $ref: "#/components/schemas/SubscriptionList"
+                Publications:
+                  $ref: "#/components/schemas/PublicationList"
+                Permissions:
+                  $ref: "#/components/schemas/PermissionList"
+                IsService:
+                  $ref: "#/components/schemas/Boolean"
+                InitializationTimeout:
+                  $ref: "#/components/schemas/InitializationTimeout"
+                ApplicationConfig:
+                  $ref: "#/components/schemas/ApplicationConfig"
+                IframeConfig:
+                  $ref: "#/components/schemas/IframeConfig"
+                ApplicationType:
+                  $ref: "#/components/schemas/ApplicationType"
+      responses:
+        "200":
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UpdateApplicationResponse"
+  /dataIntegrations/{identifier}:
+    delete:
+      operationId: DeleteDataIntegration
+      description: Deletes the DataIntegration. Only DataIntegrations that don't have any DataIntegrationAssociations can be deleted. Deleting a DataIntegration also deletes the underlying Amazon AppFlow flow and service linked role. You cannot create a DataIntegration association for a DataIntegration that has been previously associated. Use a different DataIntegration, or recreate the DataIntegration using the CreateDataIntegration API.
+      parameters:
+        - name: identifier
+          in: path
+          required: true
+          schema:
+            $ref: "#/components/schemas/Identifier"
+          description: A unique identifier for the DataIntegration.
+      responses:
+        "200":
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DeleteDataIntegrationResponse"
+    get:
+      operationId: GetDataIntegration
+      description: Returns information about the DataIntegration. You cannot create a DataIntegration association for a DataIntegration that has been previously associated. Use a different DataIntegration, or recreate the DataIntegration using the CreateDataIntegration API.
+      parameters:
+        - name: identifier
+          in: path
+          required: true
+          schema:
+            $ref: "#/components/schemas/Identifier"
+          description: A unique identifier.
+      responses:
+        "200":
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/GetDataIntegrationResponse"
+    patch:
+      operationId: UpdateDataIntegration
+      description: Updates the description of a DataIntegration. You cannot create a DataIntegration association for a DataIntegration that has been previously associated. Use a different DataIntegration, or recreate the DataIntegration using the CreateDataIntegration API.
+      parameters:
+        - name: identifier
+          in: path
+          required: true
+          schema:
+            $ref: "#/components/schemas/Identifier"
+          description: A unique identifier for the DataIntegration.
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                Name:
+                  $ref: "#/components/schemas/Name"
+                Description:
+                  $ref: "#/components/schemas/Description"
+      responses:
+        "200":
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UpdateDataIntegrationResponse"
+  /eventIntegrations/{name}:
+    delete:
+      operationId: DeleteEventIntegration
+      description: Deletes the specified existing event integration. If the event integration is associated with clients, the request is rejected.
+      parameters:
+        - name: name
+          in: path
+          required: true
+          schema:
+            $ref: "#/components/schemas/Name"
+          description: The name of the event integration.
+      responses:
+        "200":
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DeleteEventIntegrationResponse"
+    get:
+      operationId: GetEventIntegration
+      description: Returns information about the event integration.
+      parameters:
+        - name: name
+          in: path
+          required: true
+          schema:
+            $ref: "#/components/schemas/Name"
+          description: The name of the event integration.
+      responses:
+        "200":
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/GetEventIntegrationResponse"
+    patch:
+      operationId: UpdateEventIntegration
+      description: Updates the description of an event integration.
+      parameters:
+        - name: name
+          in: path
+          required: true
+          schema:
+            $ref: "#/components/schemas/Name"
+          description: The name of the event integration.
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                Description:
+                  $ref: "#/components/schemas/Description"
+      responses:
+        "200":
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UpdateEventIntegrationResponse"
+  /applications/{application_identifier}/associations:
+    get:
+      operationId: ListApplicationAssociations
+      description: Returns a paginated list of application associations for an application.
+      parameters:
+        - name: application_identifier
+          in: path
+          required: true
+          schema:
+            $ref: "#/components/schemas/ArnOrUUID"
+          description: A unique identifier for the Application.
+        - name: nextToken
+          in: query
+          required: false
+          schema:
+            $ref: "#/components/schemas/NextToken"
+          description: The token for the next set of results. Use the value returned in the previous response in the next request to retrieve the next set of results.
+        - name: maxResults
+          in: query
+          required: false
+          schema:
+            $ref: "#/components/schemas/MaxResults"
+          description: The maximum number of results to return per page.
+      responses:
+        "200":
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ListApplicationAssociationsResponse"
+  /eventIntegrations/{name}/associations:
+    get:
+      operationId: ListEventIntegrationAssociations
+      description: Returns a paginated list of event integration associations in the account.
+      parameters:
+        - name: name
+          in: path
+          required: true
+          schema:
+            $ref: "#/components/schemas/Name"
+          description: The name of the event integration.
+        - name: nextToken
+          in: query
+          required: false
+          schema:
+            $ref: "#/components/schemas/NextToken"
+          description: The token for the next set of results. Use the value returned in the previous response in the next request to retrieve the next set of results.
+        - name: maxResults
+          in: query
+          required: false
+          schema:
+            $ref: "#/components/schemas/MaxResults"
+          description: The maximum number of results to return per page.
+      responses:
+        "200":
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ListEventIntegrationAssociationsResponse"
+  /tags/{resource_arn}:
+    get:
+      operationId: ListTagsForResource
+      description: Lists the tags for the specified resource.
+      parameters:
+        - name: resource_arn
+          in: path
+          required: true
+          schema:
+            $ref: "#/components/schemas/Arn"
+          description: The Amazon Resource Name (ARN) of the resource.
+      responses:
+        "200":
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ListTagsForResourceResponse"
+    post:
+      operationId: TagResource
+      description: Adds the specified tags to the specified resource.
+      parameters:
+        - name: resource_arn
+          in: path
+          required: true
+          schema:
+            $ref: "#/components/schemas/Arn"
+          description: The Amazon Resource Name (ARN) of the resource.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                tags:
+                  $ref: "#/components/schemas/TagMap"
+              required:
+                - tags
+      responses:
+        "200":
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TagResourceResponse"
+    delete:
+      operationId: UntagResource
+      description: Removes the specified tags from the specified resource.
+      parameters:
+        - name: resource_arn
+          in: path
+          required: true
+          schema:
+            $ref: "#/components/schemas/Arn"
+          description: The Amazon Resource Name (ARN) of the resource.
+        - name: tagKeys
+          in: query
+          required: true
+          schema:
+            $ref: "#/components/schemas/TagKeyList"
+          description: The tag keys.
+      responses:
+        "200":
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UntagResourceResponse"
+  /dataIntegrations/{identifier}/associations/{data_integration_association_identifier}:
+    patch:
+      operationId: UpdateDataIntegrationAssociation
+      description: Updates and persists a DataIntegrationAssociation resource. Updating a DataIntegrationAssociation with ExecutionConfiguration will rerun the on-demand job.
+      parameters:
+        - name: identifier
+          in: path
+          required: true
+          schema:
+            $ref: "#/components/schemas/Identifier"
+          description: A unique identifier for the DataIntegration.
+        - name: data_integration_association_identifier
+          in: path
+          required: true
+          schema:
+            $ref: "#/components/schemas/Identifier"
+          description: A unique identifier. of the DataIntegrationAssociation resource
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                ExecutionConfiguration:
+                  $ref: "#/components/schemas/ExecutionConfiguration"
+              required:
+                - ExecutionConfiguration
+      responses:
+        "200":
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UpdateDataIntegrationAssociationResponse"
+components:
+  parameters:
+    X-Amz-Content-Sha256:
+      in: header
+      name: X-Amz-Content-Sha256
+      required: false
+      schema:
+        type: string
+    X-Amz-Date:
+      in: header
+      name: X-Amz-Date
+      required: false
+      schema:
+        type: string
+    X-Amz-Algorithm:
+      in: header
+      name: X-Amz-Algorithm
+      required: false
+      schema:
+        type: string
+    X-Amz-Credential:
+      in: header
+      name: X-Amz-Credential
+      required: false
+      schema:
+        type: string
+    X-Amz-Security-Token:
+      in: header
+      name: X-Amz-Security-Token
+      required: false
+      schema:
+        type: string
+    X-Amz-Signature:
+      in: header
+      name: X-Amz-Signature
+      required: false
+      schema:
+        type: string
+    X-Amz-SignedHeaders:
+      in: header
+      name: X-Amz-SignedHeaders
+      required: false
+      schema:
+        type: string
+  schemas:
+    ApplicationName:
+      type: string
+      minLength: 1
+      maxLength: 255
+      pattern: ^[a-zA-Z0-9\/\._ \-]+$
+    ApplicationNamespace:
+      type: string
+      minLength: 1
+      maxLength: 211
+      pattern: ^[a-zA-Z0-9\/\._\-]+$
+    Description:
+      type: string
+      minLength: 0
+      maxLength: 1000
+      pattern: .*
+    ApplicationSourceConfig:
+      description: The configuration for where the application should be loaded from.
+      type: object
+      properties:
+        ExternalUrlConfig:
+          $ref: "#/components/schemas/ExternalUrlConfig"
+          description: The external URL source for the application.
+    ExternalUrlConfig:
+      description: The external URL source for the application.
+      type: object
+      properties:
+        AccessUrl:
+          $ref: "#/components/schemas/URL"
+          description: The URL to access the application.
+        ApprovedOrigins:
+          $ref: "#/components/schemas/ApplicationApprovedOrigins"
+          description: Additional URLs to allow list if different than the access URL.
+      required:
+        - AccessUrl
+    URL:
+      type: string
+      minLength: 1
+      maxLength: 1000
+      pattern: ^\w+\:\/\/.*$
+    ApplicationApprovedOrigins:
+      type: array
+      items:
+        $ref: "#/components/schemas/ApplicationTrustedSource"
+    ApplicationTrustedSource:
+      type: string
+      minLength: 1
+      maxLength: 128
+      pattern: ^\w+\:\/\/.*$
+    SubscriptionList:
+      type: array
+      items:
+        $ref: "#/components/schemas/Subscription"
+    Subscription:
+      description: The configuration of an event that the application subscribes.
+      type: object
+      properties:
+        Event:
+          $ref: "#/components/schemas/EventName"
+          description: The name of the subscription.
+        Description:
+          $ref: "#/components/schemas/Description"
+          description: The description of the subscription.
+      required:
+        - Event
+    EventName:
+      type: string
+      minLength: 1
+      maxLength: 255
+      pattern: ^[a-zA-Z0-9\/\._\-]+::[a-zA-Z0-9\/\._\-]+(?:\*)?$
+    PublicationList:
+      type: array
+      items:
+        $ref: "#/components/schemas/Publication"
+    Publication:
+      description: The configuration of an event that the application publishes.
+      type: object
+      properties:
+        Event:
+          $ref: "#/components/schemas/EventName"
+          description: The name of the publication.
+        Schema:
+          $ref: "#/components/schemas/EventDefinitionSchema"
+          description: The JSON schema of the publication event.
+        Description:
+          $ref: "#/components/schemas/Description"
+          description: The description of the publication.
+      required:
+        - Event
+        - Schema
+    EventDefinitionSchema:
+      type: string
+      minLength: 1
+      maxLength: 10240
+      pattern: ^.*$
+    IdempotencyToken:
+      type: string
+      minLength: 1
+      maxLength: 2048
+      pattern: .*
+    TagMap:
+      type: object
+      properties: {}
+    PermissionList:
+      type: array
+      items:
+        $ref: "#/components/schemas/Permission"
+    Permission:
+      description: The permission of an event or request that the application has access to.
+      type: string
+      minLength: 1
+      maxLength: 255
+      pattern: ^[a-zA-Z0-9\/\._\-\*]+$
+    Boolean:
+      type: boolean
+    InitializationTimeout:
+      type: integer
+      minimum: 1
+      maximum: 600000
+    ApplicationConfig:
+      description: The configuration settings for the application.
+      type: object
+      properties:
+        ContactHandling:
+          $ref: "#/components/schemas/ContactHandling"
+          description: The contact handling configuration for the application.
+    ContactHandling:
+      description: The contact handling configuration for the application.
+      type: object
+      properties:
+        Scope:
+          $ref: "#/components/schemas/ContactHandlingScope"
+          description: Indicates whether the application refreshes for each contact or refreshes only with each new browser session.
+    ContactHandlingScope:
+      type: string
+      enum:
+        - CROSS_CONTACTS
+        - PER_CONTACT
+    IframeConfig:
+      description: The iframe configuration for the application.
+      type: object
+      properties:
+        Allow:
+          $ref: "#/components/schemas/IframePermissionList"
+          description: The list of features that are allowed in the iframe.
+        Sandbox:
+          $ref: "#/components/schemas/IframePermissionList"
+          description: The list of sandbox attributes for the iframe.
+    IframePermissionList:
+      description: A list of permissions for the iframe.
+      type: array
+      items:
+        $ref: "#/components/schemas/IframePermission"
+    IframePermission:
+      description: A permission for the iframe.
+      type: string
+      minLength: 1
+      maxLength: 100
+      pattern: ^[a-z-]+$
+    ApplicationType:
+      description: The type of application
+      type: string
+      enum:
+        - STANDARD
+        - SERVICE
+        - MCP_SERVER
+    CreateApplicationResponse:
+      type: object
+      properties:
+        Arn:
+          $ref: "#/components/schemas/Arn"
+          description: The Amazon Resource Name (ARN) of the Application.
+        Id:
+          $ref: "#/components/schemas/UUID"
+          description: A unique identifier for the Application.
+    Arn:
+      type: string
+      minLength: 1
+      maxLength: 2048
+      pattern: ^arn:aws:[A-Za-z0-9][A-Za-z0-9_/.-]{0,62}:[A-Za-z0-9_/.-]{0,63}:[A-Za-z0-9_/.-]{0,63}:[A-Za-z0-9][A-Za-z0-9:_/+=,@.-]{0,1023}$
+    UUID:
+      type: string
+      pattern: "[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}"
+    Name:
+      type: string
+      minLength: 1
+      maxLength: 255
+      pattern: ^[a-zA-Z0-9\/\._\-]+$
+    NonBlankString:
+      type: string
+      minLength: 1
+      maxLength: 255
+      pattern: .*\S.*
+    SourceURI:
+      type: string
+      minLength: 1
+      maxLength: 1000
+      pattern: ^(\w+\:\/\/[\w.-]+[\w/!@#+=.-]+$)|(\w+\:\/\/[\w.-]+[\w/!@#+=.-]+[\w/!@#+=.-]+[\w/!@#+=.,-]+$)
+    ScheduleConfiguration:
+      description: The name of the data and how often it should be pulled from the source.
+      type: object
+      properties:
+        FirstExecutionFrom:
+          $ref: "#/components/schemas/NonBlankString"
+          description: The start date for objects to import in the first flow run as an Unix/epoch timestamp in milliseconds or in ISO-8601 format.
+        Object:
+          $ref: "#/components/schemas/Object"
+          description: The name of the object to pull from the data source.
+        ScheduleExpression:
+          $ref: "#/components/schemas/NonBlankString"
+          description: How often the data should be pulled from data source.
+      required:
+        - ScheduleExpression
+    Object:
+      type: string
+      minLength: 1
+      maxLength: 255
+      pattern: ^[a-zA-Z0-9\/\._\-]+$
+    FileConfiguration:
+      description: The configuration for what files should be pulled from the source.
+      type: object
+      properties:
+        Folders:
+          $ref: "#/components/schemas/FolderList"
+          description: Identifiers for the source folders to pull all files from recursively.
+        Filters:
+          type: object
+          properties: {}
+          description: Restrictions for what files should be pulled from the source.
+      required:
+        - Folders
+    FolderList:
+      type: array
+      items:
+        $ref: "#/components/schemas/NonBlankLongString"
+    NonBlankLongString:
+      type: string
+      minLength: 1
+      maxLength: 200
+      pattern: .*\S.*
+    ObjectConfiguration:
+      description: The configuration for what data should be pulled from the source.
+      type: object
+      properties: {}
+    CreateDataIntegrationResponse:
+      type: object
+      properties:
+        Arn:
+          $ref: "#/components/schemas/Arn"
+          description: The Amazon Resource Name (ARN)
+        Id:
+          $ref: "#/components/schemas/UUID"
+          description: A unique identifier.
+        Name:
+          $ref: "#/components/schemas/Name"
+          description: The name of the DataIntegration.
+        Description:
+          $ref: "#/components/schemas/Description"
+          description: A description of the DataIntegration.
+        KmsKey:
+          $ref: "#/components/schemas/NonBlankString"
+          description: The KMS key ARN for the DataIntegration.
+        SourceURI:
+          $ref: "#/components/schemas/SourceURI"
+          description: The URI of the data source.
+        ScheduleConfiguration:
+          $ref: "#/components/schemas/ScheduleConfiguration"
+          description: The name of the data and how often it should be pulled from the source.
+        Tags:
+          type: object
+          properties: {}
+          description: 'The tags used to organize, track, or control access for this resource. For example, { "tags": {"key1":"value1", "key2":"value2"} }.'
+        ClientToken:
+          $ref: "#/components/schemas/IdempotencyToken"
+          description: A unique, case-sensitive identifier that you provide to ensure the idempotency of the request. If not provided, the Amazon Web Services SDK populates this field. For more information about idempotency, see Making retries safe with idempotent APIs.
+        FileConfiguration:
+          $ref: "#/components/schemas/FileConfiguration"
+          description: The configuration for what files should be pulled from the source.
+        ObjectConfiguration:
+          type: object
+          properties: {}
+          description: The configuration for what data should be pulled from the source.
+    Identifier:
+      type: string
+      minLength: 1
+      maxLength: 255
+      pattern: .*\S.*
+    ClientId:
+      type: string
+      minLength: 1
+      maxLength: 255
+      pattern: .*
+    DestinationURI:
+      type: string
+      minLength: 1
+      maxLength: 1000
+      pattern: ^(\w+\:\/\/[\w.-]+[\w/!@#+=.-]+$)|(\w+\:\/\/[\w.-]+[\w/!@#+=.-]+[\w/!@#+=.-]+[\w/!@#+=.,-]+$)
+    ClientAssociationMetadata:
+      type: object
+      properties: {}
+    ExecutionConfiguration:
+      description: The configuration for how the files should be pulled from the source.
+      type: object
+      properties:
+        ExecutionMode:
+          $ref: "#/components/schemas/ExecutionMode"
+          description: The mode for data import/export execution.
+        OnDemandConfiguration:
+          $ref: "#/components/schemas/OnDemandConfiguration"
+        ScheduleConfiguration:
+          $ref: "#/components/schemas/ScheduleConfiguration"
+      required:
+        - ExecutionMode
+    ExecutionMode:
+      type: string
+      enum:
+        - ON_DEMAND
+        - SCHEDULED
+    OnDemandConfiguration:
+      description: The start and end time for data pull from the source.
+      type: object
+      properties:
+        StartTime:
+          $ref: "#/components/schemas/NonBlankString"
+          description: The start time for data pull from the source as an Unix/epoch string in milliseconds
+        EndTime:
+          $ref: "#/components/schemas/NonBlankString"
+          description: The end time for data pull from the source as an Unix/epoch string in milliseconds
+      required:
+        - StartTime
+    CreateDataIntegrationAssociationResponse:
+      type: object
+      properties:
+        DataIntegrationAssociationId:
+          $ref: "#/components/schemas/UUID"
+          description: A unique identifier. for the DataIntegrationAssociation.
+        DataIntegrationArn:
+          $ref: "#/components/schemas/Arn"
+          description: The Amazon Resource Name (ARN) for the DataIntegration.
+    EventFilter:
+      description: The event filter.
+      type: object
+      properties:
+        Source:
+          $ref: "#/components/schemas/Source"
+          description: The source of the events.
+      required:
+        - Source
+    Source:
+      type: string
+      minLength: 1
+      maxLength: 256
+      pattern: ^(aws\.(partner\/.*|cases|cases\-test))|Pipe\s.[a-zA-Z0-9\/\._\-]+$|app\-integrations\.webhooks\/[a-zA-Z0-9\-_.\/]+$
+    EventBridgeBus:
+      type: string
+      minLength: 1
+      maxLength: 255
+      pattern: ^[a-zA-Z0-9\/\._\-]+$
+    CreateEventIntegrationResponse:
+      type: object
+      properties:
+        EventIntegrationArn:
+          $ref: "#/components/schemas/Arn"
+          description: The Amazon Resource Name (ARN) of the event integration.
+    ArnOrUUID:
+      type: string
+      minLength: 1
+      maxLength: 2048
+      pattern: ^(arn:aws:[A-Za-z0-9][A-Za-z0-9_/.-]{0,62}:[A-Za-z0-9_/.-]{0,63}:[A-Za-z0-9_/.-]{0,63}:[A-Za-z0-9][A-Za-z0-9:_/+=,@.-]{0,1023}|[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12})(:[\w\$]+)?$
+    DeleteApplicationResponse:
+      type: object
+    DeleteDataIntegrationResponse:
+      type: object
+    DeleteEventIntegrationResponse:
+      type: object
+    GetApplicationResponse:
+      type: object
+      properties:
+        Arn:
+          $ref: "#/components/schemas/Arn"
+          description: The Amazon Resource Name (ARN) of the Application.
+        Id:
+          $ref: "#/components/schemas/UUID"
+          description: A unique identifier for the Application.
+        Name:
+          $ref: "#/components/schemas/ApplicationName"
+          description: The name of the application.
+        Namespace:
+          $ref: "#/components/schemas/ApplicationNamespace"
+          description: The namespace of the application.
+        Description:
+          $ref: "#/components/schemas/Description"
+          description: The description of the application.
+        ApplicationSourceConfig:
+          $ref: "#/components/schemas/ApplicationSourceConfig"
+          description: The configuration for where the application should be loaded from.
+        Subscriptions:
+          $ref: "#/components/schemas/SubscriptionList"
+          description: The events that the application subscribes.
+        Publications:
+          $ref: "#/components/schemas/PublicationList"
+          description: The events that the application publishes.
+        CreatedTime:
+          $ref: "#/components/schemas/Timestamp"
+          description: The created time of the Application.
+        LastModifiedTime:
+          $ref: "#/components/schemas/Timestamp"
+          description: The last modified time of the Application.
+        Tags:
+          type: object
+          properties: {}
+          description: 'The tags used to organize, track, or control access for this resource. For example, { "tags": {"key1":"value1", "key2":"value2"} }.'
+        Permissions:
+          $ref: "#/components/schemas/PermissionList"
+          description: The configuration of events or requests that the application has access to.
+        IsService:
+          $ref: "#/components/schemas/Boolean"
+          description: Indicates whether the application is a service.
+        InitializationTimeout:
+          $ref: "#/components/schemas/InitializationTimeout"
+          description: The maximum time in milliseconds allowed to establish a connection with the workspace.
+        ApplicationConfig:
+          $ref: "#/components/schemas/ApplicationConfig"
+          description: The configuration settings for the application.
+        IframeConfig:
+          $ref: "#/components/schemas/IframeConfig"
+          description: The iframe configuration for the application.
+        ApplicationType:
+          $ref: "#/components/schemas/ApplicationType"
+          description: The type of application.
+    Timestamp:
+      type: string
+      format: date-time
+    GetDataIntegrationResponse:
+      type: object
+      properties:
+        Arn:
+          $ref: "#/components/schemas/Arn"
+          description: The Amazon Resource Name (ARN) for the DataIntegration.
+        Id:
+          $ref: "#/components/schemas/UUID"
+          description: A unique identifier.
+        Name:
+          $ref: "#/components/schemas/Name"
+          description: The name of the DataIntegration.
+        Description:
+          $ref: "#/components/schemas/Description"
+          description: The KMS key ARN for the DataIntegration.
+        KmsKey:
+          $ref: "#/components/schemas/NonBlankString"
+          description: The KMS key ARN for the DataIntegration.
+        SourceURI:
+          $ref: "#/components/schemas/SourceURI"
+          description: The URI of the data source.
+        ScheduleConfiguration:
+          $ref: "#/components/schemas/ScheduleConfiguration"
+          description: The name of the data and how often it should be pulled from the source.
+        Tags:
+          type: object
+          properties: {}
+          description: 'The tags used to organize, track, or control access for this resource. For example, { "tags": {"key1":"value1", "key2":"value2"} }.'
+        FileConfiguration:
+          $ref: "#/components/schemas/FileConfiguration"
+          description: The configuration for what files should be pulled from the source.
+        ObjectConfiguration:
+          type: object
+          properties: {}
+          description: The configuration for what data should be pulled from the source.
+    GetEventIntegrationResponse:
+      type: object
+      properties:
+        Name:
+          $ref: "#/components/schemas/Name"
+          description: The name of the event integration.
+        Description:
+          $ref: "#/components/schemas/Description"
+          description: The description of the event integration.
+        EventIntegrationArn:
+          $ref: "#/components/schemas/Arn"
+          description: The Amazon Resource Name (ARN) for the event integration.
+        EventBridgeBus:
+          $ref: "#/components/schemas/EventBridgeBus"
+          description: The EventBridge bus.
+        EventFilter:
+          $ref: "#/components/schemas/EventFilter"
+          description: The event filter.
+        Tags:
+          type: object
+          properties: {}
+          description: 'The tags used to organize, track, or control access for this resource. For example, { "tags": {"key1":"value1", "key2":"value2"} }.'
+    NextToken:
+      type: string
+      minLength: 1
+      maxLength: 1000
+      pattern: .*
+    MaxResults:
+      type: integer
+      minimum: 1
+      maximum: 50
+    ListApplicationAssociationsResponse:
+      type: object
+      properties:
+        ApplicationAssociations:
+          $ref: "#/components/schemas/ApplicationAssociationsList"
+          description: List of Application Associations for the Application.
+        NextToken:
+          $ref: "#/components/schemas/NextToken"
+          description: If there are additional results, this is the token for the next set of results.
+    ApplicationAssociationsList:
+      type: array
+      items:
+        $ref: "#/components/schemas/ApplicationAssociationSummary"
+    ApplicationAssociationSummary:
+      description: Summary information about the Application Association.
+      type: object
+      properties:
+        ApplicationAssociationArn:
+          $ref: "#/components/schemas/Arn"
+          description: The Amazon Resource Name (ARN) of the Application Association.
+        ApplicationArn:
+          $ref: "#/components/schemas/Arn"
+          description: The Amazon Resource Name (ARN) of the Application.
+        ClientId:
+          $ref: "#/components/schemas/ClientId"
+          description: The identifier for the client that is associated with the Application Association.
+    ListApplicationsResponse:
+      type: object
+      properties:
+        Applications:
+          $ref: "#/components/schemas/ApplicationsList"
+          description: The Applications associated with this account.
+        NextToken:
+          $ref: "#/components/schemas/NextToken"
+          description: If there are additional results, this is the token for the next set of results.
+    ApplicationsList:
+      type: array
+      items:
+        $ref: "#/components/schemas/ApplicationSummary"
+    ApplicationSummary:
+      description: Summary information about the Application.
+      type: object
+      properties:
+        Arn:
+          $ref: "#/components/schemas/Arn"
+          description: The Amazon Resource Name (ARN) of the Application.
+        Id:
+          $ref: "#/components/schemas/UUID"
+          description: A unique identifier for the Application.
+        Name:
+          $ref: "#/components/schemas/ApplicationName"
+          description: The name of the application.
+        Namespace:
+          $ref: "#/components/schemas/ApplicationNamespace"
+          description: The namespace of the application.
+        CreatedTime:
+          $ref: "#/components/schemas/Timestamp"
+          description: The time when the application was created.
+        LastModifiedTime:
+          $ref: "#/components/schemas/Timestamp"
+          description: The time when the application was last modified.
+        IsService:
+          $ref: "#/components/schemas/Boolean"
+          description: Indicates whether the application is a service.
+        ApplicationType:
+          $ref: "#/components/schemas/ApplicationType"
+          description: The type of application.
+    ListDataIntegrationAssociationsResponse:
+      type: object
+      properties:
+        DataIntegrationAssociations:
+          $ref: "#/components/schemas/DataIntegrationAssociationsList"
+          description: The Amazon Resource Name (ARN) and unique ID of the DataIntegration association.
+        NextToken:
+          $ref: "#/components/schemas/NextToken"
+          description: If there are additional results, this is the token for the next set of results.
+    DataIntegrationAssociationsList:
+      type: array
+      items:
+        $ref: "#/components/schemas/DataIntegrationAssociationSummary"
+    DataIntegrationAssociationSummary:
+      description: Summary information about the DataIntegration association.
+      type: object
+      properties:
+        DataIntegrationAssociationArn:
+          $ref: "#/components/schemas/Arn"
+          description: The Amazon Resource Name (ARN) of the DataIntegration association.
+        DataIntegrationArn:
+          $ref: "#/components/schemas/Arn"
+          description: The Amazon Resource Name (ARN) of the DataIntegration.
+        ClientId:
+          $ref: "#/components/schemas/ClientId"
+          description: The identifier for the client that is associated with the DataIntegration association.
+        DestinationURI:
+          $ref: "#/components/schemas/DestinationURI"
+          description: The URI of the data destination.
+        LastExecutionStatus:
+          $ref: "#/components/schemas/LastExecutionStatus"
+          description: The execution status of the last job.
+        ExecutionConfiguration:
+          $ref: "#/components/schemas/ExecutionConfiguration"
+    LastExecutionStatus:
+      description: The execution status of the last job.
+      type: object
+      properties:
+        ExecutionStatus:
+          $ref: "#/components/schemas/ExecutionStatus"
+          description: The job status enum string.
+        StatusMessage:
+          $ref: "#/components/schemas/NonBlankString"
+          description: The status message of a job.
+    ExecutionStatus:
+      type: string
+      enum:
+        - COMPLETED
+        - IN_PROGRESS
+        - FAILED
+    ListDataIntegrationsResponse:
+      type: object
+      properties:
+        DataIntegrations:
+          $ref: "#/components/schemas/DataIntegrationsList"
+          description: The DataIntegrations associated with this account.
+        NextToken:
+          $ref: "#/components/schemas/NextToken"
+          description: If there are additional results, this is the token for the next set of results.
+    DataIntegrationsList:
+      type: array
+      items:
+        $ref: "#/components/schemas/DataIntegrationSummary"
+    DataIntegrationSummary:
+      description: Summary information about the DataIntegration.
+      type: object
+      properties:
+        Arn:
+          $ref: "#/components/schemas/Arn"
+          description: The Amazon Resource Name (ARN) of the DataIntegration.
+        Name:
+          $ref: "#/components/schemas/Name"
+          description: The name of the DataIntegration.
+        SourceURI:
+          $ref: "#/components/schemas/SourceURI"
+          description: The URI of the data source.
+    ListEventIntegrationAssociationsResponse:
+      type: object
+      properties:
+        EventIntegrationAssociations:
+          $ref: "#/components/schemas/EventIntegrationAssociationsList"
+          description: The event integration associations.
+        NextToken:
+          $ref: "#/components/schemas/NextToken"
+          description: If there are additional results, this is the token for the next set of results.
+    EventIntegrationAssociationsList:
+      type: array
+      items:
+        $ref: "#/components/schemas/EventIntegrationAssociation"
+    EventIntegrationAssociation:
+      description: The event integration association.
+      type: object
+      properties:
+        EventIntegrationAssociationArn:
+          $ref: "#/components/schemas/Arn"
+          description: The Amazon Resource Name (ARN) for the event integration association.
+        EventIntegrationAssociationId:
+          $ref: "#/components/schemas/UUID"
+          description: The identifier for the event integration association.
+        EventIntegrationName:
+          $ref: "#/components/schemas/Name"
+          description: The name of the event integration.
+        ClientId:
+          $ref: "#/components/schemas/ClientId"
+          description: The identifier for the client that is associated with the event integration.
+        EventBridgeRuleName:
+          $ref: "#/components/schemas/EventBridgeRuleName"
+          description: The name of the EventBridge rule.
+        ClientAssociationMetadata:
+          type: object
+          properties: {}
+          description: The metadata associated with the client.
+    EventBridgeRuleName:
+      type: string
+      minLength: 1
+      maxLength: 2048
+      pattern: ^[a-zA-Z0-9\/\._\-]+$
+    ListEventIntegrationsResponse:
+      type: object
+      properties:
+        EventIntegrations:
+          $ref: "#/components/schemas/EventIntegrationsList"
+          description: The event integrations.
+        NextToken:
+          $ref: "#/components/schemas/NextToken"
+          description: If there are additional results, this is the token for the next set of results.
+    EventIntegrationsList:
+      type: array
+      items:
+        $ref: "#/components/schemas/EventIntegration"
+    EventIntegration:
+      description: The event integration.
+      type: object
+      properties:
+        EventIntegrationArn:
+          $ref: "#/components/schemas/Arn"
+          description: The Amazon Resource Name (ARN) of the event integration.
+        Name:
+          $ref: "#/components/schemas/Name"
+          description: The name of the event integration.
+        Description:
+          $ref: "#/components/schemas/Description"
+          description: The event integration description.
+        EventFilter:
+          $ref: "#/components/schemas/EventFilter"
+          description: The event integration filter.
+        EventBridgeBus:
+          $ref: "#/components/schemas/EventBridgeBus"
+          description: The Amazon EventBridge bus for the event integration.
+        Tags:
+          type: object
+          properties: {}
+          description: 'The tags used to organize, track, or control access for this resource. For example, { "tags": {"key1":"value1", "key2":"value2"} }.'
+    ListTagsForResourceResponse:
+      type: object
+      properties:
+        tags:
+          type: object
+          properties: {}
+          description: Information about the tags.
+    TagResourceResponse:
+      type: object
+    TagKeyList:
+      type: array
+      items:
+        $ref: "#/components/schemas/TagKey"
+    TagKey:
+      type: string
+      minLength: 1
+      maxLength: 128
+      pattern: ^(?!aws:)[a-zA-Z+-=._:/]+$
+    UntagResourceResponse:
+      type: object
+    UpdateApplicationResponse:
+      type: object
+    UpdateDataIntegrationResponse:
+      type: object
+    UpdateDataIntegrationAssociationResponse:
+      type: object
+    UpdateEventIntegrationResponse:
+      type: object
+  x-stackQL-resources:
+    applications:
+      id: aws.appintegrations.applications
+      name: applications
+      title: applications
+      methods:
+        create_application:
+          operation:
+            $ref: "#/paths/~1applications/post"
+          response:
+            openAPIDocKey: "200"
+            mediaType: application/json
+          request:
+            nativeCasing: pascal
+          config:
+            requestBodyTranslate:
+              algorithm: naive
+        list_applications:
+          operation:
+            $ref: "#/paths/~1applications/get"
+          response:
+            openAPIDocKey: "200"
+            mediaType: application/json
+            objectKey: $.Applications
+          request:
+            nativeCasing: pascal
+          config:
+            pagination:
+              requestToken:
+                key: nextToken
+                location: query
+              responseToken:
+                key: $.NextToken
+                location: body
+        delete_application:
+          operation:
+            $ref: "#/paths/~1applications~1{application_identifier}/delete"
+          response:
+            openAPIDocKey: "200"
+            mediaType: application/json
+        get_application:
+          operation:
+            $ref: "#/paths/~1applications~1{application_identifier}/get"
+          response:
+            openAPIDocKey: "200"
+            mediaType: application/json
+        update_application:
+          operation:
+            $ref: "#/paths/~1applications~1{application_identifier}/patch"
+          response:
+            openAPIDocKey: "200"
+            mediaType: application/json
+          request:
+            nativeCasing: pascal
+          config:
+            requestBodyTranslate:
+              algorithm: naive
+      sqlVerbs:
+        select:
+          - $ref: "#/components/x-stackQL-resources/applications/methods/get_application"
+          - $ref: "#/components/x-stackQL-resources/applications/methods/list_applications"
+        insert:
+          - $ref: "#/components/x-stackQL-resources/applications/methods/create_application"
+        update:
+          - $ref: "#/components/x-stackQL-resources/applications/methods/update_application"
+        delete:
+          - $ref: "#/components/x-stackQL-resources/applications/methods/delete_application"
+    data_integrations:
+      id: aws.appintegrations.data_integrations
+      name: data_integrations
+      title: data_integrations
+      methods:
+        create_data_integration:
+          operation:
+            $ref: "#/paths/~1dataIntegrations/post"
+          response:
+            openAPIDocKey: "200"
+            mediaType: application/json
+          request:
+            nativeCasing: pascal
+          config:
+            requestBodyTranslate:
+              algorithm: naive
+        list_data_integrations:
+          operation:
+            $ref: "#/paths/~1dataIntegrations/get"
+          response:
+            openAPIDocKey: "200"
+            mediaType: application/json
+            objectKey: $.DataIntegrations
+          request:
+            nativeCasing: pascal
+          config:
+            pagination:
+              requestToken:
+                key: nextToken
+                location: query
+              responseToken:
+                key: $.NextToken
+                location: body
+        delete_data_integration:
+          operation:
+            $ref: "#/paths/~1dataIntegrations~1{identifier}/delete"
+          response:
+            openAPIDocKey: "200"
+            mediaType: application/json
+        get_data_integration:
+          operation:
+            $ref: "#/paths/~1dataIntegrations~1{identifier}/get"
+          response:
+            openAPIDocKey: "200"
+            mediaType: application/json
+        update_data_integration:
+          operation:
+            $ref: "#/paths/~1dataIntegrations~1{identifier}/patch"
+          response:
+            openAPIDocKey: "200"
+            mediaType: application/json
+          request:
+            nativeCasing: pascal
+          config:
+            requestBodyTranslate:
+              algorithm: naive
+      sqlVerbs:
+        select:
+          - $ref: "#/components/x-stackQL-resources/data_integrations/methods/get_data_integration"
+          - $ref: "#/components/x-stackQL-resources/data_integrations/methods/list_data_integrations"
+        insert:
+          - $ref: "#/components/x-stackQL-resources/data_integrations/methods/create_data_integration"
+        update:
+          - $ref: "#/components/x-stackQL-resources/data_integrations/methods/update_data_integration"
+        delete:
+          - $ref: "#/components/x-stackQL-resources/data_integrations/methods/delete_data_integration"
+    data_integration_associations:
+      id: aws.appintegrations.data_integration_associations
+      name: data_integration_associations
+      title: data_integration_associations
+      methods:
+        create_data_integration_association:
+          operation:
+            $ref: "#/paths/~1dataIntegrations~1{identifier}~1associations/post"
+          response:
+            openAPIDocKey: "200"
+            mediaType: application/json
+          request:
+            nativeCasing: pascal
+          config:
+            requestBodyTranslate:
+              algorithm: naive
+        list_data_integration_associations:
+          operation:
+            $ref: "#/paths/~1dataIntegrations~1{identifier}~1associations/get"
+          response:
+            openAPIDocKey: "200"
+            mediaType: application/json
+            objectKey: $.DataIntegrationAssociations
+          request:
+            nativeCasing: pascal
+          config:
+            pagination:
+              requestToken:
+                key: nextToken
+                location: query
+              responseToken:
+                key: $.NextToken
+                location: body
+        update_data_integration_association:
+          operation:
+            $ref: "#/paths/~1dataIntegrations~1{identifier}~1associations~1{data_integration_association_identifier}/patch"
+          response:
+            openAPIDocKey: "200"
+            mediaType: application/json
+          request:
+            nativeCasing: pascal
+          config:
+            requestBodyTranslate:
+              algorithm: naive
+      sqlVerbs:
+        select:
+          - $ref: "#/components/x-stackQL-resources/data_integration_associations/methods/list_data_integration_associations"
+        insert:
+          - $ref: "#/components/x-stackQL-resources/data_integration_associations/methods/create_data_integration_association"
+        update:
+          - $ref: "#/components/x-stackQL-resources/data_integration_associations/methods/update_data_integration_association"
+        delete: []
+    event_integrations:
+      id: aws.appintegrations.event_integrations
+      name: event_integrations
+      title: event_integrations
+      methods:
+        create_event_integration:
+          operation:
+            $ref: "#/paths/~1eventIntegrations/post"
+          response:
+            openAPIDocKey: "200"
+            mediaType: application/json
+          request:
+            nativeCasing: pascal
+          config:
+            requestBodyTranslate:
+              algorithm: naive
+        list_event_integrations:
+          operation:
+            $ref: "#/paths/~1eventIntegrations/get"
+          response:
+            openAPIDocKey: "200"
+            mediaType: application/json
+            objectKey: $.EventIntegrations
+          request:
+            nativeCasing: pascal
+          config:
+            pagination:
+              requestToken:
+                key: nextToken
+                location: query
+              responseToken:
+                key: $.NextToken
+                location: body
+        delete_event_integration:
+          operation:
+            $ref: "#/paths/~1eventIntegrations~1{name}/delete"
+          response:
+            openAPIDocKey: "200"
+            mediaType: application/json
+        get_event_integration:
+          operation:
+            $ref: "#/paths/~1eventIntegrations~1{name}/get"
+          response:
+            openAPIDocKey: "200"
+            mediaType: application/json
+        update_event_integration:
+          operation:
+            $ref: "#/paths/~1eventIntegrations~1{name}/patch"
+          response:
+            openAPIDocKey: "200"
+            mediaType: application/json
+          request:
+            nativeCasing: pascal
+          config:
+            requestBodyTranslate:
+              algorithm: naive
+      sqlVerbs:
+        select:
+          - $ref: "#/components/x-stackQL-resources/event_integrations/methods/get_event_integration"
+          - $ref: "#/components/x-stackQL-resources/event_integrations/methods/list_event_integrations"
+        insert:
+          - $ref: "#/components/x-stackQL-resources/event_integrations/methods/create_event_integration"
+        update:
+          - $ref: "#/components/x-stackQL-resources/event_integrations/methods/update_event_integration"
+        delete:
+          - $ref: "#/components/x-stackQL-resources/event_integrations/methods/delete_event_integration"
+    application_associations:
+      id: aws.appintegrations.application_associations
+      name: application_associations
+      title: application_associations
+      methods:
+        list_application_associations:
+          operation:
+            $ref: "#/paths/~1applications~1{application_identifier}~1associations/get"
+          response:
+            openAPIDocKey: "200"
+            mediaType: application/json
+            objectKey: $.ApplicationAssociations
+          request:
+            nativeCasing: pascal
+          config:
+            pagination:
+              requestToken:
+                key: nextToken
+                location: query
+              responseToken:
+                key: $.NextToken
+                location: body
+      sqlVerbs:
+        select:
+          - $ref: "#/components/x-stackQL-resources/application_associations/methods/list_application_associations"
+        insert: []
+        update: []
+        delete: []
+    event_integration_associations:
+      id: aws.appintegrations.event_integration_associations
+      name: event_integration_associations
+      title: event_integration_associations
+      methods:
+        list_event_integration_associations:
+          operation:
+            $ref: "#/paths/~1eventIntegrations~1{name}~1associations/get"
+          response:
+            openAPIDocKey: "200"
+            mediaType: application/json
+            objectKey: $.EventIntegrationAssociations
+          request:
+            nativeCasing: pascal
+          config:
+            pagination:
+              requestToken:
+                key: nextToken
+                location: query
+              responseToken:
+                key: $.NextToken
+                location: body
+      sqlVerbs:
+        select:
+          - $ref: "#/components/x-stackQL-resources/event_integration_associations/methods/list_event_integration_associations"
+        insert: []
+        update: []
+        delete: []
+    tags:
+      id: aws.appintegrations.tags
+      name: tags
+      title: tags
+      methods:
+        list_tags_for_resource:
+          operation:
+            $ref: "#/paths/~1tags~1{resource_arn}/get"
+          response:
+            openAPIDocKey: "200"
+            mediaType: application/json
+        tag_resource:
+          operation:
+            $ref: "#/paths/~1tags~1{resource_arn}/post"
+          response:
+            openAPIDocKey: "200"
+            mediaType: application/json
+          request:
+            nativeCasing: pascal
+          config:
+            requestBodyTranslate:
+              algorithm: naive
+        untag_resource:
+          operation:
+            $ref: "#/paths/~1tags~1{resource_arn}/delete"
+          response:
+            openAPIDocKey: "200"
+            mediaType: application/json
+          request:
+            nativeCasing: pascal
+      sqlVerbs:
+        select:
+          - $ref: "#/components/x-stackQL-resources/tags/methods/list_tags_for_resource"
+        insert: []
+        update:
+          - $ref: "#/components/x-stackQL-resources/tags/methods/tag_resource"
+          - $ref: "#/components/x-stackQL-resources/tags/methods/untag_resource"
+        delete: []

@@ -1,0 +1,2522 @@
+openapi: 3.0.0
+servers:
+  - url: https://management.azure.com/
+info:
+  title: Azure AI Search
+  description: Management plane for search services, admin/query keys, private endpoints and shared private links.
+  contact:
+    name: StackQL Studios
+    url: https://stackql.io/
+    email: info@stackql.io
+  version: 2026-03-01-preview-stackql-generated
+  x-serviceAlias: search
+  x-sdkPackage: azure-mgmt-search
+  x-plane: mgmt
+security:
+  - azure_auth:
+      - user_impersonation
+components:
+  securitySchemes:
+    azure_auth:
+      description: Azure Active Directory OAuth2 Flow.
+      type: oauth2
+      flows:
+        implicit:
+          authorizationUrl: https://login.microsoftonline.com/common/oauth2/authorize
+          scopes:
+            user_impersonation: impersonate your user account
+  schemas:
+    AdminKeyResult:
+      type: object
+      description: Response containing the primary and secondary admin API keys for a given Azure AI Search service.
+      properties:
+        primaryKey:
+          type: string
+          description: The primary admin API key of the search service.
+        secondaryKey:
+          type: string
+          description: The secondary admin API key of the search service.
+    SystemData:
+      type: object
+      description: Metadata pertaining to creation and last modification of the resource.
+      properties:
+        createdBy:
+          type: string
+          description: The identity that created the resource.
+        createdByType:
+          $ref: "#/components/schemas/CreatedByType"
+          description: 'The type of identity that created the resource. Known values are: "User", "Application", "ManagedIdentity", and "Key".'
+        createdAt:
+          type: string
+          format: date-time
+          description: The timestamp of resource creation (UTC).
+        lastModifiedBy:
+          type: string
+          description: The identity that last modified the resource.
+        lastModifiedByType:
+          $ref: "#/components/schemas/CreatedByType"
+          description: 'The type of identity that last modified the resource. Known values are: "User", "Application", "ManagedIdentity", and "Key".'
+        lastModifiedAt:
+          type: string
+          format: date-time
+          description: The timestamp of resource last modification (UTC).
+    CreatedByType:
+      type: string
+      enum:
+        - User
+        - Application
+        - ManagedIdentity
+        - Key
+    NetworkSecurityPerimeterConfigurationProperties:
+      type: object
+      description: Network security configuration properties.
+      properties:
+        provisioningState:
+          $ref: "#/components/schemas/NetworkSecurityPerimeterConfigurationProvisioningState"
+          description: 'Known values are: "Succeeded", "Creating", "Updating", "Deleting", "Accepted", "Failed", and "Canceled".'
+        provisioningIssues:
+          type: array
+          items:
+            $ref: "#/components/schemas/ProvisioningIssue"
+          description: List of provisioning issues, if any.
+        networkSecurityPerimeter:
+          $ref: "#/components/schemas/NetworkSecurityPerimeter"
+          description: ":vartype network_security_perimeter: ~azure.mgmt.search.models.NetworkSecurityPerimeter"
+        resourceAssociation:
+          $ref: "#/components/schemas/ResourceAssociation"
+          description: ":vartype resource_association: ~azure.mgmt.search.models.ResourceAssociation"
+        profile:
+          $ref: "#/components/schemas/NetworkSecurityProfile"
+          description: ":vartype profile: ~azure.mgmt.search.models.NetworkSecurityProfile"
+    NetworkSecurityPerimeterConfigurationProvisioningState:
+      type: string
+      enum:
+        - Succeeded
+        - Creating
+        - Updating
+        - Deleting
+        - Accepted
+        - Failed
+        - Canceled
+    ProvisioningIssue:
+      type: object
+      description: Describes a provisioning issue for a network security perimeter configuration.
+      properties:
+        name:
+          type: string
+          description: Name of the issue.
+        properties:
+          $ref: "#/components/schemas/ProvisioningIssueProperties"
+          description: ":vartype properties: ~azure.mgmt.search.models.ProvisioningIssueProperties"
+    ProvisioningIssueProperties:
+      type: object
+      description: Details of a provisioning issue for a network security perimeter (NSP) configuration. Resource providers should generate separate provisioning issue elements for each separate issue detected, and include a meaningful and distinctive description, as well as any appropriate suggestedResourceIds and suggestedAccessRules.
+      properties:
+        issueType:
+          $ref: "#/components/schemas/IssueType"
+          description: 'Type of issue. Known values are: "Unknown", "ConfigurationPropagationFailure", "MissingPerimeterConfiguration", and "MissingIdentityConfiguration".'
+        severity:
+          $ref: "#/components/schemas/Severity"
+          description: 'Severity of the issue. Known values are: "Warning" and "Error".'
+        description:
+          type: string
+          description: Description of the issue.
+        suggestedResourceIds:
+          type: array
+          items:
+            type: string
+          description: Fully qualified resource IDs of suggested resources that can be associated to the network security perimeter (NSP) to remediate the issue.
+        suggestedAccessRules:
+          type: array
+          items:
+            $ref: "#/components/schemas/AccessRule"
+          description: Access rules that can be added to the network security profile (NSP) to remediate the issue.
+    IssueType:
+      type: string
+      enum:
+        - Unknown
+        - ConfigurationPropagationFailure
+        - MissingPerimeterConfiguration
+        - MissingIdentityConfiguration
+    Severity:
+      type: string
+      enum:
+        - Warning
+        - Error
+    AccessRule:
+      type: object
+      description: Access rule in a network security perimeter configuration profile.
+      properties:
+        name:
+          type: string
+          description: Name of the access rule.
+        properties:
+          $ref: "#/components/schemas/AccessRuleProperties"
+          description: ":vartype properties: ~azure.mgmt.search.models.AccessRuleProperties"
+    AccessRuleProperties:
+      type: object
+      description: Properties of Access Rule.
+      properties:
+        direction:
+          $ref: "#/components/schemas/AccessRuleDirection"
+          description: 'Known values are: "Inbound" and "Outbound".'
+        addressPrefixes:
+          type: array
+          items:
+            type: string
+          description: Address prefixes in the CIDR format for inbound rules.
+        subscriptions:
+          type: array
+          items:
+            $ref: "#/components/schemas/AccessRulePropertiesSubscriptionsItem"
+          description: Subscriptions for inbound rules.
+        networkSecurityPerimeters:
+          type: array
+          items:
+            $ref: "#/components/schemas/NetworkSecurityPerimeter"
+          description: Network security perimeters for inbound rules.
+        fullyQualifiedDomainNames:
+          type: array
+          items:
+            type: string
+          description: Fully qualified domain names (FQDN) for outbound rules.
+        emailAddresses:
+          type: array
+          items:
+            type: string
+          description: Email addresses for outbound rules.
+        phoneNumbers:
+          type: array
+          items:
+            type: string
+          description: Phone numbers for outbound rules.
+    AccessRuleDirection:
+      type: string
+      enum:
+        - Inbound
+        - Outbound
+    AccessRulePropertiesSubscriptionsItem:
+      type: object
+      description: Network security perimeter configuration.
+      properties:
+        id:
+          type: string
+          description: The fully qualified Azure resource ID of the subscription e.g. ('/subscriptions/00000000-0000-0000-0000-000000000000').
+    NetworkSecurityPerimeter:
+      type: object
+      description: Information about a network security perimeter (NSP).
+      properties:
+        id:
+          type: string
+          description: Fully qualified Azure resource ID of the NSP resource.
+        perimeterGuid:
+          type: string
+          description: Universal unique ID (UUID) of the network security perimeter.
+        location:
+          type: string
+          description: Location of the network security perimeter.
+    ResourceAssociation:
+      type: object
+      description: Information about resource association.
+      properties:
+        name:
+          type: string
+          description: Name of the resource association.
+        accessMode:
+          $ref: "#/components/schemas/ResourceAssociationAccessMode"
+          description: 'Known values are: "Enforced", "Learning", and "Audit".'
+    ResourceAssociationAccessMode:
+      type: string
+      enum:
+        - Enforced
+        - Learning
+        - Audit
+    NetworkSecurityProfile:
+      type: object
+      description: Network security perimeter configuration profile.
+      properties:
+        name:
+          type: string
+          description: Name of the profile.
+        accessRulesVersion:
+          type: integer
+          description: Current access rules version.
+        accessRules:
+          type: array
+          items:
+            $ref: "#/components/schemas/AccessRule"
+          description: List of Access Rules.
+        diagnosticSettingsVersion:
+          type: integer
+          description: Current diagnostic settings version.
+        enabledLogCategories:
+          type: array
+          items:
+            type: string
+          description: List of log categories that are enabled.
+    NetworkSecurityPerimeterConfigurationFlattened:
+      type: object
+      description: Flattened view of NetworkSecurityPerimeterConfiguration ('properties' hoisted to the top level).
+      properties:
+        id:
+          type: string
+          description: Fully qualified resource ID for the resource. Ex - /subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/providers/{resourceProviderNamespace}/{resourceType}/{resourceName}.
+        name:
+          type: string
+          description: The name of the resource.
+        type:
+          type: string
+          description: The type of the resource. E.g. "Microsoft.Compute/virtualMachines" or "Microsoft.Storage/storageAccounts".
+        systemData:
+          $ref: "#/components/schemas/SystemData"
+          description: Azure Resource Manager metadata containing createdBy and modifiedBy information.
+        provisioningState:
+          $ref: "#/components/schemas/NetworkSecurityPerimeterConfigurationProvisioningState"
+          description: 'Known values are: "Succeeded", "Creating", "Updating", "Deleting", "Accepted", "Failed", and "Canceled".'
+        provisioningIssues:
+          type: array
+          items:
+            $ref: "#/components/schemas/ProvisioningIssue"
+          description: List of provisioning issues, if any.
+        networkSecurityPerimeter:
+          $ref: "#/components/schemas/NetworkSecurityPerimeter"
+          description: ":vartype network_security_perimeter: ~azure.mgmt.search.models.NetworkSecurityPerimeter"
+        resourceAssociation:
+          $ref: "#/components/schemas/ResourceAssociation"
+          description: ":vartype resource_association: ~azure.mgmt.search.models.ResourceAssociation"
+        profile:
+          $ref: "#/components/schemas/NetworkSecurityProfile"
+          description: ":vartype profile: ~azure.mgmt.search.models.NetworkSecurityProfile"
+    PagedNetworkSecurityPerimeterConfigurationFlattened:
+      type: object
+      properties:
+        value:
+          type: array
+          items:
+            $ref: "#/components/schemas/NetworkSecurityPerimeterConfigurationFlattened"
+        nextLink:
+          type: string
+    OfferingsByRegion:
+      type: object
+      description: Describes the Azure AI Search features and SKUs available in a specific Azure region.
+      properties:
+        regionName:
+          type: string
+          description: The name of the region.
+        features:
+          type: array
+          items:
+            $ref: "#/components/schemas/FeatureOffering"
+          description: The list of features offered in this region.
+        skus:
+          type: array
+          items:
+            $ref: "#/components/schemas/SkuOffering"
+          description: The list of SKUs offered in this region.
+    FeatureOffering:
+      type: object
+      description: Describes the availability of a specific feature in a region.
+      properties:
+        name:
+          type: string
+          description: The name of the feature offered in this region.
+    SkuOffering:
+      type: object
+      description: Describes a SKU offering with its limits in a specific region.
+      properties:
+        sku:
+          $ref: "#/components/schemas/Sku"
+          description: The SKU definition.
+        limits:
+          $ref: "#/components/schemas/SkuLimits"
+          description: The limits associated with this SKU offered in this region.
+    Sku:
+      type: object
+      description: Defines the SKU of a search service, which determines billing rate and capacity limits.
+      properties:
+        name:
+          $ref: "#/components/schemas/SkuName"
+          description: "The SKU of the search service. Valid values include: 'free': Shared service. 'basic': Dedicated service with up to 3 replicas. 'standard': Dedicated service with up to 12 partitions and 12 replicas. 'standard2': Similar to standard, but with more capacity per search unit. 'standard3': The largest Standard offering with up to 12 partitions and 12 replicas (or up to 3 partitions with more indexes if you also set the hostingMode property to 'highDensity'). 'storage_optimized_l1': Supports 1TB per partition, up to 12 partitions. 'storage_optimized_l2': Supports 2TB per partition, up to 12 partitions. 'serverless': Serverless tier with auto-scaling capabilities. Known values are: \"free\", \"basic\", \"standard\", \"standard2\", \"standard3\", \"storage_optimized_l1\", \"storage_optimized_l2\", and \"serverless\"."
+    SkuName:
+      type: string
+      enum:
+        - free
+        - basic
+        - standard
+        - standard2
+        - standard3
+        - storage_optimized_l1
+        - storage_optimized_l2
+        - serverless
+    SkuLimits:
+      type: object
+      description: Describes the limits associated with a SKU offering.
+      properties:
+        indexes:
+          type: integer
+          description: The maximum number of indexes available for this SKU.
+        indexers:
+          type: integer
+          description: The maximum number of indexers available for this SKU.
+        partitionStorageInGigabytes:
+          type: number
+          description: The maximum storage size in Gigabytes available for this SKU per partition.
+        partitionVectorStorageInGigabytes:
+          type: number
+          description: The maximum vector storage size in Gigabytes available for this SKU per partition.
+        searchUnits:
+          type: integer
+          description: The maximum number of search units available for this SKU.
+        replicas:
+          type: integer
+          description: The maximum number of replicas available for this SKU.
+        partitions:
+          type: integer
+          description: The maximum number of partitions available for this SKU.
+    OfferingsListResult:
+      type: object
+      description: Response containing the list of offerings available in Azure AI Search, organized by region.
+      properties:
+        value:
+          type: array
+          items:
+            $ref: "#/components/schemas/OfferingsByRegion"
+          description: The list of Azure AI Search offerings by region.
+        nextLink:
+          type: string
+          description: The URL to get the next set of offerings, if any.
+    OperationDisplay:
+      type: object
+      description: Localized display information for an operation.
+      properties:
+        provider:
+          type: string
+          description: The localized friendly form of the resource provider name, e.g. "Microsoft Monitoring Insights" or "Microsoft Compute".
+        resource:
+          type: string
+          description: The localized friendly name of the resource type related to this operation. E.g. "Virtual Machines" or "Job Schedule Collections".
+        operation:
+          type: string
+          description: The concise, localized friendly name for the operation; suitable for dropdowns. E.g. "Create or Update Virtual Machine", "Restart Virtual Machine".
+        description:
+          type: string
+          description: The short, localized friendly description of the operation; suitable for tool tips and detailed views.
+    Origin:
+      type: string
+      enum:
+        - user
+        - system
+        - user,system
+    ActionType:
+      type: string
+      enum:
+        - Internal
+    Operation:
+      type: object
+      description: REST API Operation.
+      properties:
+        name:
+          type: string
+          description: 'The name of the operation, as per Resource-Based Access Control (RBAC). Examples: "Microsoft.Compute/virtualMachines/write", "Microsoft.Compute/virtualMachines/capture/action".'
+        isDataAction:
+          type: boolean
+          description: Whether the operation applies to data-plane. This is "true" for data-plane operations and "false" for Azure Resource Manager/control-plane operations.
+        display:
+          $ref: "#/components/schemas/OperationDisplay"
+          description: Localized display information for this particular operation.
+        origin:
+          $ref: "#/components/schemas/Origin"
+          description: 'The intended executor of the operation; as in Resource Based Access Control (RBAC) and audit logs UX. Default value is "user,system". Known values are: "user", "system", and "user,system".'
+        actionType:
+          $ref: "#/components/schemas/ActionType"
+          description: Extensible enum. Indicates the action type. "Internal" refers to actions that are for internal only APIs. "Internal"
+    PagedOperation:
+      type: object
+      properties:
+        value:
+          type: array
+          items:
+            $ref: "#/components/schemas/Operation"
+        nextLink:
+          type: string
+    PrivateEndpointConnectionProperties:
+      type: object
+      description: Describes the properties of an existing private endpoint connection to the search service.
+      properties:
+        privateEndpoint:
+          $ref: "#/components/schemas/PrivateEndpointConnectionPropertiesPrivateEndpoint"
+          description: The private endpoint resource from Microsoft.Network provider.
+        privateLinkServiceConnectionState:
+          $ref: "#/components/schemas/PrivateEndpointConnectionPropertiesPrivateLinkServiceConnectionState"
+          description: Describes the current state of an existing Azure Private Link service connection to the private endpoint.
+        groupId:
+          type: string
+          description: The group ID of the Azure resource for which the private link service is for.
+        provisioningState:
+          $ref: "#/components/schemas/PrivateLinkServiceConnectionProvisioningState"
+          description: 'The provisioning state of the private link service connection. Valid values are Updating, Deleting, Failed, Succeeded, Incomplete, or Canceled. Known values are: "Updating", "Deleting", "Failed", "Succeeded", "Incomplete", and "Canceled".'
+    PrivateEndpointConnectionPropertiesPrivateEndpoint:
+      type: object
+      description: The private endpoint resource from Microsoft.Network provider.
+      properties:
+        id:
+          type: string
+          description: The resource ID of the private endpoint resource from Microsoft.Network provider.
+    PrivateEndpointConnectionPropertiesPrivateLinkServiceConnectionState:
+      type: object
+      description: Describes the current state of an existing Azure Private Link service connection to the private endpoint.
+      properties:
+        status:
+          $ref: "#/components/schemas/PrivateLinkServiceConnectionStatus"
+          description: 'Status of the the private link service connection. Valid values are Pending, Approved, Rejected, or Disconnected. Known values are: "Pending", "Approved", "Rejected", and "Disconnected".'
+        description:
+          type: string
+          description: The description for the private link service connection state.
+        actionsRequired:
+          type: string
+          description: A description of any extra actions that may be required.
+    PrivateLinkServiceConnectionStatus:
+      type: string
+      enum:
+        - Pending
+        - Approved
+        - Rejected
+        - Disconnected
+    PrivateLinkServiceConnectionProvisioningState:
+      type: string
+      enum:
+        - Updating
+        - Deleting
+        - Failed
+        - Succeeded
+        - Incomplete
+        - Canceled
+    PrivateEndpointConnectionFlattened:
+      type: object
+      description: Flattened view of PrivateEndpointConnection ('properties' hoisted to the top level).
+      properties:
+        id:
+          type: string
+          description: Fully qualified resource ID for the resource. Ex - /subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/providers/{resourceProviderNamespace}/{resourceType}/{resourceName}.
+        name:
+          type: string
+          description: The name of the resource.
+        type:
+          type: string
+          description: The type of the resource. E.g. "Microsoft.Compute/virtualMachines" or "Microsoft.Storage/storageAccounts".
+        systemData:
+          $ref: "#/components/schemas/SystemData"
+          description: Azure Resource Manager metadata containing createdBy and modifiedBy information.
+        privateEndpoint:
+          $ref: "#/components/schemas/PrivateEndpointConnectionPropertiesPrivateEndpoint"
+          description: The private endpoint resource from Microsoft.Network provider.
+        privateLinkServiceConnectionState:
+          $ref: "#/components/schemas/PrivateEndpointConnectionPropertiesPrivateLinkServiceConnectionState"
+          description: Describes the current state of an existing Azure Private Link service connection to the private endpoint.
+        groupId:
+          type: string
+          description: The group ID of the Azure resource for which the private link service is for.
+        provisioningState:
+          $ref: "#/components/schemas/PrivateLinkServiceConnectionProvisioningState"
+          description: 'The provisioning state of the private link service connection. Valid values are Updating, Deleting, Failed, Succeeded, Incomplete, or Canceled. Known values are: "Updating", "Deleting", "Failed", "Succeeded", "Incomplete", and "Canceled".'
+    PagedPrivateEndpointConnectionFlattened:
+      type: object
+      properties:
+        value:
+          type: array
+          items:
+            $ref: "#/components/schemas/PrivateEndpointConnectionFlattened"
+        nextLink:
+          type: string
+    PrivateEndpointConnection:
+      type: object
+      description: Describes an existing private endpoint connection to the Azure AI Search service.
+      properties:
+        id:
+          type: string
+          description: Fully qualified resource ID for the resource. Ex - /subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/providers/{resourceProviderNamespace}/{resourceType}/{resourceName}.
+        name:
+          type: string
+          description: The name of the resource.
+        type:
+          type: string
+          description: The type of the resource. E.g. "Microsoft.Compute/virtualMachines" or "Microsoft.Storage/storageAccounts".
+        systemData:
+          $ref: "#/components/schemas/SystemData"
+          description: Azure Resource Manager metadata containing createdBy and modifiedBy information.
+        properties:
+          $ref: "#/components/schemas/PrivateEndpointConnectionProperties"
+          description: Describes the properties of an existing private endpoint connection to the Azure AI Search service.
+    PrivateLinkResourceProperties:
+      type: object
+      description: Describes the properties of a supported private link resource for the Azure AI Search service. For a given API version, this represents the 'supported' groupIds when creating a shared private link resource.
+      properties:
+        groupId:
+          type: string
+          description: The group ID of the private link resource.
+        requiredMembers:
+          type: array
+          items:
+            type: string
+          description: The list of required members of the private link resource.
+        requiredZoneNames:
+          type: array
+          items:
+            type: string
+          description: The list of required DNS zone names of the private link resource.
+        shareablePrivateLinkResourceTypes:
+          type: array
+          items:
+            $ref: "#/components/schemas/ShareablePrivateLinkResourceType"
+          description: The list of resources that are onboarded to private link service, that are supported by Azure AI Search.
+    ShareablePrivateLinkResourceType:
+      type: object
+      description: Describes an resource type that has been onboarded to private link service, supported by Azure AI Search.
+      properties:
+        name:
+          type: string
+          description: The name of the resource type that has been onboarded to private link service, supported by Azure AI Search.
+        properties:
+          $ref: "#/components/schemas/ShareablePrivateLinkResourceProperties"
+          description: Describes the properties of a resource type that has been onboarded to private link service, supported by Azure AI Search.
+    ShareablePrivateLinkResourceProperties:
+      type: object
+      description: Describes the properties of a resource type that has been onboarded to private link service, supported by Azure AI Search.
+      properties:
+        type:
+          type: string
+          description: The resource provider type for the resource that has been onboarded to private link service, supported by Azure AI Search.
+        groupId:
+          type: string
+          description: The resource provider group id for the resource that has been onboarded to private link service, supported by Azure AI Search.
+        description:
+          type: string
+          description: The description of the resource type that has been onboarded to private link service, supported by Azure AI Search.
+    PrivateLinkResourceFlattened:
+      type: object
+      description: Flattened view of PrivateLinkResource ('properties' hoisted to the top level).
+      properties:
+        id:
+          type: string
+          description: Fully qualified resource ID for the resource. Ex - /subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/providers/{resourceProviderNamespace}/{resourceType}/{resourceName}.
+        name:
+          type: string
+          description: The name of the resource.
+        type:
+          type: string
+          description: The type of the resource. E.g. "Microsoft.Compute/virtualMachines" or "Microsoft.Storage/storageAccounts".
+        systemData:
+          $ref: "#/components/schemas/SystemData"
+          description: Azure Resource Manager metadata containing createdBy and modifiedBy information.
+        groupId:
+          type: string
+          description: The group ID of the private link resource.
+        requiredMembers:
+          type: array
+          items:
+            type: string
+          description: The list of required members of the private link resource.
+        requiredZoneNames:
+          type: array
+          items:
+            type: string
+          description: The list of required DNS zone names of the private link resource.
+        shareablePrivateLinkResourceTypes:
+          type: array
+          items:
+            $ref: "#/components/schemas/ShareablePrivateLinkResourceType"
+          description: The list of resources that are onboarded to private link service, that are supported by Azure AI Search.
+    PagedPrivateLinkResourceFlattened:
+      type: object
+      properties:
+        value:
+          type: array
+          items:
+            $ref: "#/components/schemas/PrivateLinkResourceFlattened"
+        nextLink:
+          type: string
+    QueryKey:
+      type: object
+      description: Describes an API key for a given Azure AI Search service that conveys read-only permissions on the docs collection of an index.
+      properties:
+        name:
+          type: string
+          description: The name of the query API key. Query names are optional, but assigning a name can help you remember how it's used.
+        key:
+          type: string
+          description: The value of the query API key.
+    PagedQueryKey:
+      type: object
+      properties:
+        value:
+          type: array
+          items:
+            $ref: "#/components/schemas/QueryKey"
+        nextLink:
+          type: string
+    SearchServiceProperties:
+      type: object
+      description: Properties of the search service.
+      properties:
+        replicaCount:
+          type: integer
+          description: The number of replicas in the dedicated search service. If specified, it must be a value between 1 and 12 inclusive for standard SKUs or between 1 and 3 inclusive for basic SKU.
+        partitionCount:
+          type: integer
+          description: The number of partitions in the dedicated search service; if specified, it can be 1, 2, 3, 4, 6, or 12. Values greater than 1 are only valid for standard SKUs. For 'standard3' services with hostingMode set to 'highDensity', the allowed values are between 1 and 3.
+        endpoint:
+          type: string
+          description: The endpoint of the Azure AI Search service.
+        hostingMode:
+          $ref: "#/components/schemas/HostingMode"
+          description: "Applicable only for the standard3 SKU. You can set this property to enable up to 3 high density partitions that allow up to 1000 indexes, which is much higher than the maximum indexes allowed for any other SKU. For the standard3 SKU, the value is either 'Default' or 'HighDensity'. For all other SKUs, this value must be 'Default'. Known values are: \"Default\" and \"HighDensity\"."
+        computeType:
+          $ref: "#/components/schemas/ComputeType"
+          description: 'Configure this property to support the search service using either the Default Compute or Azure Confidential Compute. Known values are: "Default" and "Confidential".'
+        publicNetworkAccess:
+          $ref: "#/components/schemas/PublicNetworkAccess"
+          description: "This value can be set to 'Enabled' to avoid breaking changes on existing customer resources and templates. If set to 'Disabled', traffic over public interface is not allowed, and private endpoint connections would be the exclusive access method. Known values are: \"Enabled\", \"Disabled\", and \"SecuredByPerimeter\"."
+        status:
+          $ref: "#/components/schemas/SearchServiceStatus"
+          description: "The status of the search service. Possible values include: 'running': The search service is running and no provisioning operations are underway. 'provisioning': The search service is being provisioned or scaled up or down. 'deleting': The search service is being deleted. 'degraded': The search service is degraded. This can occur when the underlying search units are not healthy. The search service is most likely operational, but performance might be slow and some requests might be dropped. 'disabled': The search service is disabled. In this state, the service will reject all API requests. 'error': The search service is in an error state. 'stopped': The search service is in a subscription that's disabled. If your service is in the degraded, disabled, or error states, it means the Azure AI Search team is actively investigating the underlying issue. Dedicated services in these states are still chargeable based on the number of search units provisioned. Known values are: \"running\", \"provisioning\", \"deleting\", \"degraded\", \"disabled\", \"error\", and \"stopped\"."
+        statusDetails:
+          type: string
+          description: The details of the search service status.
+        provisioningState:
+          $ref: "#/components/schemas/ProvisioningState"
+          description: "The state of the last provisioning operation performed on the search service. Provisioning is an intermediate state that occurs while service capacity is being established. After capacity is set up, provisioningState changes to either 'Succeeded' or 'Failed'. Client applications can poll provisioning status (the recommended polling interval is from 30 seconds to one minute) by using the Get Search Service operation to see when an operation is completed. If you are using the free service, this value tends to come back as 'Succeeded' directly in the call to Create search service. This is because the free service uses capacity that is already set up. Known values are: \"succeeded\", \"provisioning\", and \"failed\"."
+        networkRuleSet:
+          $ref: "#/components/schemas/NetworkRuleSet"
+          description: Network specific rules that determine how the Azure AI Search service may be reached.
+        dataExfiltrationProtections:
+          type: array
+          items:
+            $ref: "#/components/schemas/SearchDataExfiltrationProtection"
+          description: A list of data exfiltration scenarios that are explicitly disallowed for the search service. Currently, the only supported value is 'All' to disable all possible data export scenarios with more fine grained controls planned for the future.
+        encryptionWithCmk:
+          $ref: "#/components/schemas/EncryptionWithCmk"
+          description: Specifies any policy regarding encryption of resources (such as indexes) using customer manager keys within a search service.
+        disableLocalAuth:
+          type: boolean
+          description: When set to true, calls to the search service will not be permitted to utilize API keys for authentication. This cannot be set to true if 'dataPlaneAuthOptions' are defined.
+        authOptions:
+          $ref: "#/components/schemas/DataPlaneAuthOptions"
+          description: Defines the options for how the data plane API of a search service authenticates requests. This cannot be set if 'disableLocalAuth' is set to true.
+        semanticSearch:
+          $ref: "#/components/schemas/SearchSemanticSearch"
+          description: 'Specifies the availability and billing plan for semantic search on the Azure AI Search service. This configuration is only available for certain pricing tiers in certain regions. Known values are: "disabled", "free", and "standard".'
+        knowledgeRetrieval:
+          $ref: "#/components/schemas/KnowledgeRetrieval"
+          description: 'Specifies the billing plan for agentic retrieval on the Azure AI Search service. This configuration is only available for certain pricing tiers in certain regions. Known values are: "free" and "standard".'
+        privateEndpointConnections:
+          type: array
+          items:
+            $ref: "#/components/schemas/PrivateEndpointConnection"
+          description: The list of private endpoint connections to the Azure AI Search service.
+        sharedPrivateLinkResources:
+          type: array
+          items:
+            $ref: "#/components/schemas/SharedPrivateLinkResource"
+          description: The list of shared private link resources managed by the Azure AI Search service.
+        eTag:
+          type: string
+          description: A system generated property representing the service's etag that can be for optimistic concurrency control during updates.
+        upgradeAvailable:
+          $ref: "#/components/schemas/UpgradeAvailable"
+          description: 'Indicates if the search service has an upgrade available. Known values are: "notAvailable" and "available".'
+        serviceUpgradedAt:
+          type: string
+          format: date-time
+          description: The date and time the search service was last upgraded. This field will be null until the service gets upgraded for the first time.
+    HostingMode:
+      type: string
+      enum:
+        - Default
+        - HighDensity
+    ComputeType:
+      type: string
+      enum:
+        - Default
+        - Confidential
+    PublicNetworkAccess:
+      type: string
+      enum:
+        - Enabled
+        - Disabled
+        - SecuredByPerimeter
+    SearchServiceStatus:
+      type: string
+      enum:
+        - running
+        - provisioning
+        - deleting
+        - degraded
+        - disabled
+        - error
+        - stopped
+    ProvisioningState:
+      type: string
+      enum:
+        - succeeded
+        - provisioning
+        - failed
+    NetworkRuleSet:
+      type: object
+      description: Network specific rules that determine how the Azure AI Search service may be reached.
+      properties:
+        ipRules:
+          type: array
+          items:
+            $ref: "#/components/schemas/IpRule"
+          description: A list of IP restriction rules that defines the inbound network(s) with allowing access to the search service endpoint. At the meantime, all other public IP networks are blocked by the firewall. These restriction rules are applied only when the 'publicNetworkAccess' of the search service is 'enabled'; otherwise, traffic over public interface is not allowed even with any public IP rules, and private endpoint connections would be the exclusive access method.
+        bypass:
+          $ref: "#/components/schemas/SearchBypass"
+          description: "Possible origins of inbound traffic that can bypass the rules defined in the 'ipRules' section. Known values are: \"None\", \"AzurePortal\", and \"AzureServices\"."
+    IpRule:
+      type: object
+      description: The IP restriction rule of the Azure AI Search service.
+      properties:
+        value:
+          type: string
+          description: Value corresponding to a single IPv4 address (eg., 123.1.2.3) or an IP range in CIDR format (eg., 123.1.2.3/24) to be allowed.
+    SearchBypass:
+      type: string
+      enum:
+        - None
+        - AzurePortal
+        - AzureServices
+    SearchDataExfiltrationProtection:
+      type: string
+      enum:
+        - BlockAll
+    EncryptionWithCmk:
+      type: object
+      description: Describes a policy that determines how resources within the search service are to be encrypted with customer managed keys.
+      properties:
+        enforcement:
+          $ref: "#/components/schemas/SearchEncryptionWithCmk"
+          description: "Describes how a search service should enforce compliance if it finds objects that aren't encrypted with the customer-managed key. Known values are: \"Disabled\", \"Enabled\", and \"Unspecified\"."
+        encryptionComplianceStatus:
+          $ref: "#/components/schemas/SearchEncryptionComplianceStatus"
+          description: 'Returns the status of search service compliance with respect to non-CMK-encrypted objects. If a service has more than one unencrypted object, and enforcement is enabled, the service is marked as noncompliant. Known values are: "Compliant" and "NonCompliant".'
+        serviceLevelEncryptionKey:
+          $ref: "#/components/schemas/SearchResourceEncryptionKey"
+          description: Describes the customer-managed key configuration for encrypting the search service.
+    SearchEncryptionWithCmk:
+      type: string
+      enum:
+        - Disabled
+        - Enabled
+        - Unspecified
+    SearchEncryptionComplianceStatus:
+      type: string
+      enum:
+        - Compliant
+        - NonCompliant
+    SearchResourceEncryptionKey:
+      type: object
+      description: A customer-managed encryption key in Azure Key Vault. Keys that you create and manage can be used to encrypt or decrypt data-at-rest, such as indexes and synonym maps.
+      properties:
+        keyVaultKeyName:
+          type: string
+          description: The name of your Azure Key Vault key to be used to encrypt your data at rest.
+        keyVaultKeyVersion:
+          type: string
+          description: The version of your Azure Key Vault key to be used to encrypt your data at rest.
+        keyVaultUri:
+          type: string
+          description: The URI of your Azure Key Vault, also referred to as DNS name, that contains the key to be used to encrypt your data at rest. An example URI might be `https://my-keyvault-name.vault.azure.net`.
+        identity:
+          $ref: "#/components/schemas/DataIdentity"
+          description: An explicit managed identity to use for this encryption key. If not specified and the access credentials property is null, the system-assigned managed identity is used. On update to the resource, if the explicit identity is unspecified, it remains unchanged. If "none" is specified, the value of this property is cleared.
+        accessCredentials:
+          $ref: "#/components/schemas/AzureActiveDirectoryApplicationCredentials"
+          description: Optional Azure Active Directory credentials used for accessing your Azure Key Vault. Not required if using managed identity instead.
+    DataIdentity:
+      type: object
+      description: "Abstract base type for data identities. You probably want to use the sub-classes and not this class directly. Known sub-classes are: DataNoneIdentity, DataUserAssignedIdentity"
+      properties:
+        "@odata":
+          type: object
+          properties:
+            type:
+              type: string
+              description: A URI fragment specifying the type of identity. Required. Default value is None.
+      required:
+        - "@odata"
+    AzureActiveDirectoryApplicationCredentials:
+      type: object
+      description: Describes the Azure Active Directory application credentials required to access an Azure Key Vault.
+      properties:
+        applicationId:
+          type: string
+          description: The application (client) ID of an App Registration in the tenant.
+        applicationSecret:
+          type: string
+          description: An AAD client secret that was generated for the App Registration used to authenticate with Azure Key Vault.
+    DataPlaneAuthOptions:
+      type: object
+      description: Defines the options for how the search service authenticates a data plane request. This cannot be set if 'disableLocalAuth' is set to true.
+      properties:
+        apiKeyOnly:
+          type: object
+          properties: {}
+          description: Indicates that only the API key can be used for authentication.
+        aadOrApiKey:
+          $ref: "#/components/schemas/DataPlaneAadOrApiKeyAuthOption"
+          description: Indicates that either the API key or an access token from a Microsoft Entra ID tenant can be used for authentication.
+    DataPlaneAadOrApiKeyAuthOption:
+      type: object
+      description: Indicates that either the API key or an access token from a Microsoft Entra ID tenant can be used for authentication.
+      properties:
+        aadAuthFailureMode:
+          $ref: "#/components/schemas/AadAuthFailureMode"
+          description: 'Describes what response the data plane API of a search service would send for requests that failed authentication. Known values are: "http403" and "http401WithBearerChallenge".'
+    AadAuthFailureMode:
+      type: string
+      enum:
+        - http403
+        - http401WithBearerChallenge
+    SearchSemanticSearch:
+      type: string
+      enum:
+        - disabled
+        - free
+        - standard
+    KnowledgeRetrieval:
+      type: string
+      enum:
+        - free
+        - standard
+    SharedPrivateLinkResource:
+      type: object
+      description: Describes a shared private link resource managed by the Azure AI Search service.
+      properties:
+        id:
+          type: string
+          description: Fully qualified resource ID for the resource. Ex - /subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/providers/{resourceProviderNamespace}/{resourceType}/{resourceName}.
+        name:
+          type: string
+          description: The name of the resource.
+        type:
+          type: string
+          description: The type of the resource. E.g. "Microsoft.Compute/virtualMachines" or "Microsoft.Storage/storageAccounts".
+        systemData:
+          $ref: "#/components/schemas/SystemData"
+          description: Azure Resource Manager metadata containing createdBy and modifiedBy information.
+        properties:
+          $ref: "#/components/schemas/SharedPrivateLinkResourceProperties"
+          description: Describes the properties of a shared private link resource managed by the Azure AI Search service.
+    SharedPrivateLinkResourceProperties:
+      type: object
+      description: Describes the properties of an existing shared private link resource managed by the Azure AI Search service.
+      properties:
+        privateLinkResourceId:
+          type: string
+          description: The resource ID of the resource the shared private link resource is for.
+        groupId:
+          type: string
+          description: The group ID from the provider of resource the shared private link resource is for.
+        requestMessage:
+          type: string
+          description: The message for requesting approval of the shared private link resource.
+        resourceRegion:
+          type: string
+          description: Optional. Can be used to specify the Azure Resource Manager location of the resource for which a shared private link is being created. This is only required for those resources whose DNS configuration are regional (such as Azure Kubernetes Service).
+        status:
+          $ref: "#/components/schemas/SharedPrivateLinkResourceStatus"
+          description: 'Status of the shared private link resource. Valid values are Pending, Approved, Rejected or Disconnected. Known values are: "Pending", "Approved", "Rejected", and "Disconnected".'
+        provisioningState:
+          $ref: "#/components/schemas/SharedPrivateLinkResourceProvisioningState"
+          description: 'The provisioning state of the shared private link resource. Valid values are Updating, Deleting, Failed, Succeeded or Incomplete. Known values are: "Updating", "Deleting", "Failed", "Succeeded", and "Incomplete".'
+    SharedPrivateLinkResourceStatus:
+      type: string
+      enum:
+        - Pending
+        - Approved
+        - Rejected
+        - Disconnected
+    SharedPrivateLinkResourceProvisioningState:
+      type: string
+      enum:
+        - Updating
+        - Deleting
+        - Failed
+        - Succeeded
+        - Incomplete
+    UpgradeAvailable:
+      type: string
+      enum:
+        - notAvailable
+        - available
+    Identity:
+      type: object
+      description: Details about the search service identity. A null value indicates that the search service has no identity assigned.
+      properties:
+        principalId:
+          type: string
+          description: The principal ID of the system-assigned identity of the search service.
+        tenantId:
+          type: string
+          description: The tenant ID of the system-assigned identity of the search service.
+        type:
+          $ref: "#/components/schemas/IdentityType"
+          description: "The type of identity used for the resource. The type 'SystemAssigned, UserAssigned' includes both an identity created by the system and a set of user assigned identities. The type 'None' will remove all identities from the service. Required. Known values are: \"None\", \"SystemAssigned\", \"UserAssigned\", and \"SystemAssigned, UserAssigned\"."
+        userAssignedIdentities:
+          type: object
+          properties: {}
+          description: "The list of user identities associated with the resource. The user identity dictionary key references will be ARM resource IDs in the form: '/subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/providers/Microsoft.ManagedIdentity/userAssignedIdentities/{identityName}'."
+      required:
+        - type
+    IdentityType:
+      type: string
+      enum:
+        - None
+        - SystemAssigned
+        - UserAssigned
+        - SystemAssigned, UserAssigned
+    SearchServiceFlattened:
+      type: object
+      description: Flattened view of SearchService ('properties' hoisted to the top level).
+      properties:
+        id:
+          type: string
+          description: Fully qualified resource ID for the resource. Ex - /subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/providers/{resourceProviderNamespace}/{resourceType}/{resourceName}.
+        name:
+          type: string
+          description: The name of the resource.
+        type:
+          type: string
+          description: The type of the resource. E.g. "Microsoft.Compute/virtualMachines" or "Microsoft.Storage/storageAccounts".
+        systemData:
+          $ref: "#/components/schemas/SystemData"
+          description: Azure Resource Manager metadata containing createdBy and modifiedBy information.
+        tags:
+          type: object
+          properties: {}
+          description: Resource tags.
+        location:
+          type: string
+          description: The geo-location where the resource lives. Required.
+        sku:
+          $ref: "#/components/schemas/Sku"
+          description: The SKU of the search service, which determines price tier and capacity limits. This property is required when creating a new search service.
+        identity:
+          $ref: "#/components/schemas/Identity"
+          description: The identity of the resource.
+        replicaCount:
+          type: integer
+          description: The number of replicas in the dedicated search service. If specified, it must be a value between 1 and 12 inclusive for standard SKUs or between 1 and 3 inclusive for basic SKU.
+        partitionCount:
+          type: integer
+          description: The number of partitions in the dedicated search service; if specified, it can be 1, 2, 3, 4, 6, or 12. Values greater than 1 are only valid for standard SKUs. For 'standard3' services with hostingMode set to 'highDensity', the allowed values are between 1 and 3.
+        endpoint:
+          type: string
+          description: The endpoint of the Azure AI Search service.
+        hostingMode:
+          $ref: "#/components/schemas/HostingMode"
+          description: "Applicable only for the standard3 SKU. You can set this property to enable up to 3 high density partitions that allow up to 1000 indexes, which is much higher than the maximum indexes allowed for any other SKU. For the standard3 SKU, the value is either 'Default' or 'HighDensity'. For all other SKUs, this value must be 'Default'. Known values are: \"Default\" and \"HighDensity\"."
+        computeType:
+          $ref: "#/components/schemas/ComputeType"
+          description: 'Configure this property to support the search service using either the Default Compute or Azure Confidential Compute. Known values are: "Default" and "Confidential".'
+        publicNetworkAccess:
+          $ref: "#/components/schemas/PublicNetworkAccess"
+          description: "This value can be set to 'Enabled' to avoid breaking changes on existing customer resources and templates. If set to 'Disabled', traffic over public interface is not allowed, and private endpoint connections would be the exclusive access method. Known values are: \"Enabled\", \"Disabled\", and \"SecuredByPerimeter\"."
+        status:
+          $ref: "#/components/schemas/SearchServiceStatus"
+          description: "The status of the search service. Possible values include: 'running': The search service is running and no provisioning operations are underway. 'provisioning': The search service is being provisioned or scaled up or down. 'deleting': The search service is being deleted. 'degraded': The search service is degraded. This can occur when the underlying search units are not healthy. The search service is most likely operational, but performance might be slow and some requests might be dropped. 'disabled': The search service is disabled. In this state, the service will reject all API requests. 'error': The search service is in an error state. 'stopped': The search service is in a subscription that's disabled. If your service is in the degraded, disabled, or error states, it means the Azure AI Search team is actively investigating the underlying issue. Dedicated services in these states are still chargeable based on the number of search units provisioned. Known values are: \"running\", \"provisioning\", \"deleting\", \"degraded\", \"disabled\", \"error\", and \"stopped\"."
+        statusDetails:
+          type: string
+          description: The details of the search service status.
+        provisioningState:
+          $ref: "#/components/schemas/ProvisioningState"
+          description: "The state of the last provisioning operation performed on the search service. Provisioning is an intermediate state that occurs while service capacity is being established. After capacity is set up, provisioningState changes to either 'Succeeded' or 'Failed'. Client applications can poll provisioning status (the recommended polling interval is from 30 seconds to one minute) by using the Get Search Service operation to see when an operation is completed. If you are using the free service, this value tends to come back as 'Succeeded' directly in the call to Create search service. This is because the free service uses capacity that is already set up. Known values are: \"succeeded\", \"provisioning\", and \"failed\"."
+        networkRuleSet:
+          $ref: "#/components/schemas/NetworkRuleSet"
+          description: Network specific rules that determine how the Azure AI Search service may be reached.
+        dataExfiltrationProtections:
+          type: array
+          items:
+            $ref: "#/components/schemas/SearchDataExfiltrationProtection"
+          description: A list of data exfiltration scenarios that are explicitly disallowed for the search service. Currently, the only supported value is 'All' to disable all possible data export scenarios with more fine grained controls planned for the future.
+        encryptionWithCmk:
+          $ref: "#/components/schemas/EncryptionWithCmk"
+          description: Specifies any policy regarding encryption of resources (such as indexes) using customer manager keys within a search service.
+        disableLocalAuth:
+          type: boolean
+          description: When set to true, calls to the search service will not be permitted to utilize API keys for authentication. This cannot be set to true if 'dataPlaneAuthOptions' are defined.
+        authOptions:
+          $ref: "#/components/schemas/DataPlaneAuthOptions"
+          description: Defines the options for how the data plane API of a search service authenticates requests. This cannot be set if 'disableLocalAuth' is set to true.
+        semanticSearch:
+          $ref: "#/components/schemas/SearchSemanticSearch"
+          description: 'Specifies the availability and billing plan for semantic search on the Azure AI Search service. This configuration is only available for certain pricing tiers in certain regions. Known values are: "disabled", "free", and "standard".'
+        knowledgeRetrieval:
+          $ref: "#/components/schemas/KnowledgeRetrieval"
+          description: 'Specifies the billing plan for agentic retrieval on the Azure AI Search service. This configuration is only available for certain pricing tiers in certain regions. Known values are: "free" and "standard".'
+        privateEndpointConnections:
+          type: array
+          items:
+            $ref: "#/components/schemas/PrivateEndpointConnection"
+          description: The list of private endpoint connections to the Azure AI Search service.
+        sharedPrivateLinkResources:
+          type: array
+          items:
+            $ref: "#/components/schemas/SharedPrivateLinkResource"
+          description: The list of shared private link resources managed by the Azure AI Search service.
+        eTag:
+          type: string
+          description: A system generated property representing the service's etag that can be for optimistic concurrency control during updates.
+        upgradeAvailable:
+          $ref: "#/components/schemas/UpgradeAvailable"
+          description: 'Indicates if the search service has an upgrade available. Known values are: "notAvailable" and "available".'
+        serviceUpgradedAt:
+          type: string
+          format: date-time
+          description: The date and time the search service was last upgraded. This field will be null until the service gets upgraded for the first time.
+    PagedSearchServiceFlattened:
+      type: object
+      properties:
+        value:
+          type: array
+          items:
+            $ref: "#/components/schemas/SearchServiceFlattened"
+        nextLink:
+          type: string
+    SearchService:
+      type: object
+      description: Describes an Azure AI Search service and its current state.
+      properties:
+        id:
+          type: string
+          description: Fully qualified resource ID for the resource. Ex - /subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/providers/{resourceProviderNamespace}/{resourceType}/{resourceName}.
+        name:
+          type: string
+          description: The name of the resource.
+        type:
+          type: string
+          description: The type of the resource. E.g. "Microsoft.Compute/virtualMachines" or "Microsoft.Storage/storageAccounts".
+        systemData:
+          $ref: "#/components/schemas/SystemData"
+          description: Azure Resource Manager metadata containing createdBy and modifiedBy information.
+        tags:
+          type: object
+          properties: {}
+          description: Resource tags.
+        location:
+          type: string
+          description: The geo-location where the resource lives. Required.
+        properties:
+          $ref: "#/components/schemas/SearchServiceProperties"
+          description: Properties of the search service.
+        sku:
+          $ref: "#/components/schemas/Sku"
+          description: The SKU of the search service, which determines price tier and capacity limits. This property is required when creating a new search service.
+        identity:
+          $ref: "#/components/schemas/Identity"
+          description: The identity of the resource.
+      required:
+        - location
+    UnavailableNameReason:
+      type: string
+      enum:
+        - Invalid
+        - AlreadyExists
+    CheckNameAvailabilityOutput:
+      type: object
+      description: Output of check name availability API.
+      properties:
+        nameAvailable:
+          type: boolean
+          description: A value indicating whether the name is available.
+        reason:
+          $ref: "#/components/schemas/UnavailableNameReason"
+          description: "The reason why the name is not available. 'Invalid' indicates the name provided does not match the naming requirements (incorrect length, unsupported characters, etc.). 'AlreadyExists' indicates that the name is already in use and is therefore unavailable. Known values are: \"Invalid\" and \"AlreadyExists\"."
+        message:
+          type: string
+          description: A message that explains why the name is invalid and provides resource naming requirements. Available only if 'Invalid' is returned in the 'reason' property.
+    SharedPrivateLinkResourceFlattened:
+      type: object
+      description: Flattened view of SharedPrivateLinkResource ('properties' hoisted to the top level).
+      properties:
+        id:
+          type: string
+          description: Fully qualified resource ID for the resource. Ex - /subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/providers/{resourceProviderNamespace}/{resourceType}/{resourceName}.
+        name:
+          type: string
+          description: The name of the resource.
+        type:
+          type: string
+          description: The type of the resource. E.g. "Microsoft.Compute/virtualMachines" or "Microsoft.Storage/storageAccounts".
+        systemData:
+          $ref: "#/components/schemas/SystemData"
+          description: Azure Resource Manager metadata containing createdBy and modifiedBy information.
+        privateLinkResourceId:
+          type: string
+          description: The resource ID of the resource the shared private link resource is for.
+        groupId:
+          type: string
+          description: The group ID from the provider of resource the shared private link resource is for.
+        requestMessage:
+          type: string
+          description: The message for requesting approval of the shared private link resource.
+        resourceRegion:
+          type: string
+          description: Optional. Can be used to specify the Azure Resource Manager location of the resource for which a shared private link is being created. This is only required for those resources whose DNS configuration are regional (such as Azure Kubernetes Service).
+        status:
+          $ref: "#/components/schemas/SharedPrivateLinkResourceStatus"
+          description: 'Status of the shared private link resource. Valid values are Pending, Approved, Rejected or Disconnected. Known values are: "Pending", "Approved", "Rejected", and "Disconnected".'
+        provisioningState:
+          $ref: "#/components/schemas/SharedPrivateLinkResourceProvisioningState"
+          description: 'The provisioning state of the shared private link resource. Valid values are Updating, Deleting, Failed, Succeeded or Incomplete. Known values are: "Updating", "Deleting", "Failed", "Succeeded", and "Incomplete".'
+    PagedSharedPrivateLinkResourceFlattened:
+      type: object
+      properties:
+        value:
+          type: array
+          items:
+            $ref: "#/components/schemas/SharedPrivateLinkResourceFlattened"
+        nextLink:
+          type: string
+    QuotaUsageResultName:
+      type: object
+      description: The SKU name information, including its identifier and localized display name.
+      properties:
+        value:
+          type: string
+          description: The SKU name supported by Azure AI Search.
+        localizedValue:
+          type: string
+          description: The localized string value for the SKU name.
+    QuotaUsageResult:
+      type: object
+      description: Describes the quota usage for a particular SKU.
+      properties:
+        id:
+          type: string
+          description: The resource ID of the quota usage SKU endpoint for Microsoft.Search provider.
+        unit:
+          type: string
+          description: The unit of measurement for the search SKU.
+        currentValue:
+          type: integer
+          description: The currently used up value for the particular search SKU.
+        limit:
+          type: integer
+          description: The quota limit for the particular search SKU.
+        name:
+          $ref: "#/components/schemas/QuotaUsageResultName"
+          description: The SKU name information of the current search service.
+    PagedQuotaUsageResult:
+      type: object
+      properties:
+        value:
+          type: array
+          items:
+            $ref: "#/components/schemas/QuotaUsageResult"
+        nextLink:
+          type: string
+  x-stackQL-resources:
+    admin_keys:
+      id: azure.search.admin_keys
+      name: admin_keys
+      title: admin_keys
+      methods:
+        get:
+          operation:
+            $ref: "#/paths/~1subscriptions~1{subscription_id}~1resourceGroups~1{resource_group_name}~1providers~1Microsoft.Search~1searchServices~1{search_service_name}~1listAdminKeys?api-version=2026-03-01-preview/post"
+          response:
+            openAPIDocKey: "200"
+            mediaType: application/json
+        regenerate:
+          operation:
+            $ref: "#/paths/~1subscriptions~1{subscription_id}~1resourceGroups~1{resource_group_name}~1providers~1Microsoft.Search~1searchServices~1{search_service_name}~1regenerateAdminKey~1{key_kind}?api-version=2026-03-01-preview/post"
+          response:
+            openAPIDocKey: "200"
+            mediaType: application/json
+      sqlVerbs:
+        select:
+          - $ref: "#/components/x-stackQL-resources/admin_keys/methods/get"
+        insert: []
+        update: []
+        delete: []
+    network_security_perimeter_configurations:
+      id: azure.search.network_security_perimeter_configurations
+      name: network_security_perimeter_configurations
+      title: network_security_perimeter_configurations
+      methods:
+        get:
+          operation:
+            $ref: "#/paths/~1subscriptions~1{subscription_id}~1resourceGroups~1{resource_group_name}~1providers~1Microsoft.Search~1searchServices~1{search_service_name}~1networkSecurityPerimeterConfigurations~1{nsp_config_name}?api-version=2026-03-01-preview/get"
+          response:
+            openAPIDocKey: "200"
+            mediaType: application/json
+            overrideMediaType: application/json
+            transform:
+              type: golang_template_json_v0.3.0
+              body: '{{ $row := . }}{ {{ $p := index $row "properties" }}{{ if eq (kindOf $p) "map" }}{{ range $k, $v := $p }}{{ printf "%q" $k }}: {{ toJson $v }}, {{ end }}{{ end }}{{ range $k, $v := $row }}{{ printf "%q" $k }}: {{ toJson $v }}, {{ end }}"_flattened": true }'
+        list_by_service:
+          operation:
+            $ref: "#/paths/~1subscriptions~1{subscription_id}~1resourceGroups~1{resource_group_name}~1providers~1Microsoft.Search~1searchServices~1{search_service_name}~1networkSecurityPerimeterConfigurations?api-version=2026-03-01-preview/get"
+          response:
+            openAPIDocKey: "200"
+            mediaType: application/json
+            objectKey: $.value
+            overrideMediaType: application/json
+            transform:
+              type: golang_template_json_v0.3.0
+              body: |-
+                {"value": [
+                {{- range $i, $row := index . "value" }}{{ if $i }},{{ end }}
+                  { {{ $p := index $row "properties" }}{{ if eq (kindOf $p) "map" }}{{ range $k, $v := $p }}{{ printf "%q" $k }}: {{ toJson $v }}, {{ end }}{{ end }}{{ range $k, $v := $row }}{{ printf "%q" $k }}: {{ toJson $v }}, {{ end }}"_flattened": true }
+                {{- end }}
+                ], "nextLink": {{ toJson (index . "nextLink") }}}
+        reconcile:
+          operation:
+            $ref: "#/paths/~1subscriptions~1{subscription_id}~1resourceGroups~1{resource_group_name}~1providers~1Microsoft.Search~1searchServices~1{search_service_name}~1networkSecurityPerimeterConfigurations~1{nsp_config_name}~1reconcile?api-version=2026-03-01-preview/post"
+          response:
+            openAPIDocKey: "204"
+      sqlVerbs:
+        select:
+          - $ref: "#/components/x-stackQL-resources/network_security_perimeter_configurations/methods/get"
+          - $ref: "#/components/x-stackQL-resources/network_security_perimeter_configurations/methods/list_by_service"
+        insert: []
+        update: []
+        delete: []
+    offerings:
+      id: azure.search.offerings
+      name: offerings
+      title: offerings
+      methods:
+        list:
+          operation:
+            $ref: "#/paths/~1providers~1Microsoft.Search~1offerings?api-version=2026-03-01-preview/get"
+          response:
+            openAPIDocKey: "200"
+            mediaType: application/json
+            objectKey: $.value
+      sqlVerbs:
+        select:
+          - $ref: "#/components/x-stackQL-resources/offerings/methods/list"
+        insert: []
+        update: []
+        delete: []
+    operations:
+      id: azure.search.operations
+      name: operations
+      title: operations
+      methods:
+        list:
+          operation:
+            $ref: "#/paths/~1providers~1Microsoft.Search~1operations?api-version=2026-03-01-preview/get"
+          response:
+            openAPIDocKey: "200"
+            mediaType: application/json
+            objectKey: $.value
+      sqlVerbs:
+        select:
+          - $ref: "#/components/x-stackQL-resources/operations/methods/list"
+        insert: []
+        update: []
+        delete: []
+    private_endpoint_connections:
+      id: azure.search.private_endpoint_connections
+      name: private_endpoint_connections
+      title: private_endpoint_connections
+      methods:
+        get:
+          operation:
+            $ref: "#/paths/~1subscriptions~1{subscription_id}~1resourceGroups~1{resource_group_name}~1providers~1Microsoft.Search~1searchServices~1{search_service_name}~1privateEndpointConnections~1{private_endpoint_connection_name}?api-version=2026-03-01-preview/get"
+          response:
+            openAPIDocKey: "200"
+            mediaType: application/json
+            overrideMediaType: application/json
+            transform:
+              type: golang_template_json_v0.3.0
+              body: '{{ $row := . }}{ {{ $p := index $row "properties" }}{{ if eq (kindOf $p) "map" }}{{ range $k, $v := $p }}{{ printf "%q" $k }}: {{ toJson $v }}, {{ end }}{{ end }}{{ range $k, $v := $row }}{{ printf "%q" $k }}: {{ toJson $v }}, {{ end }}"_flattened": true }'
+        update:
+          operation:
+            $ref: "#/paths/~1subscriptions~1{subscription_id}~1resourceGroups~1{resource_group_name}~1providers~1Microsoft.Search~1searchServices~1{search_service_name}~1privateEndpointConnections~1{private_endpoint_connection_name}?api-version=2026-03-01-preview/put"
+          response:
+            openAPIDocKey: "200"
+            mediaType: application/json
+          request:
+            nativeCasing: camel
+          config:
+            requestBodyTranslate:
+              algorithm: naive
+        delete:
+          operation:
+            $ref: "#/paths/~1subscriptions~1{subscription_id}~1resourceGroups~1{resource_group_name}~1providers~1Microsoft.Search~1searchServices~1{search_service_name}~1privateEndpointConnections~1{private_endpoint_connection_name}?api-version=2026-03-01-preview/delete"
+          response:
+            openAPIDocKey: "200"
+            mediaType: application/json
+        list_by_service:
+          operation:
+            $ref: "#/paths/~1subscriptions~1{subscription_id}~1resourceGroups~1{resource_group_name}~1providers~1Microsoft.Search~1searchServices~1{search_service_name}~1privateEndpointConnections?api-version=2026-03-01-preview/get"
+          response:
+            openAPIDocKey: "200"
+            mediaType: application/json
+            objectKey: $.value
+            overrideMediaType: application/json
+            transform:
+              type: golang_template_json_v0.3.0
+              body: |-
+                {"value": [
+                {{- range $i, $row := index . "value" }}{{ if $i }},{{ end }}
+                  { {{ $p := index $row "properties" }}{{ if eq (kindOf $p) "map" }}{{ range $k, $v := $p }}{{ printf "%q" $k }}: {{ toJson $v }}, {{ end }}{{ end }}{{ range $k, $v := $row }}{{ printf "%q" $k }}: {{ toJson $v }}, {{ end }}"_flattened": true }
+                {{- end }}
+                ], "nextLink": {{ toJson (index . "nextLink") }}}
+      sqlVerbs:
+        select:
+          - $ref: "#/components/x-stackQL-resources/private_endpoint_connections/methods/get"
+          - $ref: "#/components/x-stackQL-resources/private_endpoint_connections/methods/list_by_service"
+        insert: []
+        update:
+          - $ref: "#/components/x-stackQL-resources/private_endpoint_connections/methods/update"
+        delete:
+          - $ref: "#/components/x-stackQL-resources/private_endpoint_connections/methods/delete"
+    private_link_resources:
+      id: azure.search.private_link_resources
+      name: private_link_resources
+      title: private_link_resources
+      methods:
+        list_supported:
+          operation:
+            $ref: "#/paths/~1subscriptions~1{subscription_id}~1resourceGroups~1{resource_group_name}~1providers~1Microsoft.Search~1searchServices~1{search_service_name}~1privateLinkResources?api-version=2026-03-01-preview/get"
+          response:
+            openAPIDocKey: "200"
+            mediaType: application/json
+            objectKey: $.value
+            overrideMediaType: application/json
+            transform:
+              type: golang_template_json_v0.3.0
+              body: |-
+                {"value": [
+                {{- range $i, $row := index . "value" }}{{ if $i }},{{ end }}
+                  { {{ $p := index $row "properties" }}{{ if eq (kindOf $p) "map" }}{{ range $k, $v := $p }}{{ printf "%q" $k }}: {{ toJson $v }}, {{ end }}{{ end }}{{ range $k, $v := $row }}{{ printf "%q" $k }}: {{ toJson $v }}, {{ end }}"_flattened": true }
+                {{- end }}
+                ], "nextLink": {{ toJson (index . "nextLink") }}}
+      sqlVerbs:
+        select:
+          - $ref: "#/components/x-stackQL-resources/private_link_resources/methods/list_supported"
+        insert: []
+        update: []
+        delete: []
+    query_keys:
+      id: azure.search.query_keys
+      name: query_keys
+      title: query_keys
+      methods:
+        list_by_search_service:
+          operation:
+            $ref: "#/paths/~1subscriptions~1{subscription_id}~1resourceGroups~1{resource_group_name}~1providers~1Microsoft.Search~1searchServices~1{search_service_name}~1listQueryKeys?api-version=2026-03-01-preview/post"
+          response:
+            openAPIDocKey: "200"
+            mediaType: application/json
+            objectKey: $.value
+        create:
+          operation:
+            $ref: "#/paths/~1subscriptions~1{subscription_id}~1resourceGroups~1{resource_group_name}~1providers~1Microsoft.Search~1searchServices~1{search_service_name}~1createQueryKey~1{name}?api-version=2026-03-01-preview/post"
+          response:
+            openAPIDocKey: "200"
+            mediaType: application/json
+        delete:
+          operation:
+            $ref: "#/paths/~1subscriptions~1{subscription_id}~1resourceGroups~1{resource_group_name}~1providers~1Microsoft.Search~1searchServices~1{search_service_name}~1deleteQueryKey~1{key_name}?api-version=2026-03-01-preview/delete"
+          response:
+            openAPIDocKey: "204"
+      sqlVerbs:
+        select:
+          - $ref: "#/components/x-stackQL-resources/query_keys/methods/list_by_search_service"
+        insert:
+          - $ref: "#/components/x-stackQL-resources/query_keys/methods/create"
+        update: []
+        delete:
+          - $ref: "#/components/x-stackQL-resources/query_keys/methods/delete"
+    services:
+      id: azure.search.services
+      name: services
+      title: services
+      methods:
+        get:
+          operation:
+            $ref: "#/paths/~1subscriptions~1{subscription_id}~1resourceGroups~1{resource_group_name}~1providers~1Microsoft.Search~1searchServices~1{search_service_name}?api-version=2026-03-01-preview/get"
+          response:
+            openAPIDocKey: "200"
+            mediaType: application/json
+            overrideMediaType: application/json
+            transform:
+              type: golang_template_json_v0.3.0
+              body: '{{ $row := . }}{ {{ $p := index $row "properties" }}{{ if eq (kindOf $p) "map" }}{{ range $k, $v := $p }}{{ printf "%q" $k }}: {{ toJson $v }}, {{ end }}{{ end }}{{ range $k, $v := $row }}{{ printf "%q" $k }}: {{ toJson $v }}, {{ end }}"_flattened": true }'
+        create_or_update:
+          operation:
+            $ref: "#/paths/~1subscriptions~1{subscription_id}~1resourceGroups~1{resource_group_name}~1providers~1Microsoft.Search~1searchServices~1{search_service_name}?api-version=2026-03-01-preview/put"
+          response:
+            openAPIDocKey: "200"
+            mediaType: application/json
+          request:
+            nativeCasing: camel
+          config:
+            requestBodyTranslate:
+              algorithm: naive
+        update:
+          operation:
+            $ref: "#/paths/~1subscriptions~1{subscription_id}~1resourceGroups~1{resource_group_name}~1providers~1Microsoft.Search~1searchServices~1{search_service_name}?api-version=2026-03-01-preview/patch"
+          response:
+            openAPIDocKey: "200"
+            mediaType: application/json
+          request:
+            nativeCasing: camel
+          config:
+            requestBodyTranslate:
+              algorithm: naive
+        delete:
+          operation:
+            $ref: "#/paths/~1subscriptions~1{subscription_id}~1resourceGroups~1{resource_group_name}~1providers~1Microsoft.Search~1searchServices~1{search_service_name}?api-version=2026-03-01-preview/delete"
+          response:
+            openAPIDocKey: "204"
+        list_by_resource_group:
+          operation:
+            $ref: "#/paths/~1subscriptions~1{subscription_id}~1resourceGroups~1{resource_group_name}~1providers~1Microsoft.Search~1searchServices?api-version=2026-03-01-preview/get"
+          response:
+            openAPIDocKey: "200"
+            mediaType: application/json
+            objectKey: $.value
+            overrideMediaType: application/json
+            transform:
+              type: golang_template_json_v0.3.0
+              body: |-
+                {"value": [
+                {{- range $i, $row := index . "value" }}{{ if $i }},{{ end }}
+                  { {{ $p := index $row "properties" }}{{ if eq (kindOf $p) "map" }}{{ range $k, $v := $p }}{{ printf "%q" $k }}: {{ toJson $v }}, {{ end }}{{ end }}{{ range $k, $v := $row }}{{ printf "%q" $k }}: {{ toJson $v }}, {{ end }}"_flattened": true }
+                {{- end }}
+                ], "nextLink": {{ toJson (index . "nextLink") }}}
+        list_by_subscription:
+          operation:
+            $ref: "#/paths/~1subscriptions~1{subscription_id}~1providers~1Microsoft.Search~1searchServices?api-version=2026-03-01-preview/get"
+          response:
+            openAPIDocKey: "200"
+            mediaType: application/json
+            objectKey: $.value
+            overrideMediaType: application/json
+            transform:
+              type: golang_template_json_v0.3.0
+              body: |-
+                {"value": [
+                {{- range $i, $row := index . "value" }}{{ if $i }},{{ end }}
+                  { {{ $p := index $row "properties" }}{{ if eq (kindOf $p) "map" }}{{ range $k, $v := $p }}{{ printf "%q" $k }}: {{ toJson $v }}, {{ end }}{{ end }}{{ range $k, $v := $row }}{{ printf "%q" $k }}: {{ toJson $v }}, {{ end }}"_flattened": true }
+                {{- end }}
+                ], "nextLink": {{ toJson (index . "nextLink") }}}
+        check_name_availability:
+          operation:
+            $ref: "#/paths/~1subscriptions~1{subscription_id}~1providers~1Microsoft.Search~1checkNameAvailability?api-version=2026-03-01-preview/post"
+          response:
+            openAPIDocKey: "200"
+            mediaType: application/json
+          request:
+            nativeCasing: camel
+          config:
+            requestBodyTranslate:
+              algorithm: naive
+        upgrade:
+          operation:
+            $ref: "#/paths/~1subscriptions~1{subscription_id}~1resourceGroups~1{resource_group_name}~1providers~1Microsoft.Search~1searchServices~1{search_service_name}~1upgrade?api-version=2026-03-01-preview/post"
+          response:
+            openAPIDocKey: "200"
+            mediaType: application/json
+      sqlVerbs:
+        select:
+          - $ref: "#/components/x-stackQL-resources/services/methods/get"
+          - $ref: "#/components/x-stackQL-resources/services/methods/check_name_availability"
+          - $ref: "#/components/x-stackQL-resources/services/methods/list_by_resource_group"
+          - $ref: "#/components/x-stackQL-resources/services/methods/list_by_subscription"
+        insert:
+          - $ref: "#/components/x-stackQL-resources/services/methods/create_or_update"
+        update:
+          - $ref: "#/components/x-stackQL-resources/services/methods/update"
+        replace:
+          - $ref: "#/components/x-stackQL-resources/services/methods/create_or_update"
+        delete:
+          - $ref: "#/components/x-stackQL-resources/services/methods/delete"
+    shared_private_link_resources:
+      id: azure.search.shared_private_link_resources
+      name: shared_private_link_resources
+      title: shared_private_link_resources
+      methods:
+        get:
+          operation:
+            $ref: "#/paths/~1subscriptions~1{subscription_id}~1resourceGroups~1{resource_group_name}~1providers~1Microsoft.Search~1searchServices~1{search_service_name}~1sharedPrivateLinkResources~1{shared_private_link_resource_name}?api-version=2026-03-01-preview/get"
+          response:
+            openAPIDocKey: "200"
+            mediaType: application/json
+            overrideMediaType: application/json
+            transform:
+              type: golang_template_json_v0.3.0
+              body: '{{ $row := . }}{ {{ $p := index $row "properties" }}{{ if eq (kindOf $p) "map" }}{{ range $k, $v := $p }}{{ printf "%q" $k }}: {{ toJson $v }}, {{ end }}{{ end }}{{ range $k, $v := $row }}{{ printf "%q" $k }}: {{ toJson $v }}, {{ end }}"_flattened": true }'
+        create_or_update:
+          operation:
+            $ref: "#/paths/~1subscriptions~1{subscription_id}~1resourceGroups~1{resource_group_name}~1providers~1Microsoft.Search~1searchServices~1{search_service_name}~1sharedPrivateLinkResources~1{shared_private_link_resource_name}?api-version=2026-03-01-preview/put"
+          response:
+            openAPIDocKey: "200"
+            mediaType: application/json
+          request:
+            nativeCasing: camel
+          config:
+            requestBodyTranslate:
+              algorithm: naive
+        delete:
+          operation:
+            $ref: "#/paths/~1subscriptions~1{subscription_id}~1resourceGroups~1{resource_group_name}~1providers~1Microsoft.Search~1searchServices~1{search_service_name}~1sharedPrivateLinkResources~1{shared_private_link_resource_name}?api-version=2026-03-01-preview/delete"
+          response:
+            openAPIDocKey: "204"
+        list_by_service:
+          operation:
+            $ref: "#/paths/~1subscriptions~1{subscription_id}~1resourceGroups~1{resource_group_name}~1providers~1Microsoft.Search~1searchServices~1{search_service_name}~1sharedPrivateLinkResources?api-version=2026-03-01-preview/get"
+          response:
+            openAPIDocKey: "200"
+            mediaType: application/json
+            objectKey: $.value
+            overrideMediaType: application/json
+            transform:
+              type: golang_template_json_v0.3.0
+              body: |-
+                {"value": [
+                {{- range $i, $row := index . "value" }}{{ if $i }},{{ end }}
+                  { {{ $p := index $row "properties" }}{{ if eq (kindOf $p) "map" }}{{ range $k, $v := $p }}{{ printf "%q" $k }}: {{ toJson $v }}, {{ end }}{{ end }}{{ range $k, $v := $row }}{{ printf "%q" $k }}: {{ toJson $v }}, {{ end }}"_flattened": true }
+                {{- end }}
+                ], "nextLink": {{ toJson (index . "nextLink") }}}
+      sqlVerbs:
+        select:
+          - $ref: "#/components/x-stackQL-resources/shared_private_link_resources/methods/get"
+          - $ref: "#/components/x-stackQL-resources/shared_private_link_resources/methods/list_by_service"
+        insert:
+          - $ref: "#/components/x-stackQL-resources/shared_private_link_resources/methods/create_or_update"
+        update: []
+        replace:
+          - $ref: "#/components/x-stackQL-resources/shared_private_link_resources/methods/create_or_update"
+        delete:
+          - $ref: "#/components/x-stackQL-resources/shared_private_link_resources/methods/delete"
+    usages:
+      id: azure.search.usages
+      name: usages
+      title: usages
+      methods:
+        list_by_subscription:
+          operation:
+            $ref: "#/paths/~1subscriptions~1{subscription_id}~1providers~1Microsoft.Search~1locations~1{location}~1usages?api-version=2026-03-01-preview/get"
+          response:
+            openAPIDocKey: "200"
+            mediaType: application/json
+            objectKey: $.value
+        usage_by_subscription_sku:
+          operation:
+            $ref: "#/paths/~1subscriptions~1{subscription_id}~1providers~1Microsoft.Search~1locations~1{location}~1usages~1{sku_name}?api-version=2026-03-01-preview/get"
+          response:
+            openAPIDocKey: "200"
+            mediaType: application/json
+      sqlVerbs:
+        select:
+          - $ref: "#/components/x-stackQL-resources/usages/methods/list_by_subscription"
+        insert: []
+        update: []
+        delete: []
+paths:
+  /subscriptions/{subscription_id}/resourceGroups/{resource_group_name}/providers/Microsoft.Search/searchServices/{search_service_name}/listAdminKeys?api-version=2026-03-01-preview:
+    post:
+      operationId: AdminKeys_get
+      description: Gets the primary and secondary admin API keys for the specified Azure AI Search service.
+      parameters:
+        - name: resource_group_name
+          in: path
+          required: true
+          schema:
+            type: string
+          description: The name of the resource group. The name is case insensitive. Required.
+        - name: search_service_name
+          in: path
+          required: true
+          schema:
+            type: string
+          description: The name of the Azure AI Search service associated with the specified resource group. Required.
+        - name: subscription_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AdminKeyResult"
+  /subscriptions/{subscription_id}/resourceGroups/{resource_group_name}/providers/Microsoft.Search/searchServices/{search_service_name}/regenerateAdminKey/{key_kind}?api-version=2026-03-01-preview:
+    post:
+      operationId: AdminKeys_regenerate
+      description: Regenerates either the primary or secondary admin API key. You can only regenerate one key at a time.
+      parameters:
+        - name: resource_group_name
+          in: path
+          required: true
+          schema:
+            type: string
+          description: The name of the resource group. The name is case insensitive. Required.
+        - name: search_service_name
+          in: path
+          required: true
+          schema:
+            type: string
+          description: The name of the Azure AI Search service associated with the specified resource group. Required.
+        - name: key_kind
+          in: path
+          required: true
+          schema:
+            type: string
+          description: "Specifies which key to regenerate. Valid values include 'primary' and 'secondary'. Known values are: \"primary\" and \"secondary\". Required."
+        - name: subscription_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AdminKeyResult"
+  /subscriptions/{subscription_id}/resourceGroups/{resource_group_name}/providers/Microsoft.Search/searchServices/{search_service_name}/networkSecurityPerimeterConfigurations/{nsp_config_name}?api-version=2026-03-01-preview:
+    get:
+      operationId: NetworkSecurityPerimeterConfigurations_get
+      description: Gets a network security perimeter configuration.
+      parameters:
+        - name: resource_group_name
+          in: path
+          required: true
+          schema:
+            type: string
+          description: The name of the resource group. The name is case insensitive. Required.
+        - name: search_service_name
+          in: path
+          required: true
+          schema:
+            type: string
+          description: The name of the Azure AI Search service associated with the specified resource group. Required.
+        - name: nsp_config_name
+          in: path
+          required: true
+          schema:
+            type: string
+          description: The network security perimeter configuration name. Required.
+        - name: subscription_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/NetworkSecurityPerimeterConfigurationFlattened"
+  /subscriptions/{subscription_id}/resourceGroups/{resource_group_name}/providers/Microsoft.Search/searchServices/{search_service_name}/networkSecurityPerimeterConfigurations?api-version=2026-03-01-preview:
+    get:
+      operationId: NetworkSecurityPerimeterConfigurations_list_by_service
+      description: Gets a list of network security perimeter configurations for a search service.
+      parameters:
+        - name: resource_group_name
+          in: path
+          required: true
+          schema:
+            type: string
+          description: The name of the resource group. The name is case insensitive. Required.
+        - name: search_service_name
+          in: path
+          required: true
+          schema:
+            type: string
+          description: The name of the Azure AI Search service associated with the specified resource group. Required.
+        - name: subscription_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PagedNetworkSecurityPerimeterConfigurationFlattened"
+  /subscriptions/{subscription_id}/resourceGroups/{resource_group_name}/providers/Microsoft.Search/searchServices/{search_service_name}/networkSecurityPerimeterConfigurations/{nsp_config_name}/reconcile?api-version=2026-03-01-preview:
+    post:
+      operationId: NetworkSecurityPerimeterConfigurations_begin_reconcile
+      description: Reconcile network security perimeter configuration for the Azure AI Search resource provider. This triggers a manual resync with network security perimeter configurations by ensuring the search service carries the latest configuration.
+      parameters:
+        - name: resource_group_name
+          in: path
+          required: true
+          schema:
+            type: string
+          description: The name of the resource group. The name is case insensitive. Required.
+        - name: search_service_name
+          in: path
+          required: true
+          schema:
+            type: string
+          description: The name of the Azure AI Search service associated with the specified resource group. Required.
+        - name: nsp_config_name
+          in: path
+          required: true
+          schema:
+            type: string
+          description: The network security perimeter configuration name. Required.
+        - name: subscription_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "204":
+          description: Success (no content / accepted)
+  /providers/Microsoft.Search/offerings?api-version=2026-03-01-preview:
+    get:
+      operationId: Offerings_list
+      description: "Lists all of the features and SKUs offered by the Azure AI Search service in each region. Note: This API returns a non-ARM resource collection and is not RPC-compliant. It will be replaced with an action-style API in the next preview as a breaking change. Customers should avoid taking new dependencies on the current shape."
+      parameters: []
+      responses:
+        "200":
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OfferingsListResult"
+  /providers/Microsoft.Search/operations?api-version=2026-03-01-preview:
+    get:
+      operationId: search_list
+      description: Lists all of the available REST API operations of the Microsoft.Search provider.
+      parameters: []
+      responses:
+        "200":
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PagedOperation"
+  /subscriptions/{subscription_id}/resourceGroups/{resource_group_name}/providers/Microsoft.Search/searchServices/{search_service_name}/privateEndpointConnections/{private_endpoint_connection_name}?api-version=2026-03-01-preview:
+    get:
+      operationId: PrivateEndpointConnections_get
+      description: Gets the details of the private endpoint connection to the search service in the given resource group.
+      parameters:
+        - name: resource_group_name
+          in: path
+          required: true
+          schema:
+            type: string
+          description: The name of the resource group. The name is case insensitive. Required.
+        - name: search_service_name
+          in: path
+          required: true
+          schema:
+            type: string
+          description: The name of the Azure AI Search service associated with the specified resource group. Required.
+        - name: private_endpoint_connection_name
+          in: path
+          required: true
+          schema:
+            type: string
+          description: The name of the private endpoint connection to the Azure AI Search service with the specified resource group. Required.
+        - name: subscription_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PrivateEndpointConnectionFlattened"
+    put:
+      operationId: PrivateEndpointConnections_update
+      description: Updates a private endpoint connection to the search service in the given resource group.
+      parameters:
+        - name: resource_group_name
+          in: path
+          required: true
+          schema:
+            type: string
+          description: The name of the resource group. The name is case insensitive. Required.
+        - name: search_service_name
+          in: path
+          required: true
+          schema:
+            type: string
+          description: The name of the Azure AI Search service associated with the specified resource group. Required.
+        - name: private_endpoint_connection_name
+          in: path
+          required: true
+          schema:
+            type: string
+          description: The name of the private endpoint connection to the Azure AI Search service with the specified resource group. Required.
+        - name: subscription_id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                properties:
+                  $ref: "#/components/schemas/PrivateEndpointConnectionProperties"
+                  description: Describes the properties of an existing private endpoint connection to the Azure AI Search service.
+      responses:
+        "200":
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PrivateEndpointConnection"
+    delete:
+      operationId: PrivateEndpointConnections_delete
+      description: "Disconnects the private endpoint connection and deletes it from the search service. Returns 200 (OK) with the deleted connection details on successful deletion, or 404 (Not Found) if the connection does not exist. NOTE: The behavior of returning 404 is inconsistent with ARM guidelines. Clients should expect a 204 response in future versions and avoid new dependencies on the 404 response."
+      parameters:
+        - name: resource_group_name
+          in: path
+          required: true
+          schema:
+            type: string
+          description: The name of the resource group. The name is case insensitive. Required.
+        - name: search_service_name
+          in: path
+          required: true
+          schema:
+            type: string
+          description: The name of the Azure AI Search service associated with the specified resource group. Required.
+        - name: private_endpoint_connection_name
+          in: path
+          required: true
+          schema:
+            type: string
+          description: The name of the private endpoint connection to the Azure AI Search service with the specified resource group. Required.
+        - name: subscription_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PrivateEndpointConnection"
+  /subscriptions/{subscription_id}/resourceGroups/{resource_group_name}/providers/Microsoft.Search/searchServices/{search_service_name}/privateEndpointConnections?api-version=2026-03-01-preview:
+    get:
+      operationId: PrivateEndpointConnections_list_by_service
+      description: Gets a list of all private endpoint connections in the given service.
+      parameters:
+        - name: resource_group_name
+          in: path
+          required: true
+          schema:
+            type: string
+          description: The name of the resource group. The name is case insensitive. Required.
+        - name: search_service_name
+          in: path
+          required: true
+          schema:
+            type: string
+          description: The name of the Azure AI Search service associated with the specified resource group. Required.
+        - name: subscription_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PagedPrivateEndpointConnectionFlattened"
+  /subscriptions/{subscription_id}/resourceGroups/{resource_group_name}/providers/Microsoft.Search/searchServices/{search_service_name}/privateLinkResources?api-version=2026-03-01-preview:
+    get:
+      operationId: PrivateLinkResources_list_supported
+      description: Gets a list of all supported private link resource types for the given service.
+      parameters:
+        - name: resource_group_name
+          in: path
+          required: true
+          schema:
+            type: string
+          description: The name of the resource group. The name is case insensitive. Required.
+        - name: search_service_name
+          in: path
+          required: true
+          schema:
+            type: string
+          description: The name of the Azure AI Search service associated with the specified resource group. Required.
+        - name: subscription_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PagedPrivateLinkResourceFlattened"
+  /subscriptions/{subscription_id}/resourceGroups/{resource_group_name}/providers/Microsoft.Search/searchServices/{search_service_name}/listQueryKeys?api-version=2026-03-01-preview:
+    post:
+      operationId: QueryKeys_list_by_search_service
+      description: Returns the list of query API keys for the given Azure AI Search service.
+      parameters:
+        - name: resource_group_name
+          in: path
+          required: true
+          schema:
+            type: string
+          description: The name of the resource group. The name is case insensitive. Required.
+        - name: search_service_name
+          in: path
+          required: true
+          schema:
+            type: string
+          description: The name of the Azure AI Search service associated with the specified resource group. Required.
+        - name: subscription_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PagedQueryKey"
+  /subscriptions/{subscription_id}/resourceGroups/{resource_group_name}/providers/Microsoft.Search/searchServices/{search_service_name}/createQueryKey/{name}?api-version=2026-03-01-preview:
+    post:
+      operationId: QueryKeys_create
+      description: Generates a new query key for the specified search service. You can create up to 50 query keys per service.
+      parameters:
+        - name: resource_group_name
+          in: path
+          required: true
+          schema:
+            type: string
+          description: The name of the resource group. The name is case insensitive. Required.
+        - name: search_service_name
+          in: path
+          required: true
+          schema:
+            type: string
+          description: The name of the Azure AI Search service associated with the specified resource group. Required.
+        - name: name
+          in: path
+          required: true
+          schema:
+            type: string
+          description: The name of the new query API key. Required.
+        - name: subscription_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/QueryKey"
+  /subscriptions/{subscription_id}/resourceGroups/{resource_group_name}/providers/Microsoft.Search/searchServices/{search_service_name}/deleteQueryKey/{key_name}?api-version=2026-03-01-preview:
+    delete:
+      operationId: QueryKeys_delete
+      description: "Deletes the specified query key. Unlike admin keys, query keys are not regenerated. The process for regenerating a query key is to delete and then recreate it. Returns 200 (OK) on successful deletion, 204 (No Content) if the service exists but the query keys not found, or 404 (Not Found) if the service is not found. NOTE: The behavior of returning 404 is inconsistent with ARM guidelines. Clients should expect a 204 response in future versions and avoid new dependencies on the 404 response."
+      parameters:
+        - name: resource_group_name
+          in: path
+          required: true
+          schema:
+            type: string
+          description: The name of the resource group. The name is case insensitive. Required.
+        - name: search_service_name
+          in: path
+          required: true
+          schema:
+            type: string
+          description: The name of the Azure AI Search service associated with the specified resource group. Required.
+        - name: key_name
+          in: path
+          required: true
+          schema:
+            type: string
+          description: The query key to be deleted. Query keys are identified by value, not by name. Required.
+        - name: subscription_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "204":
+          description: Success (no content / accepted)
+  /subscriptions/{subscription_id}/resourceGroups/{resource_group_name}/providers/Microsoft.Search/searchServices/{search_service_name}?api-version=2026-03-01-preview:
+    get:
+      operationId: Services_get
+      description: Gets the search service with the given name in the given resource group.
+      parameters:
+        - name: resource_group_name
+          in: path
+          required: true
+          schema:
+            type: string
+          description: The name of the resource group. The name is case insensitive. Required.
+        - name: search_service_name
+          in: path
+          required: true
+          schema:
+            type: string
+          description: The name of the Azure AI Search service associated with the specified resource group. Required.
+        - name: subscription_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SearchServiceFlattened"
+    put:
+      operationId: Services_begin_create_or_update
+      description: Creates or updates a search service in the given resource group. If the search service already exists, all properties will be updated with the given values.
+      parameters:
+        - name: resource_group_name
+          in: path
+          required: true
+          schema:
+            type: string
+          description: The name of the resource group. The name is case insensitive. Required.
+        - name: search_service_name
+          in: path
+          required: true
+          schema:
+            type: string
+          description: The name of the Azure AI Search service associated with the specified resource group. Required.
+        - name: subscription_id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                tags:
+                  type: object
+                  properties: {}
+                  description: Resource tags.
+                location:
+                  type: string
+                  description: The geo-location where the resource lives. Required.
+                properties:
+                  $ref: "#/components/schemas/SearchServiceProperties"
+                  description: Properties of the search service.
+                sku:
+                  $ref: "#/components/schemas/Sku"
+                  description: The SKU of the search service, which determines price tier and capacity limits. This property is required when creating a new search service.
+                identity:
+                  $ref: "#/components/schemas/Identity"
+                  description: The identity of the resource.
+              required:
+                - location
+      responses:
+        "200":
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SearchService"
+    patch:
+      operationId: Services_update
+      description: Updates an existing search service in the given resource group.
+      parameters:
+        - name: resource_group_name
+          in: path
+          required: true
+          schema:
+            type: string
+          description: The name of the resource group. The name is case insensitive. Required.
+        - name: search_service_name
+          in: path
+          required: true
+          schema:
+            type: string
+          description: The name of the Azure AI Search service associated with the specified resource group. Required.
+        - name: subscription_id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                properties:
+                  $ref: "#/components/schemas/SearchServiceProperties"
+                  description: Properties of the search service.
+                sku:
+                  $ref: "#/components/schemas/Sku"
+                  description: The SKU of the search service, which determines price tier and capacity limits. This property is required when creating a new search service.
+                location:
+                  type: string
+                  description: The geographic location of the resource. This must be one of the supported and registered Azure geo regions (for example, West US, East US, Southeast Asia, and so forth). This property is required when creating a new resource.
+                tags:
+                  type: object
+                  properties: {}
+                  description: Tags to help categorize the resource in the Azure portal.
+                identity:
+                  $ref: "#/components/schemas/Identity"
+                  description: Details about the search service identity. A null value indicates that the search service has no identity assigned.
+      responses:
+        "200":
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SearchService"
+    delete:
+      operationId: Services_delete
+      description: Deletes a search service in the given resource group, along with its associated resources. Returns 200 (OK) on successful deletion, or 204 (No Content) if the service is not found.
+      parameters:
+        - name: resource_group_name
+          in: path
+          required: true
+          schema:
+            type: string
+          description: The name of the resource group. The name is case insensitive. Required.
+        - name: search_service_name
+          in: path
+          required: true
+          schema:
+            type: string
+          description: The name of the Azure AI Search service associated with the specified resource group. Required.
+        - name: subscription_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "204":
+          description: Success (no content / accepted)
+  /subscriptions/{subscription_id}/resourceGroups/{resource_group_name}/providers/Microsoft.Search/searchServices?api-version=2026-03-01-preview:
+    get:
+      operationId: Services_list_by_resource_group
+      description: Gets a list of all search services in the given resource group.
+      parameters:
+        - name: resource_group_name
+          in: path
+          required: true
+          schema:
+            type: string
+          description: The name of the resource group. The name is case insensitive. Required.
+        - name: subscription_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PagedSearchServiceFlattened"
+  /subscriptions/{subscription_id}/providers/Microsoft.Search/searchServices?api-version=2026-03-01-preview:
+    get:
+      operationId: Services_list_by_subscription
+      description: Gets a list of all search services in the given subscription.
+      parameters:
+        - name: subscription_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PagedSearchServiceFlattened"
+  /subscriptions/{subscription_id}/providers/Microsoft.Search/checkNameAvailability?api-version=2026-03-01-preview:
+    post:
+      operationId: Services_check_name_availability
+      description: Checks whether or not the given search service name is available for use. Search service names must be globally unique since they are part of the service URI (https://.search.windows.net).
+      parameters:
+        - name: subscription_id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name:
+                  type: string
+                  description: The search service name to validate. Search service names must only contain lowercase letters, digits or dashes, cannot use dash as the first two or last one characters, cannot contain consecutive dashes, and must be between 2 and 60 characters in length. Required.
+                type:
+                  type: string
+                  description: The type of the resource whose name is to be validated. This value must always be 'searchServices'. Required. Default value is "searchServices".
+              required:
+                - name
+                - type
+      responses:
+        "200":
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CheckNameAvailabilityOutput"
+  /subscriptions/{subscription_id}/resourceGroups/{resource_group_name}/providers/Microsoft.Search/searchServices/{search_service_name}/upgrade?api-version=2026-03-01-preview:
+    post:
+      operationId: Services_begin_upgrade
+      description: Upgrades the Azure AI Search service to the latest version available.
+      parameters:
+        - name: resource_group_name
+          in: path
+          required: true
+          schema:
+            type: string
+          description: The name of the resource group. The name is case insensitive. Required.
+        - name: search_service_name
+          in: path
+          required: true
+          schema:
+            type: string
+          description: The name of the Azure AI Search service associated with the specified resource group. Required.
+        - name: subscription_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SearchService"
+  /subscriptions/{subscription_id}/resourceGroups/{resource_group_name}/providers/Microsoft.Search/searchServices/{search_service_name}/sharedPrivateLinkResources/{shared_private_link_resource_name}?api-version=2026-03-01-preview:
+    get:
+      operationId: SharedPrivateLinkResources_get
+      description: Gets the details of the shared private link resource managed by the search service in the given resource group.
+      parameters:
+        - name: resource_group_name
+          in: path
+          required: true
+          schema:
+            type: string
+          description: The name of the resource group. The name is case insensitive. Required.
+        - name: search_service_name
+          in: path
+          required: true
+          schema:
+            type: string
+          description: The name of the Azure AI Search service associated with the specified resource group. Required.
+        - name: shared_private_link_resource_name
+          in: path
+          required: true
+          schema:
+            type: string
+          description: The name of the shared private link resource managed by the Azure AI Search service within the specified resource group. Required.
+        - name: subscription_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SharedPrivateLinkResourceFlattened"
+    put:
+      operationId: SharedPrivateLinkResources_begin_create_or_update
+      description: Initiates the creation or update of a shared private link resource managed by the search service in the given resource group.
+      parameters:
+        - name: resource_group_name
+          in: path
+          required: true
+          schema:
+            type: string
+          description: The name of the resource group. The name is case insensitive. Required.
+        - name: search_service_name
+          in: path
+          required: true
+          schema:
+            type: string
+          description: The name of the Azure AI Search service associated with the specified resource group. Required.
+        - name: shared_private_link_resource_name
+          in: path
+          required: true
+          schema:
+            type: string
+          description: The name of the shared private link resource managed by the Azure AI Search service within the specified resource group. Required.
+        - name: subscription_id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                properties:
+                  $ref: "#/components/schemas/SharedPrivateLinkResourceProperties"
+                  description: Describes the properties of a shared private link resource managed by the Azure AI Search service.
+      responses:
+        "200":
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SharedPrivateLinkResource"
+    delete:
+      operationId: SharedPrivateLinkResources_begin_delete
+      description: "Initiates the deletion of the shared private link resource from the search service. Returns 202 (Accepted) for asynchronous deletion, 204 (No Content) if the service exists but the shared private link is not found, or 404 (Not Found) if the service is not found. NOTE: The behavior of returning 404 is inconsistent with ARM guidelines. Clients should expect a 204 response in future versions and avoid new dependencies on the 404 response."
+      parameters:
+        - name: resource_group_name
+          in: path
+          required: true
+          schema:
+            type: string
+          description: The name of the resource group. The name is case insensitive. Required.
+        - name: search_service_name
+          in: path
+          required: true
+          schema:
+            type: string
+          description: The name of the Azure AI Search service associated with the specified resource group. Required.
+        - name: shared_private_link_resource_name
+          in: path
+          required: true
+          schema:
+            type: string
+          description: The name of the shared private link resource managed by the Azure AI Search service within the specified resource group. Required.
+        - name: subscription_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "204":
+          description: Success (no content / accepted)
+  /subscriptions/{subscription_id}/resourceGroups/{resource_group_name}/providers/Microsoft.Search/searchServices/{search_service_name}/sharedPrivateLinkResources?api-version=2026-03-01-preview:
+    get:
+      operationId: SharedPrivateLinkResources_list_by_service
+      description: Gets a list of all shared private link resources managed by the given service.
+      parameters:
+        - name: resource_group_name
+          in: path
+          required: true
+          schema:
+            type: string
+          description: The name of the resource group. The name is case insensitive. Required.
+        - name: search_service_name
+          in: path
+          required: true
+          schema:
+            type: string
+          description: The name of the Azure AI Search service associated with the specified resource group. Required.
+        - name: subscription_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PagedSharedPrivateLinkResourceFlattened"
+  /subscriptions/{subscription_id}/providers/Microsoft.Search/locations/{location}/usages?api-version=2026-03-01-preview:
+    get:
+      operationId: Usages_list_by_subscription
+      description: Get a list of all Azure AI Search quota usages across the subscription.
+      parameters:
+        - name: location
+          in: path
+          required: true
+          schema:
+            type: string
+          description: The name of the Azure region. Required.
+        - name: subscription_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PagedQuotaUsageResult"
+  /subscriptions/{subscription_id}/providers/Microsoft.Search/locations/{location}/usages/{sku_name}?api-version=2026-03-01-preview:
+    get:
+      operationId: _SearchManagementClient_usage_by_subscription_sku
+      description: Gets the quota usage for a search SKU in the given subscription.
+      parameters:
+        - name: location
+          in: path
+          required: true
+          schema:
+            type: string
+          description: The name of the Azure region. Required.
+        - name: sku_name
+          in: path
+          required: true
+          schema:
+            type: string
+          description: The unique SKU name that identifies a billable tier. Required.
+        - name: subscription_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/QuotaUsageResult"

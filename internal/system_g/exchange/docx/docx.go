@@ -36,10 +36,18 @@ import (
 type Option func(*options)
 
 type options struct {
-	baseURL string
-	creds   awsv4.Credentials
-	signer  facade.Transform
-	noSign  bool
+	baseURL  string
+	creds    awsv4.Credentials
+	signer   facade.Transform
+	noSign   bool
+	security aot.Security
+}
+
+// WithProviderSecurity supplies the scheme the PROVIDER document declares. Auth is stated once for a
+// whole provider, and a service document that says nothing is inheriting it, not opting out — so
+// without this a signed provider's services would quietly issue unsigned requests.
+func WithProviderSecurity(sec aot.Security) Option {
+	return func(o *options) { o.security = sec }
 }
 
 // WithAWSCredentials supplies the credentials for documents that declare SigV4. The document says a
@@ -84,7 +92,7 @@ func SelectPlan(doc []byte, resource string, inputs map[string]any, reg dsl.Regi
 // PlanFor builds a plan from an already-resolved exchange — the path a catalog takes, where the
 // address has already done the resolving.
 func PlanFor(ex aot.AOTExchange, inputs map[string]any, reg dsl.Registry, opts ...Option) (plan.Plan, error) {
-	spec, err := Spec(ex, reg, opts...)
+	spec, err := Spec(ex, inputs, reg, opts...)
 	if err != nil {
 		return nil, err
 	}
@@ -93,25 +101,41 @@ func PlanFor(ex aot.AOTExchange, inputs map[string]any, reg dsl.Registry, opts .
 			return nil, fmt.Errorf("docx: exchange %q requires input %q", ex.Name(), in)
 		}
 	}
+	for _, p := range ex.Request().Parameters() {
+		if !p.Required() {
+			continue
+		}
+		if v, ok := inputs[p.Name()]; !ok || v == "" {
+			return nil, fmt.Errorf("docx: exchange %q requires parameter %q (in %s)",
+				ex.Name(), p.Name(), p.In())
+		}
+	}
 	return plan.NewPlan([]plan.ExchangeSpec{spec}, nil, nil, inputs, nil, encoder.NewJSONLEncoder()), nil
 }
 
-// Spec compiles one AOT exchange into the engine's exchange declaration.
-func Spec(ex aot.AOTExchange, reg dsl.Registry, opts ...Option) (plan.ExchangeSpec, error) {
+// Spec compiles one AOT exchange into the engine's exchange declaration. inputs are the values the
+// caller supplied: needed HERE, not merely validated later, because which optional parameters exist on
+// the wire depends on which were given — an unsupplied optional must not appear as an empty query
+// string, and a supplied one must not be silently dropped.
+func Spec(ex aot.AOTExchange, inputs map[string]any, reg dsl.Registry, opts ...Option) (plan.ExchangeSpec, error) {
 	var o options
 	for _, opt := range opts {
 		opt(&o)
 	}
 	req, resp := ex.Request(), ex.Response()
-	// A response transform is OPTIONAL, and most methods declare none: the body is then used as it
-	// arrives, decoded by its own media type. Only a declared program needs an evaluator.
+	// A transform runs a PROGRAM only when the document ships one. Most declare a type with no body —
+	// naming a built-in decoding (golang_template_json_v0.3.0, schema_driven_xml_v0.1.0) rather than
+	// supplying code — and for those the body is used as it arrives, decoded by its media type.
+	// Requiring an evaluator for a type that carries no program would reject the majority of documents
+	// over a program that does not exist.
 	tr := resp.Transform()
-	if tr.Type() != "" {
+	hasProgram := tr.Type() != "" && tr.Body() != ""
+	if hasProgram {
 		if _, ok := reg.Get(tr.Type()); !ok {
 			return nil, fmt.Errorf("docx: exchange %q needs evaluator %q (have: %v)", ex.Name(), tr.Type(), reg.Types())
 		}
 	}
-	decode := decoderFor(resp)
+	decode := decoderFor(resp, hasProgram)
 	if decode == nil {
 		return nil, fmt.Errorf("docx: exchange %q has response media type %q, which is not decodable",
 			ex.Name(), resp.MediaType())
@@ -129,11 +153,47 @@ func Spec(ex aot.AOTExchange, reg dsl.Registry, opts ...Option) (plan.ExchangeSp
 		hreq.Body = httpx.Body{Encoding: encodingOf(req.MediaType()), Params: body}
 	}
 
+	// Place each declared parameter where the DOCUMENT says it belongs. Every string in an
+	// httpx.Request is a {name} template resolved from the bound row, so placing a parameter is
+	// declaring where its template goes — and binding its name so a value reaches it.
+	bindings := ex.Inputs()
+	for _, p := range req.Parameters() {
+		_, supplied := inputs[p.Name()]
+		if !supplied && !p.Required() {
+			continue // an optional parameter nobody supplied is absent, not empty
+		}
+		tmpl := "{" + p.Name() + "}"
+		switch p.In() {
+		case aot.InQuery:
+			if hreq.Query == nil {
+				hreq.Query = map[string]string{}
+			}
+			hreq.Query[p.Name()] = tmpl
+		case aot.InHeader:
+			if hreq.Headers == nil {
+				hreq.Headers = map[string]string{}
+			}
+			hreq.Headers[p.Name()] = tmpl
+		case aot.InPath:
+			// already templated into the URL by the document; it only needs binding
+		default:
+			continue // a location we do not place must not be bound as if we had
+		}
+		bindings = withInput(bindings, p.Name())
+	}
+	// A {placeholder} in the URL that no parameter declared still has to be bound, or it resolves to
+	// nothing and the request goes out with an empty path segment.
+	for _, name := range placeholders(url) {
+		if _, supplied := inputs[name]; supplied {
+			bindings = withInput(bindings, name)
+		}
+	}
+
 	// Signing is IMPLICIT: the document declares the scheme for every call it describes, so requiring
 	// a caller to restate it per exchange is how a request goes out unsigned. Overridable, never
 	// silently skipped — a declared scheme with no way to satisfy it is an error, not a plain request.
 	service := serviceOf(req.URL())
-	sec := ex.Security()
+	sec := effectiveSecurity(ex.Security(), o.security)
 	if sec.Scheme() == aot.SchemeAWSSigV4 && !o.noSign && o.signer == nil && o.creds.AccessKeyID == "" {
 		return nil, fmt.Errorf("docx: exchange %q declares %s (%q) but no credentials were supplied",
 			ex.Name(), sec.Scheme(), sec.Name())
@@ -142,12 +202,11 @@ func Spec(ex aot.AOTExchange, reg dsl.Registry, opts ...Option) (plan.ExchangeSp
 	// SigV4 always signs into a region, but a GLOBAL service (iam.amazonaws.com) declares no {region}
 	// server variable — so nothing would bind one and the signature would be scoped to "". Signing
 	// needs it whether or not the URL does, so it joins the inputs explicitly.
-	inputs := ex.Inputs()
 	if sec.Scheme() == aot.SchemeAWSSigV4 && !o.noSign && o.signer == nil {
-		inputs = withInput(inputs, "region")
+		bindings = withInput(bindings, "region")
 	}
 
-	return plan.NewExchangeSpec(ex.Name(), inputs, nil, func(bound map[string]any) facade.Operator {
+	return plan.NewExchangeSpec(ex.Name(), bindings, nil, func(bound map[string]any) facade.Operator {
 		var reqT []facade.Transform
 		switch {
 		case o.noSign:
@@ -163,7 +222,7 @@ func Spec(ex aot.AOTExchange, reg dsl.Registry, opts ...Option) (plan.ExchangeSp
 		checked := exchange.NewTransformExchange(0, send, httpx.NewRequireOK(), 1)
 		// the document's own program, moved from source to here — when it declares one
 		body := checked
-		if tr.Type() != "" {
+		if hasProgram {
 			body = exchange.NewTransformExchange(0, checked, program(reg, tr.Type(), tr.Body()), 1)
 		}
 		decoded := exchange.NewTransformExchange(0, body, decode, 1)
@@ -275,9 +334,11 @@ func docRecord(list []any) facade.Record {
 
 // decoderFor picks the body decoder. A declared transform states what it turns the body INTO
 // (overrideMediaType); without one, the body arrives as the wire media type says.
-func decoderFor(resp aot.Response) facade.Transform {
+func decoderFor(resp aot.Response, hasProgram bool) facade.Transform {
+	// Without a program the body arrives as the wire says; with one, overrideMediaType states what the
+	// program turned it into.
 	mt := resp.MediaType()
-	if resp.Transform().Type() != "" && resp.OverrideMediaType() != "" {
+	if hasProgram && resp.OverrideMediaType() != "" {
 		mt = resp.OverrideMediaType()
 	}
 	switch {
@@ -288,6 +349,18 @@ func decoderFor(resp aot.Response) facade.Transform {
 	default:
 		return nil
 	}
+}
+
+// effectiveSecurity prefers what the operation itself declares and falls back to the provider's.
+// Silence at the service level means inheritance, never "none".
+func effectiveSecurity(operation, provider aot.Security) aot.Security {
+	if operation != nil && operation.Scheme() != aot.SchemeNone {
+		return operation
+	}
+	if provider != nil {
+		return provider
+	}
+	return operation
 }
 
 // serviceOf is the AWS service a host names (ec2.{region}.amazonaws.com → "ec2"), which SigV4 signs
@@ -304,6 +377,25 @@ func serviceOf(rawURL string) string {
 	}
 	label, _, _ := strings.Cut(host, ".")
 	return label
+}
+
+// placeholders are the {name} templates in a URL.
+func placeholders(url string) []string {
+	var out []string
+	rest := url
+	for {
+		i := strings.Index(rest, "{")
+		if i < 0 {
+			return out
+		}
+		rest = rest[i+1:]
+		j := strings.Index(rest, "}")
+		if j < 0 {
+			return out
+		}
+		out = append(out, rest[:j])
+		rest = rest[j+1:]
+	}
 }
 
 // withInput adds name to inputs if absent, preserving order.

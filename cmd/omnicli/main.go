@@ -333,17 +333,31 @@ func main() {
 
 	// doc-run: run one address out of a bundle.
 	root.AddCommand(&cobra.Command{
-		Use:   "doc-run <bundle-dir> <address>",
-		Short: `Run an addressed exchange from a provider bundle, e.g. doc-run ./testdata aws.ec2.instances`,
-		Args:  cobra.ExactArgs(2),
+		Use:   "doc-run <dir> <address> [args-json]",
+		Short: `Run an addressed exchange, e.g. doc-run ~/.stackql/src stackql_unstable_google.storage.buckets '{"params":{"project":"p"}}'`,
+		Args:  cobra.RangeArgs(2, 3),
 		RunE: withSinks(func(cmd *cobra.Command, w, logw io.Writer) error {
 			pos := cmd.Flags().Args()
-			pl, err := omnisdk.NewFromCatalog(pos[0], pos[1], omnisdk.Args{
-				Params:   map[string]string{"region": awsRegion},
-				Endpoint: endpoint,
-				Log:      logw,
-				Tuning:   t.facade(),
-			})
+			var a omnisdk.Args
+			if len(pos) == 3 {
+				if err := json.Unmarshal([]byte(pos[2]), &a); err != nil {
+					return fmt.Errorf("args: parse: %w", err)
+				}
+			}
+			if a.Params == nil {
+				a.Params = map[string]string{}
+			}
+			if _, ok := a.Params["region"]; !ok && awsRegion != "" {
+				a.Params["region"] = awsRegion
+			}
+			a.Log = logw
+			if a.Endpoint == "" {
+				a.Endpoint = endpoint
+			}
+			if (a.Tuning == omnisdk.Tuning{}) {
+				a.Tuning = t.facade()
+			}
+			pl, err := omnisdk.NewFromCatalog(pos[0], pos[1], a)
 			if err != nil {
 				return err
 			}

@@ -1,0 +1,1928 @@
+openapi: 3.0.0
+info:
+  version: "2021-09-14"
+  title: Managed Streaming for Kafka Connect
+  description: Managed Streaming for Kafka Connect
+  x-serviceName: kafkaconnect
+  x-serviceAlias: kafkaconnect
+  x-protocol: rest-json
+  x-apiVersion: "2021-09-14"
+  x-endpointPrefix: kafkaconnect
+servers:
+  - url: https://kafkaconnect.{region}.amazonaws.com
+    variables:
+      region:
+        default: us-east-1
+        description: AWS region
+    description: Regional endpoint for kafkaconnect
+paths:
+  /v1/connectors:
+    post:
+      operationId: CreateConnector
+      description: Creates a connector using the specified properties.
+      parameters: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                capacity:
+                  $ref: "#/components/schemas/Capacity"
+                connectorConfiguration:
+                  $ref: "#/components/schemas/ConnectorConfiguration"
+                connectorDescription:
+                  $ref: "#/components/schemas/__stringMax1024"
+                connectorName:
+                  $ref: "#/components/schemas/__stringMin1Max128"
+                kafkaCluster:
+                  $ref: "#/components/schemas/KafkaCluster"
+                kafkaClusterClientAuthentication:
+                  $ref: "#/components/schemas/KafkaClusterClientAuthentication"
+                kafkaClusterEncryptionInTransit:
+                  $ref: "#/components/schemas/KafkaClusterEncryptionInTransit"
+                kafkaConnectVersion:
+                  $ref: "#/components/schemas/__string"
+                logDelivery:
+                  $ref: "#/components/schemas/LogDelivery"
+                networkType:
+                  $ref: "#/components/schemas/NetworkType"
+                plugins:
+                  $ref: "#/components/schemas/__listOfPlugin"
+                serviceExecutionRoleArn:
+                  $ref: "#/components/schemas/__string"
+                workerConfiguration:
+                  $ref: "#/components/schemas/WorkerConfiguration"
+                tags:
+                  $ref: "#/components/schemas/Tags"
+              required:
+                - capacity
+                - connectorConfiguration
+                - connectorName
+                - kafkaCluster
+                - kafkaClusterClientAuthentication
+                - kafkaClusterEncryptionInTransit
+                - kafkaConnectVersion
+                - plugins
+                - serviceExecutionRoleArn
+      responses:
+        "200":
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CreateConnectorResponse"
+    get:
+      operationId: ListConnectors
+      description: Returns a list of all the connectors in this account and Region. The list is limited to connectors whose name starts with the specified prefix. The response also includes a description of each of the listed connectors.
+      parameters:
+        - name: connectorNamePrefix
+          in: query
+          required: false
+          schema:
+            $ref: "#/components/schemas/__string"
+          description: The name prefix that you want to use to search for and list connectors.
+        - name: maxResults
+          in: query
+          required: false
+          schema:
+            $ref: "#/components/schemas/MaxResults"
+          description: The maximum number of connectors to list in one response.
+        - name: nextToken
+          in: query
+          required: false
+          schema:
+            $ref: "#/components/schemas/__string"
+          description: If the response of a ListConnectors operation is truncated, it will include a NextToken. Send this NextToken in a subsequent request to continue listing from where the previous operation left off.
+      responses:
+        "200":
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ListConnectorsResponse"
+  /v1/custom-plugins:
+    post:
+      operationId: CreateCustomPlugin
+      description: Creates a custom plugin using the specified properties.
+      parameters: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                contentType:
+                  $ref: "#/components/schemas/CustomPluginContentType"
+                description:
+                  $ref: "#/components/schemas/__stringMax1024"
+                location:
+                  $ref: "#/components/schemas/CustomPluginLocation"
+                name:
+                  $ref: "#/components/schemas/__stringMin1Max128"
+                tags:
+                  $ref: "#/components/schemas/Tags"
+              required:
+                - contentType
+                - location
+                - name
+      responses:
+        "200":
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CreateCustomPluginResponse"
+    get:
+      operationId: ListCustomPlugins
+      description: Returns a list of all of the custom plugins in this account and Region.
+      parameters:
+        - name: maxResults
+          in: query
+          required: false
+          schema:
+            $ref: "#/components/schemas/MaxResults"
+          description: The maximum number of custom plugins to list in one response.
+        - name: nextToken
+          in: query
+          required: false
+          schema:
+            $ref: "#/components/schemas/__string"
+          description: If the response of a ListCustomPlugins operation is truncated, it will include a NextToken. Send this NextToken in a subsequent request to continue listing from where the previous operation left off.
+        - name: namePrefix
+          in: query
+          required: false
+          schema:
+            $ref: "#/components/schemas/__string"
+          description: Lists custom plugin names that start with the specified text string.
+      responses:
+        "200":
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ListCustomPluginsResponse"
+  /v1/worker-configurations:
+    post:
+      operationId: CreateWorkerConfiguration
+      description: Creates a worker configuration using the specified properties.
+      parameters: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                description:
+                  $ref: "#/components/schemas/__stringMax1024"
+                name:
+                  $ref: "#/components/schemas/__stringMin1Max128"
+                propertiesFileContent:
+                  $ref: "#/components/schemas/__sensitiveString"
+                tags:
+                  $ref: "#/components/schemas/Tags"
+              required:
+                - name
+                - propertiesFileContent
+      responses:
+        "200":
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CreateWorkerConfigurationResponse"
+    get:
+      operationId: ListWorkerConfigurations
+      description: Returns a list of all of the worker configurations in this account and Region.
+      parameters:
+        - name: maxResults
+          in: query
+          required: false
+          schema:
+            $ref: "#/components/schemas/MaxResults"
+          description: The maximum number of worker configurations to list in one response.
+        - name: nextToken
+          in: query
+          required: false
+          schema:
+            $ref: "#/components/schemas/__string"
+          description: If the response of a ListWorkerConfigurations operation is truncated, it will include a NextToken. Send this NextToken in a subsequent request to continue listing from where the previous operation left off.
+        - name: namePrefix
+          in: query
+          required: false
+          schema:
+            $ref: "#/components/schemas/__string"
+          description: Lists worker configuration names that start with the specified text string.
+      responses:
+        "200":
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ListWorkerConfigurationsResponse"
+  /v1/connectors/{connector_arn}:
+    delete:
+      operationId: DeleteConnector
+      description: Deletes the specified connector.
+      parameters:
+        - name: connector_arn
+          in: path
+          required: true
+          schema:
+            $ref: "#/components/schemas/__string"
+          description: The Amazon Resource Name (ARN) of the connector that you want to delete.
+        - name: currentVersion
+          in: query
+          required: false
+          schema:
+            $ref: "#/components/schemas/__string"
+          description: The current version of the connector that you want to delete.
+      responses:
+        "200":
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DeleteConnectorResponse"
+    get:
+      operationId: DescribeConnector
+      description: Returns summary information about the connector.
+      parameters:
+        - name: connector_arn
+          in: path
+          required: true
+          schema:
+            $ref: "#/components/schemas/__string"
+          description: The Amazon Resource Name (ARN) of the connector that you want to describe.
+      responses:
+        "200":
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DescribeConnectorResponse"
+    put:
+      operationId: UpdateConnector
+      description: "Updates the specified connector. For request body, specify only one parameter: either capacity or connectorConfiguration."
+      parameters:
+        - name: connector_arn
+          in: path
+          required: true
+          schema:
+            $ref: "#/components/schemas/__string"
+          description: The Amazon Resource Name (ARN) of the connector that you want to update.
+        - name: currentVersion
+          in: query
+          required: true
+          schema:
+            $ref: "#/components/schemas/__string"
+          description: The current version of the connector that you want to update.
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                capacity:
+                  $ref: "#/components/schemas/CapacityUpdate"
+                connectorConfiguration:
+                  $ref: "#/components/schemas/ConnectorConfigurationUpdate"
+      responses:
+        "200":
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UpdateConnectorResponse"
+  /v1/custom-plugins/{custom_plugin_arn}:
+    delete:
+      operationId: DeleteCustomPlugin
+      description: Deletes a custom plugin.
+      parameters:
+        - name: custom_plugin_arn
+          in: path
+          required: true
+          schema:
+            $ref: "#/components/schemas/__string"
+          description: The Amazon Resource Name (ARN) of the custom plugin that you want to delete.
+      responses:
+        "200":
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DeleteCustomPluginResponse"
+    get:
+      operationId: DescribeCustomPlugin
+      description: A summary description of the custom plugin.
+      parameters:
+        - name: custom_plugin_arn
+          in: path
+          required: true
+          schema:
+            $ref: "#/components/schemas/__string"
+          description: Returns information about a custom plugin.
+      responses:
+        "200":
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DescribeCustomPluginResponse"
+  /v1/worker-configurations/{worker_configuration_arn}:
+    delete:
+      operationId: DeleteWorkerConfiguration
+      description: Deletes the specified worker configuration.
+      parameters:
+        - name: worker_configuration_arn
+          in: path
+          required: true
+          schema:
+            $ref: "#/components/schemas/__string"
+          description: The Amazon Resource Name (ARN) of the worker configuration that you want to delete.
+      responses:
+        "200":
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DeleteWorkerConfigurationResponse"
+    get:
+      operationId: DescribeWorkerConfiguration
+      description: Returns information about a worker configuration.
+      parameters:
+        - name: worker_configuration_arn
+          in: path
+          required: true
+          schema:
+            $ref: "#/components/schemas/__string"
+          description: The Amazon Resource Name (ARN) of the worker configuration that you want to get information about.
+      responses:
+        "200":
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DescribeWorkerConfigurationResponse"
+  /v1/connectorOperations/{connector_operation_arn}:
+    get:
+      operationId: DescribeConnectorOperation
+      description: Returns information about the specified connector's operations.
+      parameters:
+        - name: connector_operation_arn
+          in: path
+          required: true
+          schema:
+            $ref: "#/components/schemas/__string"
+          description: ARN of the connector operation to be described.
+      responses:
+        "200":
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DescribeConnectorOperationResponse"
+  /v1/connectors/{connector_arn}/operations:
+    get:
+      operationId: ListConnectorOperations
+      description: Lists information about a connector's operation(s).
+      parameters:
+        - name: connector_arn
+          in: path
+          required: true
+          schema:
+            $ref: "#/components/schemas/__string"
+          description: The Amazon Resource Name (ARN) of the connector for which to list operations.
+        - name: maxResults
+          in: query
+          required: false
+          schema:
+            $ref: "#/components/schemas/MaxResults"
+          description: Maximum number of connector operations to fetch in one get request.
+        - name: nextToken
+          in: query
+          required: false
+          schema:
+            $ref: "#/components/schemas/__string"
+          description: If the response is truncated, it includes a NextToken. Send this NextToken in a subsequent request to continue listing from where it left off.
+      responses:
+        "200":
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ListConnectorOperationsResponse"
+  /v1/tags/{resource_arn}:
+    get:
+      operationId: ListTagsForResource
+      description: Lists all the tags attached to the specified resource.
+      parameters:
+        - name: resource_arn
+          in: path
+          required: true
+          schema:
+            $ref: "#/components/schemas/__string"
+          description: The Amazon Resource Name (ARN) of the resource for which you want to list all attached tags.
+      responses:
+        "200":
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ListTagsForResourceResponse"
+    post:
+      operationId: TagResource
+      description: Attaches tags to the specified resource.
+      parameters:
+        - name: resource_arn
+          in: path
+          required: true
+          schema:
+            $ref: "#/components/schemas/__string"
+          description: The Amazon Resource Name (ARN) of the resource to which you want to attach tags.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                tags:
+                  $ref: "#/components/schemas/Tags"
+              required:
+                - tags
+      responses:
+        "200":
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TagResourceResponse"
+    delete:
+      operationId: UntagResource
+      description: Removes tags from the specified resource.
+      parameters:
+        - name: resource_arn
+          in: path
+          required: true
+          schema:
+            $ref: "#/components/schemas/__string"
+          description: The Amazon Resource Name (ARN) of the resource from which you want to remove tags.
+        - name: tagKeys
+          in: query
+          required: true
+          schema:
+            $ref: "#/components/schemas/TagKeyList"
+          description: The keys of the tags that you want to remove from the resource.
+      responses:
+        "200":
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UntagResourceResponse"
+components:
+  parameters:
+    X-Amz-Content-Sha256:
+      in: header
+      name: X-Amz-Content-Sha256
+      required: false
+      schema:
+        type: string
+    X-Amz-Date:
+      in: header
+      name: X-Amz-Date
+      required: false
+      schema:
+        type: string
+    X-Amz-Algorithm:
+      in: header
+      name: X-Amz-Algorithm
+      required: false
+      schema:
+        type: string
+    X-Amz-Credential:
+      in: header
+      name: X-Amz-Credential
+      required: false
+      schema:
+        type: string
+    X-Amz-Security-Token:
+      in: header
+      name: X-Amz-Security-Token
+      required: false
+      schema:
+        type: string
+    X-Amz-Signature:
+      in: header
+      name: X-Amz-Signature
+      required: false
+      schema:
+        type: string
+    X-Amz-SignedHeaders:
+      in: header
+      name: X-Amz-SignedHeaders
+      required: false
+      schema:
+        type: string
+  schemas:
+    Capacity:
+      description: Information about the capacity of the connector, whether it is auto scaled or provisioned.
+      type: object
+      properties:
+        autoScaling:
+          $ref: "#/components/schemas/AutoScaling"
+          description: Information about the auto scaling parameters for the connector.
+        provisionedCapacity:
+          $ref: "#/components/schemas/ProvisionedCapacity"
+          description: Details about a fixed capacity allocated to a connector.
+    AutoScaling:
+      description: Specifies how the connector scales.
+      type: object
+      properties:
+        maxWorkerCount:
+          $ref: "#/components/schemas/__integer"
+          description: The maximum number of workers allocated to the connector.
+        mcuCount:
+          $ref: "#/components/schemas/__integerMin1Max8"
+          description: The number of microcontroller units (MCUs) allocated to each connector worker. The valid values are 1,2,4,8.
+        minWorkerCount:
+          $ref: "#/components/schemas/__integer"
+          description: The minimum number of workers allocated to the connector.
+        scaleInPolicy:
+          $ref: "#/components/schemas/ScaleInPolicy"
+          description: The scale-in policy for the connector.
+        scaleOutPolicy:
+          $ref: "#/components/schemas/ScaleOutPolicy"
+          description: The scale-out policy for the connector.
+        maxAutoscalingTaskCount:
+          $ref: "#/components/schemas/__integer"
+          description: The maximum number of tasks allocated to the connector during autoscaling operations. Must be at least equal to maxWorkerCount.
+      required:
+        - maxWorkerCount
+        - mcuCount
+        - minWorkerCount
+    __integer:
+      type: integer
+    __integerMin1Max8:
+      type: integer
+      minimum: 1
+      maximum: 8
+    ScaleInPolicy:
+      description: The scale-in policy for the connector.
+      type: object
+      properties:
+        cpuUtilizationPercentage:
+          $ref: "#/components/schemas/__integerMin1Max100"
+          description: Specifies the CPU utilization percentage threshold at which you want connector scale in to be triggered.
+      required:
+        - cpuUtilizationPercentage
+    __integerMin1Max100:
+      type: integer
+      minimum: 1
+      maximum: 100
+    ScaleOutPolicy:
+      description: The scale-out policy for the connector.
+      type: object
+      properties:
+        cpuUtilizationPercentage:
+          $ref: "#/components/schemas/__integerMin1Max100"
+          description: The CPU utilization percentage threshold at which you want connector scale out to be triggered.
+      required:
+        - cpuUtilizationPercentage
+    ProvisionedCapacity:
+      description: Details about a connector's provisioned capacity.
+      type: object
+      properties:
+        mcuCount:
+          $ref: "#/components/schemas/__integerMin1Max8"
+          description: The number of microcontroller units (MCUs) allocated to each connector worker. The valid values are 1,2,4,8.
+        workerCount:
+          $ref: "#/components/schemas/__integer"
+          description: The number of workers that are allocated to the connector.
+      required:
+        - mcuCount
+        - workerCount
+    ConnectorConfiguration:
+      type: object
+      properties: {}
+    __stringMax1024:
+      type: string
+      minLength: 0
+      maxLength: 1024
+    __stringMin1Max128:
+      type: string
+      minLength: 1
+      maxLength: 128
+    KafkaCluster:
+      description: The details of the Apache Kafka cluster to which the connector is connected.
+      type: object
+      properties:
+        apacheKafkaCluster:
+          $ref: "#/components/schemas/ApacheKafkaCluster"
+          description: The Apache Kafka cluster to which the connector is connected.
+      required:
+        - apacheKafkaCluster
+    ApacheKafkaCluster:
+      description: The details of the Apache Kafka cluster to which the connector is connected.
+      type: object
+      properties:
+        bootstrapServers:
+          $ref: "#/components/schemas/__string"
+          description: The bootstrap servers of the cluster.
+        vpc:
+          $ref: "#/components/schemas/Vpc"
+          description: Details of an Amazon VPC which has network connectivity to the Apache Kafka cluster.
+      required:
+        - bootstrapServers
+        - vpc
+    __string:
+      type: string
+    Vpc:
+      description: Information about the VPC in which the connector resides.
+      type: object
+      properties:
+        securityGroups:
+          $ref: "#/components/schemas/__listOf__string"
+          description: The security groups for the connector.
+        subnets:
+          $ref: "#/components/schemas/__listOf__string"
+          description: The subnets for the connector.
+      required:
+        - subnets
+    __listOf__string:
+      type: array
+      items:
+        $ref: "#/components/schemas/__string"
+    KafkaClusterClientAuthentication:
+      description: The client authentication information used in order to authenticate with the Apache Kafka cluster.
+      type: object
+      properties:
+        authenticationType:
+          $ref: "#/components/schemas/KafkaClusterClientAuthenticationType"
+          description: The type of client authentication used to connect to the Apache Kafka cluster. Value NONE means that no client authentication is used.
+      required:
+        - authenticationType
+    KafkaClusterClientAuthenticationType:
+      type: string
+      enum:
+        - NONE
+        - IAM
+    KafkaClusterEncryptionInTransit:
+      description: Details of encryption in transit to the Apache Kafka cluster.
+      type: object
+      properties:
+        encryptionType:
+          $ref: "#/components/schemas/KafkaClusterEncryptionInTransitType"
+          description: The type of encryption in transit to the Apache Kafka cluster.
+      required:
+        - encryptionType
+    KafkaClusterEncryptionInTransitType:
+      type: string
+      enum:
+        - PLAINTEXT
+        - TLS
+    LogDelivery:
+      description: Details about log delivery.
+      type: object
+      properties:
+        workerLogDelivery:
+          $ref: "#/components/schemas/WorkerLogDelivery"
+          description: The workers can send worker logs to different destination types. This configuration specifies the details of these destinations.
+      required:
+        - workerLogDelivery
+    WorkerLogDelivery:
+      description: Workers can send worker logs to different destination types. This configuration specifies the details of these destinations.
+      type: object
+      properties:
+        cloudWatchLogs:
+          $ref: "#/components/schemas/CloudWatchLogsLogDelivery"
+          description: Details about delivering logs to Amazon CloudWatch Logs.
+        firehose:
+          $ref: "#/components/schemas/FirehoseLogDelivery"
+          description: Details about delivering logs to Amazon Kinesis Data Firehose.
+        s3:
+          $ref: "#/components/schemas/S3LogDelivery"
+          description: Details about delivering logs to Amazon S3.
+    CloudWatchLogsLogDelivery:
+      description: The settings for delivering connector logs to Amazon CloudWatch Logs.
+      type: object
+      properties:
+        enabled:
+          $ref: "#/components/schemas/__boolean"
+          description: Whether log delivery to Amazon CloudWatch Logs is enabled.
+        logGroup:
+          $ref: "#/components/schemas/__string"
+          description: The name of the CloudWatch log group that is the destination for log delivery.
+      required:
+        - enabled
+    __boolean:
+      type: boolean
+    FirehoseLogDelivery:
+      description: The settings for delivering logs to Amazon Kinesis Data Firehose.
+      type: object
+      properties:
+        deliveryStream:
+          $ref: "#/components/schemas/__string"
+          description: The name of the Kinesis Data Firehose delivery stream that is the destination for log delivery.
+        enabled:
+          $ref: "#/components/schemas/__boolean"
+          description: Specifies whether connector logs get delivered to Amazon Kinesis Data Firehose.
+      required:
+        - enabled
+    S3LogDelivery:
+      description: Details about delivering logs to Amazon S3.
+      type: object
+      properties:
+        bucket:
+          $ref: "#/components/schemas/__string"
+          description: The name of the S3 bucket that is the destination for log delivery.
+        enabled:
+          $ref: "#/components/schemas/__boolean"
+          description: Specifies whether connector logs get sent to the specified Amazon S3 destination.
+        prefix:
+          $ref: "#/components/schemas/__string"
+          description: The S3 prefix that is the destination for log delivery.
+      required:
+        - enabled
+    NetworkType:
+      description: The network type of a connector.
+      type: string
+      enum:
+        - IPV4
+        - DUAL
+    __listOfPlugin:
+      type: array
+      items:
+        $ref: "#/components/schemas/Plugin"
+    Plugin:
+      description: A plugin is an Amazon Web Services resource that contains the code that defines your connector logic.
+      type: object
+      properties:
+        customPlugin:
+          $ref: "#/components/schemas/CustomPlugin"
+          description: Details about a custom plugin.
+      required:
+        - customPlugin
+    CustomPlugin:
+      description: A plugin is an Amazon Web Services resource that contains the code that defines a connector's logic.
+      type: object
+      properties:
+        customPluginArn:
+          $ref: "#/components/schemas/__string"
+          description: The Amazon Resource Name (ARN) of the custom plugin.
+        revision:
+          $ref: "#/components/schemas/__longMin1"
+          description: The revision of the custom plugin.
+      required:
+        - customPluginArn
+        - revision
+    __longMin1:
+      type: integer
+      format: int64
+      minimum: 1
+      maximum: 9223372036854776000
+    WorkerConfiguration:
+      description: The configuration of the workers, which are the processes that run the connector logic.
+      type: object
+      properties:
+        revision:
+          $ref: "#/components/schemas/__longMin1"
+          description: The revision of the worker configuration.
+        workerConfigurationArn:
+          $ref: "#/components/schemas/__string"
+          description: The Amazon Resource Name (ARN) of the worker configuration.
+      required:
+        - revision
+        - workerConfigurationArn
+    Tags:
+      type: object
+      properties: {}
+    CreateConnectorResponse:
+      type: object
+      properties:
+        connectorArn:
+          $ref: "#/components/schemas/__string"
+          description: The Amazon Resource Name (ARN) that Amazon assigned to the connector.
+        connectorName:
+          $ref: "#/components/schemas/__string"
+          description: The name of the connector.
+        connectorState:
+          $ref: "#/components/schemas/ConnectorState"
+          description: The state of the connector.
+    ConnectorState:
+      type: string
+      enum:
+        - RUNNING
+        - CREATING
+        - UPDATING
+        - DELETING
+        - FAILED
+    CustomPluginContentType:
+      type: string
+      enum:
+        - JAR
+        - ZIP
+    CustomPluginLocation:
+      description: Information about the location of a custom plugin.
+      type: object
+      properties:
+        s3Location:
+          $ref: "#/components/schemas/S3Location"
+          description: The S3 bucket Amazon Resource Name (ARN), file key, and object version of the plugin file stored in Amazon S3.
+      required:
+        - s3Location
+    S3Location:
+      description: The location of an object in Amazon S3.
+      type: object
+      properties:
+        bucketArn:
+          $ref: "#/components/schemas/__string"
+          description: The Amazon Resource Name (ARN) of an S3 bucket.
+        fileKey:
+          $ref: "#/components/schemas/__string"
+          description: The file key for an object in an S3 bucket.
+        objectVersion:
+          $ref: "#/components/schemas/__string"
+          description: The version of an object in an S3 bucket.
+      required:
+        - bucketArn
+        - fileKey
+    CreateCustomPluginResponse:
+      type: object
+      properties:
+        customPluginArn:
+          $ref: "#/components/schemas/__string"
+          description: The Amazon Resource Name (ARN) that Amazon assigned to the custom plugin.
+        customPluginState:
+          $ref: "#/components/schemas/CustomPluginState"
+          description: The state of the custom plugin.
+        name:
+          $ref: "#/components/schemas/__string"
+          description: The name of the custom plugin.
+        revision:
+          $ref: "#/components/schemas/__long"
+          description: The revision of the custom plugin.
+    CustomPluginState:
+      type: string
+      enum:
+        - CREATING
+        - CREATE_FAILED
+        - ACTIVE
+        - UPDATING
+        - UPDATE_FAILED
+        - DELETING
+    __long:
+      type: integer
+      format: int64
+    __sensitiveString:
+      type: string
+    CreateWorkerConfigurationResponse:
+      type: object
+      properties:
+        creationTime:
+          $ref: "#/components/schemas/__timestampIso8601"
+          description: The time that the worker configuration was created.
+        latestRevision:
+          $ref: "#/components/schemas/WorkerConfigurationRevisionSummary"
+          description: The latest revision of the worker configuration.
+        name:
+          $ref: "#/components/schemas/__string"
+          description: The name of the worker configuration.
+        workerConfigurationArn:
+          $ref: "#/components/schemas/__string"
+          description: The Amazon Resource Name (ARN) that Amazon assigned to the worker configuration.
+        workerConfigurationState:
+          $ref: "#/components/schemas/WorkerConfigurationState"
+          description: The state of the worker configuration.
+    __timestampIso8601:
+      type: string
+      format: date-time
+    WorkerConfigurationRevisionSummary:
+      description: The summary of a worker configuration revision.
+      type: object
+      properties:
+        creationTime:
+          $ref: "#/components/schemas/__timestampIso8601"
+          description: The time that a worker configuration revision was created.
+        description:
+          $ref: "#/components/schemas/__string"
+          description: The description of a worker configuration revision.
+        revision:
+          $ref: "#/components/schemas/__long"
+          description: The revision of a worker configuration.
+    WorkerConfigurationState:
+      type: string
+      enum:
+        - ACTIVE
+        - DELETING
+    DeleteConnectorResponse:
+      type: object
+      properties:
+        connectorArn:
+          $ref: "#/components/schemas/__string"
+          description: The Amazon Resource Name (ARN) of the connector that you requested to delete.
+        connectorState:
+          $ref: "#/components/schemas/ConnectorState"
+          description: The state of the connector that you requested to delete.
+    DeleteCustomPluginResponse:
+      type: object
+      properties:
+        customPluginArn:
+          $ref: "#/components/schemas/__string"
+          description: The Amazon Resource Name (ARN) of the custom plugin that you requested to delete.
+        customPluginState:
+          $ref: "#/components/schemas/CustomPluginState"
+          description: The state of the custom plugin.
+    DeleteWorkerConfigurationResponse:
+      type: object
+      properties:
+        workerConfigurationArn:
+          $ref: "#/components/schemas/__string"
+          description: The Amazon Resource Name (ARN) of the worker configuration that you requested to delete.
+        workerConfigurationState:
+          $ref: "#/components/schemas/WorkerConfigurationState"
+          description: The state of the worker configuration.
+    DescribeConnectorResponse:
+      type: object
+      properties:
+        capacity:
+          $ref: "#/components/schemas/CapacityDescription"
+          description: Information about the capacity of the connector, whether it is auto scaled or provisioned.
+        connectorArn:
+          $ref: "#/components/schemas/__string"
+          description: The Amazon Resource Name (ARN) of the connector.
+        connectorConfiguration:
+          type: object
+          properties: {}
+          description: A map of keys to values that represent the configuration for the connector.
+        connectorDescription:
+          $ref: "#/components/schemas/__string"
+          description: A summary description of the connector.
+        connectorName:
+          $ref: "#/components/schemas/__string"
+          description: The name of the connector.
+        connectorState:
+          $ref: "#/components/schemas/ConnectorState"
+          description: The state of the connector.
+        creationTime:
+          $ref: "#/components/schemas/__timestampIso8601"
+          description: The time the connector was created.
+        currentVersion:
+          $ref: "#/components/schemas/__string"
+          description: The current version of the connector.
+        kafkaCluster:
+          $ref: "#/components/schemas/KafkaClusterDescription"
+          description: The Apache Kafka cluster that the connector is connected to.
+        kafkaClusterClientAuthentication:
+          $ref: "#/components/schemas/KafkaClusterClientAuthenticationDescription"
+          description: The type of client authentication used to connect to the Apache Kafka cluster. The value is NONE when no client authentication is used.
+        kafkaClusterEncryptionInTransit:
+          $ref: "#/components/schemas/KafkaClusterEncryptionInTransitDescription"
+          description: Details of encryption in transit to the Apache Kafka cluster.
+        kafkaConnectVersion:
+          $ref: "#/components/schemas/__string"
+          description: The version of Kafka Connect. It has to be compatible with both the Apache Kafka cluster's version and the plugins.
+        logDelivery:
+          $ref: "#/components/schemas/LogDeliveryDescription"
+          description: Details about delivering logs to Amazon CloudWatch Logs.
+        networkType:
+          $ref: "#/components/schemas/NetworkType"
+          description: The network type of the connector. It gives connectors connectivity to either IPv4 (IPV4) or IPv4 and IPv6 (DUAL) destinations. Defaults to IPV4.
+        plugins:
+          $ref: "#/components/schemas/__listOfPluginDescription"
+          description: Specifies which plugins were used for this connector.
+        serviceExecutionRoleArn:
+          $ref: "#/components/schemas/__string"
+          description: The Amazon Resource Name (ARN) of the IAM role used by the connector to access Amazon Web Services resources.
+        workerConfiguration:
+          $ref: "#/components/schemas/WorkerConfigurationDescription"
+          description: Specifies which worker configuration was used for the connector.
+        stateDescription:
+          $ref: "#/components/schemas/StateDescription"
+          description: Details about the state of a connector.
+    CapacityDescription:
+      description: A description of the connector's capacity.
+      type: object
+      properties:
+        autoScaling:
+          $ref: "#/components/schemas/AutoScalingDescription"
+          description: Describes the connector's auto scaling capacity.
+        provisionedCapacity:
+          $ref: "#/components/schemas/ProvisionedCapacityDescription"
+          description: Describes a connector's provisioned capacity.
+    AutoScalingDescription:
+      description: Information about the auto scaling parameters for the connector.
+      type: object
+      properties:
+        maxWorkerCount:
+          $ref: "#/components/schemas/__integer"
+          description: The maximum number of workers allocated to the connector.
+        mcuCount:
+          $ref: "#/components/schemas/__integer"
+          description: The number of microcontroller units (MCUs) allocated to each connector worker. The valid values are 1,2,4,8.
+        minWorkerCount:
+          $ref: "#/components/schemas/__integer"
+          description: The minimum number of workers allocated to the connector.
+        scaleInPolicy:
+          $ref: "#/components/schemas/ScaleInPolicyDescription"
+          description: The scale-in policy for the connector.
+        scaleOutPolicy:
+          $ref: "#/components/schemas/ScaleOutPolicyDescription"
+          description: The scale-out policy for the connector.
+        maxAutoscalingTaskCount:
+          $ref: "#/components/schemas/__integer"
+          description: The maximum number of tasks allocated to the connector during autoscaling operations. Must be at least equal to maxWorkerCount.
+    ScaleInPolicyDescription:
+      description: The description of the scale-in policy for the connector.
+      type: object
+      properties:
+        cpuUtilizationPercentage:
+          $ref: "#/components/schemas/__integer"
+          description: Specifies the CPU utilization percentage threshold at which you want connector scale in to be triggered.
+    ScaleOutPolicyDescription:
+      description: The description of the scale-out policy for the connector.
+      type: object
+      properties:
+        cpuUtilizationPercentage:
+          $ref: "#/components/schemas/__integer"
+          description: The CPU utilization percentage threshold at which you want connector scale out to be triggered.
+    ProvisionedCapacityDescription:
+      description: The description of a connector's provisioned capacity.
+      type: object
+      properties:
+        mcuCount:
+          $ref: "#/components/schemas/__integer"
+          description: The number of microcontroller units (MCUs) allocated to each connector worker. The valid values are 1,2,4,8.
+        workerCount:
+          $ref: "#/components/schemas/__integer"
+          description: The number of workers that are allocated to the connector.
+    KafkaClusterDescription:
+      description: Details of how to connect to the Apache Kafka cluster.
+      type: object
+      properties:
+        apacheKafkaCluster:
+          $ref: "#/components/schemas/ApacheKafkaClusterDescription"
+          description: The Apache Kafka cluster to which the connector is connected.
+    ApacheKafkaClusterDescription:
+      description: The description of the Apache Kafka cluster to which the connector is connected.
+      type: object
+      properties:
+        bootstrapServers:
+          $ref: "#/components/schemas/__string"
+          description: The bootstrap servers of the cluster.
+        vpc:
+          $ref: "#/components/schemas/VpcDescription"
+          description: Details of an Amazon VPC which has network connectivity to the Apache Kafka cluster.
+    VpcDescription:
+      description: The description of the VPC in which the connector resides.
+      type: object
+      properties:
+        securityGroups:
+          $ref: "#/components/schemas/__listOf__string"
+          description: The security groups for the connector.
+        subnets:
+          $ref: "#/components/schemas/__listOf__string"
+          description: The subnets for the connector.
+    KafkaClusterClientAuthenticationDescription:
+      description: The client authentication information used in order to authenticate with the Apache Kafka cluster.
+      type: object
+      properties:
+        authenticationType:
+          $ref: "#/components/schemas/KafkaClusterClientAuthenticationType"
+          description: The type of client authentication used to connect to the Apache Kafka cluster. Value NONE means that no client authentication is used.
+    KafkaClusterEncryptionInTransitDescription:
+      description: The description of the encryption in transit to the Apache Kafka cluster.
+      type: object
+      properties:
+        encryptionType:
+          $ref: "#/components/schemas/KafkaClusterEncryptionInTransitType"
+          description: The type of encryption in transit to the Apache Kafka cluster.
+    LogDeliveryDescription:
+      description: The description of the log delivery settings.
+      type: object
+      properties:
+        workerLogDelivery:
+          $ref: "#/components/schemas/WorkerLogDeliveryDescription"
+          description: The workers can send worker logs to different destination types. This configuration specifies the details of these destinations.
+    WorkerLogDeliveryDescription:
+      description: Workers can send worker logs to different destination types. This configuration specifies the details of these destinations.
+      type: object
+      properties:
+        cloudWatchLogs:
+          $ref: "#/components/schemas/CloudWatchLogsLogDeliveryDescription"
+          description: Details about delivering logs to Amazon CloudWatch Logs.
+        firehose:
+          $ref: "#/components/schemas/FirehoseLogDeliveryDescription"
+          description: Details about delivering logs to Amazon Kinesis Data Firehose.
+        s3:
+          $ref: "#/components/schemas/S3LogDeliveryDescription"
+          description: Details about delivering logs to Amazon S3.
+    CloudWatchLogsLogDeliveryDescription:
+      description: A description of the log delivery settings.
+      type: object
+      properties:
+        enabled:
+          $ref: "#/components/schemas/__boolean"
+          description: Whether log delivery to Amazon CloudWatch Logs is enabled.
+        logGroup:
+          $ref: "#/components/schemas/__string"
+          description: The name of the CloudWatch log group that is the destination for log delivery.
+    FirehoseLogDeliveryDescription:
+      description: A description of the settings for delivering logs to Amazon Kinesis Data Firehose.
+      type: object
+      properties:
+        deliveryStream:
+          $ref: "#/components/schemas/__string"
+          description: The name of the Kinesis Data Firehose delivery stream that is the destination for log delivery.
+        enabled:
+          $ref: "#/components/schemas/__boolean"
+          description: Specifies whether connector logs get delivered to Amazon Kinesis Data Firehose.
+    S3LogDeliveryDescription:
+      description: The description of the details about delivering logs to Amazon S3.
+      type: object
+      properties:
+        bucket:
+          $ref: "#/components/schemas/__string"
+          description: The name of the S3 bucket that is the destination for log delivery.
+        enabled:
+          $ref: "#/components/schemas/__boolean"
+          description: Specifies whether connector logs get sent to the specified Amazon S3 destination.
+        prefix:
+          $ref: "#/components/schemas/__string"
+          description: The S3 prefix that is the destination for log delivery.
+    __listOfPluginDescription:
+      type: array
+      items:
+        $ref: "#/components/schemas/PluginDescription"
+    PluginDescription:
+      description: The description of the plugin.
+      type: object
+      properties:
+        customPlugin:
+          $ref: "#/components/schemas/CustomPluginDescription"
+          description: Details about a custom plugin.
+    CustomPluginDescription:
+      description: Details about a custom plugin.
+      type: object
+      properties:
+        customPluginArn:
+          $ref: "#/components/schemas/__string"
+          description: The Amazon Resource Name (ARN) of the custom plugin.
+        revision:
+          $ref: "#/components/schemas/__long"
+          description: The revision of the custom plugin.
+    WorkerConfigurationDescription:
+      description: The description of the worker configuration.
+      type: object
+      properties:
+        revision:
+          $ref: "#/components/schemas/__long"
+          description: The revision of the worker configuration.
+        workerConfigurationArn:
+          $ref: "#/components/schemas/__string"
+          description: The Amazon Resource Name (ARN) of the worker configuration.
+    StateDescription:
+      description: Details about the state of a resource.
+      type: object
+      properties:
+        code:
+          $ref: "#/components/schemas/__string"
+          description: A code that describes the state of a resource.
+        message:
+          $ref: "#/components/schemas/__string"
+          description: A message that describes the state of a resource.
+    DescribeConnectorOperationResponse:
+      type: object
+      properties:
+        connectorArn:
+          $ref: "#/components/schemas/__string"
+          description: The Amazon Resource Name (ARN) of the connector.
+        connectorOperationArn:
+          $ref: "#/components/schemas/__string"
+          description: The Amazon Resource Name (ARN) of the connector operation.
+        connectorOperationState:
+          $ref: "#/components/schemas/ConnectorOperationState"
+          description: The state of the connector operation.
+        connectorOperationType:
+          $ref: "#/components/schemas/ConnectorOperationType"
+          description: The type of connector operation performed.
+        operationSteps:
+          $ref: "#/components/schemas/__listOfConnectorOperationStep"
+          description: The array of operation steps taken.
+        originWorkerSetting:
+          $ref: "#/components/schemas/WorkerSetting"
+          description: The origin worker setting.
+        originConnectorConfiguration:
+          type: object
+          properties: {}
+          description: The origin connector configuration.
+        targetWorkerSetting:
+          $ref: "#/components/schemas/WorkerSetting"
+          description: The target worker setting.
+        targetConnectorConfiguration:
+          type: object
+          properties: {}
+          description: The target connector configuration.
+        errorInfo:
+          $ref: "#/components/schemas/StateDescription"
+        creationTime:
+          $ref: "#/components/schemas/__timestampIso8601"
+          description: The time when the operation was created.
+        endTime:
+          $ref: "#/components/schemas/__timestampIso8601"
+          description: The time when the operation ended.
+    ConnectorOperationState:
+      type: string
+      enum:
+        - PENDING
+        - UPDATE_IN_PROGRESS
+        - UPDATE_COMPLETE
+        - UPDATE_FAILED
+        - ROLLBACK_IN_PROGRESS
+        - ROLLBACK_FAILED
+        - ROLLBACK_COMPLETE
+    ConnectorOperationType:
+      type: string
+      enum:
+        - UPDATE_WORKER_SETTING
+        - UPDATE_CONNECTOR_CONFIGURATION
+        - ISOLATE_CONNECTOR
+        - RESTORE_CONNECTOR
+    __listOfConnectorOperationStep:
+      type: array
+      items:
+        $ref: "#/components/schemas/ConnectorOperationStep"
+    ConnectorOperationStep:
+      description: Details of a step that is involved in a connector's operation.
+      type: object
+      properties:
+        stepType:
+          $ref: "#/components/schemas/ConnectorOperationStepType"
+          description: The step type of the operation.
+        stepState:
+          $ref: "#/components/schemas/ConnectorOperationStepState"
+          description: The step state of the operation.
+    ConnectorOperationStepType:
+      type: string
+      enum:
+        - INITIALIZE_UPDATE
+        - FINALIZE_UPDATE
+        - UPDATE_WORKER_SETTING
+        - UPDATE_CONNECTOR_CONFIGURATION
+        - VALIDATE_UPDATE
+    ConnectorOperationStepState:
+      type: string
+      enum:
+        - PENDING
+        - IN_PROGRESS
+        - COMPLETED
+        - FAILED
+        - CANCELLED
+    WorkerSetting:
+      description: Details about worker setting of a connector
+      type: object
+      properties:
+        capacity:
+          $ref: "#/components/schemas/CapacityDescription"
+    DescribeCustomPluginResponse:
+      type: object
+      properties:
+        creationTime:
+          $ref: "#/components/schemas/__timestampIso8601"
+          description: The time that the custom plugin was created.
+        customPluginArn:
+          $ref: "#/components/schemas/__string"
+          description: The Amazon Resource Name (ARN) of the custom plugin.
+        customPluginState:
+          $ref: "#/components/schemas/CustomPluginState"
+          description: The state of the custom plugin.
+        description:
+          $ref: "#/components/schemas/__string"
+          description: The description of the custom plugin.
+        latestRevision:
+          $ref: "#/components/schemas/CustomPluginRevisionSummary"
+          description: The latest successfully created revision of the custom plugin. If there are no successfully created revisions, this field will be absent.
+        name:
+          $ref: "#/components/schemas/__string"
+          description: The name of the custom plugin.
+        stateDescription:
+          $ref: "#/components/schemas/StateDescription"
+          description: Details about the state of a custom plugin.
+    CustomPluginRevisionSummary:
+      description: Details about the revision of a custom plugin.
+      type: object
+      properties:
+        contentType:
+          $ref: "#/components/schemas/CustomPluginContentType"
+          description: The format of the plugin file.
+        creationTime:
+          $ref: "#/components/schemas/__timestampIso8601"
+          description: The time that the custom plugin was created.
+        description:
+          $ref: "#/components/schemas/__string"
+          description: The description of the custom plugin.
+        fileDescription:
+          $ref: "#/components/schemas/CustomPluginFileDescription"
+          description: Details about the custom plugin file.
+        location:
+          $ref: "#/components/schemas/CustomPluginLocationDescription"
+          description: Information about the location of the custom plugin.
+        revision:
+          $ref: "#/components/schemas/__long"
+          description: The revision of the custom plugin.
+    CustomPluginFileDescription:
+      description: Details about a custom plugin file.
+      type: object
+      properties:
+        fileMd5:
+          $ref: "#/components/schemas/__string"
+          description: The hex-encoded MD5 checksum of the custom plugin file. You can use it to validate the file.
+        fileSize:
+          $ref: "#/components/schemas/__long"
+          description: The size in bytes of the custom plugin file. You can use it to validate the file.
+    CustomPluginLocationDescription:
+      description: Information about the location of a custom plugin.
+      type: object
+      properties:
+        s3Location:
+          $ref: "#/components/schemas/S3LocationDescription"
+          description: The S3 bucket Amazon Resource Name (ARN), file key, and object version of the plugin file stored in Amazon S3.
+    S3LocationDescription:
+      description: The description of the location of an object in Amazon S3.
+      type: object
+      properties:
+        bucketArn:
+          $ref: "#/components/schemas/__string"
+          description: The Amazon Resource Name (ARN) of an S3 bucket.
+        fileKey:
+          $ref: "#/components/schemas/__string"
+          description: The file key for an object in an S3 bucket.
+        objectVersion:
+          $ref: "#/components/schemas/__string"
+          description: The version of an object in an S3 bucket.
+    DescribeWorkerConfigurationResponse:
+      type: object
+      properties:
+        creationTime:
+          $ref: "#/components/schemas/__timestampIso8601"
+          description: The time that the worker configuration was created.
+        description:
+          $ref: "#/components/schemas/__string"
+          description: The description of the worker configuration.
+        latestRevision:
+          $ref: "#/components/schemas/WorkerConfigurationRevisionDescription"
+          description: The latest revision of the custom configuration.
+        name:
+          $ref: "#/components/schemas/__string"
+          description: The name of the worker configuration.
+        workerConfigurationArn:
+          $ref: "#/components/schemas/__string"
+          description: The Amazon Resource Name (ARN) of the custom configuration.
+        workerConfigurationState:
+          $ref: "#/components/schemas/WorkerConfigurationState"
+          description: The state of the worker configuration.
+    WorkerConfigurationRevisionDescription:
+      description: The description of the worker configuration revision.
+      type: object
+      properties:
+        creationTime:
+          $ref: "#/components/schemas/__timestampIso8601"
+          description: The time that the worker configuration was created.
+        description:
+          $ref: "#/components/schemas/__string"
+          description: The description of the worker configuration revision.
+        propertiesFileContent:
+          $ref: "#/components/schemas/__sensitiveString"
+          description: Base64 encoded contents of the connect-distributed.properties file.
+        revision:
+          $ref: "#/components/schemas/__long"
+          description: The description of a revision of the worker configuration.
+    MaxResults:
+      type: integer
+      minimum: 1
+      maximum: 100
+    ListConnectorOperationsResponse:
+      type: object
+      properties:
+        connectorOperations:
+          $ref: "#/components/schemas/__listOfConnectorOperationSummary"
+          description: An array of connector operation descriptions.
+        nextToken:
+          $ref: "#/components/schemas/__string"
+          description: If the response is truncated, it includes a NextToken. Send this NextToken in a subsequent request to continue listing from where it left off.
+    __listOfConnectorOperationSummary:
+      type: array
+      items:
+        $ref: "#/components/schemas/ConnectorOperationSummary"
+    ConnectorOperationSummary:
+      description: Summary of a connector operation.
+      type: object
+      properties:
+        connectorOperationArn:
+          $ref: "#/components/schemas/__string"
+          description: The Amazon Resource Name (ARN) of the connector operation.
+        connectorOperationType:
+          $ref: "#/components/schemas/ConnectorOperationType"
+          description: The type of connector operation performed.
+        connectorOperationState:
+          $ref: "#/components/schemas/ConnectorOperationState"
+          description: The state of the connector operation.
+        creationTime:
+          $ref: "#/components/schemas/__timestampIso8601"
+          description: The time when operation was created.
+        endTime:
+          $ref: "#/components/schemas/__timestampIso8601"
+          description: The time when operation ended.
+    ListConnectorsResponse:
+      type: object
+      properties:
+        connectors:
+          $ref: "#/components/schemas/__listOfConnectorSummary"
+          description: An array of connector descriptions.
+        nextToken:
+          $ref: "#/components/schemas/__string"
+          description: If the response of a ListConnectors operation is truncated, it will include a NextToken. Send this NextToken in a subsequent request to continue listing from where it left off.
+    __listOfConnectorSummary:
+      type: array
+      items:
+        $ref: "#/components/schemas/ConnectorSummary"
+    ConnectorSummary:
+      description: Summary of a connector.
+      type: object
+      properties:
+        capacity:
+          $ref: "#/components/schemas/CapacityDescription"
+          description: The connector's compute capacity settings.
+        connectorArn:
+          $ref: "#/components/schemas/__string"
+          description: The Amazon Resource Name (ARN) of the connector.
+        connectorDescription:
+          $ref: "#/components/schemas/__string"
+          description: The description of the connector.
+        connectorName:
+          $ref: "#/components/schemas/__string"
+          description: The name of the connector.
+        connectorState:
+          $ref: "#/components/schemas/ConnectorState"
+          description: The state of the connector.
+        creationTime:
+          $ref: "#/components/schemas/__timestampIso8601"
+          description: The time that the connector was created.
+        currentVersion:
+          $ref: "#/components/schemas/__string"
+          description: The current version of the connector.
+        kafkaCluster:
+          $ref: "#/components/schemas/KafkaClusterDescription"
+          description: The details of the Apache Kafka cluster to which the connector is connected.
+        kafkaClusterClientAuthentication:
+          $ref: "#/components/schemas/KafkaClusterClientAuthenticationDescription"
+          description: The type of client authentication used to connect to the Apache Kafka cluster. The value is NONE when no client authentication is used.
+        kafkaClusterEncryptionInTransit:
+          $ref: "#/components/schemas/KafkaClusterEncryptionInTransitDescription"
+          description: Details of encryption in transit to the Apache Kafka cluster.
+        kafkaConnectVersion:
+          $ref: "#/components/schemas/__string"
+          description: The version of Kafka Connect. It has to be compatible with both the Apache Kafka cluster's version and the plugins.
+        logDelivery:
+          $ref: "#/components/schemas/LogDeliveryDescription"
+          description: The settings for delivering connector logs to Amazon CloudWatch Logs.
+        networkType:
+          $ref: "#/components/schemas/NetworkType"
+          description: The network type of the connector. It gives connectors connectivity to either IPv4 (IPV4) or IPv4 and IPv6 (DUAL) destinations. Defaults to IPV4.
+        plugins:
+          $ref: "#/components/schemas/__listOfPluginDescription"
+          description: Specifies which plugins were used for this connector.
+        serviceExecutionRoleArn:
+          $ref: "#/components/schemas/__string"
+          description: The Amazon Resource Name (ARN) of the IAM role used by the connector to access Amazon Web Services resources.
+        workerConfiguration:
+          $ref: "#/components/schemas/WorkerConfigurationDescription"
+          description: The worker configurations that are in use with the connector.
+    ListCustomPluginsResponse:
+      type: object
+      properties:
+        customPlugins:
+          $ref: "#/components/schemas/__listOfCustomPluginSummary"
+          description: An array of custom plugin descriptions.
+        nextToken:
+          $ref: "#/components/schemas/__string"
+          description: If the response of a ListCustomPlugins operation is truncated, it will include a NextToken. Send this NextToken in a subsequent request to continue listing from where the previous operation left off.
+    __listOfCustomPluginSummary:
+      type: array
+      items:
+        $ref: "#/components/schemas/CustomPluginSummary"
+    CustomPluginSummary:
+      description: A summary of the custom plugin.
+      type: object
+      properties:
+        creationTime:
+          $ref: "#/components/schemas/__timestampIso8601"
+          description: The time that the custom plugin was created.
+        customPluginArn:
+          $ref: "#/components/schemas/__string"
+          description: The Amazon Resource Name (ARN) of the custom plugin.
+        customPluginState:
+          $ref: "#/components/schemas/CustomPluginState"
+          description: The state of the custom plugin.
+        description:
+          $ref: "#/components/schemas/__string"
+          description: A description of the custom plugin.
+        latestRevision:
+          $ref: "#/components/schemas/CustomPluginRevisionSummary"
+          description: The latest revision of the custom plugin.
+        name:
+          $ref: "#/components/schemas/__string"
+          description: The name of the custom plugin.
+    ListTagsForResourceResponse:
+      type: object
+      properties:
+        tags:
+          type: object
+          properties: {}
+          description: Lists the tags attached to the specified resource in the corresponding request.
+    ListWorkerConfigurationsResponse:
+      type: object
+      properties:
+        nextToken:
+          $ref: "#/components/schemas/__string"
+          description: If the response of a ListWorkerConfigurations operation is truncated, it will include a NextToken. Send this NextToken in a subsequent request to continue listing from where the previous operation left off.
+        workerConfigurations:
+          $ref: "#/components/schemas/__listOfWorkerConfigurationSummary"
+          description: An array of worker configuration descriptions.
+    __listOfWorkerConfigurationSummary:
+      type: array
+      items:
+        $ref: "#/components/schemas/WorkerConfigurationSummary"
+    WorkerConfigurationSummary:
+      description: The summary of a worker configuration.
+      type: object
+      properties:
+        creationTime:
+          $ref: "#/components/schemas/__timestampIso8601"
+          description: The time that a worker configuration was created.
+        description:
+          $ref: "#/components/schemas/__string"
+          description: The description of a worker configuration.
+        latestRevision:
+          $ref: "#/components/schemas/WorkerConfigurationRevisionSummary"
+          description: The latest revision of a worker configuration.
+        name:
+          $ref: "#/components/schemas/__string"
+          description: The name of the worker configuration.
+        workerConfigurationArn:
+          $ref: "#/components/schemas/__string"
+          description: The Amazon Resource Name (ARN) of the worker configuration.
+        workerConfigurationState:
+          $ref: "#/components/schemas/WorkerConfigurationState"
+          description: The state of the worker configuration.
+    TagResourceResponse:
+      type: object
+    TagKeyList:
+      type: array
+      items:
+        $ref: "#/components/schemas/TagKey"
+    TagKey:
+      type: string
+      minLength: 1
+      maxLength: 128
+    UntagResourceResponse:
+      type: object
+    CapacityUpdate:
+      description: The target capacity for the connector. The capacity can be auto scaled or provisioned.
+      type: object
+      properties:
+        autoScaling:
+          $ref: "#/components/schemas/AutoScalingUpdate"
+          description: The target auto scaling setting.
+        provisionedCapacity:
+          $ref: "#/components/schemas/ProvisionedCapacityUpdate"
+          description: The target settings for provisioned capacity.
+    AutoScalingUpdate:
+      description: The updates to the auto scaling parameters for the connector.
+      type: object
+      properties:
+        maxWorkerCount:
+          $ref: "#/components/schemas/__integer"
+          description: The target maximum number of workers allocated to the connector.
+        mcuCount:
+          $ref: "#/components/schemas/__integerMin1Max8"
+          description: The target number of microcontroller units (MCUs) allocated to each connector worker. The valid values are 1,2,4,8.
+        minWorkerCount:
+          $ref: "#/components/schemas/__integer"
+          description: The target minimum number of workers allocated to the connector.
+        scaleInPolicy:
+          $ref: "#/components/schemas/ScaleInPolicyUpdate"
+          description: The target scale-in policy for the connector.
+        scaleOutPolicy:
+          $ref: "#/components/schemas/ScaleOutPolicyUpdate"
+          description: The target scale-out policy for the connector.
+        maxAutoscalingTaskCount:
+          $ref: "#/components/schemas/__integer"
+          description: The maximum number of tasks allocated to the connector during autoscaling operations. Must be at least equal to maxWorkerCount.
+      required:
+        - maxWorkerCount
+        - mcuCount
+        - minWorkerCount
+        - scaleInPolicy
+        - scaleOutPolicy
+    ScaleInPolicyUpdate:
+      description: An update to the connector's scale-in policy.
+      type: object
+      properties:
+        cpuUtilizationPercentage:
+          $ref: "#/components/schemas/__integerMin1Max100"
+          description: The target CPU utilization percentage threshold at which you want connector scale in to be triggered.
+      required:
+        - cpuUtilizationPercentage
+    ScaleOutPolicyUpdate:
+      description: An update to the connector's scale-out policy.
+      type: object
+      properties:
+        cpuUtilizationPercentage:
+          $ref: "#/components/schemas/__integerMin1Max100"
+          description: The target CPU utilization percentage threshold at which you want connector scale out to be triggered.
+      required:
+        - cpuUtilizationPercentage
+    ProvisionedCapacityUpdate:
+      description: An update to a connector's fixed capacity.
+      type: object
+      properties:
+        mcuCount:
+          $ref: "#/components/schemas/__integerMin1Max8"
+          description: The number of microcontroller units (MCUs) allocated to each connector worker. The valid values are 1,2,4,8.
+        workerCount:
+          $ref: "#/components/schemas/__integer"
+          description: The number of workers that are allocated to the connector.
+      required:
+        - mcuCount
+        - workerCount
+    ConnectorConfigurationUpdate:
+      type: object
+      properties: {}
+    UpdateConnectorResponse:
+      type: object
+      properties:
+        connectorArn:
+          $ref: "#/components/schemas/__string"
+          description: The Amazon Resource Name (ARN) of the connector.
+        connectorState:
+          $ref: "#/components/schemas/ConnectorState"
+          description: The state of the connector.
+        connectorOperationArn:
+          $ref: "#/components/schemas/__string"
+          description: The Amazon Resource Name (ARN) of the connector operation.
+  x-stackQL-resources:
+    connectors:
+      id: aws.kafkaconnect.connectors
+      name: connectors
+      title: connectors
+      methods:
+        create_connector:
+          operation:
+            $ref: "#/paths/~1v1~1connectors/post"
+          response:
+            openAPIDocKey: "200"
+            mediaType: application/json
+          request:
+            nativeCasing: pascal
+          config:
+            requestBodyTranslate:
+              algorithm: naive
+        list_connectors:
+          operation:
+            $ref: "#/paths/~1v1~1connectors/get"
+          response:
+            openAPIDocKey: "200"
+            mediaType: application/json
+            objectKey: $.connectors
+          request:
+            nativeCasing: pascal
+          config:
+            pagination:
+              requestToken:
+                key: nextToken
+                location: query
+              responseToken:
+                key: $.nextToken
+                location: body
+        delete_connector:
+          operation:
+            $ref: "#/paths/~1v1~1connectors~1{connector_arn}/delete"
+          response:
+            openAPIDocKey: "200"
+            mediaType: application/json
+          request:
+            nativeCasing: pascal
+        describe_connector:
+          operation:
+            $ref: "#/paths/~1v1~1connectors~1{connector_arn}/get"
+          response:
+            openAPIDocKey: "200"
+            mediaType: application/json
+        update_connector:
+          operation:
+            $ref: "#/paths/~1v1~1connectors~1{connector_arn}/put"
+          response:
+            openAPIDocKey: "200"
+            mediaType: application/json
+          request:
+            nativeCasing: pascal
+          config:
+            requestBodyTranslate:
+              algorithm: naive
+      sqlVerbs:
+        select:
+          - $ref: "#/components/x-stackQL-resources/connectors/methods/describe_connector"
+          - $ref: "#/components/x-stackQL-resources/connectors/methods/list_connectors"
+        insert:
+          - $ref: "#/components/x-stackQL-resources/connectors/methods/create_connector"
+        update:
+          - $ref: "#/components/x-stackQL-resources/connectors/methods/update_connector"
+        delete:
+          - $ref: "#/components/x-stackQL-resources/connectors/methods/delete_connector"
+    custom_plugins:
+      id: aws.kafkaconnect.custom_plugins
+      name: custom_plugins
+      title: custom_plugins
+      methods:
+        create_custom_plugin:
+          operation:
+            $ref: "#/paths/~1v1~1custom-plugins/post"
+          response:
+            openAPIDocKey: "200"
+            mediaType: application/json
+          request:
+            nativeCasing: pascal
+          config:
+            requestBodyTranslate:
+              algorithm: naive
+        list_custom_plugins:
+          operation:
+            $ref: "#/paths/~1v1~1custom-plugins/get"
+          response:
+            openAPIDocKey: "200"
+            mediaType: application/json
+            objectKey: $.customPlugins
+          request:
+            nativeCasing: pascal
+          config:
+            pagination:
+              requestToken:
+                key: nextToken
+                location: query
+              responseToken:
+                key: $.nextToken
+                location: body
+        delete_custom_plugin:
+          operation:
+            $ref: "#/paths/~1v1~1custom-plugins~1{custom_plugin_arn}/delete"
+          response:
+            openAPIDocKey: "200"
+            mediaType: application/json
+        describe_custom_plugin:
+          operation:
+            $ref: "#/paths/~1v1~1custom-plugins~1{custom_plugin_arn}/get"
+          response:
+            openAPIDocKey: "200"
+            mediaType: application/json
+      sqlVerbs:
+        select:
+          - $ref: "#/components/x-stackQL-resources/custom_plugins/methods/describe_custom_plugin"
+          - $ref: "#/components/x-stackQL-resources/custom_plugins/methods/list_custom_plugins"
+        insert:
+          - $ref: "#/components/x-stackQL-resources/custom_plugins/methods/create_custom_plugin"
+        update: []
+        delete:
+          - $ref: "#/components/x-stackQL-resources/custom_plugins/methods/delete_custom_plugin"
+    worker_configurations:
+      id: aws.kafkaconnect.worker_configurations
+      name: worker_configurations
+      title: worker_configurations
+      methods:
+        create_worker_configuration:
+          operation:
+            $ref: "#/paths/~1v1~1worker-configurations/post"
+          response:
+            openAPIDocKey: "200"
+            mediaType: application/json
+          request:
+            nativeCasing: pascal
+          config:
+            requestBodyTranslate:
+              algorithm: naive
+        list_worker_configurations:
+          operation:
+            $ref: "#/paths/~1v1~1worker-configurations/get"
+          response:
+            openAPIDocKey: "200"
+            mediaType: application/json
+            objectKey: $.workerConfigurations
+          request:
+            nativeCasing: pascal
+          config:
+            pagination:
+              requestToken:
+                key: nextToken
+                location: query
+              responseToken:
+                key: $.nextToken
+                location: body
+        delete_worker_configuration:
+          operation:
+            $ref: "#/paths/~1v1~1worker-configurations~1{worker_configuration_arn}/delete"
+          response:
+            openAPIDocKey: "200"
+            mediaType: application/json
+        describe_worker_configuration:
+          operation:
+            $ref: "#/paths/~1v1~1worker-configurations~1{worker_configuration_arn}/get"
+          response:
+            openAPIDocKey: "200"
+            mediaType: application/json
+      sqlVerbs:
+        select:
+          - $ref: "#/components/x-stackQL-resources/worker_configurations/methods/describe_worker_configuration"
+          - $ref: "#/components/x-stackQL-resources/worker_configurations/methods/list_worker_configurations"
+        insert:
+          - $ref: "#/components/x-stackQL-resources/worker_configurations/methods/create_worker_configuration"
+        update: []
+        delete:
+          - $ref: "#/components/x-stackQL-resources/worker_configurations/methods/delete_worker_configuration"
+    connector_operations:
+      id: aws.kafkaconnect.connector_operations
+      name: connector_operations
+      title: connector_operations
+      methods:
+        describe_connector_operation:
+          operation:
+            $ref: "#/paths/~1v1~1connectorOperations~1{connector_operation_arn}/get"
+          response:
+            openAPIDocKey: "200"
+            mediaType: application/json
+        list_connector_operations:
+          operation:
+            $ref: "#/paths/~1v1~1connectors~1{connector_arn}~1operations/get"
+          response:
+            openAPIDocKey: "200"
+            mediaType: application/json
+            objectKey: $.connectorOperations
+          request:
+            nativeCasing: pascal
+          config:
+            pagination:
+              requestToken:
+                key: nextToken
+                location: query
+              responseToken:
+                key: $.nextToken
+                location: body
+      sqlVerbs:
+        select:
+          - $ref: "#/components/x-stackQL-resources/connector_operations/methods/describe_connector_operation"
+          - $ref: "#/components/x-stackQL-resources/connector_operations/methods/list_connector_operations"
+        insert: []
+        update: []
+        delete: []
+    tags:
+      id: aws.kafkaconnect.tags
+      name: tags
+      title: tags
+      methods:
+        list_tags_for_resource:
+          operation:
+            $ref: "#/paths/~1v1~1tags~1{resource_arn}/get"
+          response:
+            openAPIDocKey: "200"
+            mediaType: application/json
+        tag_resource:
+          operation:
+            $ref: "#/paths/~1v1~1tags~1{resource_arn}/post"
+          response:
+            openAPIDocKey: "200"
+            mediaType: application/json
+          request:
+            nativeCasing: pascal
+          config:
+            requestBodyTranslate:
+              algorithm: naive
+        untag_resource:
+          operation:
+            $ref: "#/paths/~1v1~1tags~1{resource_arn}/delete"
+          response:
+            openAPIDocKey: "200"
+            mediaType: application/json
+          request:
+            nativeCasing: pascal
+      sqlVerbs:
+        select:
+          - $ref: "#/components/x-stackQL-resources/tags/methods/list_tags_for_resource"
+        insert: []
+        update:
+          - $ref: "#/components/x-stackQL-resources/tags/methods/tag_resource"
+          - $ref: "#/components/x-stackQL-resources/tags/methods/untag_resource"
+        delete: []

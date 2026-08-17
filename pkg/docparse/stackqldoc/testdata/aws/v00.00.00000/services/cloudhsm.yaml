@@ -1,0 +1,1575 @@
+openapi: 3.0.0
+info:
+  version: "2014-05-30"
+  title: Amazon CloudHSM
+  description: Amazon CloudHSM
+  x-serviceName: cloudhsm
+  x-serviceAlias: cloudhsm
+  x-protocol: json
+  x-apiVersion: "2014-05-30"
+  x-endpointPrefix: cloudhsm
+  x-targetPrefix: CloudHsmFrontendService
+  x-jsonVersion: "1.1"
+servers:
+  - url: https://cloudhsm.{region}.amazonaws.com
+    variables:
+      region:
+        default: us-east-1
+        description: AWS region
+    description: Regional endpoint for cloudhsm
+paths:
+  /AddTagsToResource:
+    post:
+      operationId: AddTagsToResource
+      description: This is documentation for AWS CloudHSM Classic. For more information, see AWS CloudHSM Classic FAQs, the AWS CloudHSM Classic User Guide, and the AWS CloudHSM Classic API Reference. For information about the current version of AWS CloudHSM, see AWS CloudHSM, the AWS CloudHSM User Guide, and the AWS CloudHSM API Reference. Adds or overwrites one or more tags for the specified AWS CloudHSM resource. Each tag consists of a key and a value. Tag keys must be unique to each resource.
+      parameters:
+        - name: X-Amz-Target
+          in: header
+          description: Action Header
+          required: false
+          schema:
+            type: string
+            enum:
+              - CloudHsmFrontendService.AddTagsToResource
+            default: CloudHsmFrontendService.AddTagsToResource
+      requestBody:
+        required: true
+        content:
+          application/x-amz-json-1.1:
+            schema:
+              type: object
+              properties:
+                ResourceArn:
+                  $ref: "#/components/schemas/String"
+                  description: The Amazon Resource Name (ARN) of the AWS CloudHSM resource to tag.
+                TagList:
+                  $ref: "#/components/schemas/TagList"
+                  description: One or more tags.
+              required:
+                - ResourceArn
+                - TagList
+      responses:
+        "200":
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AddTagsToResourceResponse"
+  /CreateHapg:
+    post:
+      operationId: CreateHapg
+      description: This is documentation for AWS CloudHSM Classic. For more information, see AWS CloudHSM Classic FAQs, the AWS CloudHSM Classic User Guide, and the AWS CloudHSM Classic API Reference. For information about the current version of AWS CloudHSM, see AWS CloudHSM, the AWS CloudHSM User Guide, and the AWS CloudHSM API Reference. Creates a high-availability partition group. A high-availability partition group is a group of partitions that spans multiple physical HSMs.
+      parameters:
+        - name: X-Amz-Target
+          in: header
+          description: Action Header
+          required: false
+          schema:
+            type: string
+            enum:
+              - CloudHsmFrontendService.CreateHapg
+            default: CloudHsmFrontendService.CreateHapg
+      requestBody:
+        required: true
+        content:
+          application/x-amz-json-1.1:
+            schema:
+              type: object
+              properties:
+                Label:
+                  $ref: "#/components/schemas/Label"
+                  description: The label of the new high-availability partition group.
+      responses:
+        "200":
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CreateHapgResponse"
+  /CreateHsm:
+    post:
+      operationId: CreateHsm
+      description: This is documentation for AWS CloudHSM Classic. For more information, see AWS CloudHSM Classic FAQs, the AWS CloudHSM Classic User Guide, and the AWS CloudHSM Classic API Reference. For information about the current version of AWS CloudHSM, see AWS CloudHSM, the AWS CloudHSM User Guide, and the AWS CloudHSM API Reference. Creates an uninitialized HSM instance. There is an upfront fee charged for each HSM instance that you create with the CreateHsm operation. If you accidentally provision an HSM and want to request a refund, delete the instance using the DeleteHsm operation, go to the AWS Support Center, create a new case, and select Account and Billing Support. It can take up to 20 minutes to create and provision an HSM. You can monitor the status of the HSM with the DescribeHsm operation. The HSM is ready to be initialized when the status changes to RUNNING.
+      parameters:
+        - name: X-Amz-Target
+          in: header
+          description: Action Header
+          required: false
+          schema:
+            type: string
+            enum:
+              - CloudHsmFrontendService.CreateHsm
+            default: CloudHsmFrontendService.CreateHsm
+      requestBody:
+        required: true
+        content:
+          application/x-amz-json-1.1:
+            schema:
+              type: object
+              properties:
+                SubnetId:
+                  $ref: "#/components/schemas/SubnetId"
+                  description: The identifier of the subnet in your VPC in which to place the HSM.
+                SshKey:
+                  $ref: "#/components/schemas/SshKey"
+                  description: The SSH public key to install on the HSM.
+                EniIp:
+                  $ref: "#/components/schemas/IpAddress"
+                  description: The IP address to assign to the HSM's ENI. If an IP address is not specified, an IP address will be randomly chosen from the CIDR range of the subnet.
+                IamRoleArn:
+                  $ref: "#/components/schemas/IamRoleArn"
+                  description: The ARN of an IAM role to enable the AWS CloudHSM service to allocate an ENI on your behalf.
+                ExternalId:
+                  $ref: "#/components/schemas/ExternalId"
+                  description: The external ID from IamRoleArn, if present.
+                SubscriptionType:
+                  $ref: "#/components/schemas/SubscriptionType"
+                ClientToken:
+                  $ref: "#/components/schemas/ClientToken"
+                  description: A user-defined token to ensure idempotence. Subsequent calls to this operation with the same token will be ignored.
+                SyslogIp:
+                  $ref: "#/components/schemas/IpAddress"
+                  description: The IP address for the syslog monitoring server. The AWS CloudHSM service only supports one syslog monitoring server.
+              required:
+                - SubnetId
+                - SshKey
+                - IamRoleArn
+                - SubscriptionType
+      responses:
+        "200":
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CreateHsmResponse"
+  /CreateLunaClient:
+    post:
+      operationId: CreateLunaClient
+      description: This is documentation for AWS CloudHSM Classic. For more information, see AWS CloudHSM Classic FAQs, the AWS CloudHSM Classic User Guide, and the AWS CloudHSM Classic API Reference. For information about the current version of AWS CloudHSM, see AWS CloudHSM, the AWS CloudHSM User Guide, and the AWS CloudHSM API Reference. Creates an HSM client.
+      parameters:
+        - name: X-Amz-Target
+          in: header
+          description: Action Header
+          required: false
+          schema:
+            type: string
+            enum:
+              - CloudHsmFrontendService.CreateLunaClient
+            default: CloudHsmFrontendService.CreateLunaClient
+      requestBody:
+        required: true
+        content:
+          application/x-amz-json-1.1:
+            schema:
+              type: object
+              properties:
+                Label:
+                  $ref: "#/components/schemas/ClientLabel"
+                  description: The label for the client.
+                Certificate:
+                  $ref: "#/components/schemas/Certificate"
+                  description: The contents of a Base64-Encoded X.509 v3 certificate to be installed on the HSMs used by this client.
+      responses:
+        "200":
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CreateLunaClientResponse"
+  /DeleteHapg:
+    post:
+      operationId: DeleteHapg
+      description: This is documentation for AWS CloudHSM Classic. For more information, see AWS CloudHSM Classic FAQs, the AWS CloudHSM Classic User Guide, and the AWS CloudHSM Classic API Reference. For information about the current version of AWS CloudHSM, see AWS CloudHSM, the AWS CloudHSM User Guide, and the AWS CloudHSM API Reference. Deletes a high-availability partition group.
+      parameters:
+        - name: X-Amz-Target
+          in: header
+          description: Action Header
+          required: false
+          schema:
+            type: string
+            enum:
+              - CloudHsmFrontendService.DeleteHapg
+            default: CloudHsmFrontendService.DeleteHapg
+      requestBody:
+        required: true
+        content:
+          application/x-amz-json-1.1:
+            schema:
+              type: object
+              properties:
+                HapgArn:
+                  $ref: "#/components/schemas/HapgArn"
+                  description: The ARN of the high-availability partition group to delete.
+              required:
+                - HapgArn
+      responses:
+        "200":
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DeleteHapgResponse"
+  /DeleteHsm:
+    post:
+      operationId: DeleteHsm
+      description: This is documentation for AWS CloudHSM Classic. For more information, see AWS CloudHSM Classic FAQs, the AWS CloudHSM Classic User Guide, and the AWS CloudHSM Classic API Reference. For information about the current version of AWS CloudHSM, see AWS CloudHSM, the AWS CloudHSM User Guide, and the AWS CloudHSM API Reference. Deletes an HSM. After completion, this operation cannot be undone and your key material cannot be recovered.
+      parameters:
+        - name: X-Amz-Target
+          in: header
+          description: Action Header
+          required: false
+          schema:
+            type: string
+            enum:
+              - CloudHsmFrontendService.DeleteHsm
+            default: CloudHsmFrontendService.DeleteHsm
+      requestBody:
+        required: true
+        content:
+          application/x-amz-json-1.1:
+            schema:
+              type: object
+              properties:
+                HsmArn:
+                  $ref: "#/components/schemas/HsmArn"
+                  description: The ARN of the HSM to delete.
+              required:
+                - HsmArn
+      responses:
+        "200":
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DeleteHsmResponse"
+  /DeleteLunaClient:
+    post:
+      operationId: DeleteLunaClient
+      description: This is documentation for AWS CloudHSM Classic. For more information, see AWS CloudHSM Classic FAQs, the AWS CloudHSM Classic User Guide, and the AWS CloudHSM Classic API Reference. For information about the current version of AWS CloudHSM, see AWS CloudHSM, the AWS CloudHSM User Guide, and the AWS CloudHSM API Reference. Deletes a client.
+      parameters:
+        - name: X-Amz-Target
+          in: header
+          description: Action Header
+          required: false
+          schema:
+            type: string
+            enum:
+              - CloudHsmFrontendService.DeleteLunaClient
+            default: CloudHsmFrontendService.DeleteLunaClient
+      requestBody:
+        required: true
+        content:
+          application/x-amz-json-1.1:
+            schema:
+              type: object
+              properties:
+                ClientArn:
+                  $ref: "#/components/schemas/ClientArn"
+                  description: The ARN of the client to delete.
+              required:
+                - ClientArn
+      responses:
+        "200":
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DeleteLunaClientResponse"
+  /DescribeHapg:
+    post:
+      operationId: DescribeHapg
+      description: This is documentation for AWS CloudHSM Classic. For more information, see AWS CloudHSM Classic FAQs, the AWS CloudHSM Classic User Guide, and the AWS CloudHSM Classic API Reference. For information about the current version of AWS CloudHSM, see AWS CloudHSM, the AWS CloudHSM User Guide, and the AWS CloudHSM API Reference. Retrieves information about a high-availability partition group.
+      parameters:
+        - name: X-Amz-Target
+          in: header
+          description: Action Header
+          required: false
+          schema:
+            type: string
+            enum:
+              - CloudHsmFrontendService.DescribeHapg
+            default: CloudHsmFrontendService.DescribeHapg
+      requestBody:
+        required: true
+        content:
+          application/x-amz-json-1.1:
+            schema:
+              type: object
+              properties:
+                HapgArn:
+                  $ref: "#/components/schemas/HapgArn"
+                  description: The ARN of the high-availability partition group to describe.
+              required:
+                - HapgArn
+      responses:
+        "200":
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DescribeHapgResponse"
+  /DescribeHsm:
+    post:
+      operationId: DescribeHsm
+      description: This is documentation for AWS CloudHSM Classic. For more information, see AWS CloudHSM Classic FAQs, the AWS CloudHSM Classic User Guide, and the AWS CloudHSM Classic API Reference. For information about the current version of AWS CloudHSM, see AWS CloudHSM, the AWS CloudHSM User Guide, and the AWS CloudHSM API Reference. Retrieves information about an HSM. You can identify the HSM by its ARN or its serial number.
+      parameters:
+        - name: X-Amz-Target
+          in: header
+          description: Action Header
+          required: false
+          schema:
+            type: string
+            enum:
+              - CloudHsmFrontendService.DescribeHsm
+            default: CloudHsmFrontendService.DescribeHsm
+      requestBody:
+        required: true
+        content:
+          application/x-amz-json-1.1:
+            schema:
+              type: object
+              properties:
+                HsmArn:
+                  $ref: "#/components/schemas/HsmArn"
+                  description: The ARN of the HSM. Either the HsmArn or the SerialNumber parameter must be specified.
+                HsmSerialNumber:
+                  $ref: "#/components/schemas/HsmSerialNumber"
+                  description: The serial number of the HSM. Either the HsmArn or the HsmSerialNumber parameter must be specified.
+              required:
+                - HsmArn
+      responses:
+        "200":
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DescribeHsmResponse"
+  /DescribeLunaClient:
+    post:
+      operationId: DescribeLunaClient
+      description: This is documentation for AWS CloudHSM Classic. For more information, see AWS CloudHSM Classic FAQs, the AWS CloudHSM Classic User Guide, and the AWS CloudHSM Classic API Reference. For information about the current version of AWS CloudHSM, see AWS CloudHSM, the AWS CloudHSM User Guide, and the AWS CloudHSM API Reference. Retrieves information about an HSM client.
+      parameters:
+        - name: X-Amz-Target
+          in: header
+          description: Action Header
+          required: false
+          schema:
+            type: string
+            enum:
+              - CloudHsmFrontendService.DescribeLunaClient
+            default: CloudHsmFrontendService.DescribeLunaClient
+      requestBody:
+        required: true
+        content:
+          application/x-amz-json-1.1:
+            schema:
+              type: object
+              properties:
+                ClientArn:
+                  $ref: "#/components/schemas/ClientArn"
+                  description: The ARN of the client.
+                CertificateFingerprint:
+                  $ref: "#/components/schemas/CertificateFingerprint"
+                  description: The certificate fingerprint.
+      responses:
+        "200":
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DescribeLunaClientResponse"
+  /GetConfig:
+    post:
+      operationId: GetConfig
+      description: This is documentation for AWS CloudHSM Classic. For more information, see AWS CloudHSM Classic FAQs, the AWS CloudHSM Classic User Guide, and the AWS CloudHSM Classic API Reference. For information about the current version of AWS CloudHSM, see AWS CloudHSM, the AWS CloudHSM User Guide, and the AWS CloudHSM API Reference. Gets the configuration files necessary to connect to all high availability partition groups the client is associated with.
+      parameters:
+        - name: X-Amz-Target
+          in: header
+          description: Action Header
+          required: false
+          schema:
+            type: string
+            enum:
+              - CloudHsmFrontendService.GetConfig
+            default: CloudHsmFrontendService.GetConfig
+      requestBody:
+        required: true
+        content:
+          application/x-amz-json-1.1:
+            schema:
+              type: object
+              properties:
+                ClientArn:
+                  $ref: "#/components/schemas/ClientArn"
+                  description: The ARN of the client.
+                ClientVersion:
+                  $ref: "#/components/schemas/ClientVersion"
+                  description: The client version.
+                HapgList:
+                  $ref: "#/components/schemas/HapgList"
+                  description: A list of ARNs that identify the high-availability partition groups that are associated with the client.
+              required:
+                - ClientArn
+                - ClientVersion
+                - HapgList
+      responses:
+        "200":
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/GetConfigResponse"
+  /ListAvailableZones:
+    post:
+      operationId: ListAvailableZones
+      description: This is documentation for AWS CloudHSM Classic. For more information, see AWS CloudHSM Classic FAQs, the AWS CloudHSM Classic User Guide, and the AWS CloudHSM Classic API Reference. For information about the current version of AWS CloudHSM, see AWS CloudHSM, the AWS CloudHSM User Guide, and the AWS CloudHSM API Reference. Lists the Availability Zones that have available AWS CloudHSM capacity.
+      parameters:
+        - name: X-Amz-Target
+          in: header
+          description: Action Header
+          required: false
+          schema:
+            type: string
+            enum:
+              - CloudHsmFrontendService.ListAvailableZones
+            default: CloudHsmFrontendService.ListAvailableZones
+      requestBody:
+        required: true
+        content:
+          application/x-amz-json-1.1:
+            schema:
+              type: object
+      responses:
+        "200":
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ListAvailableZonesOutputDisplay"
+  /ListHapgs:
+    post:
+      operationId: ListHapgs
+      description: This is documentation for AWS CloudHSM Classic. For more information, see AWS CloudHSM Classic FAQs, the AWS CloudHSM Classic User Guide, and the AWS CloudHSM Classic API Reference. For information about the current version of AWS CloudHSM, see AWS CloudHSM, the AWS CloudHSM User Guide, and the AWS CloudHSM API Reference. Lists the high-availability partition groups for the account. This operation supports pagination with the use of the NextToken member. If more results are available, the NextToken member of the response contains a token that you pass in the next call to ListHapgs to retrieve the next set of items.
+      parameters:
+        - name: X-Amz-Target
+          in: header
+          description: Action Header
+          required: false
+          schema:
+            type: string
+            enum:
+              - CloudHsmFrontendService.ListHapgs
+            default: CloudHsmFrontendService.ListHapgs
+      requestBody:
+        required: true
+        content:
+          application/x-amz-json-1.1:
+            schema:
+              type: object
+              properties:
+                NextToken:
+                  $ref: "#/components/schemas/PaginationToken"
+                  description: The NextToken value from a previous call to ListHapgs. Pass null if this is the first call.
+      responses:
+        "200":
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ListHapgsOutputDisplay"
+  /ListHsms:
+    post:
+      operationId: ListHsms
+      description: This is documentation for AWS CloudHSM Classic. For more information, see AWS CloudHSM Classic FAQs, the AWS CloudHSM Classic User Guide, and the AWS CloudHSM Classic API Reference. For information about the current version of AWS CloudHSM, see AWS CloudHSM, the AWS CloudHSM User Guide, and the AWS CloudHSM API Reference. Retrieves the identifiers of all of the HSMs provisioned for the current customer. This operation supports pagination with the use of the NextToken member. If more results are available, the NextToken member of the response contains a token that you pass in the next call to ListHsms to retrieve the next set of items.
+      parameters:
+        - name: X-Amz-Target
+          in: header
+          description: Action Header
+          required: false
+          schema:
+            type: string
+            enum:
+              - CloudHsmFrontendService.ListHsms
+            default: CloudHsmFrontendService.ListHsms
+      requestBody:
+        required: true
+        content:
+          application/x-amz-json-1.1:
+            schema:
+              type: object
+              properties:
+                NextToken:
+                  $ref: "#/components/schemas/PaginationToken"
+                  description: The NextToken value from a previous call to ListHsms. Pass null if this is the first call.
+      responses:
+        "200":
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ListHsmsOutputDisplay"
+  /ListLunaClients:
+    post:
+      operationId: ListLunaClients
+      description: This is documentation for AWS CloudHSM Classic. For more information, see AWS CloudHSM Classic FAQs, the AWS CloudHSM Classic User Guide, and the AWS CloudHSM Classic API Reference. For information about the current version of AWS CloudHSM, see AWS CloudHSM, the AWS CloudHSM User Guide, and the AWS CloudHSM API Reference. Lists all of the clients. This operation supports pagination with the use of the NextToken member. If more results are available, the NextToken member of the response contains a token that you pass in the next call to ListLunaClients to retrieve the next set of items.
+      parameters:
+        - name: X-Amz-Target
+          in: header
+          description: Action Header
+          required: false
+          schema:
+            type: string
+            enum:
+              - CloudHsmFrontendService.ListLunaClients
+            default: CloudHsmFrontendService.ListLunaClients
+      requestBody:
+        required: true
+        content:
+          application/x-amz-json-1.1:
+            schema:
+              type: object
+              properties:
+                NextToken:
+                  $ref: "#/components/schemas/PaginationToken"
+                  description: The NextToken value from a previous call to ListLunaClients. Pass null if this is the first call.
+      responses:
+        "200":
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ListLunaClientsOutputDisplay"
+  /ListTagsForResource:
+    post:
+      operationId: ListTagsForResource
+      description: This is documentation for AWS CloudHSM Classic. For more information, see AWS CloudHSM Classic FAQs, the AWS CloudHSM Classic User Guide, and the AWS CloudHSM Classic API Reference. For information about the current version of AWS CloudHSM, see AWS CloudHSM, the AWS CloudHSM User Guide, and the AWS CloudHSM API Reference. Returns a list of all tags for the specified AWS CloudHSM resource.
+      parameters:
+        - name: X-Amz-Target
+          in: header
+          description: Action Header
+          required: false
+          schema:
+            type: string
+            enum:
+              - CloudHsmFrontendService.ListTagsForResource
+            default: CloudHsmFrontendService.ListTagsForResource
+      requestBody:
+        required: true
+        content:
+          application/x-amz-json-1.1:
+            schema:
+              type: object
+              properties:
+                ResourceArn:
+                  $ref: "#/components/schemas/String"
+                  description: The Amazon Resource Name (ARN) of the AWS CloudHSM resource.
+              required:
+                - ResourceArn
+      responses:
+        "200":
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ListTagsForResourceResponse"
+  /ModifyHapg:
+    post:
+      operationId: ModifyHapg
+      description: This is documentation for AWS CloudHSM Classic. For more information, see AWS CloudHSM Classic FAQs, the AWS CloudHSM Classic User Guide, and the AWS CloudHSM Classic API Reference. For information about the current version of AWS CloudHSM, see AWS CloudHSM, the AWS CloudHSM User Guide, and the AWS CloudHSM API Reference. Modifies an existing high-availability partition group.
+      parameters:
+        - name: X-Amz-Target
+          in: header
+          description: Action Header
+          required: false
+          schema:
+            type: string
+            enum:
+              - CloudHsmFrontendService.ModifyHapg
+            default: CloudHsmFrontendService.ModifyHapg
+      requestBody:
+        required: true
+        content:
+          application/x-amz-json-1.1:
+            schema:
+              type: object
+              properties:
+                HapgArn:
+                  $ref: "#/components/schemas/HapgArn"
+                  description: The ARN of the high-availability partition group to modify.
+                Label:
+                  $ref: "#/components/schemas/Label"
+                  description: The new label for the high-availability partition group.
+                PartitionSerialList:
+                  $ref: "#/components/schemas/PartitionSerialList"
+                  description: The list of partition serial numbers to make members of the high-availability partition group.
+              required:
+                - HapgArn
+      responses:
+        "200":
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ModifyHapgResponse"
+  /ModifyHsm:
+    post:
+      operationId: ModifyHsm
+      description: This is documentation for AWS CloudHSM Classic. For more information, see AWS CloudHSM Classic FAQs, the AWS CloudHSM Classic User Guide, and the AWS CloudHSM Classic API Reference. For information about the current version of AWS CloudHSM, see AWS CloudHSM, the AWS CloudHSM User Guide, and the AWS CloudHSM API Reference. Modifies an HSM. This operation can result in the HSM being offline for up to 15 minutes while the AWS CloudHSM service is reconfigured. If you are modifying a production HSM, you should ensure that your AWS CloudHSM service is configured for high availability, and consider executing this operation during a maintenance window.
+      parameters:
+        - name: X-Amz-Target
+          in: header
+          description: Action Header
+          required: false
+          schema:
+            type: string
+            enum:
+              - CloudHsmFrontendService.ModifyHsm
+            default: CloudHsmFrontendService.ModifyHsm
+      requestBody:
+        required: true
+        content:
+          application/x-amz-json-1.1:
+            schema:
+              type: object
+              properties:
+                HsmArn:
+                  $ref: "#/components/schemas/HsmArn"
+                  description: The ARN of the HSM to modify.
+                SubnetId:
+                  $ref: "#/components/schemas/SubnetId"
+                  description: The new identifier of the subnet that the HSM is in. The new subnet must be in the same Availability Zone as the current subnet.
+                EniIp:
+                  $ref: "#/components/schemas/IpAddress"
+                  description: The new IP address for the elastic network interface (ENI) attached to the HSM. If the HSM is moved to a different subnet, and an IP address is not specified, an IP address will be randomly chosen from the CIDR range of the new subnet.
+                IamRoleArn:
+                  $ref: "#/components/schemas/IamRoleArn"
+                  description: The new IAM role ARN.
+                ExternalId:
+                  $ref: "#/components/schemas/ExternalId"
+                  description: The new external ID.
+                SyslogIp:
+                  $ref: "#/components/schemas/IpAddress"
+                  description: The new IP address for the syslog monitoring server. The AWS CloudHSM service only supports one syslog monitoring server.
+              required:
+                - HsmArn
+      responses:
+        "200":
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ModifyHsmResponse"
+  /ModifyLunaClient:
+    post:
+      operationId: ModifyLunaClient
+      description: This is documentation for AWS CloudHSM Classic. For more information, see AWS CloudHSM Classic FAQs, the AWS CloudHSM Classic User Guide, and the AWS CloudHSM Classic API Reference. For information about the current version of AWS CloudHSM, see AWS CloudHSM, the AWS CloudHSM User Guide, and the AWS CloudHSM API Reference. Modifies the certificate used by the client. This action can potentially start a workflow to install the new certificate on the client's HSMs.
+      parameters:
+        - name: X-Amz-Target
+          in: header
+          description: Action Header
+          required: false
+          schema:
+            type: string
+            enum:
+              - CloudHsmFrontendService.ModifyLunaClient
+            default: CloudHsmFrontendService.ModifyLunaClient
+      requestBody:
+        required: true
+        content:
+          application/x-amz-json-1.1:
+            schema:
+              type: object
+              properties:
+                ClientArn:
+                  $ref: "#/components/schemas/ClientArn"
+                  description: The ARN of the client.
+                Certificate:
+                  $ref: "#/components/schemas/Certificate"
+                  description: The new certificate for the client.
+              required:
+                - ClientArn
+      responses:
+        "200":
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ModifyLunaClientResponse"
+  /RemoveTagsFromResource:
+    post:
+      operationId: RemoveTagsFromResource
+      description: This is documentation for AWS CloudHSM Classic. For more information, see AWS CloudHSM Classic FAQs, the AWS CloudHSM Classic User Guide, and the AWS CloudHSM Classic API Reference. For information about the current version of AWS CloudHSM, see AWS CloudHSM, the AWS CloudHSM User Guide, and the AWS CloudHSM API Reference. Removes one or more tags from the specified AWS CloudHSM resource. To remove a tag, specify only the tag key to remove (not the value). To overwrite the value for an existing tag, use AddTagsToResource.
+      parameters:
+        - name: X-Amz-Target
+          in: header
+          description: Action Header
+          required: false
+          schema:
+            type: string
+            enum:
+              - CloudHsmFrontendService.RemoveTagsFromResource
+            default: CloudHsmFrontendService.RemoveTagsFromResource
+      requestBody:
+        required: true
+        content:
+          application/x-amz-json-1.1:
+            schema:
+              type: object
+              properties:
+                ResourceArn:
+                  $ref: "#/components/schemas/String"
+                  description: The Amazon Resource Name (ARN) of the AWS CloudHSM resource.
+                TagKeyList:
+                  $ref: "#/components/schemas/TagKeyList"
+                  description: The tag key or keys to remove. Specify only the tag key to remove (not the value). To overwrite the value for an existing tag, use AddTagsToResource.
+              required:
+                - ResourceArn
+                - TagKeyList
+      responses:
+        "200":
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RemoveTagsFromResourceResponse"
+components:
+  parameters:
+    X-Amz-Content-Sha256:
+      in: header
+      name: X-Amz-Content-Sha256
+      required: false
+      schema:
+        type: string
+    X-Amz-Date:
+      in: header
+      name: X-Amz-Date
+      required: false
+      schema:
+        type: string
+    X-Amz-Algorithm:
+      in: header
+      name: X-Amz-Algorithm
+      required: false
+      schema:
+        type: string
+    X-Amz-Credential:
+      in: header
+      name: X-Amz-Credential
+      required: false
+      schema:
+        type: string
+    X-Amz-Security-Token:
+      in: header
+      name: X-Amz-Security-Token
+      required: false
+      schema:
+        type: string
+    X-Amz-Signature:
+      in: header
+      name: X-Amz-Signature
+      required: false
+      schema:
+        type: string
+    X-Amz-SignedHeaders:
+      in: header
+      name: X-Amz-SignedHeaders
+      required: false
+      schema:
+        type: string
+  schemas:
+    String:
+      type: string
+      pattern: "[\\w :+=./\\\\-]*"
+    TagList:
+      type: array
+      items:
+        $ref: "#/components/schemas/Tag"
+    Tag:
+      description: A key-value pair that identifies or specifies metadata about an AWS CloudHSM resource.
+      type: object
+      properties:
+        Key:
+          $ref: "#/components/schemas/TagKey"
+          description: The key of the tag.
+        Value:
+          $ref: "#/components/schemas/TagValue"
+          description: The value of the tag.
+      required:
+        - Key
+        - Value
+    TagKey:
+      type: string
+      minLength: 1
+      maxLength: 128
+    TagValue:
+      type: string
+      minLength: 0
+      maxLength: 256
+    AddTagsToResourceResponse:
+      type: object
+      properties:
+        Status:
+          $ref: "#/components/schemas/String"
+          description: The status of the operation.
+      required:
+        - Status
+    Label:
+      type: string
+      pattern: "[a-zA-Z0-9_.-]{1,64}"
+    CreateHapgResponse:
+      description: Contains the output of the CreateHAPartitionGroup action.
+      type: object
+      properties:
+        HapgArn:
+          $ref: "#/components/schemas/HapgArn"
+          description: The ARN of the high-availability partition group.
+    HapgArn:
+      type: string
+      pattern: arn:aws(-iso)?:cloudhsm:[a-zA-Z0-9\-]*:[0-9]{12}:hapg-[0-9a-f]{8}
+    SubnetId:
+      type: string
+      pattern: subnet-[0-9a-f]{8}
+    SshKey:
+      type: string
+      pattern: "[a-zA-Z0-9+/= ._:\\\\@-]*"
+    IpAddress:
+      type: string
+      pattern: \d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}
+    IamRoleArn:
+      type: string
+      pattern: arn:aws(-iso)?:iam::[0-9]{12}:role/[a-zA-Z0-9_\+=,\.\-@]{1,64}
+    ExternalId:
+      type: string
+      pattern: "[\\w :+=./-]*"
+    SubscriptionType:
+      description: Specifies the type of subscription for the HSM. PRODUCTION - The HSM is being used in a production environment. TRIAL - The HSM is being used in a product trial.
+      type: string
+      enum:
+        - PRODUCTION
+    ClientToken:
+      type: string
+      pattern: "[a-zA-Z0-9]{1,64}"
+    CreateHsmResponse:
+      description: Contains the output of the CreateHsm operation.
+      type: object
+      properties:
+        HsmArn:
+          $ref: "#/components/schemas/HsmArn"
+          description: The ARN of the HSM.
+    HsmArn:
+      description: An ARN that identifies an HSM.
+      type: string
+      pattern: arn:aws(-iso)?:cloudhsm:[a-zA-Z0-9\-]*:[0-9]{12}:hsm-[0-9a-f]{8}
+    ClientLabel:
+      type: string
+      pattern: "[a-zA-Z0-9_.-]{2,64}"
+    Certificate:
+      type: string
+      minLength: 600
+      maxLength: 2400
+      pattern: "[\\w :+=./\\n-]*"
+    CreateLunaClientResponse:
+      description: Contains the output of the CreateLunaClient action.
+      type: object
+      properties:
+        ClientArn:
+          $ref: "#/components/schemas/ClientArn"
+          description: The ARN of the client.
+    ClientArn:
+      type: string
+      pattern: arn:aws(-iso)?:cloudhsm:[a-zA-Z0-9\-]*:[0-9]{12}:client-[0-9a-f]{8}
+    DeleteHapgResponse:
+      description: Contains the output of the DeleteHapg action.
+      type: object
+      properties:
+        Status:
+          $ref: "#/components/schemas/String"
+          description: The status of the action.
+      required:
+        - Status
+    DeleteHsmResponse:
+      description: Contains the output of the DeleteHsm operation.
+      type: object
+      properties:
+        Status:
+          $ref: "#/components/schemas/String"
+          description: The status of the operation.
+      required:
+        - Status
+    DeleteLunaClientResponse:
+      type: object
+      properties:
+        Status:
+          $ref: "#/components/schemas/String"
+          description: The status of the action.
+      required:
+        - Status
+    DescribeHapgResponse:
+      description: Contains the output of the DescribeHapg action.
+      type: object
+      properties:
+        HapgArn:
+          $ref: "#/components/schemas/HapgArn"
+          description: The ARN of the high-availability partition group.
+        HapgSerial:
+          $ref: "#/components/schemas/String"
+          description: The serial number of the high-availability partition group.
+        HsmsLastActionFailed:
+          $ref: "#/components/schemas/HsmList"
+        HsmsPendingDeletion:
+          $ref: "#/components/schemas/HsmList"
+        HsmsPendingRegistration:
+          $ref: "#/components/schemas/HsmList"
+        Label:
+          $ref: "#/components/schemas/Label"
+          description: The label for the high-availability partition group.
+        LastModifiedTimestamp:
+          $ref: "#/components/schemas/Timestamp"
+          description: The date and time the high-availability partition group was last modified.
+        PartitionSerialList:
+          $ref: "#/components/schemas/PartitionSerialList"
+          description: The list of partition serial numbers that belong to the high-availability partition group.
+        State:
+          $ref: "#/components/schemas/CloudHsmObjectState"
+          description: The state of the high-availability partition group.
+    HsmList:
+      description: Contains a list of ARNs that identify the HSMs.
+      type: array
+      items:
+        $ref: "#/components/schemas/HsmArn"
+    Timestamp:
+      type: string
+      pattern: \d*
+    PartitionSerialList:
+      type: array
+      items:
+        $ref: "#/components/schemas/PartitionSerial"
+    PartitionSerial:
+      type: string
+      pattern: \d{6,12}
+    CloudHsmObjectState:
+      type: string
+      enum:
+        - READY
+        - UPDATING
+        - DEGRADED
+    HsmSerialNumber:
+      type: string
+      pattern: \d{1,16}
+    DescribeHsmResponse:
+      description: Contains the output of the DescribeHsm operation.
+      type: object
+      properties:
+        HsmArn:
+          $ref: "#/components/schemas/HsmArn"
+          description: The ARN of the HSM.
+        Status:
+          $ref: "#/components/schemas/HsmStatus"
+          description: The status of the HSM.
+        StatusDetails:
+          $ref: "#/components/schemas/String"
+          description: Contains additional information about the status of the HSM.
+        AvailabilityZone:
+          $ref: "#/components/schemas/AZ"
+          description: The Availability Zone that the HSM is in.
+        EniId:
+          $ref: "#/components/schemas/EniId"
+          description: The identifier of the elastic network interface (ENI) attached to the HSM.
+        EniIp:
+          $ref: "#/components/schemas/IpAddress"
+          description: The IP address assigned to the HSM's ENI.
+        SubscriptionType:
+          $ref: "#/components/schemas/SubscriptionType"
+        SubscriptionStartDate:
+          $ref: "#/components/schemas/Timestamp"
+          description: The subscription start date.
+        SubscriptionEndDate:
+          $ref: "#/components/schemas/Timestamp"
+          description: The subscription end date.
+        VpcId:
+          $ref: "#/components/schemas/VpcId"
+          description: The identifier of the VPC that the HSM is in.
+        SubnetId:
+          $ref: "#/components/schemas/SubnetId"
+          description: The identifier of the subnet that the HSM is in.
+        IamRoleArn:
+          $ref: "#/components/schemas/IamRoleArn"
+          description: The ARN of the IAM role assigned to the HSM.
+        SerialNumber:
+          $ref: "#/components/schemas/HsmSerialNumber"
+          description: The serial number of the HSM.
+        VendorName:
+          $ref: "#/components/schemas/String"
+          description: The name of the HSM vendor.
+        HsmType:
+          $ref: "#/components/schemas/String"
+          description: The HSM model type.
+        SoftwareVersion:
+          $ref: "#/components/schemas/String"
+          description: The HSM software version.
+        SshPublicKey:
+          $ref: "#/components/schemas/SshKey"
+          description: The public SSH key.
+        SshKeyLastUpdated:
+          $ref: "#/components/schemas/Timestamp"
+          description: The date and time that the SSH key was last updated.
+        ServerCertUri:
+          $ref: "#/components/schemas/String"
+          description: The URI of the certificate server.
+        ServerCertLastUpdated:
+          $ref: "#/components/schemas/Timestamp"
+          description: The date and time that the server certificate was last updated.
+        Partitions:
+          $ref: "#/components/schemas/PartitionList"
+          description: The list of partitions on the HSM.
+    HsmStatus:
+      type: string
+      enum:
+        - PENDING
+        - RUNNING
+        - UPDATING
+        - SUSPENDED
+        - TERMINATING
+        - TERMINATED
+        - DEGRADED
+    AZ:
+      type: string
+      pattern: "[a-zA-Z0-9\\-]*"
+    EniId:
+      type: string
+      pattern: eni-[0-9a-f]{8}
+    VpcId:
+      type: string
+      pattern: vpc-[0-9a-f]{8}
+    PartitionList:
+      type: array
+      items:
+        $ref: "#/components/schemas/PartitionArn"
+    PartitionArn:
+      type: string
+      pattern: arn:aws(-iso)?:cloudhsm:[a-zA-Z0-9\-]*:[0-9]{12}:hsm-[0-9a-f]{8}/partition-[0-9]{6,12}
+    CertificateFingerprint:
+      type: string
+      pattern: ([0-9a-fA-F][0-9a-fA-F]:){15}[0-9a-fA-F][0-9a-fA-F]
+    DescribeLunaClientResponse:
+      type: object
+      properties:
+        ClientArn:
+          $ref: "#/components/schemas/ClientArn"
+          description: The ARN of the client.
+        Certificate:
+          $ref: "#/components/schemas/Certificate"
+          description: The certificate installed on the HSMs used by this client.
+        CertificateFingerprint:
+          $ref: "#/components/schemas/CertificateFingerprint"
+          description: The certificate fingerprint.
+        LastModifiedTimestamp:
+          $ref: "#/components/schemas/Timestamp"
+          description: The date and time the client was last modified.
+        Label:
+          $ref: "#/components/schemas/Label"
+          description: The label of the client.
+    ClientVersion:
+      type: string
+      enum:
+        - "5.1"
+        - "5.3"
+    HapgList:
+      type: array
+      items:
+        $ref: "#/components/schemas/HapgArn"
+    GetConfigResponse:
+      type: object
+      properties:
+        ConfigType:
+          $ref: "#/components/schemas/String"
+          description: The type of credentials.
+        ConfigFile:
+          $ref: "#/components/schemas/String"
+          description: The chrystoki.conf configuration file.
+        ConfigCred:
+          $ref: "#/components/schemas/String"
+          description: The certificate file containing the server.pem files of the HSMs.
+    ListAvailableZonesRowDisplay:
+      type: object
+      properties:
+        az:
+          type: string
+          description: The list of Availability Zones that have available AWS CloudHSM capacity.
+    ListAvailableZonesOutputDisplay:
+      type: object
+      properties:
+        line_items:
+          type: array
+          items:
+            $ref: "#/components/schemas/ListAvailableZonesRowDisplay"
+    PaginationToken:
+      type: string
+      pattern: "[a-zA-Z0-9+/]*"
+    ListHapgsRowDisplay:
+      type: object
+      properties:
+        hapg:
+          type: string
+          description: The list of high-availability partition groups.
+    ListHapgsOutputDisplay:
+      type: object
+      properties:
+        line_items:
+          type: array
+          items:
+            $ref: "#/components/schemas/ListHapgsRowDisplay"
+    ListHsmsRowDisplay:
+      type: object
+      properties:
+        hsm:
+          type: string
+          description: The list of ARNs that identify the HSMs.
+    ListHsmsOutputDisplay:
+      type: object
+      properties:
+        line_items:
+          type: array
+          items:
+            $ref: "#/components/schemas/ListHsmsRowDisplay"
+    ListLunaClientsRowDisplay:
+      type: object
+      properties:
+        client:
+          type: string
+          description: The list of clients.
+    ListLunaClientsOutputDisplay:
+      type: object
+      properties:
+        line_items:
+          type: array
+          items:
+            $ref: "#/components/schemas/ListLunaClientsRowDisplay"
+    ListTagsForResourceResponse:
+      type: object
+      properties:
+        TagList:
+          $ref: "#/components/schemas/TagList"
+          description: One or more tags.
+      required:
+        - TagList
+    ModifyHapgResponse:
+      type: object
+      properties:
+        HapgArn:
+          $ref: "#/components/schemas/HapgArn"
+          description: The ARN of the high-availability partition group.
+    ModifyHsmResponse:
+      description: Contains the output of the ModifyHsm operation.
+      type: object
+      properties:
+        HsmArn:
+          $ref: "#/components/schemas/HsmArn"
+          description: The ARN of the HSM.
+    ModifyLunaClientResponse:
+      type: object
+      properties:
+        ClientArn:
+          $ref: "#/components/schemas/ClientArn"
+          description: The ARN of the client.
+    TagKeyList:
+      type: array
+      items:
+        $ref: "#/components/schemas/TagKey"
+    RemoveTagsFromResourceResponse:
+      type: object
+      properties:
+        Status:
+          $ref: "#/components/schemas/String"
+          description: The status of the operation.
+      required:
+        - Status
+  x-stackQL-resources:
+    tags:
+      id: aws.cloudhsm.tags
+      name: tags
+      title: tags
+      methods:
+        add_tags_to_resource:
+          operation:
+            $ref: "#/paths/~1AddTagsToResource/post"
+          response:
+            openAPIDocKey: "200"
+            mediaType: application/json
+          request:
+            nativeCasing: pascal
+            mediaType: application/x-amz-json-1.1
+            base: "{}"
+          config:
+            requestBodyTranslate:
+              algorithm: naive
+        list_tags_for_resource:
+          operation:
+            $ref: "#/paths/~1ListTagsForResource/post"
+          response:
+            openAPIDocKey: "200"
+            mediaType: application/json
+          request:
+            nativeCasing: pascal
+            mediaType: application/x-amz-json-1.1
+            base: "{}"
+          config:
+            requestBodyTranslate:
+              algorithm: naive
+        remove_tags_from_resource:
+          operation:
+            $ref: "#/paths/~1RemoveTagsFromResource/post"
+          response:
+            openAPIDocKey: "200"
+            mediaType: application/json
+          request:
+            nativeCasing: pascal
+            mediaType: application/x-amz-json-1.1
+            base: "{}"
+          config:
+            requestBodyTranslate:
+              algorithm: naive
+      sqlVerbs:
+        select:
+          - $ref: "#/components/x-stackQL-resources/tags/methods/list_tags_for_resource"
+        insert: []
+        update:
+          - $ref: "#/components/x-stackQL-resources/tags/methods/add_tags_to_resource"
+          - $ref: "#/components/x-stackQL-resources/tags/methods/remove_tags_from_resource"
+        delete: []
+    hapgs:
+      id: aws.cloudhsm.hapgs
+      name: hapgs
+      title: hapgs
+      methods:
+        create_hapg:
+          operation:
+            $ref: "#/paths/~1CreateHapg/post"
+          response:
+            openAPIDocKey: "200"
+            mediaType: application/json
+          request:
+            nativeCasing: pascal
+            mediaType: application/x-amz-json-1.1
+            base: "{}"
+          config:
+            requestBodyTranslate:
+              algorithm: naive
+        delete_hapg:
+          operation:
+            $ref: "#/paths/~1DeleteHapg/post"
+          response:
+            openAPIDocKey: "200"
+            mediaType: application/json
+          request:
+            nativeCasing: pascal
+            mediaType: application/x-amz-json-1.1
+            base: "{}"
+          config:
+            requestBodyTranslate:
+              algorithm: naive
+        describe_hapg:
+          operation:
+            $ref: "#/paths/~1DescribeHapg/post"
+          response:
+            openAPIDocKey: "200"
+            mediaType: application/json
+          request:
+            nativeCasing: pascal
+            mediaType: application/x-amz-json-1.1
+            base: "{}"
+          config:
+            requestBodyTranslate:
+              algorithm: naive
+        list_hapgs:
+          operation:
+            $ref: "#/paths/~1ListHapgs/post"
+          response:
+            openAPIDocKey: "200"
+            mediaType: application/json
+            overrideMediaType: application/json
+            schema_override:
+              $ref: "#/components/schemas/ListHapgsOutputDisplay"
+            transform:
+              type: golang_template_json_v0.3.0
+              body: '{{- $lst := index . "HapgList" -}}{{- $tok := index . "NextToken" -}}{"line_items": [{{- if eq (kindOf $lst) "slice" -}}{{- range $i, $v := $lst -}}{{- if $i }},{{ end }}{"hapg": {{ toJson $v }}}{{- end -}}{{- end -}}]{{- if $tok }}, "NextToken": {{ toJson $tok }}{{- end }}}'
+            objectKey: $.line_items
+          request:
+            nativeCasing: pascal
+            mediaType: application/x-amz-json-1.1
+            base: "{}"
+          config:
+            pagination:
+              requestToken:
+                key: NextToken
+                location: body
+              responseToken:
+                key: $.NextToken
+                location: body
+            requestBodyTranslate:
+              algorithm: naive
+        modify_hapg:
+          operation:
+            $ref: "#/paths/~1ModifyHapg/post"
+          response:
+            openAPIDocKey: "200"
+            mediaType: application/json
+          request:
+            nativeCasing: pascal
+            mediaType: application/x-amz-json-1.1
+            base: "{}"
+          config:
+            requestBodyTranslate:
+              algorithm: naive
+      sqlVerbs:
+        select:
+          - $ref: "#/components/x-stackQL-resources/hapgs/methods/describe_hapg"
+          - $ref: "#/components/x-stackQL-resources/hapgs/methods/list_hapgs"
+        insert:
+          - $ref: "#/components/x-stackQL-resources/hapgs/methods/create_hapg"
+        update:
+          - $ref: "#/components/x-stackQL-resources/hapgs/methods/modify_hapg"
+        delete:
+          - $ref: "#/components/x-stackQL-resources/hapgs/methods/delete_hapg"
+    hsms:
+      id: aws.cloudhsm.hsms
+      name: hsms
+      title: hsms
+      methods:
+        create_hsm:
+          operation:
+            $ref: "#/paths/~1CreateHsm/post"
+          response:
+            openAPIDocKey: "200"
+            mediaType: application/json
+          request:
+            nativeCasing: pascal
+            mediaType: application/x-amz-json-1.1
+            base: "{}"
+          config:
+            requestBodyTranslate:
+              algorithm: naive
+        delete_hsm:
+          operation:
+            $ref: "#/paths/~1DeleteHsm/post"
+          response:
+            openAPIDocKey: "200"
+            mediaType: application/json
+          request:
+            nativeCasing: pascal
+            mediaType: application/x-amz-json-1.1
+            base: "{}"
+          config:
+            requestBodyTranslate:
+              algorithm: naive
+        describe_hsm:
+          operation:
+            $ref: "#/paths/~1DescribeHsm/post"
+          response:
+            openAPIDocKey: "200"
+            mediaType: application/json
+          request:
+            nativeCasing: pascal
+            mediaType: application/x-amz-json-1.1
+            base: "{}"
+          config:
+            requestBodyTranslate:
+              algorithm: naive
+        list_hsms:
+          operation:
+            $ref: "#/paths/~1ListHsms/post"
+          response:
+            openAPIDocKey: "200"
+            mediaType: application/json
+            overrideMediaType: application/json
+            schema_override:
+              $ref: "#/components/schemas/ListHsmsOutputDisplay"
+            transform:
+              type: golang_template_json_v0.3.0
+              body: '{{- $lst := index . "HsmList" -}}{{- $tok := index . "NextToken" -}}{"line_items": [{{- if eq (kindOf $lst) "slice" -}}{{- range $i, $v := $lst -}}{{- if $i }},{{ end }}{"hsm": {{ toJson $v }}}{{- end -}}{{- end -}}]{{- if $tok }}, "NextToken": {{ toJson $tok }}{{- end }}}'
+            objectKey: $.line_items
+          request:
+            nativeCasing: pascal
+            mediaType: application/x-amz-json-1.1
+            base: "{}"
+          config:
+            pagination:
+              requestToken:
+                key: NextToken
+                location: body
+              responseToken:
+                key: $.NextToken
+                location: body
+            requestBodyTranslate:
+              algorithm: naive
+        modify_hsm:
+          operation:
+            $ref: "#/paths/~1ModifyHsm/post"
+          response:
+            openAPIDocKey: "200"
+            mediaType: application/json
+          request:
+            nativeCasing: pascal
+            mediaType: application/x-amz-json-1.1
+            base: "{}"
+          config:
+            requestBodyTranslate:
+              algorithm: naive
+      sqlVerbs:
+        select:
+          - $ref: "#/components/x-stackQL-resources/hsms/methods/describe_hsm"
+          - $ref: "#/components/x-stackQL-resources/hsms/methods/list_hsms"
+        insert:
+          - $ref: "#/components/x-stackQL-resources/hsms/methods/create_hsm"
+        update:
+          - $ref: "#/components/x-stackQL-resources/hsms/methods/modify_hsm"
+        delete:
+          - $ref: "#/components/x-stackQL-resources/hsms/methods/delete_hsm"
+    luna_clients:
+      id: aws.cloudhsm.luna_clients
+      name: luna_clients
+      title: luna_clients
+      methods:
+        create_luna_client:
+          operation:
+            $ref: "#/paths/~1CreateLunaClient/post"
+          response:
+            openAPIDocKey: "200"
+            mediaType: application/json
+          request:
+            nativeCasing: pascal
+            mediaType: application/x-amz-json-1.1
+            base: "{}"
+          config:
+            requestBodyTranslate:
+              algorithm: naive
+        delete_luna_client:
+          operation:
+            $ref: "#/paths/~1DeleteLunaClient/post"
+          response:
+            openAPIDocKey: "200"
+            mediaType: application/json
+          request:
+            nativeCasing: pascal
+            mediaType: application/x-amz-json-1.1
+            base: "{}"
+          config:
+            requestBodyTranslate:
+              algorithm: naive
+        describe_luna_client:
+          operation:
+            $ref: "#/paths/~1DescribeLunaClient/post"
+          response:
+            openAPIDocKey: "200"
+            mediaType: application/json
+          request:
+            nativeCasing: pascal
+            mediaType: application/x-amz-json-1.1
+            base: "{}"
+          config:
+            requestBodyTranslate:
+              algorithm: naive
+        list_luna_clients:
+          operation:
+            $ref: "#/paths/~1ListLunaClients/post"
+          response:
+            openAPIDocKey: "200"
+            mediaType: application/json
+            overrideMediaType: application/json
+            schema_override:
+              $ref: "#/components/schemas/ListLunaClientsOutputDisplay"
+            transform:
+              type: golang_template_json_v0.3.0
+              body: '{{- $lst := index . "ClientList" -}}{{- $tok := index . "NextToken" -}}{"line_items": [{{- if eq (kindOf $lst) "slice" -}}{{- range $i, $v := $lst -}}{{- if $i }},{{ end }}{"client": {{ toJson $v }}}{{- end -}}{{- end -}}]{{- if $tok }}, "NextToken": {{ toJson $tok }}{{- end }}}'
+            objectKey: $.line_items
+          request:
+            nativeCasing: pascal
+            mediaType: application/x-amz-json-1.1
+            base: "{}"
+          config:
+            pagination:
+              requestToken:
+                key: NextToken
+                location: body
+              responseToken:
+                key: $.NextToken
+                location: body
+            requestBodyTranslate:
+              algorithm: naive
+        modify_luna_client:
+          operation:
+            $ref: "#/paths/~1ModifyLunaClient/post"
+          response:
+            openAPIDocKey: "200"
+            mediaType: application/json
+          request:
+            nativeCasing: pascal
+            mediaType: application/x-amz-json-1.1
+            base: "{}"
+          config:
+            requestBodyTranslate:
+              algorithm: naive
+      sqlVerbs:
+        select:
+          - $ref: "#/components/x-stackQL-resources/luna_clients/methods/describe_luna_client"
+        insert:
+          - $ref: "#/components/x-stackQL-resources/luna_clients/methods/create_luna_client"
+        update:
+          - $ref: "#/components/x-stackQL-resources/luna_clients/methods/modify_luna_client"
+        delete:
+          - $ref: "#/components/x-stackQL-resources/luna_clients/methods/delete_luna_client"
+    configs:
+      id: aws.cloudhsm.configs
+      name: configs
+      title: configs
+      methods:
+        get_config:
+          operation:
+            $ref: "#/paths/~1GetConfig/post"
+          response:
+            openAPIDocKey: "200"
+            mediaType: application/json
+          request:
+            nativeCasing: pascal
+            mediaType: application/x-amz-json-1.1
+            base: "{}"
+          config:
+            requestBodyTranslate:
+              algorithm: naive
+      sqlVerbs:
+        select:
+          - $ref: "#/components/x-stackQL-resources/configs/methods/get_config"
+        insert: []
+        update: []
+        delete: []
+    available_zones:
+      id: aws.cloudhsm.available_zones
+      name: available_zones
+      title: available_zones
+      methods:
+        list_available_zones:
+          operation:
+            $ref: "#/paths/~1ListAvailableZones/post"
+          response:
+            openAPIDocKey: "200"
+            mediaType: application/json
+            overrideMediaType: application/json
+            schema_override:
+              $ref: "#/components/schemas/ListAvailableZonesOutputDisplay"
+            transform:
+              type: golang_template_json_v0.3.0
+              body: '{{- $lst := index . "AZList" -}}{"line_items": [{{- if eq (kindOf $lst) "slice" -}}{{- range $i, $v := $lst -}}{{- if $i }},{{ end }}{"az": {{ toJson $v }}}{{- end -}}{{- end -}}]}'
+            objectKey: $.line_items
+          request:
+            nativeCasing: pascal
+            mediaType: application/x-amz-json-1.1
+            base: "{}"
+          config:
+            requestBodyTranslate:
+              algorithm: naive
+      sqlVerbs:
+        select:
+          - $ref: "#/components/x-stackQL-resources/available_zones/methods/list_available_zones"
+        insert: []
+        update: []
+        delete: []

@@ -29,6 +29,8 @@ type Doc interface {
 	Select(resource string) (aot.AOTExchange, error)
 	// Methods are a resource's methods with the SQL verb each is mapped to, sorted.
 	Methods(resource string) ([]aot.Method, error)
+	// Selects are every exchange the resource's SELECT verb names, in declaration order.
+	Selects(resource string) ([]aot.AOTExchange, error)
 }
 
 // Parse reads a stackql provider document.
@@ -116,10 +118,11 @@ type tokenSpec struct {
 
 type pathOp struct {
 	OperationID string      `yaml:"operationId"`
-	Parameters  []parameter `yaml:"parameters"`
+	Parameters  []pathParam `yaml:"parameters"`
 }
 
-type parameter struct {
+// pathParam is an operation parameter as the document declares it.
+type pathParam struct {
 	Name     string `yaml:"name"`
 	In       string `yaml:"in"`
 	Required bool   `yaml:"required"`
@@ -137,6 +140,17 @@ func (d *document) Resources() []string {
 }
 
 func (d *document) Select(name string) (aot.AOTExchange, error) {
+	exs, err := d.Selects(name)
+	if err != nil {
+		return nil, err
+	}
+	return exs[0], nil
+}
+
+// Selects resolves EVERY method the resource binds to SELECT. Documents routinely bind more than one
+// — a get by identifier and a list by scope — and picking the first would silently answer a different
+// question from the one asked.
+func (d *document) Selects(name string) ([]aot.AOTExchange, error) {
 	res, ok := d.Components.Resources[name]
 	if !ok {
 		return nil, fmt.Errorf("stackqldoc: no resource %q", name)
@@ -145,34 +159,51 @@ func (d *document) Select(name string) (aot.AOTExchange, error) {
 	if len(sel) == 0 {
 		return nil, fmt.Errorf("stackqldoc: resource %q declares no select verb", name)
 	}
-	// sqlVerbs point at a method by $ref rather than naming it, so the last pointer segment is the
-	// method key. Following the document's own indirection keeps this honest: whatever the doc says
-	// backs SELECT is what runs.
-	mName := lastSegment(sel[0].Ref)
-	m, ok := res.Methods[mName]
-	if !ok {
-		return nil, fmt.Errorf("stackqldoc: resource %q select references unknown method %q", name, mName)
-	}
-	path, verb, err := splitOperationRef(m.Operation.Ref)
-	if err != nil {
-		return nil, fmt.Errorf("stackqldoc: resource %q method %q: %w", name, mName, err)
-	}
-	ops, ok := d.Paths[path]
-	if !ok {
-		return nil, fmt.Errorf("stackqldoc: resource %q method %q: no path %q", name, mName, path)
-	}
-	node, ok := ops[verb]
-	if !ok {
-		return nil, fmt.Errorf("stackqldoc: resource %q method %q: path %q has no %q", name, mName, path, verb)
-	}
-	var op pathOp
-	if err := node.Decode(&op); err != nil {
-		return nil, fmt.Errorf("stackqldoc: resource %q method %q: decode %s %s: %w", name, mName, verb, path, err)
-	}
 	if len(d.Servers) == 0 {
 		return nil, fmt.Errorf("stackqldoc: document declares no servers")
 	}
-	return d.build(name, verb, path, op, m), nil
+	var out []aot.AOTExchange
+	var firstErr error
+	for _, ref := range sel {
+		// sqlVerbs point at a method by $ref rather than naming it, so the last pointer segment is the
+		// method key. Following the document's own indirection keeps this honest.
+		mName := lastSegment(ref.Ref)
+		m, ok := res.Methods[mName]
+		if !ok {
+			firstErr = orErr(firstErr, fmt.Errorf("stackqldoc: resource %q select references unknown method %q", name, mName))
+			continue
+		}
+		path, verb, err := splitOperationRef(m.Operation.Ref)
+		if err != nil {
+			firstErr = orErr(firstErr, fmt.Errorf("stackqldoc: resource %q method %q: %w", name, mName, err))
+			continue
+		}
+		node, ok := d.Paths[path][verb]
+		if !ok {
+			firstErr = orErr(firstErr, fmt.Errorf("stackqldoc: resource %q method %q: path %q has no %q", name, mName, path, verb))
+			continue
+		}
+		var op pathOp
+		if err := node.Decode(&op); err != nil {
+			firstErr = orErr(firstErr, fmt.Errorf("stackqldoc: resource %q method %q: decode %s %s: %w", name, mName, verb, path, err))
+			continue
+		}
+		out = append(out, d.build(mName, verb, path, op, m))
+	}
+	if len(out) == 0 {
+		if firstErr != nil {
+			return nil, firstErr
+		}
+		return nil, fmt.Errorf("stackqldoc: resource %q select resolves to nothing", name)
+	}
+	return out, nil
+}
+
+func orErr(first, next error) error {
+	if first != nil {
+		return first
+	}
+	return next
 }
 
 // Methods lists a resource's methods and the verb each is bound to. The verb comes from sqlVerbs,
@@ -237,10 +268,11 @@ func (d *document) build(name, verb, path string, op pathOp, m method) aot.AOTEx
 		inputs: serverVars(srv),
 		opID:   op.OperationID,
 		req: request{
-			method:    strings.ToUpper(verb),
-			url:       strings.TrimRight(srv.URL, "/") + route,
-			mediaType: m.Request.MediaType,
-			params:    params,
+			method:     strings.ToUpper(verb),
+			url:        strings.TrimRight(srv.URL, "/") + route,
+			mediaType:  m.Request.MediaType,
+			params:     params,
+			parameters: operationParams(op),
 		},
 		resp: response{
 			mediaType:  m.Response.MediaType,
@@ -359,12 +391,35 @@ func (e *aotExchange) Request() aot.Request   { return e.req }
 func (e *aotExchange) Response() aot.Response { return e.resp }
 func (e *aotExchange) Security() aot.Security { return e.sec }
 
-type request struct {
-	method    string
-	url       string
-	mediaType string
-	params    map[string]string
+// operationParams are the operation's declared inputs. The __-prefixed markers are excluded: they are
+// the operation's identity lifted out of the path key, already placed as fixed body params, and are
+// not something a caller supplies.
+func operationParams(op pathOp) []aot.Parameter {
+	out := make([]aot.Parameter, 0, len(op.Parameters))
+	for _, p := range op.Parameters {
+		if p.Name == "" || strings.HasPrefix(p.Name, "__") {
+			continue
+		}
+		out = append(out, parameter{p})
+	}
+	return out
 }
+
+type parameter struct{ p pathParam }
+
+func (p parameter) Name() string   { return p.p.Name }
+func (p parameter) In() string     { return p.p.In }
+func (p parameter) Required() bool { return p.p.Required }
+
+type request struct {
+	method     string
+	url        string
+	mediaType  string
+	params     map[string]string
+	parameters []aot.Parameter
+}
+
+func (r request) Parameters() []aot.Parameter { return r.parameters }
 
 func (r request) Method() string    { return r.method }
 func (r request) URL() string       { return r.url }

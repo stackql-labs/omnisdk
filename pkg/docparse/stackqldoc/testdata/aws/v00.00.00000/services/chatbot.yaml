@@ -1,0 +1,2382 @@
+openapi: 3.0.0
+info:
+  version: "2017-10-11"
+  title: AWS Chatbot
+  description: AWS Chatbot
+  x-serviceName: chatbot
+  x-serviceAlias: chatbot
+  x-protocol: rest-json
+  x-apiVersion: "2017-10-11"
+  x-endpointPrefix: chatbot
+servers:
+  - url: https://chatbot.{region}.amazonaws.com
+    variables:
+      region:
+        default: us-east-1
+        description: AWS region
+    description: Regional endpoint for chatbot
+paths:
+  /associate-to-configuration:
+    post:
+      operationId: AssociateToConfiguration
+      description: Links a resource (for example, a custom action) to a channel configuration.
+      parameters: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                Resource:
+                  $ref: "#/components/schemas/ResourceIdentifier"
+                ChatConfiguration:
+                  $ref: "#/components/schemas/ChatConfigurationArn"
+              required:
+                - Resource
+                - ChatConfiguration
+      responses:
+        "201":
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AssociateToConfigurationResult"
+  /create-chime-webhook-configuration:
+    post:
+      operationId: CreateChimeWebhookConfiguration
+      description: Creates an AWS Chatbot configuration for Amazon Chime.
+      parameters: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                WebhookDescription:
+                  $ref: "#/components/schemas/ChimeWebhookDescription"
+                WebhookUrl:
+                  $ref: "#/components/schemas/ChimeWebhookUrl"
+                SnsTopicArns:
+                  $ref: "#/components/schemas/SnsTopicArnList"
+                IamRoleArn:
+                  $ref: "#/components/schemas/Arn"
+                ConfigurationName:
+                  $ref: "#/components/schemas/ConfigurationName"
+                LoggingLevel:
+                  $ref: "#/components/schemas/CustomerCwLogLevel"
+                Tags:
+                  $ref: "#/components/schemas/Tags"
+              required:
+                - WebhookDescription
+                - WebhookUrl
+                - SnsTopicArns
+                - IamRoleArn
+                - ConfigurationName
+      responses:
+        "201":
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CreateChimeWebhookConfigurationResult"
+  /create-custom-action:
+    post:
+      operationId: CreateCustomAction
+      description: Creates a custom action that can be invoked as an alias or as a button on a notification.
+      parameters: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                Definition:
+                  $ref: "#/components/schemas/CustomActionDefinition"
+                AliasName:
+                  $ref: "#/components/schemas/CustomActionAliasName"
+                Attachments:
+                  $ref: "#/components/schemas/CustomActionAttachmentList"
+                Tags:
+                  $ref: "#/components/schemas/TagList"
+                ClientToken:
+                  $ref: "#/components/schemas/ClientToken"
+                ActionName:
+                  $ref: "#/components/schemas/CustomActionName"
+              required:
+                - Definition
+                - ActionName
+      responses:
+        "201":
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CreateCustomActionResult"
+  /create-ms-teams-channel-configuration:
+    post:
+      operationId: CreateMicrosoftTeamsChannelConfiguration
+      description: Creates an AWS Chatbot configuration for Microsoft Teams.
+      parameters: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                ChannelId:
+                  $ref: "#/components/schemas/TeamsChannelId"
+                ChannelName:
+                  $ref: "#/components/schemas/TeamsChannelName"
+                TeamId:
+                  $ref: "#/components/schemas/UUID"
+                TeamName:
+                  $ref: "#/components/schemas/TeamName"
+                TenantId:
+                  $ref: "#/components/schemas/UUID"
+                SnsTopicArns:
+                  $ref: "#/components/schemas/SnsTopicArnList"
+                IamRoleArn:
+                  $ref: "#/components/schemas/Arn"
+                ConfigurationName:
+                  $ref: "#/components/schemas/ConfigurationName"
+                LoggingLevel:
+                  $ref: "#/components/schemas/CustomerCwLogLevel"
+                GuardrailPolicyArns:
+                  $ref: "#/components/schemas/GuardrailPolicyArnList"
+                UserAuthorizationRequired:
+                  $ref: "#/components/schemas/BooleanAccountPreference"
+                Tags:
+                  $ref: "#/components/schemas/Tags"
+              required:
+                - ChannelId
+                - TeamId
+                - TenantId
+                - IamRoleArn
+                - ConfigurationName
+      responses:
+        "201":
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CreateTeamsChannelConfigurationResult"
+  /create-slack-channel-configuration:
+    post:
+      operationId: CreateSlackChannelConfiguration
+      description: Creates an AWS Chatbot confugration for Slack.
+      parameters: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                SlackTeamId:
+                  $ref: "#/components/schemas/SlackTeamId"
+                SlackChannelId:
+                  $ref: "#/components/schemas/SlackChannelId"
+                SlackChannelName:
+                  $ref: "#/components/schemas/SlackChannelDisplayName"
+                SnsTopicArns:
+                  $ref: "#/components/schemas/SnsTopicArnList"
+                IamRoleArn:
+                  $ref: "#/components/schemas/Arn"
+                ConfigurationName:
+                  $ref: "#/components/schemas/ConfigurationName"
+                LoggingLevel:
+                  $ref: "#/components/schemas/CustomerCwLogLevel"
+                GuardrailPolicyArns:
+                  $ref: "#/components/schemas/GuardrailPolicyArnList"
+                UserAuthorizationRequired:
+                  $ref: "#/components/schemas/BooleanAccountPreference"
+                Tags:
+                  $ref: "#/components/schemas/Tags"
+              required:
+                - SlackTeamId
+                - SlackChannelId
+                - IamRoleArn
+                - ConfigurationName
+      responses:
+        "201":
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CreateSlackChannelConfigurationResult"
+  /delete-chime-webhook-configuration:
+    post:
+      operationId: DeleteChimeWebhookConfiguration
+      description: Deletes a Amazon Chime webhook configuration for AWS Chatbot.
+      parameters: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                ChatConfigurationArn:
+                  $ref: "#/components/schemas/ChatConfigurationArn"
+              required:
+                - ChatConfigurationArn
+      responses:
+        "204":
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DeleteChimeWebhookConfigurationResult"
+  /delete-custom-action:
+    post:
+      operationId: DeleteCustomAction
+      description: Deletes a custom action.
+      parameters: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                CustomActionArn:
+                  $ref: "#/components/schemas/CustomActionArn"
+              required:
+                - CustomActionArn
+      responses:
+        "204":
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DeleteCustomActionResult"
+  /delete-ms-teams-channel-configuration:
+    post:
+      operationId: DeleteMicrosoftTeamsChannelConfiguration
+      description: Deletes a Microsoft Teams channel configuration for AWS Chatbot
+      parameters: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                ChatConfigurationArn:
+                  $ref: "#/components/schemas/ChatConfigurationArn"
+              required:
+                - ChatConfigurationArn
+      responses:
+        "204":
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DeleteTeamsChannelConfigurationResult"
+  /delete-ms-teams-configured-teams:
+    post:
+      operationId: DeleteMicrosoftTeamsConfiguredTeam
+      description: Deletes the Microsoft Teams team authorization allowing for channels to be configured in that Microsoft Teams team. Note that the Microsoft Teams team must have no channels configured to remove it.
+      parameters: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                TeamId:
+                  $ref: "#/components/schemas/UUID"
+              required:
+                - TeamId
+      responses:
+        "204":
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DeleteTeamsConfiguredTeamResult"
+  /delete-ms-teams-user-identity:
+    post:
+      operationId: DeleteMicrosoftTeamsUserIdentity
+      description: Identifes a user level permission for a channel configuration.
+      parameters: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                ChatConfigurationArn:
+                  $ref: "#/components/schemas/ChatConfigurationArn"
+                UserId:
+                  $ref: "#/components/schemas/UUID"
+              required:
+                - ChatConfigurationArn
+                - UserId
+      responses:
+        "204":
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DeleteMicrosoftTeamsUserIdentityResult"
+  /delete-slack-channel-configuration:
+    post:
+      operationId: DeleteSlackChannelConfiguration
+      description: Deletes a Slack channel configuration for AWS Chatbot
+      parameters: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                ChatConfigurationArn:
+                  $ref: "#/components/schemas/ChatConfigurationArn"
+              required:
+                - ChatConfigurationArn
+      responses:
+        "204":
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DeleteSlackChannelConfigurationResult"
+  /delete-slack-user-identity:
+    post:
+      operationId: DeleteSlackUserIdentity
+      description: Deletes a user level permission for a Slack channel configuration.
+      parameters: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                ChatConfigurationArn:
+                  $ref: "#/components/schemas/ChatConfigurationArn"
+                SlackTeamId:
+                  $ref: "#/components/schemas/SlackTeamId"
+                SlackUserId:
+                  $ref: "#/components/schemas/SlackUserId"
+              required:
+                - ChatConfigurationArn
+                - SlackTeamId
+                - SlackUserId
+      responses:
+        "204":
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DeleteSlackUserIdentityResult"
+  /delete-slack-workspace-authorization:
+    post:
+      operationId: DeleteSlackWorkspaceAuthorization
+      description: Deletes the Slack workspace authorization that allows channels to be configured in that workspace. This requires all configured channels in the workspace to be deleted.
+      parameters: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                SlackTeamId:
+                  $ref: "#/components/schemas/SlackTeamId"
+              required:
+                - SlackTeamId
+      responses:
+        "204":
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DeleteSlackWorkspaceAuthorizationResult"
+  /describe-chime-webhook-configurations:
+    post:
+      operationId: DescribeChimeWebhookConfigurations
+      description: Lists Amazon Chime webhook configurations optionally filtered by ChatConfigurationArn
+      parameters: []
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                MaxResults:
+                  $ref: "#/components/schemas/MaxResults"
+                NextToken:
+                  $ref: "#/components/schemas/PaginationToken"
+                ChatConfigurationArn:
+                  $ref: "#/components/schemas/ChatConfigurationArn"
+      responses:
+        "200":
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DescribeChimeWebhookConfigurationsResult"
+  /describe-slack-channel-configurations:
+    post:
+      operationId: DescribeSlackChannelConfigurations
+      description: Lists Slack channel configurations optionally filtered by ChatConfigurationArn
+      parameters: []
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                MaxResults:
+                  $ref: "#/components/schemas/MaxResults"
+                NextToken:
+                  $ref: "#/components/schemas/PaginationToken"
+                ChatConfigurationArn:
+                  $ref: "#/components/schemas/ChatConfigurationArn"
+      responses:
+        "200":
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DescribeSlackChannelConfigurationsResult"
+  /describe-slack-user-identities:
+    post:
+      operationId: DescribeSlackUserIdentities
+      description: Lists all Slack user identities with a mapped role.
+      parameters: []
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                ChatConfigurationArn:
+                  $ref: "#/components/schemas/ChatConfigurationArn"
+                NextToken:
+                  $ref: "#/components/schemas/PaginationToken"
+                MaxResults:
+                  $ref: "#/components/schemas/MaxResults"
+      responses:
+        "200":
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DescribeSlackUserIdentitiesResult"
+  /describe-slack-workspaces:
+    post:
+      operationId: DescribeSlackWorkspaces
+      description: List all authorized Slack workspaces connected to the AWS Account onboarded with AWS Chatbot.
+      parameters: []
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                MaxResults:
+                  $ref: "#/components/schemas/MaxResults"
+                NextToken:
+                  $ref: "#/components/schemas/PaginationToken"
+      responses:
+        "200":
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DescribeSlackWorkspacesResult"
+  /disassociate-from-configuration:
+    post:
+      operationId: DisassociateFromConfiguration
+      description: Unlink a resource, for example a custom action, from a channel configuration.
+      parameters: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                Resource:
+                  $ref: "#/components/schemas/ResourceIdentifier"
+                ChatConfiguration:
+                  $ref: "#/components/schemas/ChatConfigurationArn"
+              required:
+                - Resource
+                - ChatConfiguration
+      responses:
+        "204":
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DisassociateFromConfigurationResult"
+  /get-account-preferences:
+    post:
+      operationId: GetAccountPreferences
+      description: Returns AWS Chatbot account preferences.
+      parameters: []
+      responses:
+        "200":
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/GetAccountPreferencesResult"
+  /get-custom-action:
+    post:
+      operationId: GetCustomAction
+      description: Returns a custom action.
+      parameters: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                CustomActionArn:
+                  $ref: "#/components/schemas/CustomActionArn"
+              required:
+                - CustomActionArn
+      responses:
+        "200":
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/GetCustomActionResult"
+  /get-ms-teams-channel-configuration:
+    post:
+      operationId: GetMicrosoftTeamsChannelConfiguration
+      description: Returns a Microsoft Teams channel configuration in an AWS account.
+      parameters: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                ChatConfigurationArn:
+                  $ref: "#/components/schemas/ChatConfigurationArn"
+              required:
+                - ChatConfigurationArn
+      responses:
+        "200":
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/GetTeamsChannelConfigurationResult"
+  /list-associations:
+    post:
+      operationId: ListAssociations
+      description: Lists resources associated with a channel configuration.
+      parameters: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                ChatConfiguration:
+                  $ref: "#/components/schemas/ChatConfigurationArn"
+                MaxResults:
+                  $ref: "#/components/schemas/ListAssociationsRequestMaxResultsInteger"
+                NextToken:
+                  $ref: "#/components/schemas/ListAssociationsRequestNextTokenString"
+              required:
+                - ChatConfiguration
+      responses:
+        "200":
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ListAssociationsResult"
+  /list-custom-actions:
+    post:
+      operationId: ListCustomActions
+      description: Lists custom actions defined in this account.
+      parameters: []
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                MaxResults:
+                  $ref: "#/components/schemas/ListCustomActionsRequestMaxResultsInteger"
+                NextToken:
+                  $ref: "#/components/schemas/ListCustomActionsRequestNextTokenString"
+      responses:
+        "200":
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ListCustomActionsOutputDisplay"
+  /list-ms-teams-channel-configurations:
+    post:
+      operationId: ListMicrosoftTeamsChannelConfigurations
+      description: Lists all AWS Chatbot Microsoft Teams channel configurations in an AWS account.
+      parameters: []
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                MaxResults:
+                  $ref: "#/components/schemas/MaxResults"
+                NextToken:
+                  $ref: "#/components/schemas/PaginationToken"
+                TeamId:
+                  $ref: "#/components/schemas/UUID"
+      responses:
+        "200":
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ListTeamsChannelConfigurationsResult"
+  /list-ms-teams-configured-teams:
+    post:
+      operationId: ListMicrosoftTeamsConfiguredTeams
+      description: Lists all authorized Microsoft Teams for an AWS Account
+      parameters: []
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                MaxResults:
+                  $ref: "#/components/schemas/MaxResults"
+                NextToken:
+                  $ref: "#/components/schemas/PaginationToken"
+      responses:
+        "200":
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ListMicrosoftTeamsConfiguredTeamsResult"
+  /list-ms-teams-user-identities:
+    post:
+      operationId: ListMicrosoftTeamsUserIdentities
+      description: A list all Microsoft Teams user identities with a mapped role.
+      parameters: []
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                ChatConfigurationArn:
+                  $ref: "#/components/schemas/ChatConfigurationArn"
+                NextToken:
+                  $ref: "#/components/schemas/PaginationToken"
+                MaxResults:
+                  $ref: "#/components/schemas/MaxResults"
+      responses:
+        "200":
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ListMicrosoftTeamsUserIdentitiesResult"
+  /list-tags-for-resource:
+    post:
+      operationId: ListTagsForResource
+      description: Lists all of the tags associated with the Amazon Resource Name (ARN) that you specify. The resource can be a user, server, or role.
+      parameters: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                ResourceARN:
+                  $ref: "#/components/schemas/AmazonResourceName"
+              required:
+                - ResourceARN
+      responses:
+        "200":
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ListTagsForResourceResponse"
+  /tag-resource:
+    post:
+      operationId: TagResource
+      description: Attaches a key-value pair to a resource, as identified by its Amazon Resource Name (ARN). Resources are users, servers, roles, and other entities.
+      parameters: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                ResourceARN:
+                  $ref: "#/components/schemas/AmazonResourceName"
+                Tags:
+                  $ref: "#/components/schemas/TagList"
+              required:
+                - ResourceARN
+      responses:
+        "200":
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TagResourceResponse"
+  /untag-resource:
+    post:
+      operationId: UntagResource
+      description: Detaches a key-value pair from a resource, as identified by its Amazon Resource Name (ARN). Resources are users, servers, roles, and other entities.
+      parameters: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                ResourceARN:
+                  $ref: "#/components/schemas/AmazonResourceName"
+                TagKeys:
+                  $ref: "#/components/schemas/TagKeyList"
+              required:
+                - ResourceARN
+                - TagKeys
+      responses:
+        "200":
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UntagResourceResponse"
+  /update-account-preferences:
+    post:
+      operationId: UpdateAccountPreferences
+      description: Updates AWS Chatbot account preferences.
+      parameters: []
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                UserAuthorizationRequired:
+                  $ref: "#/components/schemas/BooleanAccountPreference"
+                TrainingDataCollectionEnabled:
+                  $ref: "#/components/schemas/BooleanAccountPreference"
+      responses:
+        "200":
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UpdateAccountPreferencesResult"
+  /update-chime-webhook-configuration:
+    post:
+      operationId: UpdateChimeWebhookConfiguration
+      description: Updates a Amazon Chime webhook configuration.
+      parameters: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                ChatConfigurationArn:
+                  $ref: "#/components/schemas/ChatConfigurationArn"
+                WebhookDescription:
+                  $ref: "#/components/schemas/ChimeWebhookDescription"
+                WebhookUrl:
+                  $ref: "#/components/schemas/ChimeWebhookUrl"
+                SnsTopicArns:
+                  $ref: "#/components/schemas/SnsTopicArnList"
+                IamRoleArn:
+                  $ref: "#/components/schemas/Arn"
+                LoggingLevel:
+                  $ref: "#/components/schemas/CustomerCwLogLevel"
+              required:
+                - ChatConfigurationArn
+      responses:
+        "200":
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UpdateChimeWebhookConfigurationResult"
+  /update-custom-action:
+    post:
+      operationId: UpdateCustomAction
+      description: Updates a custom action.
+      parameters: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                CustomActionArn:
+                  $ref: "#/components/schemas/CustomActionArn"
+                Definition:
+                  $ref: "#/components/schemas/CustomActionDefinition"
+                AliasName:
+                  $ref: "#/components/schemas/CustomActionAliasName"
+                Attachments:
+                  $ref: "#/components/schemas/CustomActionAttachmentList"
+              required:
+                - CustomActionArn
+                - Definition
+      responses:
+        "200":
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UpdateCustomActionResult"
+  /update-ms-teams-channel-configuration:
+    post:
+      operationId: UpdateMicrosoftTeamsChannelConfiguration
+      description: Updates an Microsoft Teams channel configuration.
+      parameters: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                ChatConfigurationArn:
+                  $ref: "#/components/schemas/ChatConfigurationArn"
+                ChannelId:
+                  $ref: "#/components/schemas/TeamsChannelId"
+                ChannelName:
+                  $ref: "#/components/schemas/TeamsChannelName"
+                SnsTopicArns:
+                  $ref: "#/components/schemas/SnsTopicArnList"
+                IamRoleArn:
+                  $ref: "#/components/schemas/Arn"
+                LoggingLevel:
+                  $ref: "#/components/schemas/CustomerCwLogLevel"
+                GuardrailPolicyArns:
+                  $ref: "#/components/schemas/GuardrailPolicyArnList"
+                UserAuthorizationRequired:
+                  $ref: "#/components/schemas/BooleanAccountPreference"
+              required:
+                - ChatConfigurationArn
+                - ChannelId
+      responses:
+        "200":
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UpdateTeamsChannelConfigurationResult"
+  /update-slack-channel-configuration:
+    post:
+      operationId: UpdateSlackChannelConfiguration
+      description: Updates a Slack channel configuration.
+      parameters: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                ChatConfigurationArn:
+                  $ref: "#/components/schemas/ChatConfigurationArn"
+                SlackChannelId:
+                  $ref: "#/components/schemas/SlackChannelId"
+                SlackChannelName:
+                  $ref: "#/components/schemas/SlackChannelDisplayName"
+                SnsTopicArns:
+                  $ref: "#/components/schemas/SnsTopicArnList"
+                IamRoleArn:
+                  $ref: "#/components/schemas/Arn"
+                LoggingLevel:
+                  $ref: "#/components/schemas/CustomerCwLogLevel"
+                GuardrailPolicyArns:
+                  $ref: "#/components/schemas/GuardrailPolicyArnList"
+                UserAuthorizationRequired:
+                  $ref: "#/components/schemas/BooleanAccountPreference"
+              required:
+                - ChatConfigurationArn
+                - SlackChannelId
+      responses:
+        "200":
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UpdateSlackChannelConfigurationResult"
+components:
+  parameters:
+    X-Amz-Content-Sha256:
+      in: header
+      name: X-Amz-Content-Sha256
+      required: false
+      schema:
+        type: string
+    X-Amz-Date:
+      in: header
+      name: X-Amz-Date
+      required: false
+      schema:
+        type: string
+    X-Amz-Algorithm:
+      in: header
+      name: X-Amz-Algorithm
+      required: false
+      schema:
+        type: string
+    X-Amz-Credential:
+      in: header
+      name: X-Amz-Credential
+      required: false
+      schema:
+        type: string
+    X-Amz-Security-Token:
+      in: header
+      name: X-Amz-Security-Token
+      required: false
+      schema:
+        type: string
+    X-Amz-Signature:
+      in: header
+      name: X-Amz-Signature
+      required: false
+      schema:
+        type: string
+    X-Amz-SignedHeaders:
+      in: header
+      name: X-Amz-SignedHeaders
+      required: false
+      schema:
+        type: string
+  schemas:
+    ResourceIdentifier:
+      type: string
+      minLength: 1
+      maxLength: 1011
+      pattern: arn:aws:chatbot:[A-Za-z0-9_/.-]{0,63}:[A-Za-z0-9_/.-]{0,63}:custom-action/[a-zA-Z0-9_-]{1,64}
+    ChatConfigurationArn:
+      type: string
+      minLength: 19
+      maxLength: 1169
+      pattern: arn:aws:(wheatley|chatbot):[A-Za-z0-9_/.-]{0,63}:[A-Za-z0-9_/.-]{0,63}:[A-Za-z0-9][A-Za-z0-9:_/+=,@.-]{0,1023}
+    AssociateToConfigurationResult:
+      type: object
+    ChimeWebhookDescription:
+      type: string
+      minLength: 1
+      maxLength: 255
+    ChimeWebhookUrl:
+      type: string
+      minLength: 1
+      maxLength: 255
+      pattern: https://hooks\.chime\.aws/incomingwebhooks/[A-Za-z0-9\-]+?\?token=[A-Za-z0-9\-]+
+    SnsTopicArnList:
+      type: array
+      items:
+        $ref: "#/components/schemas/Arn"
+    Arn:
+      type: string
+      minLength: 12
+      maxLength: 1224
+      pattern: arn:aws:[A-Za-z0-9][A-Za-z0-9_/.-]{0,62}:[A-Za-z0-9_/.-]{0,63}:[A-Za-z0-9_/.-]{0,63}:[A-Za-z0-9][A-Za-z0-9:_/+=,@.-]{0,1023}
+    ConfigurationName:
+      type: string
+      minLength: 1
+      maxLength: 128
+      pattern: "[A-Za-z0-9-_]+"
+    CustomerCwLogLevel:
+      type: string
+      minLength: 4
+      maxLength: 5
+      pattern: (ERROR|INFO|NONE)
+    Tags:
+      type: array
+      items:
+        $ref: "#/components/schemas/Tag"
+    Tag:
+      description: A key-value pair. A tag consists of a tag key and a tag value. Tag keys and tag values are both required, but tag values can be empty (null) strings. Do not include confidential or sensitive information in this field. For more information, see User-Defined Tag Restrictions in the AWS Billing and Cost Management User Guide.
+      type: object
+      properties:
+        TagKey:
+          $ref: "#/components/schemas/TagKey"
+          description: The key of the tag.
+        TagValue:
+          $ref: "#/components/schemas/TagValue"
+          description: The value of the tag.
+      required:
+        - TagKey
+        - TagValue
+    TagKey:
+      type: string
+      minLength: 1
+      maxLength: 128
+    TagValue:
+      type: string
+      minLength: 0
+      maxLength: 256
+    CreateChimeWebhookConfigurationResult:
+      type: object
+      properties:
+        WebhookConfiguration:
+          $ref: "#/components/schemas/ChimeWebhookConfiguration"
+          description: An Amazon Chime webhook configuration.
+    ChimeWebhookConfiguration:
+      description: An AWS Chatbot configuration for Amazon Chime.
+      type: object
+      properties:
+        WebhookDescription:
+          $ref: "#/components/schemas/ChimeWebhookDescription"
+          description: "A description of the webhook. We recommend using the convention RoomName/WebhookName. For more information, see Tutorial: Get started with Amazon Chime in the AWS Chatbot Administrator Guide."
+        ChatConfigurationArn:
+          $ref: "#/components/schemas/ChatConfigurationArn"
+          description: The Amazon Resource Name (ARN) of the ChimeWebhookConfiguration.
+        IamRoleArn:
+          $ref: "#/components/schemas/Arn"
+          description: A user-defined role that AWS Chatbot assumes. This is not the service-linked role. For more information, see IAM policies for AWS Chatbot in the AWS Chatbot Administrator Guide.
+        SnsTopicArns:
+          $ref: "#/components/schemas/SnsTopicArnList"
+          description: The Amazon Resource Names (ARNs) of the SNS topics that deliver notifications to AWS Chatbot.
+        ConfigurationName:
+          $ref: "#/components/schemas/ConfigurationName"
+          description: The name of the configuration.
+        LoggingLevel:
+          $ref: "#/components/schemas/CustomerCwLogLevel"
+          description: Logging levels include ERROR, INFO, or NONE.
+        Tags:
+          $ref: "#/components/schemas/Tags"
+          description: A map of tags assigned to a resource. A tag is a string-to-string map of key-value pairs.
+        State:
+          $ref: "#/components/schemas/ResourceState"
+          description: Either ENABLED or DISABLED. The resource returns DISABLED if the organization's AWS Chatbot policy has explicitly denied that configuration. For example, if Amazon Chime is disabled.
+        StateReason:
+          $ref: "#/components/schemas/String"
+          description: Provided if State is DISABLED. Provides context as to why the resource is disabled.
+      required:
+        - WebhookDescription
+        - ChatConfigurationArn
+        - IamRoleArn
+        - SnsTopicArns
+    ResourceState:
+      type: string
+      pattern: (ENABLED|DISABLED)
+    String:
+      type: string
+    CustomActionDefinition:
+      description: The definition of the command to run when invoked as an alias or as an action button.
+      type: object
+      properties:
+        CommandText:
+          $ref: "#/components/schemas/CustomActionDefinitionCommandTextString"
+          description: The command string to run which may include variables by prefixing with a dollar sign ($).
+      required:
+        - CommandText
+    CustomActionDefinitionCommandTextString:
+      type: string
+      minLength: 1
+      maxLength: 100
+      pattern: "[\\S\\s]+"
+    CustomActionAliasName:
+      type: string
+      minLength: 1
+      maxLength: 30
+      pattern: "[A-Za-z0-9-_]+"
+    CustomActionAttachmentList:
+      type: array
+      items:
+        $ref: "#/components/schemas/CustomActionAttachment"
+    CustomActionAttachment:
+      description: Defines when a custom action button should be attached to a notification.
+      type: object
+      properties:
+        NotificationType:
+          $ref: "#/components/schemas/CustomActionAttachmentNotificationType"
+          description: The type of notification that the custom action should be attached to.
+        ButtonText:
+          $ref: "#/components/schemas/CustomActionButtonText"
+          description: The text of the button that appears on the notification.
+        Criteria:
+          $ref: "#/components/schemas/CustomActionAttachmentCriteriaList"
+          description: The criteria for when a button should be shown based on values in the notification.
+        Variables:
+          type: object
+          properties: {}
+          description: The variables to extract from the notification.
+    CustomActionAttachmentNotificationType:
+      type: string
+      minLength: 1
+      maxLength: 100
+      pattern: "[a-zA-Z0-9-]+"
+    CustomActionButtonText:
+      type: string
+      minLength: 1
+      maxLength: 50
+      pattern: "[\\S\\s]+"
+    CustomActionAttachmentCriteriaList:
+      type: array
+      items:
+        $ref: "#/components/schemas/CustomActionAttachmentCriteria"
+    CustomActionAttachmentCriteria:
+      description: A criteria for when a button should be shown based on values in the notification
+      type: object
+      properties:
+        Operator:
+          $ref: "#/components/schemas/CustomActionAttachmentCriteriaOperator"
+          description: The operation to perform on the named variable.
+        VariableName:
+          $ref: "#/components/schemas/CustomActionAttachmentCriteriaVariableNameString"
+          description: The name of the variable to operate on.
+        Value:
+          $ref: "#/components/schemas/CustomActionAttachmentCriteriaValueString"
+          description: A value that is compared with the actual value of the variable based on the behavior of the operator.
+      required:
+        - Operator
+        - VariableName
+    CustomActionAttachmentCriteriaOperator:
+      type: string
+      enum:
+        - HAS_VALUE
+        - EQUALS
+    CustomActionAttachmentCriteriaVariableNameString:
+      type: string
+      minLength: 1
+      maxLength: 100
+      pattern: "[A-Za-z0-9-_]+"
+    CustomActionAttachmentCriteriaValueString:
+      type: string
+      minLength: 0
+      maxLength: 1024
+      pattern: "[\\S\\s]+"
+    TagList:
+      type: array
+      items:
+        $ref: "#/components/schemas/Tag"
+    ClientToken:
+      type: string
+      minLength: 33
+      maxLength: 126
+      pattern: "[\\x21-\\x7F]+"
+    CustomActionName:
+      type: string
+      minLength: 1
+      maxLength: 64
+      pattern: "[a-zA-Z0-9_-]{1,64}"
+    CreateCustomActionResult:
+      type: object
+      properties:
+        CustomActionArn:
+          $ref: "#/components/schemas/CustomActionArn"
+          description: The fully defined ARN of the custom action.
+      required:
+        - CustomActionArn
+    CustomActionArn:
+      type: string
+      minLength: 1
+      maxLength: 1011
+      pattern: arn:aws:chatbot:[A-Za-z0-9_/.-]{0,63}:[A-Za-z0-9_/.-]{0,63}:custom-action/[a-zA-Z0-9_-]{1,64}
+    TeamsChannelId:
+      type: string
+      minLength: 1
+      maxLength: 255
+      pattern: ([a-zA-Z0-9-_=+\/.,])*%3[aA]([a-zA-Z0-9-_=+\/.,])*%40([a-zA-Z0-9-_=+\/.,])*
+    TeamsChannelName:
+      type: string
+      minLength: 1
+      maxLength: 1000
+      pattern: (.*)
+    UUID:
+      type: string
+      minLength: 36
+      maxLength: 36
+      pattern: "[0-9A-Fa-f]{8}(?:-[0-9A-Fa-f]{4}){3}-[0-9A-Fa-f]{12}"
+    TeamName:
+      type: string
+      minLength: 1
+      maxLength: 255
+      pattern: (.*)
+    GuardrailPolicyArnList:
+      type: array
+      items:
+        $ref: "#/components/schemas/GuardrailPolicyArn"
+    GuardrailPolicyArn:
+      type: string
+      minLength: 11
+      maxLength: 1163
+      pattern: (^$|(?!.*\/aws-service-role\/.*)arn:aws:iam:[A-Za-z0-9_\/.-]{0,63}:[A-Za-z0-9_\/.-]{0,63}:[A-Za-z0-9][A-Za-z0-9:_\/+=,@.-]{0,1023})
+    BooleanAccountPreference:
+      type: boolean
+    CreateTeamsChannelConfigurationResult:
+      type: object
+      properties:
+        ChannelConfiguration:
+          $ref: "#/components/schemas/TeamsChannelConfiguration"
+          description: The configuration for a Microsoft Teams channel configured with AWS Chatbot.
+    TeamsChannelConfiguration:
+      description: An AWS Chatbot configuration for Microsoft Teams.
+      type: object
+      properties:
+        ChannelId:
+          $ref: "#/components/schemas/TeamsChannelId"
+          description: The ID of the Microsoft Teams channel.
+        ChannelName:
+          $ref: "#/components/schemas/TeamsChannelName"
+          description: The name of the Microsoft Teams channel.
+        TeamId:
+          $ref: "#/components/schemas/UUID"
+          description: "The ID of the Microsoft Teams authorized with AWS Chatbot. To get the team ID, you must perform the initial authorization flow with Microsoft Teams in the AWS Chatbot console. Then you can copy and paste the team ID from the console. For more information, see Step 1: Configure a Microsoft Teams client in the AWS Chatbot Administrator Guide."
+        TeamName:
+          $ref: "#/components/schemas/TeamName"
+          description: The name of the Microsoft Teams Team.
+        TenantId:
+          $ref: "#/components/schemas/UUID"
+          description: The ID of the Microsoft Teams tenant.
+        ChatConfigurationArn:
+          $ref: "#/components/schemas/ChatConfigurationArn"
+          description: The Amazon Resource Name (ARN) of the MicrosoftTeamsChannelConfiguration associated with the user identity to delete.
+        IamRoleArn:
+          $ref: "#/components/schemas/Arn"
+          description: A user-defined role that AWS Chatbot assumes. This is not the service-linked role. For more information, see IAM policies for AWS Chatbot in the AWS Chatbot Administrator Guide.
+        SnsTopicArns:
+          $ref: "#/components/schemas/SnsTopicArnList"
+          description: The Amazon Resource Names (ARNs) of the SNS topics that deliver notifications to AWS Chatbot.
+        ConfigurationName:
+          $ref: "#/components/schemas/ConfigurationName"
+          description: The name of the configuration.
+        LoggingLevel:
+          $ref: "#/components/schemas/CustomerCwLogLevel"
+          description: Logging levels include ERROR, INFO, or NONE.
+        GuardrailPolicyArns:
+          $ref: "#/components/schemas/GuardrailPolicyArnList"
+          description: The list of IAM policy ARNs that are applied as channel guardrails. The AWS managed AdministratorAccess policy is applied by default if this is not set.
+        UserAuthorizationRequired:
+          $ref: "#/components/schemas/BooleanAccountPreference"
+          description: Enables use of a user role requirement in your chat configuration.
+        Tags:
+          $ref: "#/components/schemas/Tags"
+          description: A map of tags assigned to a resource. A tag is a string-to-string map of key-value pairs.
+        State:
+          $ref: "#/components/schemas/ResourceState"
+          description: Either ENABLED or DISABLED. The resource returns DISABLED if the organization's AWS Chatbot policy has explicitly denied that configuration. For example, if Amazon Chime is disabled.
+        StateReason:
+          $ref: "#/components/schemas/String"
+          description: Provided if State is DISABLED. Provides context as to why the resource is disabled.
+      required:
+        - ChannelId
+        - TeamId
+        - TenantId
+        - ChatConfigurationArn
+        - IamRoleArn
+        - SnsTopicArns
+    SlackTeamId:
+      type: string
+      minLength: 1
+      maxLength: 255
+      pattern: "[0-9A-Z]{1,255}"
+    SlackChannelId:
+      type: string
+      minLength: 1
+      maxLength: 255
+      pattern: "[A-Za-z0-9]+"
+    SlackChannelDisplayName:
+      type: string
+      minLength: 1
+      maxLength: 255
+    CreateSlackChannelConfigurationResult:
+      type: object
+      properties:
+        ChannelConfiguration:
+          $ref: "#/components/schemas/SlackChannelConfiguration"
+          description: The configuration for a Slack channel configured with AWS Chatbot.
+    SlackChannelConfiguration:
+      description: An AWS Chatbot configuration for Slack.
+      type: object
+      properties:
+        SlackTeamName:
+          $ref: "#/components/schemas/SlackTeamName"
+          description: Name of the Slack workspace.
+        SlackTeamId:
+          $ref: "#/components/schemas/SlackTeamId"
+          description: The ID of the Slack workspace authorized with Amazon Chime.
+        SlackChannelId:
+          $ref: "#/components/schemas/SlackChannelId"
+          description: The ID of the Slack channel. To get this ID, open Slack, right click on the channel name in the left pane, then choose Copy Link. The channel ID is the 9-character string at the end of the URL. For example, ABCBBLZZZ.
+        SlackChannelName:
+          $ref: "#/components/schemas/SlackChannelDisplayName"
+          description: The name of the Slack channel.
+        ChatConfigurationArn:
+          $ref: "#/components/schemas/ChatConfigurationArn"
+          description: The Amazon Resource Name (ARN) of the SlackChannelConfiguration.
+        IamRoleArn:
+          $ref: "#/components/schemas/Arn"
+          description: A user-defined role that AWS Chatbot assumes. This is not the service-linked role. For more information, see IAM policies for AWS Chatbot in the AWS Chatbot Administrator Guide.
+        SnsTopicArns:
+          $ref: "#/components/schemas/SnsTopicArnList"
+          description: The ARNs of the SNS topics that deliver notifications to AWS Chatbot.
+        ConfigurationName:
+          $ref: "#/components/schemas/ConfigurationName"
+          description: The name of the configuration.
+        LoggingLevel:
+          $ref: "#/components/schemas/CustomerCwLogLevel"
+          description: Logging levels include ERROR, INFO, or NONE.
+        GuardrailPolicyArns:
+          $ref: "#/components/schemas/GuardrailPolicyArnList"
+          description: The list of IAM policy ARNs that are applied as channel guardrails. The AWS managed AdministratorAccess policy is applied by default if this is not set.
+        UserAuthorizationRequired:
+          $ref: "#/components/schemas/BooleanAccountPreference"
+          description: Enables use of a user role requirement in your chat configuration.
+        Tags:
+          $ref: "#/components/schemas/Tags"
+          description: A map of tags assigned to a resource. A tag is a string-to-string map of key-value pairs.
+        State:
+          $ref: "#/components/schemas/ResourceState"
+          description: Either ENABLED or DISABLED. The resource returns DISABLED if the organization's AWS Chatbot policy has explicitly denied that configuration. For example, if Amazon Chime is disabled.
+        StateReason:
+          $ref: "#/components/schemas/String"
+          description: Provided if State is DISABLED. Provides context as to why the resource is disabled.
+      required:
+        - SlackTeamName
+        - SlackTeamId
+        - SlackChannelId
+        - SlackChannelName
+        - ChatConfigurationArn
+        - IamRoleArn
+        - SnsTopicArns
+    SlackTeamName:
+      type: string
+      minLength: 1
+      maxLength: 255
+    DeleteChimeWebhookConfigurationResult:
+      type: object
+    DeleteCustomActionResult:
+      type: object
+    DeleteTeamsChannelConfigurationResult:
+      type: object
+    DeleteTeamsConfiguredTeamResult:
+      type: object
+    DeleteMicrosoftTeamsUserIdentityResult:
+      type: object
+    DeleteSlackChannelConfigurationResult:
+      type: object
+    SlackUserId:
+      type: string
+      minLength: 1
+      maxLength: 255
+      pattern: (.*)
+    DeleteSlackUserIdentityResult:
+      type: object
+    DeleteSlackWorkspaceAuthorizationResult:
+      type: object
+    MaxResults:
+      type: integer
+      minimum: 1
+      maximum: 100
+    PaginationToken:
+      type: string
+      minLength: 1
+      maxLength: 1276
+      pattern: '[a-zA-Z0-9=\/+_.\-,#:\\"{}]{4,1276}'
+    DescribeChimeWebhookConfigurationsResult:
+      type: object
+      properties:
+        NextToken:
+          $ref: "#/components/schemas/PaginationToken"
+          description: An optional token returned from a prior request. Use this token for pagination of results from this action. If this parameter is specified, the response includes only results beyond the token, up to the value specified by MaxResults.
+        WebhookConfigurations:
+          $ref: "#/components/schemas/ChimeWebhookConfigurationList"
+          description: A list of Amazon Chime webhooks associated with the account.
+    ChimeWebhookConfigurationList:
+      type: array
+      items:
+        $ref: "#/components/schemas/ChimeWebhookConfiguration"
+    DescribeSlackChannelConfigurationsResult:
+      type: object
+      properties:
+        NextToken:
+          $ref: "#/components/schemas/PaginationToken"
+          description: An optional token returned from a prior request. Use this token for pagination of results from this action. If this parameter is specified, the response includes only results beyond the token, up to the value specified by MaxResults.
+        SlackChannelConfigurations:
+          $ref: "#/components/schemas/SlackChannelConfigurationList"
+          description: A list of Slack channel configurations.
+    SlackChannelConfigurationList:
+      type: array
+      items:
+        $ref: "#/components/schemas/SlackChannelConfiguration"
+    DescribeSlackUserIdentitiesResult:
+      type: object
+      properties:
+        SlackUserIdentities:
+          $ref: "#/components/schemas/SlackUserIdentitiesList"
+          description: A list of Slack User Identities.
+        NextToken:
+          $ref: "#/components/schemas/PaginationToken"
+          description: An optional token returned from a prior request. Use this token for pagination of results from this action. If this parameter is specified, the response includes only results beyond the token, up to the value specified by MaxResults.
+    SlackUserIdentitiesList:
+      type: array
+      items:
+        $ref: "#/components/schemas/SlackUserIdentity"
+    SlackUserIdentity:
+      description: Identifes a user level permission for a channel configuration.
+      type: object
+      properties:
+        IamRoleArn:
+          $ref: "#/components/schemas/Arn"
+          description: A user-defined role that AWS Chatbot assumes. This is not the service-linked role. For more information, see IAM policies for AWS Chatbot in the AWS Chatbot Administrator Guide.
+        ChatConfigurationArn:
+          $ref: "#/components/schemas/ChatConfigurationArn"
+          description: The Amazon Resource Name (ARN) of the SlackChannelConfiguration associated with the user identity to delete.
+        SlackTeamId:
+          $ref: "#/components/schemas/SlackTeamId"
+          description: The ID of the Slack workspace authorized with AWS Chatbot.
+        SlackUserId:
+          $ref: "#/components/schemas/SlackUserId"
+          description: The ID of the user in Slack
+        AwsUserIdentity:
+          $ref: "#/components/schemas/AwsUserIdentity"
+          description: The AWS user identity ARN used to associate a Slack user ID with an IAM Role.
+      required:
+        - IamRoleArn
+        - ChatConfigurationArn
+        - SlackTeamId
+        - SlackUserId
+    AwsUserIdentity:
+      type: string
+      minLength: 15
+      maxLength: 1101
+      pattern: arn:aws:(iam|sts)::[A-Za-z0-9_/.-]{0,63}:[A-Za-z0-9][A-Za-z0-9:_/+=,@.-]{0,1023}
+    DescribeSlackWorkspacesResult:
+      type: object
+      properties:
+        SlackWorkspaces:
+          $ref: "#/components/schemas/SlackWorkspacesList"
+          description: A list of Slack workspaces registered with AWS Chatbot.
+        NextToken:
+          $ref: "#/components/schemas/PaginationToken"
+          description: An optional token returned from a prior request. Use this token for pagination of results from this action. If this parameter is specified, the response includes only results beyond the token, up to the value specified by MaxResults.
+    SlackWorkspacesList:
+      type: array
+      items:
+        $ref: "#/components/schemas/SlackWorkspace"
+    SlackWorkspace:
+      description: A Slack workspace.
+      type: object
+      properties:
+        SlackTeamId:
+          $ref: "#/components/schemas/SlackTeamId"
+          description: The ID of the Slack workspace authorized with AWS Chatbot.
+        SlackTeamName:
+          $ref: "#/components/schemas/SlackTeamName"
+          description: The name of the Slack workspace.
+        State:
+          $ref: "#/components/schemas/ResourceState"
+          description: Either ENABLED or DISABLED. The resource returns DISABLED if the organization's AWS Chatbot policy has explicitly denied that configuration. For example, if Amazon Chime is disabled.
+        StateReason:
+          $ref: "#/components/schemas/String"
+          description: Provided if State is DISABLED. Provides context as to why the resource is disabled.
+      required:
+        - SlackTeamId
+        - SlackTeamName
+    DisassociateFromConfigurationResult:
+      type: object
+    GetAccountPreferencesResult:
+      type: object
+      properties:
+        AccountPreferences:
+          $ref: "#/components/schemas/AccountPreferences"
+          description: The preferences related to AWS Chatbot usage in the calling AWS account.
+    AccountPreferences:
+      description: Preferences related to AWS Chatbot usage in the calling AWS account.
+      type: object
+      properties:
+        UserAuthorizationRequired:
+          $ref: "#/components/schemas/BooleanAccountPreference"
+          description: Enables use of a user role requirement in your chat configuration.
+        TrainingDataCollectionEnabled:
+          $ref: "#/components/schemas/BooleanAccountPreference"
+          description: Turns on training data collection. This helps improve the AWS Chatbot experience by allowing AWS Chatbot to store and use your customer information, such as AWS Chatbot configurations, notifications, user inputs, AWS Chatbot generated responses, and interaction data. This data helps us to continuously improve and develop Artificial Intelligence (AI) technologies. Your data is not shared with any third parties and is protected using sophisticated controls to prevent unauthorized access and misuse. AWS Chatbot does not store or use interactions in chat channels with Amazon Q for training AI technologies for AWS Chatbot.
+    GetCustomActionResult:
+      type: object
+      properties:
+        CustomAction:
+          $ref: "#/components/schemas/CustomAction"
+          description: Returns the custom action.
+    CustomAction:
+      description: Represents a parameterized command that can be invoked as an alias or as a notification button in the chat client.
+      type: object
+      properties:
+        CustomActionArn:
+          $ref: "#/components/schemas/CustomActionArn"
+          description: The fully defined Amazon Resource Name (ARN) of the custom action.
+        Definition:
+          $ref: "#/components/schemas/CustomActionDefinition"
+          description: The definition of the command to run when invoked an alias or as an action button.
+        AliasName:
+          $ref: "#/components/schemas/CustomActionAliasName"
+          description: The name used to invoke this action in the chat channel. For example, @aws run my-alias.
+        Attachments:
+          $ref: "#/components/schemas/CustomActionAttachmentList"
+          description: Defines when this custom action button should be attached to a notification.
+        ActionName:
+          $ref: "#/components/schemas/CustomActionName"
+          description: The name of the custom action that is included in the ARN.
+      required:
+        - CustomActionArn
+        - Definition
+    GetTeamsChannelConfigurationResult:
+      type: object
+      properties:
+        ChannelConfiguration:
+          $ref: "#/components/schemas/TeamsChannelConfiguration"
+          description: The configuration for a Microsoft Teams channel configured with AWS Chatbot.
+    ListAssociationsRequestMaxResultsInteger:
+      type: integer
+      minimum: 1
+      maximum: 100
+    ListAssociationsRequestNextTokenString:
+      type: string
+      minLength: 1
+      maxLength: 1024
+      pattern: "[\\x20-\\x7F]+"
+    ListAssociationsResult:
+      type: object
+      properties:
+        Associations:
+          $ref: "#/components/schemas/AssociationList"
+          description: The resources associated with this channel configuration.
+        NextToken:
+          $ref: "#/components/schemas/ListAssociationsResultNextTokenString"
+          description: An optional token returned from a prior request. Use this token for pagination of results from this action. If this parameter is specified, the response includes only results beyond the token, up to the value specified by MaxResults.
+      required:
+        - Associations
+    AssociationList:
+      type: array
+      items:
+        $ref: "#/components/schemas/AssociationListing"
+    AssociationListing:
+      description: A listing of an association with a channel configuration.
+      type: object
+      properties:
+        Resource:
+          $ref: "#/components/schemas/Arn"
+          description: The Amazon Resource Name (ARN) of the resource (for example, a custom action).
+      required:
+        - Resource
+    ListAssociationsResultNextTokenString:
+      type: string
+      minLength: 1
+      maxLength: 1024
+      pattern: "[\\x20-\\x7F]+"
+    ListCustomActionsRequestMaxResultsInteger:
+      type: integer
+      minimum: 1
+      maximum: 100
+    ListCustomActionsRequestNextTokenString:
+      type: string
+      minLength: 1
+      maxLength: 1024
+      pattern: "[\\x20-\\x7F]+"
+    ListCustomActionsRowDisplay:
+      type: object
+      properties:
+        custom_action:
+          type: string
+          description: A list of custom actions.
+    ListCustomActionsOutputDisplay:
+      type: object
+      properties:
+        line_items:
+          type: array
+          items:
+            $ref: "#/components/schemas/ListCustomActionsRowDisplay"
+    ListTeamsChannelConfigurationsResult:
+      type: object
+      properties:
+        NextToken:
+          $ref: "#/components/schemas/PaginationToken"
+          description: An optional token returned from a prior request. Use this token for pagination of results from this action. If this parameter is specified, the response includes only results beyond the token, up to the value specified by MaxResults.
+        TeamChannelConfigurations:
+          $ref: "#/components/schemas/TeamChannelConfigurationsList"
+          description: A list of AWS Chatbot channel configurations for Microsoft Teams.
+    TeamChannelConfigurationsList:
+      type: array
+      items:
+        $ref: "#/components/schemas/TeamsChannelConfiguration"
+    ListMicrosoftTeamsConfiguredTeamsResult:
+      type: object
+      properties:
+        ConfiguredTeams:
+          $ref: "#/components/schemas/ConfiguredTeamsList"
+          description: A list of teams in Microsoft Teams that are configured with AWS Chatbot.
+        NextToken:
+          $ref: "#/components/schemas/PaginationToken"
+          description: An optional token returned from a prior request. Use this token for pagination of results from this action. If this parameter is specified, the response includes only results beyond the token, up to the value specified by MaxResults.
+    ConfiguredTeamsList:
+      type: array
+      items:
+        $ref: "#/components/schemas/ConfiguredTeam"
+    ConfiguredTeam:
+      description: A Microsoft Teams team that is authorized with AWS Chatbot.
+      type: object
+      properties:
+        TenantId:
+          $ref: "#/components/schemas/UUID"
+          description: The ID of the Microsoft Teams tenant.
+        TeamId:
+          $ref: "#/components/schemas/UUID"
+          description: "The ID of the Microsoft Teams authorized with AWS Chatbot. To get the team ID, you must perform the initial authorization flow with Microsoft Teams in the AWS Chatbot console. Then you can copy and paste the team ID from the console. For more information, see Step 1: Configure a Microsoft Teams client in the AWS Chatbot Administrator Guide."
+        TeamName:
+          $ref: "#/components/schemas/UUID"
+          description: The name of the Microsoft Teams Team.
+        State:
+          $ref: "#/components/schemas/ResourceState"
+          description: Either ENABLED or DISABLED. The resource returns DISABLED if the organization's AWS Chatbot policy has explicitly denied that configuration. For example, if Amazon Chime is disabled.
+        StateReason:
+          $ref: "#/components/schemas/String"
+          description: Provided if State is DISABLED. Provides context as to why the resource is disabled.
+      required:
+        - TenantId
+        - TeamId
+    ListMicrosoftTeamsUserIdentitiesResult:
+      type: object
+      properties:
+        TeamsUserIdentities:
+          $ref: "#/components/schemas/TeamsUserIdentitiesList"
+          description: User level permissions associated to a channel configuration.
+        NextToken:
+          $ref: "#/components/schemas/PaginationToken"
+          description: An optional token returned from a prior request. Use this token for pagination of results from this action. If this parameter is specified, the response includes only results beyond the token, up to the value specified by MaxResults.
+    TeamsUserIdentitiesList:
+      type: array
+      items:
+        $ref: "#/components/schemas/TeamsUserIdentity"
+    TeamsUserIdentity:
+      description: Identifes a user level permission for a channel configuration.
+      type: object
+      properties:
+        IamRoleArn:
+          $ref: "#/components/schemas/Arn"
+          description: A user-defined role that AWS Chatbot assumes. This is not the service-linked role. For more information, see IAM policies for AWS Chatbot in the AWS Chatbot Administrator Guide.
+        ChatConfigurationArn:
+          $ref: "#/components/schemas/ChatConfigurationArn"
+          description: The Amazon Resource Name (ARN) of the MicrosoftTeamsChannelConfiguration associated with the user identity to delete.
+        TeamId:
+          $ref: "#/components/schemas/UUID"
+          description: "The ID of the Microsoft Teams authorized with AWS Chatbot. To get the team ID, you must perform the initial authorization flow with Microsoft Teams in the AWS Chatbot console. Then you can copy and paste the team ID from the console. For more information, see Step 1: Configure a Microsoft Teams client in the AWS Chatbot Administrator Guide."
+        UserId:
+          $ref: "#/components/schemas/UUID"
+          description: The Microsoft Teams user ID.
+        AwsUserIdentity:
+          $ref: "#/components/schemas/AwsUserIdentity"
+          description: The AWS user identity ARN used to associate a Microsoft Teams user Identity with an IAM Role.
+        TeamsChannelId:
+          $ref: "#/components/schemas/TeamsChannelId"
+          description: The ID of the Microsoft Teams channel.
+        TeamsTenantId:
+          $ref: "#/components/schemas/UUID"
+          description: The ID of the Microsoft Teams tenant.
+      required:
+        - IamRoleArn
+        - ChatConfigurationArn
+        - TeamId
+    AmazonResourceName:
+      type: string
+      minLength: 1
+      maxLength: 1011
+      pattern: arn:aws:(wheatley|chatbot):[A-Za-z0-9_/.-]{0,63}:[A-Za-z0-9_/.-]{0,63}:[A-Za-z0-9][A-Za-z0-9:_/+=,@.-]{0,1023}
+    ListTagsForResourceResponse:
+      type: object
+      properties:
+        Tags:
+          $ref: "#/components/schemas/TagList"
+          description: Key-value pairs that are assigned to a resource, usually for the purpose of grouping and searching for items. Tags are metadata that you define.
+    TagResourceResponse:
+      type: object
+    TagKeyList:
+      type: array
+      items:
+        $ref: "#/components/schemas/TagKey"
+    UntagResourceResponse:
+      type: object
+    UpdateAccountPreferencesResult:
+      type: object
+      properties:
+        AccountPreferences:
+          $ref: "#/components/schemas/AccountPreferences"
+          description: Preferences related to AWS Chatbot usage in the calling AWS account.
+    UpdateChimeWebhookConfigurationResult:
+      type: object
+      properties:
+        WebhookConfiguration:
+          $ref: "#/components/schemas/ChimeWebhookConfiguration"
+          description: A Amazon Chime webhook configuration.
+    UpdateCustomActionResult:
+      type: object
+      properties:
+        CustomActionArn:
+          $ref: "#/components/schemas/CustomActionArn"
+          description: The fully defined ARN of the custom action.
+      required:
+        - CustomActionArn
+    UpdateTeamsChannelConfigurationResult:
+      type: object
+      properties:
+        ChannelConfiguration:
+          $ref: "#/components/schemas/TeamsChannelConfiguration"
+          description: The configuration for a Microsoft Teams channel configured with AWS Chatbot.
+    UpdateSlackChannelConfigurationResult:
+      type: object
+      properties:
+        ChannelConfiguration:
+          $ref: "#/components/schemas/SlackChannelConfiguration"
+          description: The configuration for a Slack channel configured with AWS Chatbot.
+  x-stackQL-resources:
+    to_configurations:
+      id: aws.chatbot.to_configurations
+      name: to_configurations
+      title: to_configurations
+      methods:
+        associate_to_configuration:
+          operation:
+            $ref: "#/paths/~1associate-to-configuration/post"
+          response:
+            openAPIDocKey: "201"
+            mediaType: application/json
+          request:
+            nativeCasing: pascal
+          config:
+            requestBodyTranslate:
+              algorithm: naive
+      sqlVerbs:
+        select: []
+        insert: []
+        update:
+          - $ref: "#/components/x-stackQL-resources/to_configurations/methods/associate_to_configuration"
+        delete: []
+    chime_webhook_configurations:
+      id: aws.chatbot.chime_webhook_configurations
+      name: chime_webhook_configurations
+      title: chime_webhook_configurations
+      methods:
+        create_chime_webhook_configuration:
+          operation:
+            $ref: "#/paths/~1create-chime-webhook-configuration/post"
+          response:
+            openAPIDocKey: "201"
+            mediaType: application/json
+          request:
+            nativeCasing: pascal
+          config:
+            requestBodyTranslate:
+              algorithm: naive
+        delete_chime_webhook_configuration:
+          operation:
+            $ref: "#/paths/~1delete-chime-webhook-configuration/post"
+          response:
+            openAPIDocKey: "204"
+            mediaType: application/json
+          request:
+            nativeCasing: pascal
+          config:
+            requestBodyTranslate:
+              algorithm: naive
+        describe_chime_webhook_configurations:
+          operation:
+            $ref: "#/paths/~1describe-chime-webhook-configurations/post"
+          response:
+            openAPIDocKey: "200"
+            mediaType: application/json
+            objectKey: $.WebhookConfigurations
+          request:
+            nativeCasing: pascal
+          config:
+            pagination:
+              requestToken:
+                key: NextToken
+                location: body
+              responseToken:
+                key: $.NextToken
+                location: body
+            requestBodyTranslate:
+              algorithm: naive
+        update_chime_webhook_configuration:
+          operation:
+            $ref: "#/paths/~1update-chime-webhook-configuration/post"
+          response:
+            openAPIDocKey: "200"
+            mediaType: application/json
+          request:
+            nativeCasing: pascal
+          config:
+            requestBodyTranslate:
+              algorithm: naive
+      sqlVerbs:
+        select:
+          - $ref: "#/components/x-stackQL-resources/chime_webhook_configurations/methods/describe_chime_webhook_configurations"
+        insert:
+          - $ref: "#/components/x-stackQL-resources/chime_webhook_configurations/methods/create_chime_webhook_configuration"
+        update:
+          - $ref: "#/components/x-stackQL-resources/chime_webhook_configurations/methods/update_chime_webhook_configuration"
+        delete:
+          - $ref: "#/components/x-stackQL-resources/chime_webhook_configurations/methods/delete_chime_webhook_configuration"
+    custom_actions:
+      id: aws.chatbot.custom_actions
+      name: custom_actions
+      title: custom_actions
+      methods:
+        create_custom_action:
+          operation:
+            $ref: "#/paths/~1create-custom-action/post"
+          response:
+            openAPIDocKey: "201"
+            mediaType: application/json
+          request:
+            nativeCasing: pascal
+          config:
+            requestBodyTranslate:
+              algorithm: naive
+        delete_custom_action:
+          operation:
+            $ref: "#/paths/~1delete-custom-action/post"
+          response:
+            openAPIDocKey: "204"
+            mediaType: application/json
+          request:
+            nativeCasing: pascal
+          config:
+            requestBodyTranslate:
+              algorithm: naive
+        get_custom_action:
+          operation:
+            $ref: "#/paths/~1get-custom-action/post"
+          response:
+            openAPIDocKey: "200"
+            mediaType: application/json
+            objectKey: $.CustomAction
+          request:
+            nativeCasing: pascal
+          config:
+            requestBodyTranslate:
+              algorithm: naive
+        list_custom_actions:
+          operation:
+            $ref: "#/paths/~1list-custom-actions/post"
+          response:
+            openAPIDocKey: "200"
+            mediaType: application/json
+            overrideMediaType: application/json
+            schema_override:
+              $ref: "#/components/schemas/ListCustomActionsOutputDisplay"
+            transform:
+              type: golang_template_json_v0.3.0
+              body: '{{- $lst := index . "CustomActions" -}}{{- $tok := index . "NextToken" -}}{"line_items": [{{- if eq (kindOf $lst) "slice" -}}{{- range $i, $v := $lst -}}{{- if $i }},{{ end }}{"custom_action": {{ toJson $v }}}{{- end -}}{{- end -}}]{{- if $tok }}, "NextToken": {{ toJson $tok }}{{- end }}}'
+            objectKey: $.line_items
+          request:
+            nativeCasing: pascal
+          config:
+            pagination:
+              requestToken:
+                key: NextToken
+                location: body
+              responseToken:
+                key: $.NextToken
+                location: body
+            requestBodyTranslate:
+              algorithm: naive
+        update_custom_action:
+          operation:
+            $ref: "#/paths/~1update-custom-action/post"
+          response:
+            openAPIDocKey: "200"
+            mediaType: application/json
+          request:
+            nativeCasing: pascal
+          config:
+            requestBodyTranslate:
+              algorithm: naive
+      sqlVerbs:
+        select:
+          - $ref: "#/components/x-stackQL-resources/custom_actions/methods/get_custom_action"
+          - $ref: "#/components/x-stackQL-resources/custom_actions/methods/list_custom_actions"
+        insert:
+          - $ref: "#/components/x-stackQL-resources/custom_actions/methods/create_custom_action"
+        update:
+          - $ref: "#/components/x-stackQL-resources/custom_actions/methods/update_custom_action"
+        delete:
+          - $ref: "#/components/x-stackQL-resources/custom_actions/methods/delete_custom_action"
+    microsoft_teams_channel_configurations:
+      id: aws.chatbot.microsoft_teams_channel_configurations
+      name: microsoft_teams_channel_configurations
+      title: microsoft_teams_channel_configurations
+      methods:
+        create_microsoft_teams_channel_configuration:
+          operation:
+            $ref: "#/paths/~1create-ms-teams-channel-configuration/post"
+          response:
+            openAPIDocKey: "201"
+            mediaType: application/json
+          request:
+            nativeCasing: pascal
+          config:
+            requestBodyTranslate:
+              algorithm: naive
+        delete_microsoft_teams_channel_configuration:
+          operation:
+            $ref: "#/paths/~1delete-ms-teams-channel-configuration/post"
+          response:
+            openAPIDocKey: "204"
+            mediaType: application/json
+          request:
+            nativeCasing: pascal
+          config:
+            requestBodyTranslate:
+              algorithm: naive
+        get_microsoft_teams_channel_configuration:
+          operation:
+            $ref: "#/paths/~1get-ms-teams-channel-configuration/post"
+          response:
+            openAPIDocKey: "200"
+            mediaType: application/json
+            objectKey: $.ChannelConfiguration
+          request:
+            nativeCasing: pascal
+          config:
+            requestBodyTranslate:
+              algorithm: naive
+        list_microsoft_teams_channel_configurations:
+          operation:
+            $ref: "#/paths/~1list-ms-teams-channel-configurations/post"
+          response:
+            openAPIDocKey: "200"
+            mediaType: application/json
+            objectKey: $.TeamChannelConfigurations
+          request:
+            nativeCasing: pascal
+          config:
+            pagination:
+              requestToken:
+                key: NextToken
+                location: body
+              responseToken:
+                key: $.NextToken
+                location: body
+            requestBodyTranslate:
+              algorithm: naive
+        update_microsoft_teams_channel_configuration:
+          operation:
+            $ref: "#/paths/~1update-ms-teams-channel-configuration/post"
+          response:
+            openAPIDocKey: "200"
+            mediaType: application/json
+          request:
+            nativeCasing: pascal
+          config:
+            requestBodyTranslate:
+              algorithm: naive
+      sqlVerbs:
+        select:
+          - $ref: "#/components/x-stackQL-resources/microsoft_teams_channel_configurations/methods/get_microsoft_teams_channel_configuration"
+          - $ref: "#/components/x-stackQL-resources/microsoft_teams_channel_configurations/methods/list_microsoft_teams_channel_configurations"
+        insert:
+          - $ref: "#/components/x-stackQL-resources/microsoft_teams_channel_configurations/methods/create_microsoft_teams_channel_configuration"
+        update:
+          - $ref: "#/components/x-stackQL-resources/microsoft_teams_channel_configurations/methods/update_microsoft_teams_channel_configuration"
+        delete:
+          - $ref: "#/components/x-stackQL-resources/microsoft_teams_channel_configurations/methods/delete_microsoft_teams_channel_configuration"
+    slack_channel_configurations:
+      id: aws.chatbot.slack_channel_configurations
+      name: slack_channel_configurations
+      title: slack_channel_configurations
+      methods:
+        create_slack_channel_configuration:
+          operation:
+            $ref: "#/paths/~1create-slack-channel-configuration/post"
+          response:
+            openAPIDocKey: "201"
+            mediaType: application/json
+          request:
+            nativeCasing: pascal
+          config:
+            requestBodyTranslate:
+              algorithm: naive
+        delete_slack_channel_configuration:
+          operation:
+            $ref: "#/paths/~1delete-slack-channel-configuration/post"
+          response:
+            openAPIDocKey: "204"
+            mediaType: application/json
+          request:
+            nativeCasing: pascal
+          config:
+            requestBodyTranslate:
+              algorithm: naive
+        describe_slack_channel_configurations:
+          operation:
+            $ref: "#/paths/~1describe-slack-channel-configurations/post"
+          response:
+            openAPIDocKey: "200"
+            mediaType: application/json
+            objectKey: $.SlackChannelConfigurations
+          request:
+            nativeCasing: pascal
+          config:
+            pagination:
+              requestToken:
+                key: NextToken
+                location: body
+              responseToken:
+                key: $.NextToken
+                location: body
+            requestBodyTranslate:
+              algorithm: naive
+        update_slack_channel_configuration:
+          operation:
+            $ref: "#/paths/~1update-slack-channel-configuration/post"
+          response:
+            openAPIDocKey: "200"
+            mediaType: application/json
+          request:
+            nativeCasing: pascal
+          config:
+            requestBodyTranslate:
+              algorithm: naive
+      sqlVerbs:
+        select:
+          - $ref: "#/components/x-stackQL-resources/slack_channel_configurations/methods/describe_slack_channel_configurations"
+        insert:
+          - $ref: "#/components/x-stackQL-resources/slack_channel_configurations/methods/create_slack_channel_configuration"
+        update:
+          - $ref: "#/components/x-stackQL-resources/slack_channel_configurations/methods/update_slack_channel_configuration"
+        delete:
+          - $ref: "#/components/x-stackQL-resources/slack_channel_configurations/methods/delete_slack_channel_configuration"
+    microsoft_teams_configured_teams:
+      id: aws.chatbot.microsoft_teams_configured_teams
+      name: microsoft_teams_configured_teams
+      title: microsoft_teams_configured_teams
+      methods:
+        delete_microsoft_teams_configured_team:
+          operation:
+            $ref: "#/paths/~1delete-ms-teams-configured-teams/post"
+          response:
+            openAPIDocKey: "204"
+            mediaType: application/json
+          request:
+            nativeCasing: pascal
+          config:
+            requestBodyTranslate:
+              algorithm: naive
+        list_microsoft_teams_configured_teams:
+          operation:
+            $ref: "#/paths/~1list-ms-teams-configured-teams/post"
+          response:
+            openAPIDocKey: "200"
+            mediaType: application/json
+            objectKey: $.ConfiguredTeams
+          request:
+            nativeCasing: pascal
+          config:
+            pagination:
+              requestToken:
+                key: NextToken
+                location: body
+              responseToken:
+                key: $.NextToken
+                location: body
+            requestBodyTranslate:
+              algorithm: naive
+      sqlVerbs:
+        select:
+          - $ref: "#/components/x-stackQL-resources/microsoft_teams_configured_teams/methods/list_microsoft_teams_configured_teams"
+        insert: []
+        update: []
+        delete:
+          - $ref: "#/components/x-stackQL-resources/microsoft_teams_configured_teams/methods/delete_microsoft_teams_configured_team"
+    microsoft_teams_user_identities:
+      id: aws.chatbot.microsoft_teams_user_identities
+      name: microsoft_teams_user_identities
+      title: microsoft_teams_user_identities
+      methods:
+        delete_microsoft_teams_user_identity:
+          operation:
+            $ref: "#/paths/~1delete-ms-teams-user-identity/post"
+          response:
+            openAPIDocKey: "204"
+            mediaType: application/json
+          request:
+            nativeCasing: pascal
+          config:
+            requestBodyTranslate:
+              algorithm: naive
+        list_microsoft_teams_user_identities:
+          operation:
+            $ref: "#/paths/~1list-ms-teams-user-identities/post"
+          response:
+            openAPIDocKey: "200"
+            mediaType: application/json
+            objectKey: $.TeamsUserIdentities
+          request:
+            nativeCasing: pascal
+          config:
+            pagination:
+              requestToken:
+                key: NextToken
+                location: body
+              responseToken:
+                key: $.NextToken
+                location: body
+            requestBodyTranslate:
+              algorithm: naive
+      sqlVerbs:
+        select:
+          - $ref: "#/components/x-stackQL-resources/microsoft_teams_user_identities/methods/list_microsoft_teams_user_identities"
+        insert: []
+        update: []
+        delete:
+          - $ref: "#/components/x-stackQL-resources/microsoft_teams_user_identities/methods/delete_microsoft_teams_user_identity"
+    slack_user_identities:
+      id: aws.chatbot.slack_user_identities
+      name: slack_user_identities
+      title: slack_user_identities
+      methods:
+        delete_slack_user_identity:
+          operation:
+            $ref: "#/paths/~1delete-slack-user-identity/post"
+          response:
+            openAPIDocKey: "204"
+            mediaType: application/json
+          request:
+            nativeCasing: pascal
+          config:
+            requestBodyTranslate:
+              algorithm: naive
+        describe_slack_user_identities:
+          operation:
+            $ref: "#/paths/~1describe-slack-user-identities/post"
+          response:
+            openAPIDocKey: "200"
+            mediaType: application/json
+            objectKey: $.SlackUserIdentities
+          request:
+            nativeCasing: pascal
+          config:
+            pagination:
+              requestToken:
+                key: NextToken
+                location: body
+              responseToken:
+                key: $.NextToken
+                location: body
+            requestBodyTranslate:
+              algorithm: naive
+      sqlVerbs:
+        select:
+          - $ref: "#/components/x-stackQL-resources/slack_user_identities/methods/describe_slack_user_identities"
+        insert: []
+        update: []
+        delete:
+          - $ref: "#/components/x-stackQL-resources/slack_user_identities/methods/delete_slack_user_identity"
+    slack_workspaces:
+      id: aws.chatbot.slack_workspaces
+      name: slack_workspaces
+      title: slack_workspaces
+      methods:
+        delete_slack_workspace_authorization:
+          operation:
+            $ref: "#/paths/~1delete-slack-workspace-authorization/post"
+          response:
+            openAPIDocKey: "204"
+            mediaType: application/json
+          request:
+            nativeCasing: pascal
+          config:
+            requestBodyTranslate:
+              algorithm: naive
+        describe_slack_workspaces:
+          operation:
+            $ref: "#/paths/~1describe-slack-workspaces/post"
+          response:
+            openAPIDocKey: "200"
+            mediaType: application/json
+            objectKey: $.SlackWorkspaces
+          request:
+            nativeCasing: pascal
+          config:
+            pagination:
+              requestToken:
+                key: NextToken
+                location: body
+              responseToken:
+                key: $.NextToken
+                location: body
+            requestBodyTranslate:
+              algorithm: naive
+      sqlVerbs:
+        select:
+          - $ref: "#/components/x-stackQL-resources/slack_workspaces/methods/describe_slack_workspaces"
+        insert: []
+        update: []
+        delete:
+          - $ref: "#/components/x-stackQL-resources/slack_workspaces/methods/delete_slack_workspace_authorization"
+    from_configurations:
+      id: aws.chatbot.from_configurations
+      name: from_configurations
+      title: from_configurations
+      methods:
+        disassociate_from_configuration:
+          operation:
+            $ref: "#/paths/~1disassociate-from-configuration/post"
+          response:
+            openAPIDocKey: "204"
+            mediaType: application/json
+          request:
+            nativeCasing: pascal
+          config:
+            requestBodyTranslate:
+              algorithm: naive
+      sqlVerbs:
+        select: []
+        insert: []
+        update:
+          - $ref: "#/components/x-stackQL-resources/from_configurations/methods/disassociate_from_configuration"
+        delete: []
+    account_preferences:
+      id: aws.chatbot.account_preferences
+      name: account_preferences
+      title: account_preferences
+      methods:
+        get_account_preferences:
+          operation:
+            $ref: "#/paths/~1get-account-preferences/post"
+          response:
+            openAPIDocKey: "200"
+            mediaType: application/json
+            objectKey: $.AccountPreferences
+        update_account_preferences:
+          operation:
+            $ref: "#/paths/~1update-account-preferences/post"
+          response:
+            openAPIDocKey: "200"
+            mediaType: application/json
+          request:
+            nativeCasing: pascal
+          config:
+            requestBodyTranslate:
+              algorithm: naive
+      sqlVerbs:
+        select:
+          - $ref: "#/components/x-stackQL-resources/account_preferences/methods/get_account_preferences"
+        insert: []
+        update:
+          - $ref: "#/components/x-stackQL-resources/account_preferences/methods/update_account_preferences"
+        delete: []
+    associations:
+      id: aws.chatbot.associations
+      name: associations
+      title: associations
+      methods:
+        list_associations:
+          operation:
+            $ref: "#/paths/~1list-associations/post"
+          response:
+            openAPIDocKey: "200"
+            mediaType: application/json
+            objectKey: $.Associations
+          request:
+            nativeCasing: pascal
+          config:
+            pagination:
+              requestToken:
+                key: NextToken
+                location: body
+              responseToken:
+                key: $.NextToken
+                location: body
+            requestBodyTranslate:
+              algorithm: naive
+      sqlVerbs:
+        select:
+          - $ref: "#/components/x-stackQL-resources/associations/methods/list_associations"
+        insert: []
+        update: []
+        delete: []
+    tags:
+      id: aws.chatbot.tags
+      name: tags
+      title: tags
+      methods:
+        list_tags_for_resource:
+          operation:
+            $ref: "#/paths/~1list-tags-for-resource/post"
+          response:
+            openAPIDocKey: "200"
+            mediaType: application/json
+          request:
+            nativeCasing: pascal
+          config:
+            requestBodyTranslate:
+              algorithm: naive
+        tag_resource:
+          operation:
+            $ref: "#/paths/~1tag-resource/post"
+          response:
+            openAPIDocKey: "200"
+            mediaType: application/json
+          request:
+            nativeCasing: pascal
+          config:
+            requestBodyTranslate:
+              algorithm: naive
+        untag_resource:
+          operation:
+            $ref: "#/paths/~1untag-resource/post"
+          response:
+            openAPIDocKey: "200"
+            mediaType: application/json
+          request:
+            nativeCasing: pascal
+          config:
+            requestBodyTranslate:
+              algorithm: naive
+      sqlVerbs:
+        select:
+          - $ref: "#/components/x-stackQL-resources/tags/methods/list_tags_for_resource"
+        insert: []
+        update:
+          - $ref: "#/components/x-stackQL-resources/tags/methods/untag_resource"
+          - $ref: "#/components/x-stackQL-resources/tags/methods/tag_resource"
+        delete: []

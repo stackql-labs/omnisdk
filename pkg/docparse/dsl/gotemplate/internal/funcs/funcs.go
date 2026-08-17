@@ -26,6 +26,9 @@ func Map() template.FuncMap {
 		// errors on indexing nil, which would turn an absent optional field into a failed audit rather
 		// than a null. Tolerating the miss is what makes the documents' own programs run.
 		"index": Index,
+		// safeIndex is the same tolerant walk under the name newer documents use for it.
+		"safeIndex": Index,
+		"separator": Separator,
 	}
 }
 
@@ -89,6 +92,21 @@ func KindOf(v any) string {
 		return "invalid"
 	}
 	return reflect.ValueOf(v).Kind().String()
+}
+
+// Separator returns a callable that yields "" the first time and sep every time after — how the
+// documents join a JSON array without a trailing comma. It is STATEFUL by design, which is safe here
+// because a template is parsed and executed per response: each execution calls separator afresh, so
+// no two responses ever share one.
+func Separator(sep string) func() string {
+	first := true
+	return func() string {
+		if first {
+			first = false
+			return ""
+		}
+		return sep
+	}
 }
 
 // Index walks keys into nested maps and slices, returning nil at the first miss instead of erroring.

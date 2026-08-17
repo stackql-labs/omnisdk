@@ -120,6 +120,21 @@ func (c *catalog) Paths() []string {
 	return out
 }
 
+func (c *catalog) Exchanges(addr string) ([]aot.AOTExchange, error) {
+	prov, svc, res, err := c.split(addr)
+	if err != nil {
+		return nil, err
+	}
+	if prov != c.prefix+c.provider.Name() {
+		return nil, fmt.Errorf("stackqldoc: address %q is not for provider %q", addr, c.prefix+c.provider.Name())
+	}
+	doc, err := c.doc(svc)
+	if err != nil {
+		return nil, err
+	}
+	return doc.Selects(res)
+}
+
 func (c *catalog) Exchange(addr string) (aot.AOTExchange, error) {
 	prov, svc, res, err := c.split(addr)
 	if err != nil {

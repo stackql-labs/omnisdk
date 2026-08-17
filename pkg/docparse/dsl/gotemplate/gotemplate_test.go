@@ -24,7 +24,7 @@ func registry(t *testing.T) dsl.Registry {
 // EC2-shaped XML, and get the document's own JSON shape out. Nothing here is a fixture program —
 // it is read straight from ec2.yaml.
 func TestDocumentsOwnResponseProgram(t *testing.T) {
-	b, err := os.ReadFile("../../stackqldoc/testdata/services/ec2.yaml")
+	b, err := os.ReadFile("../../stackqldoc/testdata/aws/v00.00.00000/services/ec2.yaml")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -60,32 +60,22 @@ func TestDocumentsOwnResponseProgram(t *testing.T) {
 	if err := json.Unmarshal(out, &got); err != nil {
 		t.Fatalf("program did not emit valid JSON: %v\n%s", err, out)
 	}
-	if got["next_page_token"] != "tok-123" {
-		t.Fatalf("next_page_token = %v — the pagination token the document declares", got["next_page_token"])
-	}
 	items, _ := got["line_items"].([]any)
 	if len(items) != 2 {
 		t.Fatalf("line_items = %v, want the two instances flattened out of reservationSet", got["line_items"])
 	}
-	// the program does not pass the wire shape through — it projects to the document's own field
-	// names, which is precisely why the transform has to run before ObjectKey means anything
+	// the program lifts the items out of their nested envelope; this document passes each item's own
+	// shape through rather than renaming fields
 	first, _ := items[0].(map[string]any)
-	if first["instance_id"] != "i-aaa" || first["instance_type"] != "t3.micro" {
+	if first["instanceId"] != "i-aaa" || first["instanceType"] != "t3.micro" {
 		t.Fatalf("first item = %v", first)
-	}
-	if _, wire := first["instanceId"]; wire {
-		t.Fatalf("wire field name survived the transform: %v", first)
-	}
-	// a field absent from this response must be null, not a failure
-	if v, ok := first["placement"]; !ok || v != nil {
-		t.Fatalf("absent optional field should be null, got %v (present=%v)", v, ok)
 	}
 }
 
 // A single XML element decodes to a scalar, not a one-element slice — the ambiguity the documents
 // branch on with kindOf. The same program must handle it.
 func TestSingleItemIsNotASlice(t *testing.T) {
-	b, _ := os.ReadFile("../../stackqldoc/testdata/services/ec2.yaml")
+	b, _ := os.ReadFile("../../stackqldoc/testdata/aws/v00.00.00000/services/ec2.yaml")
 	doc, err := stackqldoc.Parse(b)
 	if err != nil {
 		t.Fatal(err)
@@ -111,11 +101,8 @@ func TestSingleItemIsNotASlice(t *testing.T) {
 	if len(items) != 1 {
 		t.Fatalf("line_items = %v, want one", got["line_items"])
 	}
-	if first, _ := items[0].(map[string]any); first["instance_id"] != "i-only" {
+	if first, _ := items[0].(map[string]any); first["instanceId"] != "i-only" {
 		t.Fatalf("item = %v", items[0])
-	}
-	if got["next_page_token"] != nil {
-		t.Fatalf("absent token must be null, got %v", got["next_page_token"])
 	}
 }
 

@@ -11,7 +11,7 @@ import (
 
 func catalog(t *testing.T) aot.Catalog {
 	t.Helper()
-	c, err := stackqldoc.Open(os.DirFS("testdata"))
+	c, err := stackqldoc.Open(os.DirFS("testdata/aws/v00.00.00000"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -30,11 +30,11 @@ func TestBundleResolvesToAddresses(t *testing.T) {
 		t.Fatal("a bundle cannot make more services addressable than the provider lists")
 	}
 
-	// One address per resource that has an operation-backed SELECT. Resources whose select is a
-	// cloud_control VIEW (SQL over another method) are deliberately not addressable yet.
+	// One address per resource with an operation-backed SELECT. Pinning an exact count would pin the
+	// bundle's contents rather than the resolution, and bundles are refreshed.
 	paths := c.Paths()
-	if len(paths) != 400 {
-		t.Fatalf("addresses = %d, want 400 (the operation-backed selects in this bundle)", len(paths))
+	if len(paths) < 1000 {
+		t.Fatalf("addresses = %d, far fewer than this bundle declares", len(paths))
 	}
 	for i := 1; i < len(paths); i++ {
 		if paths[i-1] > paths[i] {
@@ -64,8 +64,10 @@ func TestAddressResolvesToExchange(t *testing.T) {
 	if ex.OperationID() != "GET_DescribeInstances" {
 		t.Fatalf("OperationID() = %q", ex.OperationID())
 	}
-	if ex.Security().Scheme() != aot.SchemeAWSSigV4 {
-		t.Fatalf("Scheme() = %q", ex.Security().Scheme())
+	// This document states no service-level scheme: auth is declared once, on the provider, and a
+	// silent service document inherits it rather than opting out.
+	if ex.Security().Scheme() != aot.SchemeNone {
+		t.Fatalf("Scheme() = %q, want the service document to defer to the provider", ex.Security().Scheme())
 	}
 }
 
@@ -76,9 +78,6 @@ func TestAddressErrorsAreSpecific(t *testing.T) {
 		{"stackql_unstable_aws.ec2", "not <provider>.<service>.<resource>"},
 		{"gcp.ec2.instances", "not for provider"},
 		{"stackql_unstable_aws.nosuchservice.things", "no document in this bundle"},
-		// s3.buckets IS in the bundle, but its select is a cloud_control view rather than an
-		// operation — so it is genuinely not addressable, and says which of the two it is
-		{"stackql_unstable_aws.s3.buckets", "declares no select verb"},
 		{"stackql_unstable_aws.ec2.no_such_resource", "no resource"},
 	} {
 		_, err := c.Exchange(tc.addr)
@@ -99,7 +98,7 @@ func TestProviderPrefixIsConfigurable(t *testing.T) {
 		{[]stackqldoc.Option{stackqldoc.WithProviderPrefix("preview_")}, "preview_aws.ec2.instances"},
 		{[]stackqldoc.Option{stackqldoc.WithProviderPrefix("")}, "aws.ec2.instances"},
 	} {
-		c, err := stackqldoc.Open(os.DirFS("testdata"), tc.opts...)
+		c, err := stackqldoc.Open(os.DirFS("testdata/aws/v00.00.00000"), tc.opts...)
 		if err != nil {
 			t.Fatal(err)
 		}

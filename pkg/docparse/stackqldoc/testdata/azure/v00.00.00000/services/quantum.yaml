@@ -1,0 +1,997 @@
+openapi: 3.0.0
+servers:
+  - url: https://management.azure.com/
+info:
+  title: Azure Quantum
+  description: Quantum workspaces and provider offerings.
+  contact:
+    name: StackQL Studios
+    url: https://stackql.io/
+    email: info@stackql.io
+  version: 2023-11-13-preview-stackql-generated
+  x-serviceAlias: quantum
+  x-sdkPackage: azure-mgmt-quantum
+  x-plane: mgmt
+security:
+  - azure_auth:
+      - user_impersonation
+components:
+  securitySchemes:
+    azure_auth:
+      description: Azure Active Directory OAuth2 Flow.
+      type: oauth2
+      flows:
+        implicit:
+          authorizationUrl: https://login.microsoftonline.com/common/oauth2/authorize
+          scopes:
+            user_impersonation: impersonate your user account
+  schemas:
+    ProviderProperties:
+      type: object
+      description: Provider properties. Variables are only populated by the server, and will be ignored when sending a request.
+      properties:
+        description:
+          type: string
+          description: A description about this provider.
+        providerType:
+          type: string
+          description: Provider type.
+        company:
+          type: string
+          description: Company name.
+        defaultEndpoint:
+          type: string
+          description: Provider's default endpoint.
+        aad:
+          $ref: "#/components/schemas/ProviderPropertiesAad"
+          description: Azure Active Directory info.
+        managedApplication:
+          $ref: "#/components/schemas/ProviderPropertiesManagedApplication"
+          description: Provider's Managed-Application info.
+        targets:
+          type: array
+          items:
+            $ref: "#/components/schemas/TargetDescription"
+          description: The list of targets available from this provider.
+        skus:
+          type: array
+          items:
+            $ref: "#/components/schemas/SkuDescription"
+          description: The list of skus available from this provider.
+        quotaDimensions:
+          type: array
+          items:
+            $ref: "#/components/schemas/QuotaDimension"
+          description: The list of quota dimensions from the provider.
+        pricingDimensions:
+          type: array
+          items:
+            $ref: "#/components/schemas/PricingDimension"
+          description: The list of pricing dimensions from the provider.
+    ProviderPropertiesAad:
+      type: object
+      description: Azure Active Directory info. Variables are only populated by the server, and will be ignored when sending a request.
+      properties:
+        applicationId:
+          type: string
+          description: Provider's application id.
+        tenantId:
+          type: string
+          description: Provider's tenant id.
+    ProviderPropertiesManagedApplication:
+      type: object
+      description: Provider's Managed-Application info. Variables are only populated by the server, and will be ignored when sending a request.
+      properties:
+        publisherId:
+          type: string
+          description: Provider's publisher id.
+        offerId:
+          type: string
+          description: Provider's offer id.
+    TargetDescription:
+      type: object
+      description: Information about a Target. A target is the component that can process a specific type of Job.
+      properties:
+        id:
+          type: string
+          description: Unique target id.
+        name:
+          type: string
+          description: Display name of this target.
+        description:
+          type: string
+          description: A description about this target.
+        acceptedDataFormats:
+          type: array
+          items:
+            type: string
+          description: List of data formats accepted by this target.
+        acceptedContentEncodings:
+          type: array
+          items:
+            type: string
+          description: List of content encodings accepted by this target.
+    SkuDescription:
+      type: object
+      description: Information about a specific sku.
+      properties:
+        id:
+          type: string
+          description: Unique sku id.
+        name:
+          type: string
+          description: Display name of this sku.
+        version:
+          type: string
+          description: Display name of this sku.
+        description:
+          type: string
+          description: Description about this sku.
+        restrictedAccessUri:
+          type: string
+          description: Uri to subscribe to the restricted access sku.
+        autoAdd:
+          type: boolean
+          description: Flag to indicate whether the sku should be automatically added during workspace creation.
+        targets:
+          type: array
+          items:
+            type: string
+          description: The list of targets available for this sku.
+        quotaDimensions:
+          type: array
+          items:
+            $ref: "#/components/schemas/QuotaDimension"
+          description: The list of quota dimensions for this sku.
+        pricingDetails:
+          type: array
+          items:
+            $ref: "#/components/schemas/PricingDetail"
+          description: The list of pricing details for the sku.
+    QuotaDimension:
+      type: object
+      description: Information about a specific quota dimension.
+      properties:
+        id:
+          type: string
+          description: Unique id of this dimension.
+        scope:
+          type: string
+          description: The scope of this quota dimension.
+        period:
+          type: string
+          description: The reset period of this quota dimension.
+        quota:
+          type: number
+          description: The max limit of this dimension.
+        name:
+          type: string
+          description: The display name of this quota dimension.
+        description:
+          type: string
+          description: A description about this quota dimension.
+        unit:
+          type: string
+          description: The standard unit of measurement used for this quota dimension.
+        unitPlural:
+          type: string
+          description: The standard unit of measurement used for this quota dimension in plural form.
+    PricingDetail:
+      type: object
+      description: Detailed pricing information for an sku.
+      properties:
+        id:
+          type: string
+          description: Unique id for this pricing information.
+        value:
+          type: string
+          description: The unit cost of this sku.
+    PricingDimension:
+      type: object
+      description: Information about pricing dimension.
+      properties:
+        id:
+          type: string
+          description: Unique id of this pricing dimension.
+        name:
+          type: string
+          description: The display name of this pricing dimension.
+    ProviderDescriptionFlattened:
+      type: object
+      description: Flattened view of ProviderDescription ('properties' hoisted to the top level).
+      properties:
+        id:
+          type: string
+          description: Unique provider's id.
+        name:
+          type: string
+          description: Provider's display name.
+        description:
+          type: string
+          description: A description about this provider.
+        providerType:
+          type: string
+          description: Provider type.
+        company:
+          type: string
+          description: Company name.
+        defaultEndpoint:
+          type: string
+          description: Provider's default endpoint.
+        aad:
+          $ref: "#/components/schemas/ProviderPropertiesAad"
+          description: Azure Active Directory info.
+        managedApplication:
+          $ref: "#/components/schemas/ProviderPropertiesManagedApplication"
+          description: Provider's Managed-Application info.
+        targets:
+          type: array
+          items:
+            $ref: "#/components/schemas/TargetDescription"
+          description: The list of targets available from this provider.
+        skus:
+          type: array
+          items:
+            $ref: "#/components/schemas/SkuDescription"
+          description: The list of skus available from this provider.
+        quotaDimensions:
+          type: array
+          items:
+            $ref: "#/components/schemas/QuotaDimension"
+          description: The list of quota dimensions from the provider.
+        pricingDimensions:
+          type: array
+          items:
+            $ref: "#/components/schemas/PricingDimension"
+          description: The list of pricing dimensions from the provider.
+    PagedProviderDescriptionFlattened:
+      type: object
+      properties:
+        value:
+          type: array
+          items:
+            $ref: "#/components/schemas/ProviderDescriptionFlattened"
+        nextLink:
+          type: string
+    OperationDisplay:
+      type: object
+      description: Properties of the operation.
+      properties:
+        provider:
+          type: string
+          description: Provider name.
+        resource:
+          type: string
+          description: Resource name.
+        operation:
+          type: string
+          description: Operation name.
+        description:
+          type: string
+          description: Description of the operation.
+    Operation:
+      type: object
+      description: Operation provided by provider.
+      properties:
+        name:
+          type: string
+          description: Name of the operation.
+        isDataAction:
+          type: boolean
+          description: Indicates whether the operation is a data action.
+        display:
+          $ref: "#/components/schemas/OperationDisplay"
+          description: Properties of the operation.
+    PagedOperation:
+      type: object
+      properties:
+        value:
+          type: array
+          items:
+            $ref: "#/components/schemas/Operation"
+        nextLink:
+          type: string
+    ApiKey:
+      type: object
+      description: Azure quantum workspace Api key details. Variables are only populated by the server, and will be ignored when sending a request.
+      properties:
+        createdAt:
+          type: string
+          format: date-time
+          description: The creation time of the api key.
+        key:
+          type: string
+          description: The Api key.
+    ListKeysResult:
+      type: object
+      description: Result of list Api keys and connection strings. Variables are only populated by the server, and will be ignored when sending a request.
+      properties:
+        apiKeyEnabled:
+          type: boolean
+          description: Indicator of enablement of the Quantum workspace Api keys.
+        primaryKey:
+          $ref: "#/components/schemas/ApiKey"
+          description: The quantum workspace primary api key.
+        secondaryKey:
+          $ref: "#/components/schemas/ApiKey"
+          description: The quantum workspace secondary api key.
+        primaryConnectionString:
+          type: string
+          description: The connection string of the primary api key.
+        secondaryConnectionString:
+          type: string
+          description: The connection string of the secondary api key.
+    CheckNameAvailabilityResult:
+      type: object
+      description: Result of check name availability. Variables are only populated by the server, and will be ignored when sending a request.
+      properties:
+        nameAvailable:
+          type: boolean
+          description: Indicator of availability of the Quantum Workspace resource name.
+        reason:
+          type: string
+          description: The reason of unavailability.
+        message:
+          type: string
+          description: The detailed info regarding the reason associated with the Namespace.
+    SystemData:
+      type: object
+      description: Metadata pertaining to creation and last modification of the resource.
+      properties:
+        createdBy:
+          type: string
+          description: The identity that created the resource.
+        createdByType:
+          type: string
+          description: 'The type of identity that created the resource. Known values are: "User", "Application", "ManagedIdentity", and "Key".'
+        createdAt:
+          type: string
+          format: date-time
+          description: The timestamp of resource creation (UTC).
+        lastModifiedBy:
+          type: string
+          description: The identity that last modified the resource.
+        lastModifiedByType:
+          type: string
+          description: 'The type of identity that last modified the resource. Known values are: "User", "Application", "ManagedIdentity", and "Key".'
+        lastModifiedAt:
+          type: string
+          format: date-time
+          description: The timestamp of resource last modification (UTC).
+    WorkspaceResourceProperties:
+      type: object
+      description: Properties of a Workspace. Variables are only populated by the server, and will be ignored when sending a request.
+      properties:
+        providers:
+          type: array
+          items:
+            $ref: "#/components/schemas/Provider"
+          description: List of Providers selected for this Workspace.
+        usable:
+          type: string
+          description: 'Whether the current workspace is ready to accept Jobs. Known values are: "Yes", "No", and "Partial".'
+        provisioningState:
+          type: string
+          description: 'Provisioning status field. Known values are: "Succeeded", "ProviderLaunching", "ProviderUpdating", "ProviderDeleting", "ProviderProvisioning", and "Failed".'
+        storageAccount:
+          type: string
+          description: ARM Resource Id of the storage account associated with this workspace.
+        endpointUri:
+          type: string
+          description: The URI of the workspace endpoint.
+        apiKeyEnabled:
+          type: boolean
+          description: Indicator of enablement of the Quantum workspace Api keys.
+    Provider:
+      type: object
+      description: Information about a Provider. A Provider is an entity that offers Targets to run Azure Quantum Jobs.
+      properties:
+        providerId:
+          type: string
+          description: Unique id of this provider.
+        providerSku:
+          type: string
+          description: The sku associated with pricing information for this provider.
+        instanceUri:
+          type: string
+          description: A Uri identifying the specific instance of this provider.
+        applicationName:
+          type: string
+          description: The provider's marketplace application display name.
+        provisioningState:
+          type: string
+          description: 'Provisioning status field. Known values are: "Succeeded", "Launching", "Updating", "Deleting", "Deleted", and "Failed".'
+        resourceUsageId:
+          type: string
+          description: Id to track resource usage for the provider.
+    QuantumWorkspaceIdentity:
+      type: object
+      description: Managed Identity information. Variables are only populated by the server, and will be ignored when sending a request.
+      properties:
+        principalId:
+          type: string
+          description: The principal ID of resource identity.
+        tenantId:
+          type: string
+          description: The tenant ID of resource.
+        type:
+          type: string
+          description: 'The identity type. Known values are: "SystemAssigned" and "None".'
+    QuantumWorkspaceFlattened:
+      type: object
+      description: Flattened view of QuantumWorkspace ('properties' hoisted to the top level).
+      properties:
+        id:
+          type: string
+          description: Fully qualified resource ID for the resource. E.g. "/subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/providers/{resourceProviderNamespace}/{resourceType}/{resourceName}".
+        name:
+          type: string
+          description: The name of the resource.
+        type:
+          type: string
+          description: The type of the resource. E.g. "Microsoft.Compute/virtualMachines" or "Microsoft.Storage/storageAccounts".
+        systemData:
+          $ref: "#/components/schemas/SystemData"
+          description: Azure Resource Manager metadata containing createdBy and modifiedBy information.
+        tags:
+          type: object
+          properties: {}
+          description: Resource tags.
+        location:
+          type: string
+          description: The geo-location where the resource lives. Required.
+        identity:
+          $ref: "#/components/schemas/QuantumWorkspaceIdentity"
+          description: Managed Identity information.
+        providers:
+          type: array
+          items:
+            $ref: "#/components/schemas/Provider"
+          description: List of Providers selected for this Workspace.
+        usable:
+          type: string
+          description: 'Whether the current workspace is ready to accept Jobs. Known values are: "Yes", "No", and "Partial".'
+        provisioningState:
+          type: string
+          description: 'Provisioning status field. Known values are: "Succeeded", "ProviderLaunching", "ProviderUpdating", "ProviderDeleting", "ProviderProvisioning", and "Failed".'
+        storageAccount:
+          type: string
+          description: ARM Resource Id of the storage account associated with this workspace.
+        endpointUri:
+          type: string
+          description: The URI of the workspace endpoint.
+        apiKeyEnabled:
+          type: boolean
+          description: Indicator of enablement of the Quantum workspace Api keys.
+    PagedQuantumWorkspaceFlattened:
+      type: object
+      properties:
+        value:
+          type: array
+          items:
+            $ref: "#/components/schemas/QuantumWorkspaceFlattened"
+        nextLink:
+          type: string
+    QuantumWorkspace:
+      type: object
+      description: The resource proxy definition object for quantum workspace. Variables are only populated by the server, and will be ignored when sending a request. All required parameters must be populated in order to send to Azure.
+      properties:
+        id:
+          type: string
+          description: Fully qualified resource ID for the resource. E.g. "/subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/providers/{resourceProviderNamespace}/{resourceType}/{resourceName}".
+        name:
+          type: string
+          description: The name of the resource.
+        type:
+          type: string
+          description: The type of the resource. E.g. "Microsoft.Compute/virtualMachines" or "Microsoft.Storage/storageAccounts".
+        systemData:
+          $ref: "#/components/schemas/SystemData"
+          description: Azure Resource Manager metadata containing createdBy and modifiedBy information.
+        tags:
+          type: object
+          properties: {}
+          description: Resource tags.
+        location:
+          type: string
+          description: The geo-location where the resource lives. Required.
+        properties:
+          $ref: "#/components/schemas/WorkspaceResourceProperties"
+          description: Gets or sets the properties. Define quantum workspace's specific properties.
+        identity:
+          $ref: "#/components/schemas/QuantumWorkspaceIdentity"
+          description: Managed Identity information.
+      required:
+        - location
+  x-stackQL-resources:
+    offerings:
+      id: azure.quantum.offerings
+      name: offerings
+      title: offerings
+      methods:
+        list:
+          operation:
+            $ref: "#/paths/~1subscriptions~1{subscription_id}~1providers~1Microsoft.Quantum~1locations~1{location_name}~1offerings?api-version=2023-11-13-preview/get"
+          response:
+            openAPIDocKey: "200"
+            mediaType: application/json
+            objectKey: $.value
+            overrideMediaType: application/json
+            transform:
+              type: golang_template_json_v0.3.0
+              body: |-
+                {"value": [
+                {{- range $i, $row := index . "value" }}{{ if $i }},{{ end }}
+                  { {{ $p := index $row "properties" }}{{ if eq (kindOf $p) "map" }}{{ range $k, $v := $p }}{{ printf "%q" $k }}: {{ toJson $v }}, {{ end }}{{ end }}{{ range $k, $v := $row }}{{ printf "%q" $k }}: {{ toJson $v }}, {{ end }}"_flattened": true }
+                {{- end }}
+                ], "nextLink": {{ toJson (index . "nextLink") }}}
+      sqlVerbs:
+        select:
+          - $ref: "#/components/x-stackQL-resources/offerings/methods/list"
+        insert: []
+        update: []
+        delete: []
+    operations:
+      id: azure.quantum.operations
+      name: operations
+      title: operations
+      methods:
+        list:
+          operation:
+            $ref: "#/paths/~1providers~1Microsoft.Quantum~1operations?api-version=2023-11-13-preview/get"
+          response:
+            openAPIDocKey: "200"
+            mediaType: application/json
+            objectKey: $.value
+      sqlVerbs:
+        select:
+          - $ref: "#/components/x-stackQL-resources/operations/methods/list"
+        insert: []
+        update: []
+        delete: []
+    workspace:
+      id: azure.quantum.workspace
+      name: workspace
+      title: workspace
+      methods:
+        list_keys:
+          operation:
+            $ref: "#/paths/~1subscriptions~1{subscription_id}~1resourceGroups~1{resource_group_name}~1providers~1Microsoft.Quantum~1workspaces~1{workspace_name}~1listKeys?api-version=2023-11-13-preview/post"
+          response:
+            openAPIDocKey: "200"
+            mediaType: application/json
+        check_name_availability:
+          operation:
+            $ref: "#/paths/~1subscriptions~1{subscription_id}~1providers~1Microsoft.Quantum~1locations~1{location_name}~1checkNameAvailability?api-version=2023-11-13-preview/post"
+          response:
+            openAPIDocKey: "200"
+            mediaType: application/json
+          request:
+            nativeCasing: camel
+          config:
+            requestBodyTranslate:
+              algorithm: naive
+        regenerate_keys:
+          operation:
+            $ref: "#/paths/~1subscriptions~1{subscription_id}~1resourceGroups~1{resource_group_name}~1providers~1Microsoft.Quantum~1workspaces~1{workspace_name}~1regenerateKey?api-version=2023-11-13-preview/post"
+          response:
+            openAPIDocKey: "200"
+          request:
+            nativeCasing: camel
+          config:
+            requestBodyTranslate:
+              algorithm: naive
+      sqlVerbs:
+        select:
+          - $ref: "#/components/x-stackQL-resources/workspace/methods/list_keys"
+          - $ref: "#/components/x-stackQL-resources/workspace/methods/check_name_availability"
+        insert: []
+        update: []
+        delete: []
+    workspaces:
+      id: azure.quantum.workspaces
+      name: workspaces
+      title: workspaces
+      methods:
+        get:
+          operation:
+            $ref: "#/paths/~1subscriptions~1{subscription_id}~1resourceGroups~1{resource_group_name}~1providers~1Microsoft.Quantum~1workspaces~1{workspace_name}?api-version=2023-11-13-preview/get"
+          response:
+            openAPIDocKey: "200"
+            mediaType: application/json
+            overrideMediaType: application/json
+            transform:
+              type: golang_template_json_v0.3.0
+              body: '{{ $row := . }}{ {{ $p := index $row "properties" }}{{ if eq (kindOf $p) "map" }}{{ range $k, $v := $p }}{{ printf "%q" $k }}: {{ toJson $v }}, {{ end }}{{ end }}{{ range $k, $v := $row }}{{ printf "%q" $k }}: {{ toJson $v }}, {{ end }}"_flattened": true }'
+        create_or_update:
+          operation:
+            $ref: "#/paths/~1subscriptions~1{subscription_id}~1resourceGroups~1{resource_group_name}~1providers~1Microsoft.Quantum~1workspaces~1{workspace_name}?api-version=2023-11-13-preview/put"
+          response:
+            openAPIDocKey: "200"
+            mediaType: application/json
+          request:
+            nativeCasing: camel
+          config:
+            requestBodyTranslate:
+              algorithm: naive
+        update_tags:
+          operation:
+            $ref: "#/paths/~1subscriptions~1{subscription_id}~1resourceGroups~1{resource_group_name}~1providers~1Microsoft.Quantum~1workspaces~1{workspace_name}?api-version=2023-11-13-preview/patch"
+          response:
+            openAPIDocKey: "200"
+            mediaType: application/json
+          request:
+            nativeCasing: camel
+          config:
+            requestBodyTranslate:
+              algorithm: naive
+        delete:
+          operation:
+            $ref: "#/paths/~1subscriptions~1{subscription_id}~1resourceGroups~1{resource_group_name}~1providers~1Microsoft.Quantum~1workspaces~1{workspace_name}?api-version=2023-11-13-preview/delete"
+          response:
+            openAPIDocKey: "204"
+        list_by_subscription:
+          operation:
+            $ref: "#/paths/~1subscriptions~1{subscription_id}~1providers~1Microsoft.Quantum~1workspaces?api-version=2023-11-13-preview/get"
+          response:
+            openAPIDocKey: "200"
+            mediaType: application/json
+            objectKey: $.value
+            overrideMediaType: application/json
+            transform:
+              type: golang_template_json_v0.3.0
+              body: |-
+                {"value": [
+                {{- range $i, $row := index . "value" }}{{ if $i }},{{ end }}
+                  { {{ $p := index $row "properties" }}{{ if eq (kindOf $p) "map" }}{{ range $k, $v := $p }}{{ printf "%q" $k }}: {{ toJson $v }}, {{ end }}{{ end }}{{ range $k, $v := $row }}{{ printf "%q" $k }}: {{ toJson $v }}, {{ end }}"_flattened": true }
+                {{- end }}
+                ], "nextLink": {{ toJson (index . "nextLink") }}}
+        list_by_resource_group:
+          operation:
+            $ref: "#/paths/~1subscriptions~1{subscription_id}~1resourceGroups~1{resource_group_name}~1providers~1Microsoft.Quantum~1workspaces?api-version=2023-11-13-preview/get"
+          response:
+            openAPIDocKey: "200"
+            mediaType: application/json
+            objectKey: $.value
+            overrideMediaType: application/json
+            transform:
+              type: golang_template_json_v0.3.0
+              body: |-
+                {"value": [
+                {{- range $i, $row := index . "value" }}{{ if $i }},{{ end }}
+                  { {{ $p := index $row "properties" }}{{ if eq (kindOf $p) "map" }}{{ range $k, $v := $p }}{{ printf "%q" $k }}: {{ toJson $v }}, {{ end }}{{ end }}{{ range $k, $v := $row }}{{ printf "%q" $k }}: {{ toJson $v }}, {{ end }}"_flattened": true }
+                {{- end }}
+                ], "nextLink": {{ toJson (index . "nextLink") }}}
+      sqlVerbs:
+        select:
+          - $ref: "#/components/x-stackQL-resources/workspaces/methods/get"
+          - $ref: "#/components/x-stackQL-resources/workspaces/methods/list_by_resource_group"
+          - $ref: "#/components/x-stackQL-resources/workspaces/methods/list_by_subscription"
+        insert:
+          - $ref: "#/components/x-stackQL-resources/workspaces/methods/create_or_update"
+        update:
+          - $ref: "#/components/x-stackQL-resources/workspaces/methods/update_tags"
+        replace:
+          - $ref: "#/components/x-stackQL-resources/workspaces/methods/create_or_update"
+        delete:
+          - $ref: "#/components/x-stackQL-resources/workspaces/methods/delete"
+paths:
+  /subscriptions/{subscription_id}/providers/Microsoft.Quantum/locations/{location_name}/offerings?api-version=2023-11-13-preview:
+    get:
+      operationId: Offerings_list
+      description: Returns the list of all provider offerings available for the given location.
+      parameters:
+        - name: location_name
+          in: path
+          required: true
+          schema:
+            type: string
+          description: Location. Required.
+        - name: subscription_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PagedProviderDescriptionFlattened"
+  /providers/Microsoft.Quantum/operations?api-version=2023-11-13-preview:
+    get:
+      operationId: quantum_list
+      description: Returns list of operations.
+      parameters: []
+      responses:
+        "200":
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PagedOperation"
+  /subscriptions/{subscription_id}/resourceGroups/{resource_group_name}/providers/Microsoft.Quantum/workspaces/{workspace_name}/listKeys?api-version=2023-11-13-preview:
+    post:
+      operationId: Workspace_list_keys
+      description: Get the keys to use with the Quantum APIs. A key is used to authenticate and authorize access to the Quantum REST APIs. Only one key is needed at a time; two are given to provide seamless key regeneration.
+      parameters:
+        - name: resource_group_name
+          in: path
+          required: true
+          schema:
+            type: string
+          description: The name of the resource group. The name is case insensitive. Required.
+        - name: workspace_name
+          in: path
+          required: true
+          schema:
+            type: string
+          description: The name of the quantum workspace resource. Required.
+        - name: subscription_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ListKeysResult"
+  /subscriptions/{subscription_id}/providers/Microsoft.Quantum/locations/{location_name}/checkNameAvailability?api-version=2023-11-13-preview:
+    post:
+      operationId: Workspace_check_name_availability
+      description: Check the availability of the resource name.
+      parameters:
+        - name: location_name
+          in: path
+          required: true
+          schema:
+            type: string
+          description: Location. Required.
+        - name: subscription_id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name:
+                  type: string
+                  description: Name for checking availability.
+                type:
+                  type: string
+                  description: The resource type of Quantum Workspace.
+      responses:
+        "200":
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CheckNameAvailabilityResult"
+  /subscriptions/{subscription_id}/resourceGroups/{resource_group_name}/providers/Microsoft.Quantum/workspaces/{workspace_name}/regenerateKey?api-version=2023-11-13-preview:
+    post:
+      operationId: Workspace_regenerate_keys
+      description: Regenerate either the primary or secondary key for use with the Quantum APIs. The old key will stop working immediately.
+      parameters:
+        - name: resource_group_name
+          in: path
+          required: true
+          schema:
+            type: string
+          description: The name of the resource group. The name is case insensitive. Required.
+        - name: workspace_name
+          in: path
+          required: true
+          schema:
+            type: string
+          description: The name of the quantum workspace resource. Required.
+        - name: subscription_id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                keys:
+                  type: array
+                  items:
+                    type: string
+                  description: A list of api key names.
+      responses:
+        "200":
+          description: Success
+  /subscriptions/{subscription_id}/resourceGroups/{resource_group_name}/providers/Microsoft.Quantum/workspaces/{workspace_name}?api-version=2023-11-13-preview:
+    get:
+      operationId: Workspaces_get
+      description: Returns the Workspace resource associated with the given name.
+      parameters:
+        - name: resource_group_name
+          in: path
+          required: true
+          schema:
+            type: string
+          description: The name of the resource group. The name is case insensitive. Required.
+        - name: workspace_name
+          in: path
+          required: true
+          schema:
+            type: string
+          description: The name of the quantum workspace resource. Required.
+        - name: subscription_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/QuantumWorkspaceFlattened"
+    put:
+      operationId: Workspaces_begin_create_or_update
+      description: Creates or updates a workspace resource.
+      parameters:
+        - name: resource_group_name
+          in: path
+          required: true
+          schema:
+            type: string
+          description: The name of the resource group. The name is case insensitive. Required.
+        - name: workspace_name
+          in: path
+          required: true
+          schema:
+            type: string
+          description: The name of the quantum workspace resource. Required.
+        - name: subscription_id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                tags:
+                  type: object
+                  properties: {}
+                  description: Resource tags.
+                location:
+                  type: string
+                  description: The geo-location where the resource lives. Required.
+                properties:
+                  $ref: "#/components/schemas/WorkspaceResourceProperties"
+                  description: Gets or sets the properties. Define quantum workspace's specific properties.
+                identity:
+                  $ref: "#/components/schemas/QuantumWorkspaceIdentity"
+                  description: Managed Identity information.
+              required:
+                - location
+      responses:
+        "200":
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/QuantumWorkspace"
+    patch:
+      operationId: Workspaces_update_tags
+      description: Updates an existing workspace's tags.
+      parameters:
+        - name: resource_group_name
+          in: path
+          required: true
+          schema:
+            type: string
+          description: The name of the resource group. The name is case insensitive. Required.
+        - name: workspace_name
+          in: path
+          required: true
+          schema:
+            type: string
+          description: The name of the quantum workspace resource. Required.
+        - name: subscription_id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                tags:
+                  type: object
+                  properties: {}
+                  description: Resource tags.
+      responses:
+        "200":
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/QuantumWorkspace"
+    delete:
+      operationId: Workspaces_begin_delete
+      description: Deletes a Workspace resource.
+      parameters:
+        - name: resource_group_name
+          in: path
+          required: true
+          schema:
+            type: string
+          description: The name of the resource group. The name is case insensitive. Required.
+        - name: workspace_name
+          in: path
+          required: true
+          schema:
+            type: string
+          description: The name of the quantum workspace resource. Required.
+        - name: subscription_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "204":
+          description: Success (no content / accepted)
+  /subscriptions/{subscription_id}/providers/Microsoft.Quantum/workspaces?api-version=2023-11-13-preview:
+    get:
+      operationId: Workspaces_list_by_subscription
+      description: Gets the list of Workspaces within a Subscription.
+      parameters:
+        - name: subscription_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PagedQuantumWorkspaceFlattened"
+  /subscriptions/{subscription_id}/resourceGroups/{resource_group_name}/providers/Microsoft.Quantum/workspaces?api-version=2023-11-13-preview:
+    get:
+      operationId: Workspaces_list_by_resource_group
+      description: Gets the list of Workspaces within a resource group.
+      parameters:
+        - name: resource_group_name
+          in: path
+          required: true
+          schema:
+            type: string
+          description: The name of the resource group. The name is case insensitive. Required.
+        - name: subscription_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PagedQuantumWorkspaceFlattened"

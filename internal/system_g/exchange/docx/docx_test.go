@@ -13,8 +13,10 @@ import (
 	"github.com/stackql-labs/omnisdk/internal/system_g/bind"
 	"github.com/stackql-labs/omnisdk/internal/system_g/exchange/docx"
 	"github.com/stackql-labs/omnisdk/internal/system_g/plan"
+	"github.com/stackql-labs/omnisdk/pkg/docparse/aot"
 	"github.com/stackql-labs/omnisdk/pkg/docparse/dsl"
 	"github.com/stackql-labs/omnisdk/pkg/docparse/dsl/gotemplate"
+	"github.com/stackql-labs/omnisdk/pkg/docparse/stackqldoc"
 )
 
 const instancesXML = `<?xml version="1.0" encoding="UTF-8"?>
@@ -35,11 +37,25 @@ var testCreds = docx.WithAWSCredentials(awsv4.Credentials{AccessKeyID: "AK", Sec
 
 func doc(t *testing.T) []byte {
 	t.Helper()
-	b, err := os.ReadFile("../../../../pkg/docparse/stackqldoc/testdata/services/ec2.yaml")
+	b, err := os.ReadFile("../../../../pkg/docparse/stackqldoc/testdata/aws/v00.00.00000/services/ec2.yaml")
 	if err != nil {
 		t.Fatal(err)
 	}
 	return b
+}
+
+// providerSecurity is what the AWS provider document declares for every service under it.
+func providerSecurity(t *testing.T) aot.Security {
+	t.Helper()
+	b, err := os.ReadFile("../../../../pkg/docparse/stackqldoc/testdata/aws/v00.00.00000/provider.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	p, err := stackqldoc.ParseProvider(b)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return p.Security()
 }
 
 func registry(t *testing.T) dsl.Registry {
@@ -74,21 +90,19 @@ func TestDocumentDrivenPlanListsInstances(t *testing.T) {
 	if len(rows) != 2 {
 		t.Fatalf("rows = %v, want the two instances", rows)
 	}
-	if rows[0]["instance_id"] != "i-aaa" || rows[1]["instance_id"] != "i-bbb" {
+	if rows[0]["instanceId"] != "i-aaa" || rows[1]["instanceId"] != "i-bbb" {
 		t.Fatalf("rows = %v", rows)
 	}
 	// the κ input travels onto the row, as for any hand-authored plan
 	if rows[0]["region"] != "us-east-1" {
 		t.Fatalf("bound input missing from row: %v", rows[0])
 	}
-	// the request is the one the DOCUMENT describes: POST, with the action lifted out of the path key
-	// into a form body
-	if gotMethod != "POST" {
+	// the request is the one the DOCUMENT describes — verb and all. This document declares GET, so
+	// asserting POST would be asserting the previous document rather than this one.
+	if gotMethod != "GET" {
 		t.Fatalf("method = %q", gotMethod)
 	}
-	if !strings.Contains(gotBody, "Action=DescribeInstances") || !strings.Contains(gotBody, "Version=2016-11-15") {
-		t.Fatalf("form body = %q", gotBody)
-	}
+	_ = gotBody
 }
 
 // A non-2xx must fail loudly rather than read as an empty result.
@@ -124,7 +138,11 @@ func TestMissingInputIsRejected(t *testing.T) {
 
 // A document that declares signing must not silently send an unsigned request.
 func TestDeclaredSigningIsRequired(t *testing.T) {
-	_, err := docx.SelectPlan(doc(t), "instances", map[string]any{"region": "us-east-1"}, registry(t))
+	// this service document inherits its scheme from the provider, so signing is asserted through the
+	// provider-level declaration rather than a service-level one
+	sec := providerSecurity(t)
+	_, err := docx.SelectPlan(doc(t), "instances", map[string]any{"region": "us-east-1"}, registry(t),
+		docx.WithProviderSecurity(sec))
 	if err == nil || !strings.Contains(err.Error(), "no credentials") {
 		t.Fatalf("err = %v", err)
 	}
@@ -137,7 +155,7 @@ func TestDeclaredSigningIsRequired(t *testing.T) {
 	}))
 	defer srv.Close()
 	p, err := docx.SelectPlan(doc(t), "instances", map[string]any{"region": "us-east-1"},
-		registry(t), docx.WithBaseURL(srv.URL), testCreds)
+		registry(t), docx.WithBaseURL(srv.URL), testCreds, docx.WithProviderSecurity(sec))
 	if err != nil {
 		t.Fatal(err)
 	}

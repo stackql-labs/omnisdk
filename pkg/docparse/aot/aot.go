@@ -47,15 +47,36 @@ type Security interface {
 	Name() string
 }
 
-// Request is the declared call: a URL template, verb, and the body/query the document specifies.
+// Request is the declared call: a URL template, verb, and the parameters the document specifies.
 type Request interface {
 	Method() string
 	// URL is a template; {name} placeholders are bound from Inputs.
 	URL() string
 	MediaType() string
-	// Params are the body parameters the document declares, already stripped of its own markers.
+	// Params are the fixed BODY parameters the document states outright (an action name, an API
+	// version) — values, not inputs.
 	Params() map[string]string
+	// Parameters are the inputs the operation accepts, each with WHERE it belongs on the wire. A name
+	// alone is not enough: the same parameter is a path segment for one operation and a query string
+	// for another, and a caller's value cannot be placed without knowing which.
+	Parameters() []Parameter
 }
+
+// Parameter is one declared input and its location on the wire.
+type Parameter interface {
+	Name() string
+	// In is where the value goes: query, path, header or cookie.
+	In() string
+	Required() bool
+}
+
+// Parameter locations, as OpenAPI names them.
+const (
+	InQuery  = "query"
+	InPath   = "path"
+	InHeader = "header"
+	InCookie = "cookie"
+)
 
 // Response is how the document says to read the reply. MediaType is what the wire carries;
 // OverrideMediaType is what the declared Transform turns it into.
@@ -148,8 +169,12 @@ type Catalog interface {
 	Methods(service, resource string) ([]Method, error)
 	// Paths are every addressable exchange, sorted.
 	Paths() []string
-	// Exchange resolves one address.
+	// Exchange resolves one address to its first SELECT.
 	Exchange(path string) (AOTExchange, error)
+	// Exchanges returns EVERY exchange a resource's SELECT names. A document may bind several — a
+	// get by id and a list by scope are both SELECT — and which one runs depends on what the caller
+	// supplied, so the choice cannot be made here.
+	Exchanges(path string) ([]AOTExchange, error)
 }
 
 // Method is one operation a resource declares, and the SQL verb (if any) the document maps it to.

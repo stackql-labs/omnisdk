@@ -1,0 +1,1001 @@
+openapi: 3.0.0
+servers:
+  - url: https://management.azure.com/
+info:
+  title: Azure Advisor
+  description: Personalized recommendations to optimize Azure deployments for cost, security, reliability, performance and operational excellence.
+  contact:
+    name: StackQL Studios
+    url: https://stackql.io/
+    email: info@stackql.io
+  version: 2020-01-01-stackql-generated
+  x-serviceAlias: advisor
+  x-sdkPackage: azure-mgmt-advisor
+  x-plane: mgmt
+security:
+  - azure_auth:
+      - user_impersonation
+components:
+  securitySchemes:
+    azure_auth:
+      description: Azure Active Directory OAuth2 Flow.
+      type: oauth2
+      flows:
+        implicit:
+          authorizationUrl: https://login.microsoftonline.com/common/oauth2/authorize
+          scopes:
+            user_impersonation: impersonate your user account
+  schemas:
+    DigestConfig:
+      type: object
+      description: Advisor Digest configuration entity.
+      properties:
+        name:
+          type: string
+          description: Name of digest configuration. Value is case-insensitive and must be unique within a subscription.
+        actionGroupResourceId:
+          type: string
+          description: Action group resource id used by digest.
+        frequency:
+          type: integer
+          description: Frequency that digest will be triggered, in days. Value must be between 7 and 30 days inclusive.
+        categories:
+          type: array
+          items:
+            type: string
+          description: Categories to send digest for. If categories are not provided, then digest will be sent for all categories.
+        language:
+          type: string
+          description: Language for digest content body. Value must be ISO 639-1 code for one of Azure portal supported languages. Otherwise, it will be converted into one. Default value is English (en).
+        state:
+          type: string
+          description: 'State of digest configuration. Known values are: "Active" and "Disabled".'
+    ConfigDataFlattened:
+      type: object
+      description: Flattened view of ConfigData ('properties' hoisted to the top level).
+      properties:
+        id:
+          type: string
+          description: The resource ID.
+        name:
+          type: string
+          description: The name of the resource.
+        type:
+          type: string
+          description: The type of the resource.
+        exclude:
+          type: boolean
+          description: "Exclude the resource from Advisor evaluations. Valid values: False (default) or True."
+        lowCpuThreshold:
+          type: string
+          description: 'Minimum percentage threshold for Advisor low CPU utilization evaluation. Valid only for subscriptions. Valid values: 5 (default), 10, 15 or 20. Known values are: "5", "10", "15", and "20".'
+        digests:
+          type: array
+          items:
+            $ref: "#/components/schemas/DigestConfig"
+          description: Advisor digest configuration. Valid only for subscriptions.
+    PagedConfigDataFlattened:
+      type: object
+      properties:
+        value:
+          type: array
+          items:
+            $ref: "#/components/schemas/ConfigDataFlattened"
+        nextLink:
+          type: string
+    ConfigData:
+      type: object
+      description: The Advisor configuration data structure. Variables are only populated by the server, and will be ignored when sending a request.
+      properties:
+        id:
+          type: string
+          description: The resource ID.
+        name:
+          type: string
+          description: The name of the resource.
+        type:
+          type: string
+          description: The type of the resource.
+        properties:
+          type: object
+          properties:
+            exclude:
+              type: boolean
+              description: "Exclude the resource from Advisor evaluations. Valid values: False (default) or True."
+            lowCpuThreshold:
+              type: string
+              description: 'Minimum percentage threshold for Advisor low CPU utilization evaluation. Valid only for subscriptions. Valid values: 5 (default), 10, 15 or 20. Known values are: "5", "10", "15", and "20".'
+            digests:
+              type: array
+              items:
+                $ref: "#/components/schemas/DigestConfig"
+              description: Advisor digest configuration. Valid only for subscriptions.
+    OperationDisplayInfo:
+      type: object
+      description: The operation supported by Advisor.
+      properties:
+        description:
+          type: string
+          description: The description of the operation.
+        operation:
+          type: string
+          description: The action that users can perform, based on their permission level.
+        provider:
+          type: string
+          description: "Service provider: Microsoft Advisor."
+        resource:
+          type: string
+          description: Resource on which the operation is performed.
+    OperationEntity:
+      type: object
+      description: The operation supported by Advisor.
+      properties:
+        name:
+          type: string
+          description: "Operation name: {provider}/{resource}/{operation}."
+        display:
+          $ref: "#/components/schemas/OperationDisplayInfo"
+          description: The operation supported by Advisor.
+    PagedOperationEntity:
+      type: object
+      properties:
+        value:
+          type: array
+          items:
+            $ref: "#/components/schemas/OperationEntity"
+        nextLink:
+          type: string
+    MetadataSupportedValueDetail:
+      type: object
+      description: The metadata supported value detail.
+      properties:
+        id:
+          type: string
+          description: The id.
+        displayName:
+          type: string
+          description: The display name.
+    MetadataEntityFlattened:
+      type: object
+      description: Flattened view of MetadataEntity ('properties' hoisted to the top level).
+      properties:
+        id:
+          type: string
+          description: The resource Id of the metadata entity.
+        type:
+          type: string
+          description: The type of the metadata entity.
+        name:
+          type: string
+          description: The name of the metadata entity.
+        displayName:
+          type: string
+          description: The display name.
+        dependsOn:
+          type: array
+          items:
+            type: string
+          description: The list of keys on which this entity depends on.
+        applicableScenarios:
+          type: array
+          items:
+            type: string
+          description: The list of scenarios applicable to this metadata entity.
+        supportedValues:
+          type: array
+          items:
+            $ref: "#/components/schemas/MetadataSupportedValueDetail"
+          description: The list of supported values.
+    PagedMetadataEntityFlattened:
+      type: object
+      properties:
+        value:
+          type: array
+          items:
+            $ref: "#/components/schemas/MetadataEntityFlattened"
+        nextLink:
+          type: string
+    ShortDescription:
+      type: object
+      description: A summary of the recommendation.
+      properties:
+        problem:
+          type: string
+          description: The issue or opportunity identified by the recommendation and proposed solution.
+        solution:
+          type: string
+          description: The issue or opportunity identified by the recommendation and proposed solution.
+    ResourceMetadata:
+      type: object
+      description: Recommendation resource metadata.
+      properties:
+        resourceId:
+          type: string
+          description: Azure resource Id of the assessed resource.
+        source:
+          type: string
+          description: Source from which recommendation is generated.
+        action:
+          type: object
+          properties: {}
+          description: The action to view resource.
+        singular:
+          type: string
+          description: "The singular user friendly name of resource type. eg: virtual machine."
+        plural:
+          type: string
+          description: "The plural user friendly name of resource type. eg: virtual machines."
+    ResourceRecommendationBaseFlattened:
+      type: object
+      description: Flattened view of ResourceRecommendationBase ('properties' hoisted to the top level).
+      properties:
+        id:
+          type: string
+          description: The resource ID.
+        name:
+          type: string
+          description: The name of the resource.
+        type:
+          type: string
+          description: The type of the resource.
+        category:
+          type: string
+          description: 'The category of the recommendation. Known values are: "HighAvailability", "Security", "Performance", "Cost", and "OperationalExcellence".'
+        impact:
+          type: string
+          description: 'The business impact of the recommendation. Known values are: "High", "Medium", and "Low".'
+        impactedField:
+          type: string
+          description: The resource type identified by Advisor.
+        impactedValue:
+          type: string
+          description: The resource identified by Advisor.
+        lastUpdated:
+          type: string
+          format: date-time
+          description: The most recent time that Advisor checked the validity of the recommendation.
+        metadata:
+          type: object
+          properties: {}
+          description: The recommendation metadata.
+        recommendationTypeId:
+          type: string
+          description: The recommendation-type GUID.
+        shortDescription:
+          $ref: "#/components/schemas/ShortDescription"
+          description: A summary of the recommendation.
+        suppressionIds:
+          type: array
+          items:
+            type: string
+          description: The list of snoozed and dismissed rules for the recommendation.
+        extendedProperties:
+          type: object
+          properties: {}
+          description: Extended properties.
+        resourceMetadata:
+          $ref: "#/components/schemas/ResourceMetadata"
+          description: Metadata of resource that was assessed.
+        description:
+          type: string
+          description: The detailed description of recommendation.
+        label:
+          type: string
+          description: The label of recommendation.
+        learnMoreLink:
+          type: string
+          description: The link to learn more about recommendation and generation logic.
+        potentialBenefits:
+          type: string
+          description: The potential benefit of implementing recommendation.
+        actions:
+          type: array
+          items:
+            type: object
+            properties: {}
+          description: The list of recommended actions to implement recommendation.
+        remediation:
+          type: object
+          properties: {}
+          description: The automated way to apply recommendation.
+        exposedMetadataProperties:
+          type: object
+          properties: {}
+          description: The recommendation metadata properties exposed to customer to provide additional information.
+    PagedResourceRecommendationBaseFlattened:
+      type: object
+      properties:
+        value:
+          type: array
+          items:
+            $ref: "#/components/schemas/ResourceRecommendationBaseFlattened"
+        nextLink:
+          type: string
+    SuppressionContractFlattened:
+      type: object
+      description: Flattened view of SuppressionContract ('properties' hoisted to the top level).
+      properties:
+        id:
+          type: string
+          description: The resource ID.
+        name:
+          type: string
+          description: The name of the resource.
+        type:
+          type: string
+          description: The type of the resource.
+        suppressionId:
+          type: string
+          description: The GUID of the suppression.
+        ttl:
+          type: string
+          description: The duration for which the suppression is valid.
+        expirationTimeStamp:
+          type: string
+          format: date-time
+          description: Gets or sets the expiration time stamp.
+    PagedSuppressionContractFlattened:
+      type: object
+      properties:
+        value:
+          type: array
+          items:
+            $ref: "#/components/schemas/SuppressionContractFlattened"
+        nextLink:
+          type: string
+    SuppressionContract:
+      type: object
+      description: The details of the snoozed or dismissed rule; for example, the duration, name, and GUID associated with the rule. Variables are only populated by the server, and will be ignored when sending a request.
+      properties:
+        id:
+          type: string
+          description: The resource ID.
+        name:
+          type: string
+          description: The name of the resource.
+        type:
+          type: string
+          description: The type of the resource.
+        properties:
+          type: object
+          properties:
+            suppressionId:
+              type: string
+              description: The GUID of the suppression.
+            ttl:
+              type: string
+              description: The duration for which the suppression is valid.
+            expirationTimeStamp:
+              type: string
+              format: date-time
+              description: Gets or sets the expiration time stamp.
+  x-stackQL-resources:
+    configurations:
+      id: azure.advisor.configurations
+      name: configurations
+      title: configurations
+      methods:
+        list_by_subscription:
+          operation:
+            $ref: "#/paths/~1subscriptions~1{subscription_id}~1providers~1Microsoft.Advisor~1configurations?api-version=2020-01-01/get"
+          response:
+            openAPIDocKey: "200"
+            mediaType: application/json
+            objectKey: $.value
+            overrideMediaType: application/json
+            transform:
+              type: golang_template_json_v0.3.0
+              body: |-
+                {"value": [
+                {{- range $i, $row := index . "value" }}{{ if $i }},{{ end }}
+                  { {{ $p := index $row "properties" }}{{ if eq (kindOf $p) "map" }}{{ range $k, $v := $p }}{{ printf "%q" $k }}: {{ toJson $v }}, {{ end }}{{ end }}{{ range $k, $v := $row }}{{ printf "%q" $k }}: {{ toJson $v }}, {{ end }}"_flattened": true }
+                {{- end }}
+                ], "nextLink": {{ toJson (index . "nextLink") }}}
+        list_by_resource_group:
+          operation:
+            $ref: "#/paths/~1subscriptions~1{subscription_id}~1resourceGroups~1{resource_group}~1providers~1Microsoft.Advisor~1configurations?api-version=2020-01-01/get"
+          response:
+            openAPIDocKey: "200"
+            mediaType: application/json
+            objectKey: $.value
+            overrideMediaType: application/json
+            transform:
+              type: golang_template_json_v0.3.0
+              body: |-
+                {"value": [
+                {{- range $i, $row := index . "value" }}{{ if $i }},{{ end }}
+                  { {{ $p := index $row "properties" }}{{ if eq (kindOf $p) "map" }}{{ range $k, $v := $p }}{{ printf "%q" $k }}: {{ toJson $v }}, {{ end }}{{ end }}{{ range $k, $v := $row }}{{ printf "%q" $k }}: {{ toJson $v }}, {{ end }}"_flattened": true }
+                {{- end }}
+                ], "nextLink": {{ toJson (index . "nextLink") }}}
+        create_in_subscription:
+          operation:
+            $ref: "#/paths/~1subscriptions~1{subscription_id}~1providers~1Microsoft.Advisor~1configurations~1{configuration_name}?api-version=2020-01-01/put"
+          response:
+            openAPIDocKey: "200"
+            mediaType: application/json
+          request:
+            nativeCasing: camel
+          config:
+            requestBodyTranslate:
+              algorithm: naive
+        create_in_resource_group:
+          operation:
+            $ref: "#/paths/~1subscriptions~1{subscription_id}~1resourceGroups~1{resource_group}~1providers~1Microsoft.Advisor~1configurations~1{configuration_name}?api-version=2020-01-01/put"
+          response:
+            openAPIDocKey: "200"
+            mediaType: application/json
+          request:
+            nativeCasing: camel
+          config:
+            requestBodyTranslate:
+              algorithm: naive
+      sqlVerbs:
+        select:
+          - $ref: "#/components/x-stackQL-resources/configurations/methods/list_by_resource_group"
+          - $ref: "#/components/x-stackQL-resources/configurations/methods/list_by_subscription"
+        insert:
+          - $ref: "#/components/x-stackQL-resources/configurations/methods/create_in_resource_group"
+          - $ref: "#/components/x-stackQL-resources/configurations/methods/create_in_subscription"
+        update: []
+        delete: []
+    operations:
+      id: azure.advisor.operations
+      name: operations
+      title: operations
+      methods:
+        list:
+          operation:
+            $ref: "#/paths/~1providers~1Microsoft.Advisor~1operations?api-version=2020-01-01/get"
+          response:
+            openAPIDocKey: "200"
+            mediaType: application/json
+            objectKey: $.value
+      sqlVerbs:
+        select:
+          - $ref: "#/components/x-stackQL-resources/operations/methods/list"
+        insert: []
+        update: []
+        delete: []
+    recommendation_metadata:
+      id: azure.advisor.recommendation_metadata
+      name: recommendation_metadata
+      title: recommendation_metadata
+      methods:
+        get:
+          operation:
+            $ref: "#/paths/~1providers~1Microsoft.Advisor~1metadata~1{name}?api-version=2020-01-01/get"
+          response:
+            openAPIDocKey: "200"
+            mediaType: application/json
+            overrideMediaType: application/json
+            transform:
+              type: golang_template_json_v0.3.0
+              body: '{{ $row := . }}{ {{ $p := index $row "properties" }}{{ if eq (kindOf $p) "map" }}{{ range $k, $v := $p }}{{ printf "%q" $k }}: {{ toJson $v }}, {{ end }}{{ end }}{{ range $k, $v := $row }}{{ printf "%q" $k }}: {{ toJson $v }}, {{ end }}"_flattened": true }'
+        list:
+          operation:
+            $ref: "#/paths/~1providers~1Microsoft.Advisor~1metadata?api-version=2020-01-01/get"
+          response:
+            openAPIDocKey: "200"
+            mediaType: application/json
+            objectKey: $.value
+            overrideMediaType: application/json
+            transform:
+              type: golang_template_json_v0.3.0
+              body: |-
+                {"value": [
+                {{- range $i, $row := index . "value" }}{{ if $i }},{{ end }}
+                  { {{ $p := index $row "properties" }}{{ if eq (kindOf $p) "map" }}{{ range $k, $v := $p }}{{ printf "%q" $k }}: {{ toJson $v }}, {{ end }}{{ end }}{{ range $k, $v := $row }}{{ printf "%q" $k }}: {{ toJson $v }}, {{ end }}"_flattened": true }
+                {{- end }}
+                ], "nextLink": {{ toJson (index . "nextLink") }}}
+      sqlVerbs:
+        select:
+          - $ref: "#/components/x-stackQL-resources/recommendation_metadata/methods/get"
+          - $ref: "#/components/x-stackQL-resources/recommendation_metadata/methods/list"
+        insert: []
+        update: []
+        delete: []
+    recommendations:
+      id: azure.advisor.recommendations
+      name: recommendations
+      title: recommendations
+      methods:
+        get:
+          operation:
+            $ref: "#/paths/~1{resource_uri}~1providers~1Microsoft.Advisor~1recommendations~1{recommendation_id}?api-version=2020-01-01/get"
+          response:
+            openAPIDocKey: "200"
+            mediaType: application/json
+            overrideMediaType: application/json
+            transform:
+              type: golang_template_json_v0.3.0
+              body: '{{ $row := . }}{ {{ $p := index $row "properties" }}{{ if eq (kindOf $p) "map" }}{{ range $k, $v := $p }}{{ printf "%q" $k }}: {{ toJson $v }}, {{ end }}{{ end }}{{ range $k, $v := $row }}{{ printf "%q" $k }}: {{ toJson $v }}, {{ end }}"_flattened": true }'
+        list:
+          operation:
+            $ref: "#/paths/~1subscriptions~1{subscription_id}~1providers~1Microsoft.Advisor~1recommendations?api-version=2020-01-01/get"
+          response:
+            openAPIDocKey: "200"
+            mediaType: application/json
+            objectKey: $.value
+            overrideMediaType: application/json
+            transform:
+              type: golang_template_json_v0.3.0
+              body: |-
+                {"value": [
+                {{- range $i, $row := index . "value" }}{{ if $i }},{{ end }}
+                  { {{ $p := index $row "properties" }}{{ if eq (kindOf $p) "map" }}{{ range $k, $v := $p }}{{ printf "%q" $k }}: {{ toJson $v }}, {{ end }}{{ end }}{{ range $k, $v := $row }}{{ printf "%q" $k }}: {{ toJson $v }}, {{ end }}"_flattened": true }
+                {{- end }}
+                ], "nextLink": {{ toJson (index . "nextLink") }}}
+          request:
+            nativeCasing: camel
+        get_generate_status:
+          operation:
+            $ref: "#/paths/~1subscriptions~1{subscription_id}~1providers~1Microsoft.Advisor~1generateRecommendations~1{operation_id}?api-version=2020-01-01/get"
+          response:
+            openAPIDocKey: "200"
+        generate:
+          operation:
+            $ref: "#/paths/~1subscriptions~1{subscription_id}~1providers~1Microsoft.Advisor~1generateRecommendations?api-version=2020-01-01/post"
+          response:
+            openAPIDocKey: "200"
+      sqlVerbs:
+        select:
+          - $ref: "#/components/x-stackQL-resources/recommendations/methods/get"
+          - $ref: "#/components/x-stackQL-resources/recommendations/methods/list"
+        insert: []
+        update: []
+        delete: []
+    suppressions:
+      id: azure.advisor.suppressions
+      name: suppressions
+      title: suppressions
+      methods:
+        get:
+          operation:
+            $ref: "#/paths/~1{resource_uri}~1providers~1Microsoft.Advisor~1recommendations~1{recommendation_id}~1suppressions~1{name}?api-version=2020-01-01/get"
+          response:
+            openAPIDocKey: "200"
+            mediaType: application/json
+            overrideMediaType: application/json
+            transform:
+              type: golang_template_json_v0.3.0
+              body: '{{ $row := . }}{ {{ $p := index $row "properties" }}{{ if eq (kindOf $p) "map" }}{{ range $k, $v := $p }}{{ printf "%q" $k }}: {{ toJson $v }}, {{ end }}{{ end }}{{ range $k, $v := $row }}{{ printf "%q" $k }}: {{ toJson $v }}, {{ end }}"_flattened": true }'
+        create:
+          operation:
+            $ref: "#/paths/~1{resource_uri}~1providers~1Microsoft.Advisor~1recommendations~1{recommendation_id}~1suppressions~1{name}?api-version=2020-01-01/put"
+          response:
+            openAPIDocKey: "200"
+            mediaType: application/json
+          request:
+            nativeCasing: camel
+          config:
+            requestBodyTranslate:
+              algorithm: naive
+        delete:
+          operation:
+            $ref: "#/paths/~1{resource_uri}~1providers~1Microsoft.Advisor~1recommendations~1{recommendation_id}~1suppressions~1{name}?api-version=2020-01-01/delete"
+          response:
+            openAPIDocKey: "204"
+        list:
+          operation:
+            $ref: "#/paths/~1subscriptions~1{subscription_id}~1providers~1Microsoft.Advisor~1suppressions?api-version=2020-01-01/get"
+          response:
+            openAPIDocKey: "200"
+            mediaType: application/json
+            objectKey: $.value
+            overrideMediaType: application/json
+            transform:
+              type: golang_template_json_v0.3.0
+              body: |-
+                {"value": [
+                {{- range $i, $row := index . "value" }}{{ if $i }},{{ end }}
+                  { {{ $p := index $row "properties" }}{{ if eq (kindOf $p) "map" }}{{ range $k, $v := $p }}{{ printf "%q" $k }}: {{ toJson $v }}, {{ end }}{{ end }}{{ range $k, $v := $row }}{{ printf "%q" $k }}: {{ toJson $v }}, {{ end }}"_flattened": true }
+                {{- end }}
+                ], "nextLink": {{ toJson (index . "nextLink") }}}
+          request:
+            nativeCasing: camel
+      sqlVerbs:
+        select:
+          - $ref: "#/components/x-stackQL-resources/suppressions/methods/get"
+          - $ref: "#/components/x-stackQL-resources/suppressions/methods/list"
+        insert:
+          - $ref: "#/components/x-stackQL-resources/suppressions/methods/create"
+        update: []
+        delete:
+          - $ref: "#/components/x-stackQL-resources/suppressions/methods/delete"
+paths:
+  /subscriptions/{subscription_id}/providers/Microsoft.Advisor/configurations?api-version=2020-01-01:
+    get:
+      operationId: Configurations_list_by_subscription
+      description: Retrieve Azure Advisor configurations. Retrieve Azure Advisor configurations and also retrieve configurations of contained resource groups.
+      parameters:
+        - name: subscription_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PagedConfigDataFlattened"
+  /subscriptions/{subscription_id}/resourceGroups/{resource_group}/providers/Microsoft.Advisor/configurations?api-version=2020-01-01:
+    get:
+      operationId: Configurations_list_by_resource_group
+      description: Retrieve Azure Advisor configurations. Retrieve Azure Advisor configurations.
+      parameters:
+        - name: resource_group
+          in: path
+          required: true
+          schema:
+            type: string
+          description: The name of the Azure resource group. Required.
+        - name: subscription_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PagedConfigDataFlattened"
+  /subscriptions/{subscription_id}/providers/Microsoft.Advisor/configurations/{configuration_name}?api-version=2020-01-01:
+    put:
+      operationId: Configurations_create_in_subscription
+      description: Create/Overwrite Azure Advisor configuration. Create/Overwrite Azure Advisor configuration and also delete all configurations of contained resource groups.
+      parameters:
+        - name: configuration_name
+          in: path
+          required: true
+          schema:
+            type: string
+          description: Advisor configuration name. Value must be 'default'. "default" Required.
+        - name: subscription_id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                properties:
+                  type: object
+                  properties:
+                    exclude:
+                      type: boolean
+                      description: "Exclude the resource from Advisor evaluations. Valid values: False (default) or True."
+                    lowCpuThreshold:
+                      type: string
+                      description: 'Minimum percentage threshold for Advisor low CPU utilization evaluation. Valid only for subscriptions. Valid values: 5 (default), 10, 15 or 20. Known values are: "5", "10", "15", and "20".'
+                    digests:
+                      type: array
+                      items:
+                        $ref: "#/components/schemas/DigestConfig"
+                      description: Advisor digest configuration. Valid only for subscriptions.
+      responses:
+        "200":
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ConfigData"
+  /subscriptions/{subscription_id}/resourceGroups/{resource_group}/providers/Microsoft.Advisor/configurations/{configuration_name}?api-version=2020-01-01:
+    put:
+      operationId: Configurations_create_in_resource_group
+      description: Create/Overwrite Azure Advisor configuration. Create/Overwrite Azure Advisor configuration.
+      parameters:
+        - name: configuration_name
+          in: path
+          required: true
+          schema:
+            type: string
+          description: Advisor configuration name. Value must be 'default'. "default" Required.
+        - name: resource_group
+          in: path
+          required: true
+          schema:
+            type: string
+          description: The name of the Azure resource group. Required.
+        - name: subscription_id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                properties:
+                  type: object
+                  properties:
+                    exclude:
+                      type: boolean
+                      description: "Exclude the resource from Advisor evaluations. Valid values: False (default) or True."
+                    lowCpuThreshold:
+                      type: string
+                      description: 'Minimum percentage threshold for Advisor low CPU utilization evaluation. Valid only for subscriptions. Valid values: 5 (default), 10, 15 or 20. Known values are: "5", "10", "15", and "20".'
+                    digests:
+                      type: array
+                      items:
+                        $ref: "#/components/schemas/DigestConfig"
+                      description: Advisor digest configuration. Valid only for subscriptions.
+      responses:
+        "200":
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ConfigData"
+  /providers/Microsoft.Advisor/operations?api-version=2020-01-01:
+    get:
+      operationId: advisor_list
+      description: Lists all the available Advisor REST API operations.
+      parameters: []
+      responses:
+        "200":
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PagedOperationEntity"
+  /providers/Microsoft.Advisor/metadata/{name}?api-version=2020-01-01:
+    get:
+      operationId: RecommendationMetadata_get
+      description: Gets the metadata entity. Gets the metadata entity.
+      parameters:
+        - name: name
+          in: path
+          required: true
+          schema:
+            type: string
+          description: Name of metadata entity. Required.
+      responses:
+        "200":
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MetadataEntityFlattened"
+  /providers/Microsoft.Advisor/metadata?api-version=2020-01-01:
+    get:
+      operationId: RecommendationMetadata_list
+      description: Gets the list of metadata entities. Gets the list of metadata entities.
+      parameters: []
+      responses:
+        "200":
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PagedMetadataEntityFlattened"
+  /{resource_uri}/providers/Microsoft.Advisor/recommendations/{recommendation_id}?api-version=2020-01-01:
+    get:
+      operationId: Recommendations_get
+      description: Obtains details of a cached recommendation.
+      parameters:
+        - name: resource_uri
+          in: path
+          required: true
+          schema:
+            type: string
+          description: The fully qualified Azure Resource Manager identifier of the resource to which the recommendation applies. Required.
+        - name: recommendation_id
+          in: path
+          required: true
+          schema:
+            type: string
+          description: The recommendation ID. Required.
+      responses:
+        "200":
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ResourceRecommendationBaseFlattened"
+  /subscriptions/{subscription_id}/providers/Microsoft.Advisor/recommendations?api-version=2020-01-01:
+    get:
+      operationId: Recommendations_list
+      description: Obtains cached recommendations for a subscription. The recommendations are generated or computed by invoking generateRecommendations.
+      parameters:
+        - name: subscription_id
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: $filter
+          in: query
+          required: false
+          schema:
+            type: string
+          description: The filter to apply to the recommendations.\ Filter can be applied to properties ['ResourceId', 'ResourceGroup', 'RecommendationTypeGuid', '\ `Category <#category>`_\ '] with operators ['eq', 'and', 'or'].\ Example:\ - $filter=Category eq 'Cost' and ResourceGroup eq 'MyResourceGroup'. Default value is None.
+        - name: $top
+          in: query
+          required: false
+          schema:
+            type: integer
+          description: The number of recommendations per page if a paged version of this API is being used. Default value is None.
+        - name: $skipToken
+          in: query
+          required: false
+          schema:
+            type: string
+          description: The page-continuation token to use with a paged version of this API. Default value is None.
+      responses:
+        "200":
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PagedResourceRecommendationBaseFlattened"
+  /subscriptions/{subscription_id}/providers/Microsoft.Advisor/generateRecommendations/{operation_id}?api-version=2020-01-01:
+    get:
+      operationId: Recommendations_get_generate_status
+      description: Retrieves the status of the recommendation computation or generation process. Invoke this API after calling the generation recommendation. The URI of this API is returned in the Location field of the response header.
+      parameters:
+        - name: operation_id
+          in: path
+          required: true
+          schema:
+            type: string
+          description: The operation ID, which can be found from the Location field in the generate recommendation response header. Required.
+        - name: subscription_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Success
+  /subscriptions/{subscription_id}/providers/Microsoft.Advisor/generateRecommendations?api-version=2020-01-01:
+    post:
+      operationId: Recommendations_generate
+      description: Initiates the recommendation generation or computation process for a subscription. This operation is asynchronous. The generated recommendations are stored in a cache in the Advisor service.
+      parameters:
+        - name: subscription_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Success
+  /{resource_uri}/providers/Microsoft.Advisor/recommendations/{recommendation_id}/suppressions/{name}?api-version=2020-01-01:
+    get:
+      operationId: Suppressions_get
+      description: Obtains the details of a suppression.
+      parameters:
+        - name: resource_uri
+          in: path
+          required: true
+          schema:
+            type: string
+          description: The fully qualified Azure Resource Manager identifier of the resource to which the recommendation applies. Required.
+        - name: recommendation_id
+          in: path
+          required: true
+          schema:
+            type: string
+          description: The recommendation ID. Required.
+        - name: name
+          in: path
+          required: true
+          schema:
+            type: string
+          description: The name of the suppression. Required.
+      responses:
+        "200":
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuppressionContractFlattened"
+    put:
+      operationId: Suppressions_create
+      description: Enables the snoozed or dismissed attribute of a recommendation. The snoozed or dismissed attribute is referred to as a suppression. Use this API to create or update the snoozed or dismissed status of a recommendation.
+      parameters:
+        - name: resource_uri
+          in: path
+          required: true
+          schema:
+            type: string
+          description: The fully qualified Azure Resource Manager identifier of the resource to which the recommendation applies. Required.
+        - name: recommendation_id
+          in: path
+          required: true
+          schema:
+            type: string
+          description: The recommendation ID. Required.
+        - name: name
+          in: path
+          required: true
+          schema:
+            type: string
+          description: The name of the suppression. Required.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                properties:
+                  type: object
+                  properties:
+                    suppressionId:
+                      type: string
+                      description: The GUID of the suppression.
+                    ttl:
+                      type: string
+                      description: The duration for which the suppression is valid.
+      responses:
+        "200":
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuppressionContract"
+    delete:
+      operationId: Suppressions_delete
+      description: Enables the activation of a snoozed or dismissed recommendation. The snoozed or dismissed attribute of a recommendation is referred to as a suppression.
+      parameters:
+        - name: resource_uri
+          in: path
+          required: true
+          schema:
+            type: string
+          description: The fully qualified Azure Resource Manager identifier of the resource to which the recommendation applies. Required.
+        - name: recommendation_id
+          in: path
+          required: true
+          schema:
+            type: string
+          description: The recommendation ID. Required.
+        - name: name
+          in: path
+          required: true
+          schema:
+            type: string
+          description: The name of the suppression. Required.
+      responses:
+        "204":
+          description: Success (no content / accepted)
+  /subscriptions/{subscription_id}/providers/Microsoft.Advisor/suppressions?api-version=2020-01-01:
+    get:
+      operationId: Suppressions_list
+      description: Retrieves the list of snoozed or dismissed suppressions for a subscription. The snoozed or dismissed attribute of a recommendation is referred to as a suppression.
+      parameters:
+        - name: subscription_id
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: $top
+          in: query
+          required: false
+          schema:
+            type: integer
+          description: The number of suppressions per page if a paged version of this API is being used. Default value is None.
+        - name: $skipToken
+          in: query
+          required: false
+          schema:
+            type: string
+          description: The page-continuation token to use with a paged version of this API. Default value is None.
+      responses:
+        "200":
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PagedSuppressionContractFlattened"

@@ -1026,19 +1026,69 @@ func NewFromCatalog(dir, address string, args Args) (Plan, error) {
 	if err != nil {
 		return nil, err
 	}
-	ex, err := c.Exchange(address)
+	candidates, err := c.Exchanges(address)
 	if err != nil {
 		return nil, err
+	}
+	ex, err := chooseExchange(candidates, docInputs(args))
+	if err != nil {
+		return nil, fmt.Errorf("omnisdk: %s: %w", address, err)
 	}
 	reg, err := dsl.NewRegistry(gotemplate.Evaluators()...)
 	if err != nil {
 		return nil, err
 	}
-	pl, err := docx.PlanFor(ex, docInputs(args), reg, docOptions(args)...)
+	opts := docOptions(args)
+	if p := c.Provider(); p != nil {
+		opts = append(opts, docx.WithProviderSecurity(p.Security()))
+	}
+	pl, err := docx.PlanFor(ex, docInputs(args), reg, opts...)
 	if err != nil {
 		return nil, err
 	}
 	return &cannedPlan{plan: pl, args: args}, nil
+}
+
+// chooseExchange picks the SELECT the caller actually asked for. A document binds several to one
+// resource — a get by identifier and a list by scope are both SELECT — and only the supplied
+// parameters say which. The most SPECIFIC satisfiable one wins (most required parameters met), since
+// supplying an identifier means asking for that one thing. A tie is ambiguous and says so rather than
+// guessing; nothing satisfiable says what each would have needed.
+func chooseExchange(candidates []aot.AOTExchange, inputs map[string]any) (aot.AOTExchange, error) {
+	var best aot.AOTExchange
+	var bestScore int
+	var tie bool
+	var unmet []string
+	for _, ex := range candidates {
+		score, ok := 0, true
+		for _, p := range ex.Request().Parameters() {
+			if !p.Required() {
+				continue
+			}
+			if v, supplied := inputs[p.Name()]; !supplied || v == "" {
+				ok = false
+				unmet = append(unmet, ex.Name()+" needs "+p.Name())
+				break
+			}
+			score++
+		}
+		if !ok {
+			continue
+		}
+		switch {
+		case best == nil || score > bestScore:
+			best, bestScore, tie = ex, score, false
+		case score == bestScore:
+			tie = true
+		}
+	}
+	switch {
+	case best == nil:
+		return nil, fmt.Errorf("no satisfiable select method (%s)", strings.Join(unmet, "; "))
+	case tie:
+		return nil, fmt.Errorf("several select methods are satisfiable; supply a parameter that distinguishes them")
+	}
+	return best, nil
 }
 
 // docInputs are the caller's params as κ inputs.

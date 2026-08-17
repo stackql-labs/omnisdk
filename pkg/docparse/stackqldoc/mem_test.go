@@ -14,7 +14,7 @@ func mb(b uint64) float64 { return float64(b) / 1024 / 1024 }
 // A query spans several services and several providers. What must scale with it is the number of
 // EXCHANGES, not the documents they were resolved from.
 func TestWorkingSetIsExchangesNotDocuments(t *testing.T) {
-	c, err := stackqldoc.Open(os.DirFS("testdata"))
+	c, err := stackqldoc.Open(os.DirFS("testdata/aws/v00.00.00000"))
 	if err != nil {
 		t.Fatal(err)
 	}

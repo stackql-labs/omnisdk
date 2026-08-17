@@ -1,0 +1,4215 @@
+openapi: 3.0.0
+info:
+  version: "2021-01-01"
+  title: Amazon MemoryDB
+  description: Amazon MemoryDB
+  x-serviceName: memorydb
+  x-serviceAlias: memorydb
+  x-protocol: json
+  x-apiVersion: "2021-01-01"
+  x-endpointPrefix: memory-db
+  x-targetPrefix: AmazonMemoryDB
+  x-jsonVersion: "1.1"
+servers:
+  - url: https://memory-db.{region}.amazonaws.com
+    variables:
+      region:
+        default: us-east-1
+        description: AWS region
+    description: Regional endpoint for memorydb
+paths:
+  /BatchUpdateCluster:
+    post:
+      operationId: BatchUpdateCluster
+      description: Apply the service update to a list of clusters supplied. For more information on service updates and applying them, see Applying the service updates.
+      parameters:
+        - name: X-Amz-Target
+          in: header
+          description: Action Header
+          required: false
+          schema:
+            type: string
+            enum:
+              - AmazonMemoryDB.BatchUpdateCluster
+            default: AmazonMemoryDB.BatchUpdateCluster
+      requestBody:
+        required: true
+        content:
+          application/x-amz-json-1.1:
+            schema:
+              type: object
+              properties:
+                ClusterNames:
+                  $ref: "#/components/schemas/ClusterNameList"
+                  description: The cluster names to apply the updates.
+                ServiceUpdate:
+                  $ref: "#/components/schemas/ServiceUpdateRequest"
+                  description: The unique ID of the service update
+              required:
+                - ClusterNames
+      responses:
+        "200":
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BatchUpdateClusterResponse"
+  /CopySnapshot:
+    post:
+      operationId: CopySnapshot
+      description: Makes a copy of an existing snapshot.
+      parameters:
+        - name: X-Amz-Target
+          in: header
+          description: Action Header
+          required: false
+          schema:
+            type: string
+            enum:
+              - AmazonMemoryDB.CopySnapshot
+            default: AmazonMemoryDB.CopySnapshot
+      requestBody:
+        required: true
+        content:
+          application/x-amz-json-1.1:
+            schema:
+              type: object
+              properties:
+                SourceSnapshotName:
+                  $ref: "#/components/schemas/String"
+                  description: The name of an existing snapshot from which to make a copy.
+                TargetSnapshotName:
+                  $ref: "#/components/schemas/String"
+                  description: A name for the snapshot copy. MemoryDB does not permit overwriting a snapshot, therefore this name must be unique within its context - MemoryDB or an Amazon S3 bucket if exporting.
+                TargetBucket:
+                  $ref: "#/components/schemas/TargetBucket"
+                  description: "The Amazon S3 bucket to which the snapshot is exported. This parameter is used only when exporting a snapshot for external access. When using this parameter to export a snapshot, be sure MemoryDB has the needed permissions to this S3 bucket. For more information, see Step 2: Grant MemoryDB Access to Your Amazon S3 Bucket."
+                KmsKeyId:
+                  $ref: "#/components/schemas/KmsKeyId"
+                  description: The ID of the KMS key used to encrypt the target snapshot.
+                Tags:
+                  $ref: "#/components/schemas/TagList"
+                  description: A list of tags to be added to this resource. A tag is a key-value pair. A tag key must be accompanied by a tag value, although null is accepted.
+              required:
+                - SourceSnapshotName
+                - TargetSnapshotName
+      responses:
+        "200":
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CopySnapshotResponse"
+  /CreateACL:
+    post:
+      operationId: CreateACL
+      description: Creates an Access Control List. For more information, see Authenticating users with Access Contol Lists (ACLs).
+      parameters:
+        - name: X-Amz-Target
+          in: header
+          description: Action Header
+          required: false
+          schema:
+            type: string
+            enum:
+              - AmazonMemoryDB.CreateACL
+            default: AmazonMemoryDB.CreateACL
+      requestBody:
+        required: true
+        content:
+          application/x-amz-json-1.1:
+            schema:
+              type: object
+              properties:
+                ACLName:
+                  $ref: "#/components/schemas/String"
+                  description: The name of the Access Control List.
+                UserNames:
+                  $ref: "#/components/schemas/UserNameListInput"
+                  description: The list of users that belong to the Access Control List.
+                Tags:
+                  $ref: "#/components/schemas/TagList"
+                  description: A list of tags to be added to this resource. A tag is a key-value pair. A tag key must be accompanied by a tag value, although null is accepted.
+              required:
+                - ACLName
+      responses:
+        "200":
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CreateACLResponse"
+  /CreateCluster:
+    post:
+      operationId: CreateCluster
+      description: Creates a cluster. All nodes in the cluster run the same protocol-compliant engine software.
+      parameters:
+        - name: X-Amz-Target
+          in: header
+          description: Action Header
+          required: false
+          schema:
+            type: string
+            enum:
+              - AmazonMemoryDB.CreateCluster
+            default: AmazonMemoryDB.CreateCluster
+      requestBody:
+        required: true
+        content:
+          application/x-amz-json-1.1:
+            schema:
+              type: object
+              properties:
+                ClusterName:
+                  $ref: "#/components/schemas/String"
+                  description: The name of the cluster. This value must be unique as it also serves as the cluster identifier.
+                NodeType:
+                  $ref: "#/components/schemas/String"
+                  description: The compute and memory capacity of the nodes in the cluster.
+                MultiRegionClusterName:
+                  $ref: "#/components/schemas/String"
+                  description: The name of the multi-Region cluster to be created.
+                ParameterGroupName:
+                  $ref: "#/components/schemas/String"
+                  description: The name of the parameter group associated with the cluster.
+                Description:
+                  $ref: "#/components/schemas/String"
+                  description: An optional description of the cluster.
+                NumShards:
+                  $ref: "#/components/schemas/IntegerOptional"
+                  description: The number of shards the cluster will contain. The default value is 1.
+                NumReplicasPerShard:
+                  $ref: "#/components/schemas/IntegerOptional"
+                  description: The number of replicas to apply to each shard. The default value is 1. The maximum is 5.
+                SubnetGroupName:
+                  $ref: "#/components/schemas/String"
+                  description: The name of the subnet group to be used for the cluster.
+                SecurityGroupIds:
+                  $ref: "#/components/schemas/SecurityGroupIdsList"
+                  description: A list of security group names to associate with this cluster.
+                MaintenanceWindow:
+                  $ref: "#/components/schemas/String"
+                  description: "Specifies the weekly time range during which maintenance on the cluster is performed. It is specified as a range in the format ddd:hh24:mi-ddd:hh24:mi (24H Clock UTC). The minimum maintenance window is a 60 minute period. Valid values for ddd are: sun mon tue wed thu fri sat Example: sun:23:00-mon:01:30"
+                Port:
+                  $ref: "#/components/schemas/IntegerOptional"
+                  description: The port number on which each of the nodes accepts connections.
+                SnsTopicArn:
+                  $ref: "#/components/schemas/String"
+                  description: The Amazon Resource Name (ARN) of the Amazon Simple Notification Service (SNS) topic to which notifications are sent.
+                TLSEnabled:
+                  $ref: "#/components/schemas/BooleanOptional"
+                  description: A flag to enable in-transit encryption on the cluster.
+                KmsKeyId:
+                  $ref: "#/components/schemas/String"
+                  description: The ID of the KMS key used to encrypt the cluster.
+                SnapshotArns:
+                  $ref: "#/components/schemas/SnapshotArnsList"
+                  description: A list of Amazon Resource Names (ARN) that uniquely identify the RDB snapshot files stored in Amazon S3. The snapshot files are used to populate the new cluster. The Amazon S3 object name in the ARN cannot contain any commas.
+                SnapshotName:
+                  $ref: "#/components/schemas/String"
+                  description: The name of a snapshot from which to restore data into the new cluster. The snapshot status changes to restoring while the new cluster is being created.
+                SnapshotRetentionLimit:
+                  $ref: "#/components/schemas/IntegerOptional"
+                  description: The number of days for which MemoryDB retains automatic snapshots before deleting them. For example, if you set SnapshotRetentionLimit to 5, a snapshot that was taken today is retained for 5 days before being deleted.
+                Tags:
+                  $ref: "#/components/schemas/TagList"
+                  description: "A list of tags to be added to this resource. Tags are comma-separated key,value pairs (e.g. Key=myKey, Value=myKeyValue. You can include multiple tags as shown following: Key=myKey, Value=myKeyValue Key=mySecondKey, Value=mySecondKeyValue."
+                SnapshotWindow:
+                  $ref: "#/components/schemas/String"
+                  description: "The daily time range (in UTC) during which MemoryDB begins taking a daily snapshot of your shard. Example: 05:00-09:00 If you do not specify this parameter, MemoryDB automatically chooses an appropriate time range."
+                ACLName:
+                  $ref: "#/components/schemas/ACLName"
+                  description: The name of the Access Control List to associate with the cluster.
+                Engine:
+                  $ref: "#/components/schemas/String"
+                  description: The name of the engine to be used for the cluster.
+                EngineVersion:
+                  $ref: "#/components/schemas/String"
+                  description: The version number of the Redis OSS engine to be used for the cluster.
+                AutoMinorVersionUpgrade:
+                  $ref: "#/components/schemas/BooleanOptional"
+                  description: When set to true, the cluster will automatically receive minor engine version upgrades after launch.
+                DataTiering:
+                  $ref: "#/components/schemas/BooleanOptional"
+                  description: Enables data tiering. Data tiering is only supported for clusters using the r6gd node type. This parameter must be set when using r6gd nodes. For more information, see Data tiering.
+                NetworkType:
+                  $ref: "#/components/schemas/NetworkType"
+                  description: Specifies the IP address type for the cluster. Valid values are 'ipv4', 'ipv6', or 'dual_stack'. When set to 'ipv4', the cluster will only be accessible via IPv4 addresses. When set to 'ipv6', the cluster will only be accessible via IPv6 addresses. When set to 'dual_stack', the cluster will be accessible via both IPv4 and IPv6 addresses. If not specified, the default is 'ipv4'.
+                IpDiscovery:
+                  $ref: "#/components/schemas/IpDiscovery"
+                  description: The mechanism for discovering IP addresses for the cluster discovery protocol. Valid values are 'ipv4' or 'ipv6'. When set to 'ipv4', cluster discovery functions such as cluster slots, cluster shards, and cluster nodes return IPv4 addresses for cluster nodes. When set to 'ipv6', the cluster discovery functions return IPv6 addresses for cluster nodes. The value must be compatible with the NetworkType parameter. If not specified, the default is 'ipv4'.
+              required:
+                - ClusterName
+                - NodeType
+                - ACLName
+      responses:
+        "200":
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CreateClusterResponse"
+  /CreateMultiRegionCluster:
+    post:
+      operationId: CreateMultiRegionCluster
+      description: Creates a new multi-Region cluster.
+      parameters:
+        - name: X-Amz-Target
+          in: header
+          description: Action Header
+          required: false
+          schema:
+            type: string
+            enum:
+              - AmazonMemoryDB.CreateMultiRegionCluster
+            default: AmazonMemoryDB.CreateMultiRegionCluster
+      requestBody:
+        required: true
+        content:
+          application/x-amz-json-1.1:
+            schema:
+              type: object
+              properties:
+                MultiRegionClusterNameSuffix:
+                  $ref: "#/components/schemas/String"
+                  description: A suffix to be added to the Multi-Region cluster name. Amazon MemoryDB automatically applies a prefix to the Multi-Region cluster Name when it is created. Each Amazon Region has its own prefix. For instance, a Multi-Region cluster Name created in the US-West-1 region will begin with "virxk", along with the suffix name you provide. The suffix guarantees uniqueness of the Multi-Region cluster name across multiple regions.
+                Description:
+                  $ref: "#/components/schemas/String"
+                  description: A description for the multi-Region cluster.
+                Engine:
+                  $ref: "#/components/schemas/String"
+                  description: The name of the engine to be used for the multi-Region cluster.
+                EngineVersion:
+                  $ref: "#/components/schemas/String"
+                  description: The version of the engine to be used for the multi-Region cluster.
+                NodeType:
+                  $ref: "#/components/schemas/String"
+                  description: The node type to be used for the multi-Region cluster.
+                MultiRegionParameterGroupName:
+                  $ref: "#/components/schemas/String"
+                  description: The name of the multi-Region parameter group to be associated with the cluster.
+                NumShards:
+                  $ref: "#/components/schemas/IntegerOptional"
+                  description: The number of shards for the multi-Region cluster.
+                TLSEnabled:
+                  $ref: "#/components/schemas/BooleanOptional"
+                  description: Whether to enable TLS encryption for the multi-Region cluster.
+                Tags:
+                  $ref: "#/components/schemas/TagList"
+                  description: A list of tags to be applied to the multi-Region cluster.
+              required:
+                - MultiRegionClusterNameSuffix
+                - NodeType
+      responses:
+        "200":
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CreateMultiRegionClusterResponse"
+  /CreateParameterGroup:
+    post:
+      operationId: CreateParameterGroup
+      description: Creates a new MemoryDB parameter group. A parameter group is a collection of parameters and their values that are applied to all of the nodes in any cluster. For more information, see Configuring engine parameters using parameter groups.
+      parameters:
+        - name: X-Amz-Target
+          in: header
+          description: Action Header
+          required: false
+          schema:
+            type: string
+            enum:
+              - AmazonMemoryDB.CreateParameterGroup
+            default: AmazonMemoryDB.CreateParameterGroup
+      requestBody:
+        required: true
+        content:
+          application/x-amz-json-1.1:
+            schema:
+              type: object
+              properties:
+                ParameterGroupName:
+                  $ref: "#/components/schemas/String"
+                  description: The name of the parameter group.
+                Family:
+                  $ref: "#/components/schemas/String"
+                  description: The name of the parameter group family that the parameter group can be used with.
+                Description:
+                  $ref: "#/components/schemas/String"
+                  description: An optional description of the parameter group.
+                Tags:
+                  $ref: "#/components/schemas/TagList"
+                  description: A list of tags to be added to this resource. A tag is a key-value pair. A tag key must be accompanied by a tag value, although null is accepted.
+              required:
+                - ParameterGroupName
+      responses:
+        "200":
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CreateParameterGroupResponse"
+  /CreateSnapshot:
+    post:
+      operationId: CreateSnapshot
+      description: Creates a copy of an entire cluster at a specific moment in time.
+      parameters:
+        - name: X-Amz-Target
+          in: header
+          description: Action Header
+          required: false
+          schema:
+            type: string
+            enum:
+              - AmazonMemoryDB.CreateSnapshot
+            default: AmazonMemoryDB.CreateSnapshot
+      requestBody:
+        required: true
+        content:
+          application/x-amz-json-1.1:
+            schema:
+              type: object
+              properties:
+                ClusterName:
+                  $ref: "#/components/schemas/String"
+                  description: The snapshot is created from this cluster.
+                SnapshotName:
+                  $ref: "#/components/schemas/String"
+                  description: A name for the snapshot being created.
+                KmsKeyId:
+                  $ref: "#/components/schemas/String"
+                  description: The ID of the KMS key used to encrypt the snapshot.
+                Tags:
+                  $ref: "#/components/schemas/TagList"
+                  description: A list of tags to be added to this resource. A tag is a key-value pair. A tag key must be accompanied by a tag value, although null is accepted.
+              required:
+                - ClusterName
+                - SnapshotName
+      responses:
+        "200":
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CreateSnapshotResponse"
+  /CreateSubnetGroup:
+    post:
+      operationId: CreateSubnetGroup
+      description: Creates a subnet group. A subnet group is a collection of subnets (typically private) that you can designate for your clusters running in an Amazon Virtual Private Cloud (VPC) environment. When you create a cluster in an Amazon VPC, you must specify a subnet group. MemoryDB uses that subnet group to choose a subnet and IP addresses within that subnet to associate with your nodes. For more information, see Subnets and subnet groups.
+      parameters:
+        - name: X-Amz-Target
+          in: header
+          description: Action Header
+          required: false
+          schema:
+            type: string
+            enum:
+              - AmazonMemoryDB.CreateSubnetGroup
+            default: AmazonMemoryDB.CreateSubnetGroup
+      requestBody:
+        required: true
+        content:
+          application/x-amz-json-1.1:
+            schema:
+              type: object
+              properties:
+                SubnetGroupName:
+                  $ref: "#/components/schemas/String"
+                  description: The name of the subnet group.
+                Description:
+                  $ref: "#/components/schemas/String"
+                  description: A description for the subnet group.
+                SubnetIds:
+                  $ref: "#/components/schemas/SubnetIdentifierList"
+                  description: A list of VPC subnet IDs for the subnet group.
+                Tags:
+                  $ref: "#/components/schemas/TagList"
+                  description: A list of tags to be added to this resource. A tag is a key-value pair. A tag key must be accompanied by a tag value, although null is accepted.
+              required:
+                - SubnetGroupName
+                - SubnetIds
+      responses:
+        "200":
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CreateSubnetGroupResponse"
+  /CreateUser:
+    post:
+      operationId: CreateUser
+      description: Creates a MemoryDB user. For more information, see Authenticating users with Access Contol Lists (ACLs).
+      parameters:
+        - name: X-Amz-Target
+          in: header
+          description: Action Header
+          required: false
+          schema:
+            type: string
+            enum:
+              - AmazonMemoryDB.CreateUser
+            default: AmazonMemoryDB.CreateUser
+      requestBody:
+        required: true
+        content:
+          application/x-amz-json-1.1:
+            schema:
+              type: object
+              properties:
+                UserName:
+                  $ref: "#/components/schemas/UserName"
+                  description: The name of the user. This value must be unique as it also serves as the user identifier.
+                AuthenticationMode:
+                  $ref: "#/components/schemas/AuthenticationMode"
+                  description: Denotes the user's authentication properties, such as whether it requires a password to authenticate.
+                AccessString:
+                  $ref: "#/components/schemas/AccessString"
+                  description: Access permissions string used for this user.
+                Tags:
+                  $ref: "#/components/schemas/TagList"
+                  description: A list of tags to be added to this resource. A tag is a key-value pair. A tag key must be accompanied by a tag value, although null is accepted.
+              required:
+                - UserName
+                - AuthenticationMode
+                - AccessString
+      responses:
+        "200":
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CreateUserResponse"
+  /DeleteACL:
+    post:
+      operationId: DeleteACL
+      description: Deletes an Access Control List. The ACL must first be disassociated from the cluster before it can be deleted. For more information, see Authenticating users with Access Contol Lists (ACLs).
+      parameters:
+        - name: X-Amz-Target
+          in: header
+          description: Action Header
+          required: false
+          schema:
+            type: string
+            enum:
+              - AmazonMemoryDB.DeleteACL
+            default: AmazonMemoryDB.DeleteACL
+      requestBody:
+        required: true
+        content:
+          application/x-amz-json-1.1:
+            schema:
+              type: object
+              properties:
+                ACLName:
+                  $ref: "#/components/schemas/String"
+                  description: The name of the Access Control List to delete.
+              required:
+                - ACLName
+      responses:
+        "200":
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DeleteACLResponse"
+  /DeleteCluster:
+    post:
+      operationId: DeleteCluster
+      description: Deletes a cluster. It also deletes all associated nodes and node endpoints. CreateSnapshot permission is required to create a final snapshot. Without this permission, the API call will fail with an Access Denied exception.
+      parameters:
+        - name: X-Amz-Target
+          in: header
+          description: Action Header
+          required: false
+          schema:
+            type: string
+            enum:
+              - AmazonMemoryDB.DeleteCluster
+            default: AmazonMemoryDB.DeleteCluster
+      requestBody:
+        required: true
+        content:
+          application/x-amz-json-1.1:
+            schema:
+              type: object
+              properties:
+                ClusterName:
+                  $ref: "#/components/schemas/String"
+                  description: The name of the cluster to be deleted
+                MultiRegionClusterName:
+                  $ref: "#/components/schemas/String"
+                  description: The name of the multi-Region cluster to be deleted.
+                FinalSnapshotName:
+                  $ref: "#/components/schemas/String"
+                  description: The user-supplied name of a final cluster snapshot. This is the unique name that identifies the snapshot. MemoryDB creates the snapshot, and then deletes the cluster immediately afterward.
+              required:
+                - ClusterName
+      responses:
+        "200":
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DeleteClusterResponse"
+  /DeleteMultiRegionCluster:
+    post:
+      operationId: DeleteMultiRegionCluster
+      description: Deletes an existing multi-Region cluster.
+      parameters:
+        - name: X-Amz-Target
+          in: header
+          description: Action Header
+          required: false
+          schema:
+            type: string
+            enum:
+              - AmazonMemoryDB.DeleteMultiRegionCluster
+            default: AmazonMemoryDB.DeleteMultiRegionCluster
+      requestBody:
+        required: true
+        content:
+          application/x-amz-json-1.1:
+            schema:
+              type: object
+              properties:
+                MultiRegionClusterName:
+                  $ref: "#/components/schemas/String"
+                  description: The name of the multi-Region cluster to be deleted.
+              required:
+                - MultiRegionClusterName
+      responses:
+        "200":
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DeleteMultiRegionClusterResponse"
+  /DeleteParameterGroup:
+    post:
+      operationId: DeleteParameterGroup
+      description: Deletes the specified parameter group. You cannot delete a parameter group if it is associated with any clusters. You cannot delete the default parameter groups in your account.
+      parameters:
+        - name: X-Amz-Target
+          in: header
+          description: Action Header
+          required: false
+          schema:
+            type: string
+            enum:
+              - AmazonMemoryDB.DeleteParameterGroup
+            default: AmazonMemoryDB.DeleteParameterGroup
+      requestBody:
+        required: true
+        content:
+          application/x-amz-json-1.1:
+            schema:
+              type: object
+              properties:
+                ParameterGroupName:
+                  $ref: "#/components/schemas/String"
+                  description: The name of the parameter group to delete.
+              required:
+                - ParameterGroupName
+      responses:
+        "200":
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DeleteParameterGroupResponse"
+  /DeleteSnapshot:
+    post:
+      operationId: DeleteSnapshot
+      description: Deletes an existing snapshot. When you receive a successful response from this operation, MemoryDB immediately begins deleting the snapshot; you cannot cancel or revert this operation.
+      parameters:
+        - name: X-Amz-Target
+          in: header
+          description: Action Header
+          required: false
+          schema:
+            type: string
+            enum:
+              - AmazonMemoryDB.DeleteSnapshot
+            default: AmazonMemoryDB.DeleteSnapshot
+      requestBody:
+        required: true
+        content:
+          application/x-amz-json-1.1:
+            schema:
+              type: object
+              properties:
+                SnapshotName:
+                  $ref: "#/components/schemas/String"
+                  description: The name of the snapshot to delete.
+              required:
+                - SnapshotName
+      responses:
+        "200":
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DeleteSnapshotResponse"
+  /DeleteSubnetGroup:
+    post:
+      operationId: DeleteSubnetGroup
+      description: Deletes a subnet group. You cannot delete a default subnet group or one that is associated with any clusters.
+      parameters:
+        - name: X-Amz-Target
+          in: header
+          description: Action Header
+          required: false
+          schema:
+            type: string
+            enum:
+              - AmazonMemoryDB.DeleteSubnetGroup
+            default: AmazonMemoryDB.DeleteSubnetGroup
+      requestBody:
+        required: true
+        content:
+          application/x-amz-json-1.1:
+            schema:
+              type: object
+              properties:
+                SubnetGroupName:
+                  $ref: "#/components/schemas/String"
+                  description: The name of the subnet group to delete.
+              required:
+                - SubnetGroupName
+      responses:
+        "200":
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DeleteSubnetGroupResponse"
+  /DeleteUser:
+    post:
+      operationId: DeleteUser
+      description: Deletes a user. The user will be removed from all ACLs and in turn removed from all clusters.
+      parameters:
+        - name: X-Amz-Target
+          in: header
+          description: Action Header
+          required: false
+          schema:
+            type: string
+            enum:
+              - AmazonMemoryDB.DeleteUser
+            default: AmazonMemoryDB.DeleteUser
+      requestBody:
+        required: true
+        content:
+          application/x-amz-json-1.1:
+            schema:
+              type: object
+              properties:
+                UserName:
+                  $ref: "#/components/schemas/UserName"
+                  description: The name of the user to delete
+              required:
+                - UserName
+      responses:
+        "200":
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DeleteUserResponse"
+  /DescribeACLs:
+    post:
+      operationId: DescribeACLs
+      description: Returns a list of ACLs.
+      parameters:
+        - name: X-Amz-Target
+          in: header
+          description: Action Header
+          required: false
+          schema:
+            type: string
+            enum:
+              - AmazonMemoryDB.DescribeACLs
+            default: AmazonMemoryDB.DescribeACLs
+      requestBody:
+        required: true
+        content:
+          application/x-amz-json-1.1:
+            schema:
+              type: object
+              properties:
+                ACLName:
+                  $ref: "#/components/schemas/String"
+                  description: The name of the ACL.
+                MaxResults:
+                  $ref: "#/components/schemas/IntegerOptional"
+                  description: The maximum number of records to include in the response. If more records exist than the specified MaxResults value, a token is included in the response so that the remaining results can be retrieved.
+                NextToken:
+                  $ref: "#/components/schemas/String"
+                  description: An optional argument to pass in case the total number of records exceeds the value of MaxResults. If nextToken is returned, there are more results available. The value of nextToken is a unique pagination token for each page. Make the call again using the returned token to retrieve the next page. Keep all other arguments unchanged.
+      responses:
+        "200":
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DescribeACLsResponse"
+  /DescribeClusters:
+    post:
+      operationId: DescribeClusters
+      description: Returns information about all provisioned clusters if no cluster identifier is specified, or about a specific cluster if a cluster name is supplied.
+      parameters:
+        - name: X-Amz-Target
+          in: header
+          description: Action Header
+          required: false
+          schema:
+            type: string
+            enum:
+              - AmazonMemoryDB.DescribeClusters
+            default: AmazonMemoryDB.DescribeClusters
+      requestBody:
+        required: true
+        content:
+          application/x-amz-json-1.1:
+            schema:
+              type: object
+              properties:
+                ClusterName:
+                  $ref: "#/components/schemas/String"
+                  description: The name of the cluster.
+                MaxResults:
+                  $ref: "#/components/schemas/IntegerOptional"
+                  description: The maximum number of records to include in the response. If more records exist than the specified MaxResults value, a token is included in the response so that the remaining results can be retrieved.
+                NextToken:
+                  $ref: "#/components/schemas/String"
+                  description: An optional argument to pass in case the total number of records exceeds the value of MaxResults. If nextToken is returned, there are more results available. The value of nextToken is a unique pagination token for each page. Make the call again using the returned token to retrieve the next page. Keep all other arguments unchanged.
+                ShowShardDetails:
+                  $ref: "#/components/schemas/BooleanOptional"
+                  description: An optional flag that can be included in the request to retrieve information about the individual shard(s).
+      responses:
+        "200":
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DescribeClustersResponse"
+  /DescribeEngineVersions:
+    post:
+      operationId: DescribeEngineVersions
+      description: Returns a list of the available Redis OSS engine versions.
+      parameters:
+        - name: X-Amz-Target
+          in: header
+          description: Action Header
+          required: false
+          schema:
+            type: string
+            enum:
+              - AmazonMemoryDB.DescribeEngineVersions
+            default: AmazonMemoryDB.DescribeEngineVersions
+      requestBody:
+        required: true
+        content:
+          application/x-amz-json-1.1:
+            schema:
+              type: object
+              properties:
+                Engine:
+                  $ref: "#/components/schemas/String"
+                  description: The name of the engine for which to list available versions.
+                EngineVersion:
+                  $ref: "#/components/schemas/String"
+                  description: The Redis OSS engine version
+                ParameterGroupFamily:
+                  $ref: "#/components/schemas/String"
+                  description: The name of a specific parameter group family to return details for.
+                MaxResults:
+                  $ref: "#/components/schemas/IntegerOptional"
+                  description: The maximum number of records to include in the response. If more records exist than the specified MaxResults value, a token is included in the response so that the remaining results can be retrieved.
+                NextToken:
+                  $ref: "#/components/schemas/String"
+                  description: An optional argument to pass in case the total number of records exceeds the value of MaxResults. If nextToken is returned, there are more results available. The value of nextToken is a unique pagination token for each page. Make the call again using the returned token to retrieve the next page. Keep all other arguments unchanged.
+                DefaultOnly:
+                  $ref: "#/components/schemas/Boolean"
+                  description: If true, specifies that only the default version of the specified engine or engine and major version combination is to be returned.
+      responses:
+        "200":
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DescribeEngineVersionsResponse"
+  /DescribeEvents:
+    post:
+      operationId: DescribeEvents
+      description: Returns events related to clusters, security groups, and parameter groups. You can obtain events specific to a particular cluster, security group, or parameter group by providing the name as a parameter. By default, only the events occurring within the last hour are returned; however, you can retrieve up to 14 days' worth of events if necessary.
+      parameters:
+        - name: X-Amz-Target
+          in: header
+          description: Action Header
+          required: false
+          schema:
+            type: string
+            enum:
+              - AmazonMemoryDB.DescribeEvents
+            default: AmazonMemoryDB.DescribeEvents
+      requestBody:
+        required: true
+        content:
+          application/x-amz-json-1.1:
+            schema:
+              type: object
+              properties:
+                SourceName:
+                  $ref: "#/components/schemas/String"
+                  description: The identifier of the event source for which events are returned. If not specified, all sources are included in the response.
+                SourceType:
+                  $ref: "#/components/schemas/SourceType"
+                  description: The event source to retrieve events for. If no value is specified, all events are returned.
+                StartTime:
+                  $ref: "#/components/schemas/TStamp"
+                  description: "The beginning of the time interval to retrieve events for, specified in ISO 8601 format. Example: 2017-03-30T07:03:49.555Z"
+                EndTime:
+                  $ref: "#/components/schemas/TStamp"
+                  description: "The end of the time interval for which to retrieve events, specified in ISO 8601 format. Example: 2017-03-30T07:03:49.555Z"
+                Duration:
+                  $ref: "#/components/schemas/IntegerOptional"
+                  description: The number of minutes worth of events to retrieve.
+                MaxResults:
+                  $ref: "#/components/schemas/IntegerOptional"
+                  description: The maximum number of records to include in the response. If more records exist than the specified MaxResults value, a token is included in the response so that the remaining results can be retrieved.
+                NextToken:
+                  $ref: "#/components/schemas/String"
+                  description: An optional argument to pass in case the total number of records exceeds the value of MaxResults. If nextToken is returned, there are more results available. The value of nextToken is a unique pagination token for each page. Make the call again using the returned token to retrieve the next page. Keep all other arguments unchanged.
+      responses:
+        "200":
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DescribeEventsResponse"
+  /DescribeMultiRegionClusters:
+    post:
+      operationId: DescribeMultiRegionClusters
+      description: Returns details about one or more multi-Region clusters.
+      parameters:
+        - name: X-Amz-Target
+          in: header
+          description: Action Header
+          required: false
+          schema:
+            type: string
+            enum:
+              - AmazonMemoryDB.DescribeMultiRegionClusters
+            default: AmazonMemoryDB.DescribeMultiRegionClusters
+      requestBody:
+        required: true
+        content:
+          application/x-amz-json-1.1:
+            schema:
+              type: object
+              properties:
+                MultiRegionClusterName:
+                  $ref: "#/components/schemas/String"
+                  description: The name of a specific multi-Region cluster to describe.
+                MaxResults:
+                  $ref: "#/components/schemas/IntegerOptional"
+                  description: The maximum number of results to return.
+                NextToken:
+                  $ref: "#/components/schemas/String"
+                  description: A token to specify where to start paginating.
+                ShowClusterDetails:
+                  $ref: "#/components/schemas/BooleanOptional"
+                  description: Details about the multi-Region cluster.
+      responses:
+        "200":
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DescribeMultiRegionClustersResponse"
+  /DescribeMultiRegionParameterGroups:
+    post:
+      operationId: DescribeMultiRegionParameterGroups
+      description: Returns a list of multi-region parameter groups.
+      parameters:
+        - name: X-Amz-Target
+          in: header
+          description: Action Header
+          required: false
+          schema:
+            type: string
+            enum:
+              - AmazonMemoryDB.DescribeMultiRegionParameterGroups
+            default: AmazonMemoryDB.DescribeMultiRegionParameterGroups
+      requestBody:
+        required: true
+        content:
+          application/x-amz-json-1.1:
+            schema:
+              type: object
+              properties:
+                MultiRegionParameterGroupName:
+                  $ref: "#/components/schemas/String"
+                  description: The request for information on a specific multi-region parameter group.
+                MaxResults:
+                  $ref: "#/components/schemas/IntegerOptional"
+                  description: The maximum number of records to include in the response. If more records exist than the specified MaxResults value, a token is included in the response so that the remaining results can be retrieved.
+                NextToken:
+                  $ref: "#/components/schemas/String"
+                  description: An optional token returned from a prior request. Use this token for pagination of results from this action. If this parameter is specified, the response includes only results beyond the token, up to the value specified by MaxResults.
+      responses:
+        "200":
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DescribeMultiRegionParameterGroupsResponse"
+  /DescribeMultiRegionParameters:
+    post:
+      operationId: DescribeMultiRegionParameters
+      description: Returns the detailed parameter list for a particular multi-region parameter group.
+      parameters:
+        - name: X-Amz-Target
+          in: header
+          description: Action Header
+          required: false
+          schema:
+            type: string
+            enum:
+              - AmazonMemoryDB.DescribeMultiRegionParameters
+            default: AmazonMemoryDB.DescribeMultiRegionParameters
+      requestBody:
+        required: true
+        content:
+          application/x-amz-json-1.1:
+            schema:
+              type: object
+              properties:
+                MultiRegionParameterGroupName:
+                  $ref: "#/components/schemas/String"
+                  description: The name of the multi-region parameter group to return details for.
+                Source:
+                  $ref: "#/components/schemas/String"
+                  description: "The parameter types to return. Valid values: user | system | engine-default"
+                MaxResults:
+                  $ref: "#/components/schemas/IntegerOptional"
+                  description: The maximum number of records to include in the response. If more records exist than the specified MaxResults value, a token is included in the response so that the remaining results can be retrieved.
+                NextToken:
+                  $ref: "#/components/schemas/String"
+                  description: An optional token returned from a prior request. Use this token for pagination of results from this action. If this parameter is specified, the response includes only results beyond the token, up to the value specified by MaxResults.
+              required:
+                - MultiRegionParameterGroupName
+      responses:
+        "200":
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DescribeMultiRegionParametersResponse"
+  /DescribeParameterGroups:
+    post:
+      operationId: DescribeParameterGroups
+      description: Returns a list of parameter group descriptions. If a parameter group name is specified, the list contains only the descriptions for that group.
+      parameters:
+        - name: X-Amz-Target
+          in: header
+          description: Action Header
+          required: false
+          schema:
+            type: string
+            enum:
+              - AmazonMemoryDB.DescribeParameterGroups
+            default: AmazonMemoryDB.DescribeParameterGroups
+      requestBody:
+        required: true
+        content:
+          application/x-amz-json-1.1:
+            schema:
+              type: object
+              properties:
+                ParameterGroupName:
+                  $ref: "#/components/schemas/String"
+                  description: The name of a specific parameter group to return details for.
+                MaxResults:
+                  $ref: "#/components/schemas/IntegerOptional"
+                  description: The maximum number of records to include in the response. If more records exist than the specified MaxResults value, a token is included in the response so that the remaining results can be retrieved.
+                NextToken:
+                  $ref: "#/components/schemas/String"
+                  description: An optional argument to pass in case the total number of records exceeds the value of MaxResults. If nextToken is returned, there are more results available. The value of nextToken is a unique pagination token for each page. Make the call again using the returned token to retrieve the next page. Keep all other arguments unchanged.
+      responses:
+        "200":
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DescribeParameterGroupsResponse"
+  /DescribeParameters:
+    post:
+      operationId: DescribeParameters
+      description: Returns the detailed parameter list for a particular parameter group.
+      parameters:
+        - name: X-Amz-Target
+          in: header
+          description: Action Header
+          required: false
+          schema:
+            type: string
+            enum:
+              - AmazonMemoryDB.DescribeParameters
+            default: AmazonMemoryDB.DescribeParameters
+      requestBody:
+        required: true
+        content:
+          application/x-amz-json-1.1:
+            schema:
+              type: object
+              properties:
+                ParameterGroupName:
+                  $ref: "#/components/schemas/String"
+                  description: he name of a specific parameter group to return details for.
+                MaxResults:
+                  $ref: "#/components/schemas/IntegerOptional"
+                  description: The maximum number of records to include in the response. If more records exist than the specified MaxResults value, a token is included in the response so that the remaining results can be retrieved.
+                NextToken:
+                  $ref: "#/components/schemas/String"
+                  description: An optional argument to pass in case the total number of records exceeds the value of MaxResults. If nextToken is returned, there are more results available. The value of nextToken is a unique pagination token for each page. Make the call again using the returned token to retrieve the next page. Keep all other arguments unchanged.
+              required:
+                - ParameterGroupName
+      responses:
+        "200":
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DescribeParametersResponse"
+  /DescribeReservedNodes:
+    post:
+      operationId: DescribeReservedNodes
+      description: Returns information about reserved nodes for this account, or about a specified reserved node.
+      parameters:
+        - name: X-Amz-Target
+          in: header
+          description: Action Header
+          required: false
+          schema:
+            type: string
+            enum:
+              - AmazonMemoryDB.DescribeReservedNodes
+            default: AmazonMemoryDB.DescribeReservedNodes
+      requestBody:
+        required: true
+        content:
+          application/x-amz-json-1.1:
+            schema:
+              type: object
+              properties:
+                ReservationId:
+                  $ref: "#/components/schemas/String"
+                  description: The reserved node identifier filter value. Use this parameter to show only the reservation that matches the specified reservation ID.
+                ReservedNodesOfferingId:
+                  $ref: "#/components/schemas/String"
+                  description: The offering identifier filter value. Use this parameter to show only purchased reservations matching the specified offering identifier.
+                NodeType:
+                  $ref: "#/components/schemas/String"
+                  description: The node type filter value. Use this parameter to show only those reservations matching the specified node type. For more information, see Supported node types.
+                Duration:
+                  $ref: "#/components/schemas/String"
+                  description: The duration filter value, specified in years or seconds. Use this parameter to show only reservations for this duration.
+                OfferingType:
+                  $ref: "#/components/schemas/String"
+                  description: 'The offering type filter value. Use this parameter to show only the available offerings matching the specified offering type. Valid values: "All Upfront"|"Partial Upfront"| "No Upfront"'
+                MaxResults:
+                  $ref: "#/components/schemas/IntegerOptional"
+                  description: The maximum number of records to include in the response. If more records exist than the specified MaxRecords value, a marker is included in the response so that the remaining results can be retrieved.
+                NextToken:
+                  $ref: "#/components/schemas/String"
+                  description: An optional marker returned from a prior request. Use this marker for pagination of results from this operation. If this parameter is specified, the response includes only records beyond the marker, up to the value specified by MaxRecords.
+      responses:
+        "200":
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DescribeReservedNodesResponse"
+  /DescribeReservedNodesOfferings:
+    post:
+      operationId: DescribeReservedNodesOfferings
+      description: Lists available reserved node offerings.
+      parameters:
+        - name: X-Amz-Target
+          in: header
+          description: Action Header
+          required: false
+          schema:
+            type: string
+            enum:
+              - AmazonMemoryDB.DescribeReservedNodesOfferings
+            default: AmazonMemoryDB.DescribeReservedNodesOfferings
+      requestBody:
+        required: true
+        content:
+          application/x-amz-json-1.1:
+            schema:
+              type: object
+              properties:
+                ReservedNodesOfferingId:
+                  $ref: "#/components/schemas/String"
+                  description: The offering identifier filter value. Use this parameter to show only the available offering that matches the specified reservation identifier.
+                NodeType:
+                  $ref: "#/components/schemas/String"
+                  description: The node type for the reserved nodes. For more information, see Supported node types.
+                Duration:
+                  $ref: "#/components/schemas/String"
+                  description: Duration filter value, specified in years or seconds. Use this parameter to show only reservations for a given duration.
+                OfferingType:
+                  $ref: "#/components/schemas/String"
+                  description: 'The offering type filter value. Use this parameter to show only the available offerings matching the specified offering type. Valid values: "All Upfront"|"Partial Upfront"| "No Upfront"'
+                MaxResults:
+                  $ref: "#/components/schemas/IntegerOptional"
+                  description: The maximum number of records to include in the response. If more records exist than the specified MaxRecords value, a marker is included in the response so that the remaining results can be retrieved.
+                NextToken:
+                  $ref: "#/components/schemas/String"
+                  description: An optional marker returned from a prior request. Use this marker for pagination of results from this operation. If this parameter is specified, the response includes only records beyond the marker, up to the value specified by MaxRecords.
+      responses:
+        "200":
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DescribeReservedNodesOfferingsResponse"
+  /DescribeServiceUpdates:
+    post:
+      operationId: DescribeServiceUpdates
+      description: Returns details of the service updates.
+      parameters:
+        - name: X-Amz-Target
+          in: header
+          description: Action Header
+          required: false
+          schema:
+            type: string
+            enum:
+              - AmazonMemoryDB.DescribeServiceUpdates
+            default: AmazonMemoryDB.DescribeServiceUpdates
+      requestBody:
+        required: true
+        content:
+          application/x-amz-json-1.1:
+            schema:
+              type: object
+              properties:
+                ServiceUpdateName:
+                  $ref: "#/components/schemas/String"
+                  description: The unique ID of the service update to describe.
+                ClusterNames:
+                  $ref: "#/components/schemas/ClusterNameList"
+                  description: The list of cluster names to identify service updates to apply.
+                Status:
+                  $ref: "#/components/schemas/ServiceUpdateStatusList"
+                  description: The status(es) of the service updates to filter on.
+                MaxResults:
+                  $ref: "#/components/schemas/IntegerOptional"
+                  description: The maximum number of records to include in the response. If more records exist than the specified MaxResults value, a token is included in the response so that the remaining results can be retrieved.
+                NextToken:
+                  $ref: "#/components/schemas/String"
+                  description: An optional argument to pass in case the total number of records exceeds the value of MaxResults. If nextToken is returned, there are more results available. The value of nextToken is a unique pagination token for each page. Make the call again using the returned token to retrieve the next page. Keep all other arguments unchanged.
+      responses:
+        "200":
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DescribeServiceUpdatesResponse"
+  /DescribeSnapshots:
+    post:
+      operationId: DescribeSnapshots
+      description: Returns information about cluster snapshots. By default, DescribeSnapshots lists all of your snapshots; it can optionally describe a single snapshot, or just the snapshots associated with a particular cluster.
+      parameters:
+        - name: X-Amz-Target
+          in: header
+          description: Action Header
+          required: false
+          schema:
+            type: string
+            enum:
+              - AmazonMemoryDB.DescribeSnapshots
+            default: AmazonMemoryDB.DescribeSnapshots
+      requestBody:
+        required: true
+        content:
+          application/x-amz-json-1.1:
+            schema:
+              type: object
+              properties:
+                ClusterName:
+                  $ref: "#/components/schemas/String"
+                  description: A user-supplied cluster identifier. If this parameter is specified, only snapshots associated with that specific cluster are described.
+                SnapshotName:
+                  $ref: "#/components/schemas/String"
+                  description: A user-supplied name of the snapshot. If this parameter is specified, only this named snapshot is described.
+                Source:
+                  $ref: "#/components/schemas/String"
+                  description: If set to system, the output shows snapshots that were automatically created by MemoryDB. If set to user the output shows snapshots that were manually created. If omitted, the output shows both automatically and manually created snapshots.
+                NextToken:
+                  $ref: "#/components/schemas/String"
+                  description: An optional argument to pass in case the total number of records exceeds the value of MaxResults. If nextToken is returned, there are more results available. The value of nextToken is a unique pagination token for each page. Make the call again using the returned token to retrieve the next page. Keep all other arguments unchanged.
+                MaxResults:
+                  $ref: "#/components/schemas/IntegerOptional"
+                  description: The maximum number of records to include in the response. If more records exist than the specified MaxResults value, a token is included in the response so that the remaining results can be retrieved.
+                ShowDetail:
+                  $ref: "#/components/schemas/BooleanOptional"
+                  description: A Boolean value which if true, the shard configuration is included in the snapshot description.
+      responses:
+        "200":
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DescribeSnapshotsResponse"
+  /DescribeSubnetGroups:
+    post:
+      operationId: DescribeSubnetGroups
+      description: Returns a list of subnet group descriptions. If a subnet group name is specified, the list contains only the description of that group.
+      parameters:
+        - name: X-Amz-Target
+          in: header
+          description: Action Header
+          required: false
+          schema:
+            type: string
+            enum:
+              - AmazonMemoryDB.DescribeSubnetGroups
+            default: AmazonMemoryDB.DescribeSubnetGroups
+      requestBody:
+        required: true
+        content:
+          application/x-amz-json-1.1:
+            schema:
+              type: object
+              properties:
+                SubnetGroupName:
+                  $ref: "#/components/schemas/String"
+                  description: The name of the subnet group to return details for.
+                MaxResults:
+                  $ref: "#/components/schemas/IntegerOptional"
+                  description: The maximum number of records to include in the response. If more records exist than the specified MaxResults value, a token is included in the response so that the remaining results can be retrieved.
+                NextToken:
+                  $ref: "#/components/schemas/String"
+                  description: An optional argument to pass in case the total number of records exceeds the value of MaxResults. If nextToken is returned, there are more results available. The value of nextToken is a unique pagination token for each page. Make the call again using the returned token to retrieve the next page. Keep all other arguments unchanged.
+      responses:
+        "200":
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DescribeSubnetGroupsResponse"
+  /DescribeUsers:
+    post:
+      operationId: DescribeUsers
+      description: Returns a list of users.
+      parameters:
+        - name: X-Amz-Target
+          in: header
+          description: Action Header
+          required: false
+          schema:
+            type: string
+            enum:
+              - AmazonMemoryDB.DescribeUsers
+            default: AmazonMemoryDB.DescribeUsers
+      requestBody:
+        required: true
+        content:
+          application/x-amz-json-1.1:
+            schema:
+              type: object
+              properties:
+                UserName:
+                  $ref: "#/components/schemas/UserName"
+                  description: The name of the user.
+                Filters:
+                  $ref: "#/components/schemas/FilterList"
+                  description: Filter to determine the list of users to return.
+                MaxResults:
+                  $ref: "#/components/schemas/IntegerOptional"
+                  description: The maximum number of records to include in the response. If more records exist than the specified MaxResults value, a token is included in the response so that the remaining results can be retrieved.
+                NextToken:
+                  $ref: "#/components/schemas/String"
+                  description: An optional argument to pass in case the total number of records exceeds the value of MaxResults. If nextToken is returned, there are more results available. The value of nextToken is a unique pagination token for each page. Make the call again using the returned token to retrieve the next page. Keep all other arguments unchanged.
+      responses:
+        "200":
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DescribeUsersResponse"
+  /FailoverShard:
+    post:
+      operationId: FailoverShard
+      description: Used to failover a shard. This API is designed for testing the behavior of your application in case of MemoryDB failover. It is not designed to be used as a production-level tool for initiating a failover to overcome a problem you may have with the cluster. Moreover, in certain conditions such as large scale operational events, Amazon may block this API.
+      parameters:
+        - name: X-Amz-Target
+          in: header
+          description: Action Header
+          required: false
+          schema:
+            type: string
+            enum:
+              - AmazonMemoryDB.FailoverShard
+            default: AmazonMemoryDB.FailoverShard
+      requestBody:
+        required: true
+        content:
+          application/x-amz-json-1.1:
+            schema:
+              type: object
+              properties:
+                ClusterName:
+                  $ref: "#/components/schemas/String"
+                  description: The cluster being failed over.
+                ShardName:
+                  $ref: "#/components/schemas/String"
+                  description: The name of the shard.
+              required:
+                - ClusterName
+                - ShardName
+      responses:
+        "200":
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FailoverShardResponse"
+  /ListAllowedMultiRegionClusterUpdates:
+    post:
+      operationId: ListAllowedMultiRegionClusterUpdates
+      description: Lists the allowed updates for a multi-Region cluster.
+      parameters:
+        - name: X-Amz-Target
+          in: header
+          description: Action Header
+          required: false
+          schema:
+            type: string
+            enum:
+              - AmazonMemoryDB.ListAllowedMultiRegionClusterUpdates
+            default: AmazonMemoryDB.ListAllowedMultiRegionClusterUpdates
+      requestBody:
+        required: true
+        content:
+          application/x-amz-json-1.1:
+            schema:
+              type: object
+              properties:
+                MultiRegionClusterName:
+                  $ref: "#/components/schemas/String"
+                  description: The name of the multi-Region cluster.
+              required:
+                - MultiRegionClusterName
+      responses:
+        "200":
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ListAllowedMultiRegionClusterUpdatesResponse"
+  /ListAllowedNodeTypeUpdates:
+    post:
+      operationId: ListAllowedNodeTypeUpdates
+      description: Lists all available node types that you can scale to from your cluster's current node type. When you use the UpdateCluster operation to scale your cluster, the value of the NodeType parameter must be one of the node types returned by this operation.
+      parameters:
+        - name: X-Amz-Target
+          in: header
+          description: Action Header
+          required: false
+          schema:
+            type: string
+            enum:
+              - AmazonMemoryDB.ListAllowedNodeTypeUpdates
+            default: AmazonMemoryDB.ListAllowedNodeTypeUpdates
+      requestBody:
+        required: true
+        content:
+          application/x-amz-json-1.1:
+            schema:
+              type: object
+              properties:
+                ClusterName:
+                  $ref: "#/components/schemas/String"
+                  description: The name of the cluster you want to scale. MemoryDB uses the cluster name to identify the current node type being used by this cluster, and from that to create a list of node types you can scale up to.
+              required:
+                - ClusterName
+      responses:
+        "200":
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ListAllowedNodeTypeUpdatesResponse"
+  /ListTags:
+    post:
+      operationId: ListTags
+      description: Lists all tags currently on a named resource. A tag is a key-value pair where the key and value are case-sensitive. You can use tags to categorize and track your MemoryDB resources. For more information, see Tagging your MemoryDB resources. When you add or remove tags from multi region clusters, you might not immediately see the latest effective tags in the ListTags API response due to it being eventually consistent specifically for multi region clusters. For more information, see Tagging your MemoryDB resources.
+      parameters:
+        - name: X-Amz-Target
+          in: header
+          description: Action Header
+          required: false
+          schema:
+            type: string
+            enum:
+              - AmazonMemoryDB.ListTags
+            default: AmazonMemoryDB.ListTags
+      requestBody:
+        required: true
+        content:
+          application/x-amz-json-1.1:
+            schema:
+              type: object
+              properties:
+                ResourceArn:
+                  $ref: "#/components/schemas/String"
+                  description: The Amazon Resource Name (ARN) of the resource for which you want the list of tags.
+              required:
+                - ResourceArn
+      responses:
+        "200":
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ListTagsResponse"
+  /PurchaseReservedNodesOffering:
+    post:
+      operationId: PurchaseReservedNodesOffering
+      description: Allows you to purchase a reserved node offering. Reserved nodes are not eligible for cancellation and are non-refundable.
+      parameters:
+        - name: X-Amz-Target
+          in: header
+          description: Action Header
+          required: false
+          schema:
+            type: string
+            enum:
+              - AmazonMemoryDB.PurchaseReservedNodesOffering
+            default: AmazonMemoryDB.PurchaseReservedNodesOffering
+      requestBody:
+        required: true
+        content:
+          application/x-amz-json-1.1:
+            schema:
+              type: object
+              properties:
+                ReservedNodesOfferingId:
+                  $ref: "#/components/schemas/String"
+                  description: The ID of the reserved node offering to purchase.
+                ReservationId:
+                  $ref: "#/components/schemas/String"
+                  description: A customer-specified identifier to track this reservation.
+                NodeCount:
+                  $ref: "#/components/schemas/IntegerOptional"
+                  description: The number of node instances to reserve.
+                Tags:
+                  $ref: "#/components/schemas/TagList"
+                  description: A list of tags to be added to this resource. A tag is a key-value pair. A tag key must be accompanied by a tag value, although null is accepted.
+              required:
+                - ReservedNodesOfferingId
+      responses:
+        "200":
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PurchaseReservedNodesOfferingResponse"
+  /ResetParameterGroup:
+    post:
+      operationId: ResetParameterGroup
+      description: Modifies the parameters of a parameter group to the engine or system default value. You can reset specific parameters by submitting a list of parameter names. To reset the entire parameter group, specify the AllParameters and ParameterGroupName parameters.
+      parameters:
+        - name: X-Amz-Target
+          in: header
+          description: Action Header
+          required: false
+          schema:
+            type: string
+            enum:
+              - AmazonMemoryDB.ResetParameterGroup
+            default: AmazonMemoryDB.ResetParameterGroup
+      requestBody:
+        required: true
+        content:
+          application/x-amz-json-1.1:
+            schema:
+              type: object
+              properties:
+                ParameterGroupName:
+                  $ref: "#/components/schemas/String"
+                  description: The name of the parameter group to reset.
+                AllParameters:
+                  $ref: "#/components/schemas/Boolean"
+                  description: If true, all parameters in the parameter group are reset to their default values. If false, only the parameters listed by ParameterNames are reset to their default values.
+                ParameterNames:
+                  $ref: "#/components/schemas/ParameterNameList"
+                  description: An array of parameter names to reset to their default values. If AllParameters is true, do not use ParameterNames. If AllParameters is false, you must specify the name of at least one parameter to reset.
+              required:
+                - ParameterGroupName
+      responses:
+        "200":
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ResetParameterGroupResponse"
+  /TagResource:
+    post:
+      operationId: TagResource
+      description: Use this operation to add tags to a resource. A tag is a key-value pair where the key and value are case-sensitive. You can use tags to categorize and track all your MemoryDB resources. For more information, see Tagging your MemoryDB resources. When you add tags to multi region clusters, you might not immediately see the latest effective tags in the ListTags API response due to it being eventually consistent specifically for multi region clusters. For more information, see Tagging your MemoryDB resources. You can specify cost-allocation tags for your MemoryDB resources, Amazon generates a cost allocation report as a comma-separated value (CSV) file with your usage and costs aggregated by your tags. You can apply tags that represent business categories (such as cost centers, application names, or owners) to organize your costs across multiple services. For more information, see Using Cost Allocation Tags.
+      parameters:
+        - name: X-Amz-Target
+          in: header
+          description: Action Header
+          required: false
+          schema:
+            type: string
+            enum:
+              - AmazonMemoryDB.TagResource
+            default: AmazonMemoryDB.TagResource
+      requestBody:
+        required: true
+        content:
+          application/x-amz-json-1.1:
+            schema:
+              type: object
+              properties:
+                ResourceArn:
+                  $ref: "#/components/schemas/String"
+                  description: The Amazon Resource Name (ARN) of the resource to which the tags are to be added.
+                Tags:
+                  $ref: "#/components/schemas/TagList"
+                  description: A list of tags to be added to this resource. A tag is a key-value pair. A tag key must be accompanied by a tag value, although null is accepted.
+              required:
+                - ResourceArn
+                - Tags
+      responses:
+        "200":
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TagResourceResponse"
+  /UntagResource:
+    post:
+      operationId: UntagResource
+      description: Use this operation to remove tags on a resource. A tag is a key-value pair where the key and value are case-sensitive. You can use tags to categorize and track all your MemoryDB resources. For more information, see Tagging your MemoryDB resources. When you remove tags from multi region clusters, you might not immediately see the latest effective tags in the ListTags API response due to it being eventually consistent specifically for multi region clusters. For more information, see Tagging your MemoryDB resources. You can specify cost-allocation tags for your MemoryDB resources, Amazon generates a cost allocation report as a comma-separated value (CSV) file with your usage and costs aggregated by your tags. You can apply tags that represent business categories (such as cost centers, application names, or owners) to organize your costs across multiple services. For more information, see Using Cost Allocation Tags.
+      parameters:
+        - name: X-Amz-Target
+          in: header
+          description: Action Header
+          required: false
+          schema:
+            type: string
+            enum:
+              - AmazonMemoryDB.UntagResource
+            default: AmazonMemoryDB.UntagResource
+      requestBody:
+        required: true
+        content:
+          application/x-amz-json-1.1:
+            schema:
+              type: object
+              properties:
+                ResourceArn:
+                  $ref: "#/components/schemas/String"
+                  description: The Amazon Resource Name (ARN) of the resource to which the tags are to be removed.
+                TagKeys:
+                  $ref: "#/components/schemas/KeyList"
+                  description: The list of keys of the tags that are to be removed.
+              required:
+                - ResourceArn
+                - TagKeys
+      responses:
+        "200":
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UntagResourceResponse"
+  /UpdateACL:
+    post:
+      operationId: UpdateACL
+      description: Changes the list of users that belong to the Access Control List.
+      parameters:
+        - name: X-Amz-Target
+          in: header
+          description: Action Header
+          required: false
+          schema:
+            type: string
+            enum:
+              - AmazonMemoryDB.UpdateACL
+            default: AmazonMemoryDB.UpdateACL
+      requestBody:
+        required: true
+        content:
+          application/x-amz-json-1.1:
+            schema:
+              type: object
+              properties:
+                ACLName:
+                  $ref: "#/components/schemas/String"
+                  description: The name of the Access Control List.
+                UserNamesToAdd:
+                  $ref: "#/components/schemas/UserNameListInput"
+                  description: The list of users to add to the Access Control List.
+                UserNamesToRemove:
+                  $ref: "#/components/schemas/UserNameListInput"
+                  description: The list of users to remove from the Access Control List.
+              required:
+                - ACLName
+      responses:
+        "200":
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UpdateACLResponse"
+  /UpdateCluster:
+    post:
+      operationId: UpdateCluster
+      description: Modifies the settings for a cluster. You can use this operation to change one or more cluster configuration settings by specifying the settings and the new values.
+      parameters:
+        - name: X-Amz-Target
+          in: header
+          description: Action Header
+          required: false
+          schema:
+            type: string
+            enum:
+              - AmazonMemoryDB.UpdateCluster
+            default: AmazonMemoryDB.UpdateCluster
+      requestBody:
+        required: true
+        content:
+          application/x-amz-json-1.1:
+            schema:
+              type: object
+              properties:
+                ClusterName:
+                  $ref: "#/components/schemas/String"
+                  description: The name of the cluster to update.
+                Description:
+                  $ref: "#/components/schemas/String"
+                  description: The description of the cluster to update.
+                SecurityGroupIds:
+                  $ref: "#/components/schemas/SecurityGroupIdsList"
+                  description: The SecurityGroupIds to update.
+                MaintenanceWindow:
+                  $ref: "#/components/schemas/String"
+                  description: "Specifies the weekly time range during which maintenance on the cluster is performed. It is specified as a range in the format ddd:hh24:mi-ddd:hh24:mi (24H Clock UTC). The minimum maintenance window is a 60 minute period. Valid values for ddd are: sun mon tue wed thu fri sat Example: sun:23:00-mon:01:30"
+                SnsTopicArn:
+                  $ref: "#/components/schemas/String"
+                  description: The SNS topic ARN to update.
+                SnsTopicStatus:
+                  $ref: "#/components/schemas/String"
+                  description: The status of the Amazon SNS notification topic. Notifications are sent only if the status is active.
+                ParameterGroupName:
+                  $ref: "#/components/schemas/String"
+                  description: The name of the parameter group to update.
+                SnapshotWindow:
+                  $ref: "#/components/schemas/String"
+                  description: The daily time range (in UTC) during which MemoryDB begins taking a daily snapshot of your cluster.
+                SnapshotRetentionLimit:
+                  $ref: "#/components/schemas/IntegerOptional"
+                  description: The number of days for which MemoryDB retains automatic cluster snapshots before deleting them. For example, if you set SnapshotRetentionLimit to 5, a snapshot that was taken today is retained for 5 days before being deleted.
+                NodeType:
+                  $ref: "#/components/schemas/String"
+                  description: A valid node type that you want to scale this cluster up or down to.
+                Engine:
+                  $ref: "#/components/schemas/String"
+                  description: The name of the engine to be used for the cluster.
+                EngineVersion:
+                  $ref: "#/components/schemas/String"
+                  description: The upgraded version of the engine to be run on the nodes. You can upgrade to a newer engine version, but you cannot downgrade to an earlier engine version. If you want to use an earlier engine version, you must delete the existing cluster and create it anew with the earlier engine version.
+                ReplicaConfiguration:
+                  $ref: "#/components/schemas/ReplicaConfigurationRequest"
+                  description: The number of replicas that will reside in each shard.
+                ShardConfiguration:
+                  $ref: "#/components/schemas/ShardConfigurationRequest"
+                  description: The number of shards in the cluster.
+                ACLName:
+                  $ref: "#/components/schemas/ACLName"
+                  description: The Access Control List that is associated with the cluster.
+                IpDiscovery:
+                  $ref: "#/components/schemas/IpDiscovery"
+                  description: The mechanism for discovering IP addresses for the cluster discovery protocol. Valid values are 'ipv4' or 'ipv6'. When set to 'ipv4', cluster discovery functions such as cluster slots, cluster shards, and cluster nodes will return IPv4 addresses for cluster nodes. When set to 'ipv6', the cluster discovery functions return IPv6 addresses for cluster nodes. The value must be compatible with the NetworkType parameter. If not specified, the default is 'ipv4'.
+              required:
+                - ClusterName
+      responses:
+        "200":
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UpdateClusterResponse"
+  /UpdateMultiRegionCluster:
+    post:
+      operationId: UpdateMultiRegionCluster
+      description: Updates the configuration of an existing multi-Region cluster.
+      parameters:
+        - name: X-Amz-Target
+          in: header
+          description: Action Header
+          required: false
+          schema:
+            type: string
+            enum:
+              - AmazonMemoryDB.UpdateMultiRegionCluster
+            default: AmazonMemoryDB.UpdateMultiRegionCluster
+      requestBody:
+        required: true
+        content:
+          application/x-amz-json-1.1:
+            schema:
+              type: object
+              properties:
+                MultiRegionClusterName:
+                  $ref: "#/components/schemas/String"
+                  description: The name of the multi-Region cluster to be updated.
+                NodeType:
+                  $ref: "#/components/schemas/String"
+                  description: The new node type to be used for the multi-Region cluster.
+                Description:
+                  $ref: "#/components/schemas/String"
+                  description: A new description for the multi-Region cluster.
+                EngineVersion:
+                  $ref: "#/components/schemas/String"
+                  description: The new engine version to be used for the multi-Region cluster.
+                ShardConfiguration:
+                  $ref: "#/components/schemas/ShardConfigurationRequest"
+                MultiRegionParameterGroupName:
+                  $ref: "#/components/schemas/String"
+                  description: The new multi-Region parameter group to be associated with the cluster.
+                UpdateStrategy:
+                  $ref: "#/components/schemas/UpdateStrategy"
+                  description: The strategy to use for the update operation. Supported values are "coordinated" or "uncoordinated".
+              required:
+                - MultiRegionClusterName
+      responses:
+        "200":
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UpdateMultiRegionClusterResponse"
+  /UpdateParameterGroup:
+    post:
+      operationId: UpdateParameterGroup
+      description: Updates the parameters of a parameter group. You can modify up to 20 parameters in a single request by submitting a list parameter name and value pairs.
+      parameters:
+        - name: X-Amz-Target
+          in: header
+          description: Action Header
+          required: false
+          schema:
+            type: string
+            enum:
+              - AmazonMemoryDB.UpdateParameterGroup
+            default: AmazonMemoryDB.UpdateParameterGroup
+      requestBody:
+        required: true
+        content:
+          application/x-amz-json-1.1:
+            schema:
+              type: object
+              properties:
+                ParameterGroupName:
+                  $ref: "#/components/schemas/String"
+                  description: The name of the parameter group to update.
+                ParameterNameValues:
+                  $ref: "#/components/schemas/ParameterNameValueList"
+                  description: An array of parameter names and values for the parameter update. You must supply at least one parameter name and value; subsequent arguments are optional. A maximum of 20 parameters may be updated per request.
+              required:
+                - ParameterGroupName
+                - ParameterNameValues
+      responses:
+        "200":
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UpdateParameterGroupResponse"
+  /UpdateSubnetGroup:
+    post:
+      operationId: UpdateSubnetGroup
+      description: Updates a subnet group. For more information, see Updating a subnet group
+      parameters:
+        - name: X-Amz-Target
+          in: header
+          description: Action Header
+          required: false
+          schema:
+            type: string
+            enum:
+              - AmazonMemoryDB.UpdateSubnetGroup
+            default: AmazonMemoryDB.UpdateSubnetGroup
+      requestBody:
+        required: true
+        content:
+          application/x-amz-json-1.1:
+            schema:
+              type: object
+              properties:
+                SubnetGroupName:
+                  $ref: "#/components/schemas/String"
+                  description: The name of the subnet group
+                Description:
+                  $ref: "#/components/schemas/String"
+                  description: A description of the subnet group
+                SubnetIds:
+                  $ref: "#/components/schemas/SubnetIdentifierList"
+                  description: The EC2 subnet IDs for the subnet group.
+              required:
+                - SubnetGroupName
+      responses:
+        "200":
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UpdateSubnetGroupResponse"
+  /UpdateUser:
+    post:
+      operationId: UpdateUser
+      description: Changes user password(s) and/or access string.
+      parameters:
+        - name: X-Amz-Target
+          in: header
+          description: Action Header
+          required: false
+          schema:
+            type: string
+            enum:
+              - AmazonMemoryDB.UpdateUser
+            default: AmazonMemoryDB.UpdateUser
+      requestBody:
+        required: true
+        content:
+          application/x-amz-json-1.1:
+            schema:
+              type: object
+              properties:
+                UserName:
+                  $ref: "#/components/schemas/UserName"
+                  description: The name of the user
+                AuthenticationMode:
+                  $ref: "#/components/schemas/AuthenticationMode"
+                  description: Denotes the user's authentication properties, such as whether it requires a password to authenticate.
+                AccessString:
+                  $ref: "#/components/schemas/AccessString"
+                  description: Access permissions string used for this user.
+              required:
+                - UserName
+      responses:
+        "200":
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UpdateUserResponse"
+components:
+  parameters:
+    X-Amz-Content-Sha256:
+      in: header
+      name: X-Amz-Content-Sha256
+      required: false
+      schema:
+        type: string
+    X-Amz-Date:
+      in: header
+      name: X-Amz-Date
+      required: false
+      schema:
+        type: string
+    X-Amz-Algorithm:
+      in: header
+      name: X-Amz-Algorithm
+      required: false
+      schema:
+        type: string
+    X-Amz-Credential:
+      in: header
+      name: X-Amz-Credential
+      required: false
+      schema:
+        type: string
+    X-Amz-Security-Token:
+      in: header
+      name: X-Amz-Security-Token
+      required: false
+      schema:
+        type: string
+    X-Amz-Signature:
+      in: header
+      name: X-Amz-Signature
+      required: false
+      schema:
+        type: string
+    X-Amz-SignedHeaders:
+      in: header
+      name: X-Amz-SignedHeaders
+      required: false
+      schema:
+        type: string
+  schemas:
+    ClusterNameList:
+      type: array
+      items:
+        $ref: "#/components/schemas/String"
+    String:
+      type: string
+    ServiceUpdateRequest:
+      description: A request to apply a service update
+      type: object
+      properties:
+        ServiceUpdateNameToApply:
+          $ref: "#/components/schemas/String"
+          description: The unique ID of the service update
+    BatchUpdateClusterResponse:
+      type: object
+      properties:
+        ProcessedClusters:
+          $ref: "#/components/schemas/ClusterList"
+          description: The list of clusters that have been updated.
+        UnprocessedClusters:
+          $ref: "#/components/schemas/UnprocessedClusterList"
+          description: The list of clusters where updates have not been applied.
+    ClusterList:
+      type: array
+      items:
+        $ref: "#/components/schemas/Cluster"
+    Cluster:
+      description: Contains all of the attributes of a specific cluster.
+      type: object
+      properties:
+        Name:
+          $ref: "#/components/schemas/String"
+          description: The user-supplied name of the cluster. This identifier is a unique key that identifies a cluster.
+        Description:
+          $ref: "#/components/schemas/String"
+          description: A description of the cluster
+        Status:
+          $ref: "#/components/schemas/String"
+          description: The status of the cluster. For example, Available, Updating, Creating.
+        PendingUpdates:
+          $ref: "#/components/schemas/ClusterPendingUpdates"
+          description: A group of settings that are currently being applied.
+        MultiRegionClusterName:
+          $ref: "#/components/schemas/String"
+          description: The name of the multi-Region cluster that this cluster belongs to.
+        NumberOfShards:
+          $ref: "#/components/schemas/IntegerOptional"
+          description: The number of shards in the cluster
+        Shards:
+          $ref: "#/components/schemas/ShardList"
+          description: A list of shards that are members of the cluster.
+        AvailabilityMode:
+          $ref: "#/components/schemas/AZStatus"
+          description: Indicates if the cluster has a Multi-AZ configuration (multiaz) or not (singleaz).
+        ClusterEndpoint:
+          $ref: "#/components/schemas/Endpoint"
+          description: The cluster's configuration endpoint
+        NodeType:
+          $ref: "#/components/schemas/String"
+          description: The cluster's node type
+        Engine:
+          $ref: "#/components/schemas/String"
+          description: The name of the engine used by the cluster.
+        EngineVersion:
+          $ref: "#/components/schemas/String"
+          description: The Redis OSS engine version used by the cluster
+        EnginePatchVersion:
+          $ref: "#/components/schemas/String"
+          description: The Redis OSS engine patch version used by the cluster
+        ParameterGroupName:
+          $ref: "#/components/schemas/String"
+          description: The name of the parameter group used by the cluster
+        ParameterGroupStatus:
+          $ref: "#/components/schemas/String"
+          description: The status of the parameter group used by the cluster, for example 'active' or 'applying'.
+        SecurityGroups:
+          $ref: "#/components/schemas/SecurityGroupMembershipList"
+          description: A list of security groups used by the cluster
+        SubnetGroupName:
+          $ref: "#/components/schemas/String"
+          description: The name of the subnet group used by the cluster
+        TLSEnabled:
+          $ref: "#/components/schemas/BooleanOptional"
+          description: A flag to indicate if In-transit encryption is enabled
+        KmsKeyId:
+          $ref: "#/components/schemas/String"
+          description: The ID of the KMS key used to encrypt the cluster
+        ARN:
+          $ref: "#/components/schemas/String"
+          description: The Amazon Resource Name (ARN) of the cluster.
+        SnsTopicArn:
+          $ref: "#/components/schemas/String"
+          description: The Amazon Resource Name (ARN) of the SNS notification topic
+        SnsTopicStatus:
+          $ref: "#/components/schemas/String"
+          description: The SNS topic must be in Active status to receive notifications
+        SnapshotRetentionLimit:
+          $ref: "#/components/schemas/IntegerOptional"
+          description: The number of days for which MemoryDB retains automatic snapshots before deleting them. For example, if you set SnapshotRetentionLimit to 5, a snapshot that was taken today is retained for 5 days before being deleted.
+        MaintenanceWindow:
+          $ref: "#/components/schemas/String"
+          description: Specifies the weekly time range during which maintenance on the cluster is performed. It is specified as a range in the format ddd:hh24:mi-ddd:hh24:mi (24H Clock UTC). The minimum maintenance window is a 60 minute period.
+        SnapshotWindow:
+          $ref: "#/components/schemas/String"
+          description: "The daily time range (in UTC) during which MemoryDB begins taking a daily snapshot of your shard. Example: 05:00-09:00 If you do not specify this parameter, MemoryDB automatically chooses an appropriate time range."
+        ACLName:
+          $ref: "#/components/schemas/ACLName"
+          description: The name of the Access Control List associated with this cluster.
+        AutoMinorVersionUpgrade:
+          $ref: "#/components/schemas/BooleanOptional"
+          description: When set to true, the cluster will automatically receive minor engine version upgrades after launch.
+        DataTiering:
+          $ref: "#/components/schemas/DataTieringStatus"
+          description: Enables data tiering. Data tiering is only supported for clusters using the r6gd node type. This parameter must be set when using r6gd nodes. For more information, see Data tiering.
+        NetworkType:
+          $ref: "#/components/schemas/NetworkType"
+          description: The IP address type for the cluster. Returns 'ipv4' for IPv4 only, 'ipv6' for IPv6 only, or 'dual-stack' if the cluster supports both IPv4 and IPv6 addressing.
+        IpDiscovery:
+          $ref: "#/components/schemas/IpDiscovery"
+          description: The mechanism that the cluster uses to discover IP addresses. Returns 'ipv4' when DNS endpoints resolve to IPv4 addresses, or 'ipv6' when DNS endpoints resolve to IPv6 addresses.
+    ClusterPendingUpdates:
+      description: A list of updates being applied to the cluster
+      type: object
+      properties:
+        Resharding:
+          $ref: "#/components/schemas/ReshardingStatus"
+          description: The status of an online resharding operation.
+        ACLs:
+          $ref: "#/components/schemas/ACLsUpdateStatus"
+          description: A list of ACLs associated with the cluster that are being updated
+        ServiceUpdates:
+          $ref: "#/components/schemas/PendingModifiedServiceUpdateList"
+          description: A list of service updates being applied to the cluster
+    ReshardingStatus:
+      description: The status of the online resharding
+      type: object
+      properties:
+        SlotMigration:
+          $ref: "#/components/schemas/SlotMigration"
+          description: The status of the online resharding slot migration
+    SlotMigration:
+      description: Represents the progress of an online resharding operation.
+      type: object
+      properties:
+        ProgressPercentage:
+          $ref: "#/components/schemas/Double"
+          description: The percentage of the slot migration that is complete.
+    Double:
+      type: number
+      format: double
+    ACLsUpdateStatus:
+      description: The status of the ACL update
+      type: object
+      properties:
+        ACLToApply:
+          $ref: "#/components/schemas/ACLName"
+          description: A list of ACLs pending to be applied.
+    ACLName:
+      type: string
+      minLength: 1
+      pattern: "[a-zA-Z][a-zA-Z0-9\\-]*"
+    PendingModifiedServiceUpdateList:
+      type: array
+      items:
+        $ref: "#/components/schemas/PendingModifiedServiceUpdate"
+    PendingModifiedServiceUpdate:
+      description: Update action that has yet to be processed for the corresponding apply/stop request
+      type: object
+      properties:
+        ServiceUpdateName:
+          $ref: "#/components/schemas/String"
+          description: The unique ID of the service update
+        Status:
+          $ref: "#/components/schemas/ServiceUpdateStatus"
+          description: The status of the service update
+    ServiceUpdateStatus:
+      type: string
+      enum:
+        - available
+        - in-progress
+        - complete
+        - scheduled
+    IntegerOptional:
+      type: integer
+    ShardList:
+      type: array
+      items:
+        $ref: "#/components/schemas/Shard"
+    Shard:
+      description: Represents a collection of nodes in a cluster. One node in the node group is the read/write primary node. All the other nodes are read-only Replica nodes.
+      type: object
+      properties:
+        Name:
+          $ref: "#/components/schemas/String"
+          description: The name of the shard
+        Status:
+          $ref: "#/components/schemas/String"
+          description: The current state of this replication group - creating, available, modifying, deleting.
+        Slots:
+          $ref: "#/components/schemas/String"
+          description: The keyspace for this shard.
+        Nodes:
+          $ref: "#/components/schemas/NodeList"
+          description: A list containing information about individual nodes within the shard
+        NumberOfNodes:
+          $ref: "#/components/schemas/IntegerOptional"
+          description: The number of nodes in the shard
+    NodeList:
+      type: array
+      items:
+        $ref: "#/components/schemas/Node"
+    Node:
+      description: Represents an individual node within a cluster. Each node runs its own instance of the cluster's protocol-compliant caching software.
+      type: object
+      properties:
+        Name:
+          $ref: "#/components/schemas/String"
+          description: The node identifier. A node name is a numeric identifier (0001, 0002, etc.). The combination of cluster name, shard name and node name uniquely identifies every node used in a customer's Amazon account.
+        Status:
+          $ref: "#/components/schemas/String"
+          description: The status of the service update on the node
+        AvailabilityZone:
+          $ref: "#/components/schemas/String"
+          description: The Availability Zone in which the node resides
+        CreateTime:
+          $ref: "#/components/schemas/TStamp"
+          description: The date and time when the node was created.
+        Endpoint:
+          $ref: "#/components/schemas/Endpoint"
+          description: The hostname for connecting to this node.
+    TStamp:
+      type: string
+      format: date-time
+    Endpoint:
+      description: Represents the information required for client programs to connect to the cluster and its nodes.
+      type: object
+      properties:
+        Address:
+          $ref: "#/components/schemas/String"
+          description: The DNS hostname of the node.
+        Port:
+          $ref: "#/components/schemas/Integer"
+          description: The port number that the engine is listening on.
+    Integer:
+      type: integer
+    AZStatus:
+      type: string
+      enum:
+        - singleaz
+        - multiaz
+    SecurityGroupMembershipList:
+      type: array
+      items:
+        $ref: "#/components/schemas/SecurityGroupMembership"
+    SecurityGroupMembership:
+      description: Represents a single security group and its status.
+      type: object
+      properties:
+        SecurityGroupId:
+          $ref: "#/components/schemas/String"
+          description: The identifier of the security group.
+        Status:
+          $ref: "#/components/schemas/String"
+          description: The status of the security group membership. The status changes whenever a security group is modified, or when the security groups assigned to a cluster are modified.
+    BooleanOptional:
+      type: boolean
+    DataTieringStatus:
+      type: string
+      enum:
+        - "true"
+        - "false"
+    NetworkType:
+      type: string
+      enum:
+        - ipv4
+        - ipv6
+        - dual_stack
+    IpDiscovery:
+      type: string
+      enum:
+        - ipv4
+        - ipv6
+    UnprocessedClusterList:
+      type: array
+      items:
+        $ref: "#/components/schemas/UnprocessedCluster"
+    UnprocessedCluster:
+      description: A cluster whose updates have failed
+      type: object
+      properties:
+        ClusterName:
+          $ref: "#/components/schemas/String"
+          description: The name of the cluster
+        ErrorType:
+          $ref: "#/components/schemas/String"
+          description: The error type associated with the update failure
+        ErrorMessage:
+          $ref: "#/components/schemas/String"
+          description: The error message associated with the update failure
+    TargetBucket:
+      type: string
+      maxLength: 255
+      pattern: ^[A-Za-z0-9._-]+$
+    KmsKeyId:
+      type: string
+      maxLength: 2048
+    TagList:
+      type: array
+      items:
+        $ref: "#/components/schemas/Tag"
+    Tag:
+      description: A tag that can be added to an MemoryDB resource. Tags are composed of a Key/Value pair. You can use tags to categorize and track all your MemoryDB resources. When you add or remove tags on clusters, those actions will be replicated to all nodes in the cluster. A tag with a null Value is permitted. For more information, see Tagging your MemoryDB resources
+      type: object
+      properties:
+        Key:
+          $ref: "#/components/schemas/String"
+          description: The key for the tag. May not be null.
+        Value:
+          $ref: "#/components/schemas/String"
+          description: The tag's value. May be null.
+    CopySnapshotResponse:
+      type: object
+      properties:
+        Snapshot:
+          $ref: "#/components/schemas/Snapshot"
+          description: Represents a copy of an entire cluster as of the time when the snapshot was taken.
+    Snapshot:
+      description: Represents a copy of an entire cluster as of the time when the snapshot was taken.
+      type: object
+      properties:
+        Name:
+          $ref: "#/components/schemas/String"
+          description: The name of the snapshot
+        Status:
+          $ref: "#/components/schemas/String"
+          description: "The status of the snapshot. Valid values: creating | available | restoring | copying | deleting."
+        Source:
+          $ref: "#/components/schemas/String"
+          description: Indicates whether the snapshot is from an automatic backup (automated) or was created manually (manual).
+        KmsKeyId:
+          $ref: "#/components/schemas/String"
+          description: The ID of the KMS key used to encrypt the snapshot.
+        ARN:
+          $ref: "#/components/schemas/String"
+          description: The ARN (Amazon Resource Name) of the snapshot.
+        ClusterConfiguration:
+          $ref: "#/components/schemas/ClusterConfiguration"
+          description: The configuration of the cluster from which the snapshot was taken
+        DataTiering:
+          $ref: "#/components/schemas/DataTieringStatus"
+          description: Enables data tiering. Data tiering is only supported for clusters using the r6gd node type. This parameter must be set when using r6gd nodes. For more information, see Data tiering.
+    ClusterConfiguration:
+      description: A list of cluster configuration options.
+      type: object
+      properties:
+        Name:
+          $ref: "#/components/schemas/String"
+          description: The name of the cluster
+        Description:
+          $ref: "#/components/schemas/String"
+          description: The description of the cluster configuration
+        NodeType:
+          $ref: "#/components/schemas/String"
+          description: The node type used for the cluster
+        Engine:
+          $ref: "#/components/schemas/String"
+          description: The name of the engine used by the cluster configuration.
+        EngineVersion:
+          $ref: "#/components/schemas/String"
+          description: The Redis OSS engine version used by the cluster
+        MaintenanceWindow:
+          $ref: "#/components/schemas/String"
+          description: The specified maintenance window for the cluster
+        TopicArn:
+          $ref: "#/components/schemas/String"
+          description: The Amazon Resource Name (ARN) of the SNS notification topic for the cluster
+        Port:
+          $ref: "#/components/schemas/IntegerOptional"
+          description: The port used by the cluster
+        ParameterGroupName:
+          $ref: "#/components/schemas/String"
+          description: The name of parameter group used by the cluster
+        SubnetGroupName:
+          $ref: "#/components/schemas/String"
+          description: The name of the subnet group used by the cluster
+        VpcId:
+          $ref: "#/components/schemas/String"
+          description: The ID of the VPC the cluster belongs to
+        SnapshotRetentionLimit:
+          $ref: "#/components/schemas/IntegerOptional"
+          description: The snapshot retention limit set by the cluster
+        SnapshotWindow:
+          $ref: "#/components/schemas/String"
+          description: The snapshot window set by the cluster
+        NumShards:
+          $ref: "#/components/schemas/IntegerOptional"
+          description: The number of shards in the cluster
+        Shards:
+          $ref: "#/components/schemas/ShardDetails"
+          description: The list of shards in the cluster
+        MultiRegionParameterGroupName:
+          $ref: "#/components/schemas/String"
+          description: The name of the multi-Region parameter group associated with the cluster configuration.
+        MultiRegionClusterName:
+          $ref: "#/components/schemas/String"
+          description: The name for the multi-Region cluster associated with the cluster configuration.
+    ShardDetails:
+      type: array
+      items:
+        $ref: "#/components/schemas/ShardDetail"
+    ShardDetail:
+      description: Provides details of a shard in a snapshot
+      type: object
+      properties:
+        Name:
+          $ref: "#/components/schemas/String"
+          description: The name of the shard
+        Configuration:
+          $ref: "#/components/schemas/ShardConfiguration"
+          description: The configuration details of the shard
+        Size:
+          $ref: "#/components/schemas/String"
+          description: The size of the shard's snapshot
+        SnapshotCreationTime:
+          $ref: "#/components/schemas/TStamp"
+          description: The date and time that the shard's snapshot was created
+    ShardConfiguration:
+      description: "Shard configuration options. Each shard configuration has the following: Slots and ReplicaCount."
+      type: object
+      properties:
+        Slots:
+          $ref: "#/components/schemas/String"
+          description: A string that specifies the keyspace for a particular node group. Keyspaces range from 0 to 16,383. The string is in the format startkey-endkey.
+        ReplicaCount:
+          $ref: "#/components/schemas/IntegerOptional"
+          description: The number of read replica nodes in this shard.
+    UserNameListInput:
+      type: array
+      items:
+        $ref: "#/components/schemas/UserName"
+    UserName:
+      type: string
+      minLength: 1
+      pattern: "[a-zA-Z][a-zA-Z0-9\\-]*"
+    CreateACLResponse:
+      type: object
+      properties:
+        ACL:
+          $ref: "#/components/schemas/ACL"
+          description: The newly-created Access Control List.
+    ACL:
+      description: An Access Control List. You can authenticate users with Access Contol Lists. ACLs enable you to control cluster access by grouping users. These Access control lists are designed as a way to organize access to clusters.
+      type: object
+      properties:
+        Name:
+          $ref: "#/components/schemas/String"
+          description: The name of the Access Control List
+        Status:
+          $ref: "#/components/schemas/String"
+          description: Indicates ACL status. Can be "creating", "active", "modifying", "deleting".
+        UserNames:
+          $ref: "#/components/schemas/UserNameList"
+          description: The list of user names that belong to the ACL.
+        MinimumEngineVersion:
+          $ref: "#/components/schemas/String"
+          description: The minimum engine version supported for the ACL
+        PendingChanges:
+          $ref: "#/components/schemas/ACLPendingChanges"
+          description: A list of updates being applied to the ACL.
+        Clusters:
+          $ref: "#/components/schemas/ACLClusterNameList"
+          description: A list of clusters associated with the ACL.
+        ARN:
+          $ref: "#/components/schemas/String"
+          description: The Amazon Resource Name (ARN) of the ACL
+    UserNameList:
+      type: array
+      items:
+        $ref: "#/components/schemas/UserName"
+    ACLPendingChanges:
+      description: Returns the updates being applied to the ACL.
+      type: object
+      properties:
+        UserNamesToRemove:
+          $ref: "#/components/schemas/UserNameList"
+          description: A list of user names being removed from the ACL
+        UserNamesToAdd:
+          $ref: "#/components/schemas/UserNameList"
+          description: A list of users being added to the ACL
+    ACLClusterNameList:
+      type: array
+      items:
+        $ref: "#/components/schemas/String"
+    SecurityGroupIdsList:
+      type: array
+      items:
+        $ref: "#/components/schemas/String"
+    SnapshotArnsList:
+      type: array
+      items:
+        $ref: "#/components/schemas/String"
+    CreateClusterResponse:
+      type: object
+      properties:
+        Cluster:
+          $ref: "#/components/schemas/Cluster"
+          description: The newly-created cluster.
+    CreateMultiRegionClusterResponse:
+      type: object
+      properties:
+        MultiRegionCluster:
+          $ref: "#/components/schemas/MultiRegionCluster"
+          description: Details about the newly created multi-Region cluster.
+    MultiRegionCluster:
+      description: Represents a multi-Region cluster.
+      type: object
+      properties:
+        MultiRegionClusterName:
+          $ref: "#/components/schemas/String"
+          description: The name of the multi-Region cluster.
+        Description:
+          $ref: "#/components/schemas/String"
+          description: The description of the multi-Region cluster.
+        Status:
+          $ref: "#/components/schemas/String"
+          description: The current status of the multi-Region cluster.
+        NodeType:
+          $ref: "#/components/schemas/String"
+          description: The node type used by the multi-Region cluster.
+        Engine:
+          $ref: "#/components/schemas/String"
+          description: The name of the engine used by the multi-Region cluster.
+        EngineVersion:
+          $ref: "#/components/schemas/String"
+          description: The version of the engine used by the multi-Region cluster.
+        NumberOfShards:
+          $ref: "#/components/schemas/IntegerOptional"
+          description: The number of shards in the multi-Region cluster.
+        Clusters:
+          $ref: "#/components/schemas/RegionalClusterList"
+          description: The clusters in this multi-Region cluster.
+        MultiRegionParameterGroupName:
+          $ref: "#/components/schemas/String"
+          description: The name of the multi-Region parameter group associated with the cluster.
+        TLSEnabled:
+          $ref: "#/components/schemas/BooleanOptional"
+          description: Indiciates if the multi-Region cluster is TLS enabled.
+        ARN:
+          $ref: "#/components/schemas/String"
+          description: The Amazon Resource Name (ARN) of the multi-Region cluster.
+    RegionalClusterList:
+      type: array
+      items:
+        $ref: "#/components/schemas/RegionalCluster"
+    RegionalCluster:
+      description: Represents a Regional cluster
+      type: object
+      properties:
+        ClusterName:
+          $ref: "#/components/schemas/String"
+          description: The name of the Regional cluster
+        Region:
+          $ref: "#/components/schemas/String"
+          description: The Region the current Regional cluster is assigned to.
+        Status:
+          $ref: "#/components/schemas/String"
+          description: The status of the Regional cluster.
+        ARN:
+          $ref: "#/components/schemas/String"
+          description: The Amazon Resource Name (ARN) the Regional cluster
+    CreateParameterGroupResponse:
+      type: object
+      properties:
+        ParameterGroup:
+          $ref: "#/components/schemas/ParameterGroup"
+          description: The newly-created parameter group.
+    ParameterGroup:
+      description: Represents the output of a CreateParameterGroup operation. A parameter group represents a combination of specific values for the parameters that are passed to the engine software during startup.
+      type: object
+      properties:
+        Name:
+          $ref: "#/components/schemas/String"
+          description: The name of the parameter group
+        Family:
+          $ref: "#/components/schemas/String"
+          description: The name of the parameter group family that this parameter group is compatible with.
+        Description:
+          $ref: "#/components/schemas/String"
+          description: A description of the parameter group
+        ARN:
+          $ref: "#/components/schemas/String"
+          description: The Amazon Resource Name (ARN) of the parameter group
+    CreateSnapshotResponse:
+      type: object
+      properties:
+        Snapshot:
+          $ref: "#/components/schemas/Snapshot"
+          description: The newly-created snapshot.
+    SubnetIdentifierList:
+      type: array
+      items:
+        $ref: "#/components/schemas/String"
+    CreateSubnetGroupResponse:
+      type: object
+      properties:
+        SubnetGroup:
+          $ref: "#/components/schemas/SubnetGroup"
+          description: The newly-created subnet group.
+    SubnetGroup:
+      description: "Represents the output of one of the following operations: CreateSubnetGroup UpdateSubnetGroup A subnet group is a collection of subnets (typically private) that you can designate for your clusters running in an Amazon Virtual Private Cloud (VPC) environment."
+      type: object
+      properties:
+        Name:
+          $ref: "#/components/schemas/String"
+          description: The name of the subnet group
+        Description:
+          $ref: "#/components/schemas/String"
+          description: A description of the subnet group
+        VpcId:
+          $ref: "#/components/schemas/String"
+          description: The Amazon Virtual Private Cloud identifier (VPC ID) of the subnet group.
+        Subnets:
+          $ref: "#/components/schemas/SubnetList"
+          description: A list of subnets associated with the subnet group.
+        ARN:
+          $ref: "#/components/schemas/String"
+          description: The ARN (Amazon Resource Name) of the subnet group.
+        SupportedNetworkTypes:
+          $ref: "#/components/schemas/NetworkTypeList"
+          description: The network types supported by this subnet group. Returns an array of strings that can include 'ipv4', 'ipv6', or both, indicating the IP address types that can be used for clusters deployed in this subnet group.
+    SubnetList:
+      type: array
+      items:
+        $ref: "#/components/schemas/Subnet"
+    Subnet:
+      description: Represents the subnet associated with a cluster. This parameter refers to subnets defined in Amazon Virtual Private Cloud (Amazon VPC) and used with MemoryDB.
+      type: object
+      properties:
+        Identifier:
+          $ref: "#/components/schemas/String"
+          description: The unique identifier for the subnet.
+        AvailabilityZone:
+          $ref: "#/components/schemas/AvailabilityZone"
+          description: The Availability Zone where the subnet resides
+        SupportedNetworkTypes:
+          $ref: "#/components/schemas/NetworkTypeList"
+          description: The network types supported by this subnet. Returns an array of strings that can include 'ipv4', 'ipv6', or both, indicating whether the subnet supports IPv4 only, IPv6 only, or dual-stack deployments.
+    AvailabilityZone:
+      description: Indicates if the cluster has a Multi-AZ configuration (multiaz) or not (singleaz).
+      type: object
+      properties:
+        Name:
+          $ref: "#/components/schemas/String"
+          description: The name of the Availability Zone.
+    NetworkTypeList:
+      type: array
+      items:
+        $ref: "#/components/schemas/NetworkType"
+    AuthenticationMode:
+      description: Denotes the user's authentication properties, such as whether it requires a password to authenticate. Used in output responses.
+      type: object
+      properties:
+        Type:
+          $ref: "#/components/schemas/InputAuthenticationType"
+          description: Indicates whether the user requires a password to authenticate. All newly-created users require a password.
+        Passwords:
+          $ref: "#/components/schemas/PasswordListInput"
+          description: The password(s) used for authentication
+    InputAuthenticationType:
+      type: string
+      enum:
+        - password
+        - iam
+    PasswordListInput:
+      type: array
+      items:
+        $ref: "#/components/schemas/String"
+    AccessString:
+      type: string
+      pattern: .*\S.*
+    CreateUserResponse:
+      type: object
+      properties:
+        User:
+          $ref: "#/components/schemas/User"
+          description: The newly-created user.
+    User:
+      description: You create users and assign them specific permissions by using an access string. You assign the users to Access Control Lists aligned with a specific role (administrators, human resources) that are then deployed to one or more MemoryDB clusters.
+      type: object
+      properties:
+        Name:
+          $ref: "#/components/schemas/String"
+          description: The name of the user
+        Status:
+          $ref: "#/components/schemas/String"
+          description: Indicates the user status. Can be "active", "modifying" or "deleting".
+        AccessString:
+          $ref: "#/components/schemas/String"
+          description: Access permissions string used for this user.
+        ACLNames:
+          $ref: "#/components/schemas/ACLNameList"
+          description: The names of the Access Control Lists to which the user belongs
+        MinimumEngineVersion:
+          $ref: "#/components/schemas/String"
+          description: The minimum engine version supported for the user
+        Authentication:
+          $ref: "#/components/schemas/Authentication"
+          description: Denotes whether the user requires a password to authenticate.
+        ARN:
+          $ref: "#/components/schemas/String"
+          description: The Amazon Resource Name (ARN) of the user.
+    ACLNameList:
+      type: array
+      items:
+        $ref: "#/components/schemas/ACLName"
+    Authentication:
+      description: Denotes the user's authentication properties, such as whether it requires a password to authenticate. Used in output responses.
+      type: object
+      properties:
+        Type:
+          $ref: "#/components/schemas/AuthenticationType"
+          description: Indicates whether the user requires a password to authenticate.
+        PasswordCount:
+          $ref: "#/components/schemas/IntegerOptional"
+          description: The number of passwords belonging to the user. The maximum is two.
+    AuthenticationType:
+      type: string
+      enum:
+        - password
+        - no-password
+        - iam
+    DeleteACLResponse:
+      type: object
+      properties:
+        ACL:
+          $ref: "#/components/schemas/ACL"
+          description: The Access Control List object that has been deleted.
+    DeleteClusterResponse:
+      type: object
+      properties:
+        Cluster:
+          $ref: "#/components/schemas/Cluster"
+          description: The cluster object that has been deleted.
+    DeleteMultiRegionClusterResponse:
+      type: object
+      properties:
+        MultiRegionCluster:
+          $ref: "#/components/schemas/MultiRegionCluster"
+          description: Details about the deleted multi-Region cluster.
+    DeleteParameterGroupResponse:
+      type: object
+      properties:
+        ParameterGroup:
+          $ref: "#/components/schemas/ParameterGroup"
+          description: The parameter group that has been deleted.
+    DeleteSnapshotResponse:
+      type: object
+      properties:
+        Snapshot:
+          $ref: "#/components/schemas/Snapshot"
+          description: The snapshot object that has been deleted.
+    DeleteSubnetGroupResponse:
+      type: object
+      properties:
+        SubnetGroup:
+          $ref: "#/components/schemas/SubnetGroup"
+          description: The subnet group object that has been deleted.
+    DeleteUserResponse:
+      type: object
+      properties:
+        User:
+          $ref: "#/components/schemas/User"
+          description: The user object that has been deleted.
+    DescribeACLsResponse:
+      type: object
+      properties:
+        ACLs:
+          $ref: "#/components/schemas/ACLList"
+          description: The list of ACLs.
+        NextToken:
+          $ref: "#/components/schemas/String"
+          description: If nextToken is returned, there are more results available. The value of nextToken is a unique pagination token for each page. Make the call again using the returned token to retrieve the next page. Keep all other arguments unchanged.
+    ACLList:
+      type: array
+      items:
+        $ref: "#/components/schemas/ACL"
+    DescribeClustersResponse:
+      type: object
+      properties:
+        NextToken:
+          $ref: "#/components/schemas/String"
+          description: An optional argument to pass in case the total number of records exceeds the value of MaxResults. If nextToken is returned, there are more results available. The value of nextToken is a unique pagination token for each page. Make the call again using the returned token to retrieve the next page. Keep all other arguments unchanged.
+        Clusters:
+          $ref: "#/components/schemas/ClusterList"
+          description: A list of clusters
+    Boolean:
+      type: boolean
+    DescribeEngineVersionsResponse:
+      type: object
+      properties:
+        NextToken:
+          $ref: "#/components/schemas/String"
+          description: An optional argument to pass in case the total number of records exceeds the value of MaxResults. If nextToken is returned, there are more results available. The value of nextToken is a unique pagination token for each page. Make the call again using the returned token to retrieve the next page. Keep all other arguments unchanged.
+        EngineVersions:
+          $ref: "#/components/schemas/EngineVersionInfoList"
+          description: A list of engine version details. Each element in the list contains detailed information about one engine version.
+    EngineVersionInfoList:
+      type: array
+      items:
+        $ref: "#/components/schemas/EngineVersionInfo"
+    EngineVersionInfo:
+      description: Provides details of the Redis OSS engine version
+      type: object
+      properties:
+        Engine:
+          $ref: "#/components/schemas/String"
+          description: The name of the engine for which version information is provided.
+        EngineVersion:
+          $ref: "#/components/schemas/String"
+          description: The engine version
+        EnginePatchVersion:
+          $ref: "#/components/schemas/String"
+          description: The patched engine version
+        ParameterGroupFamily:
+          $ref: "#/components/schemas/String"
+          description: Specifies the name of the parameter group family to which the engine default parameters apply.
+    SourceType:
+      type: string
+      enum:
+        - node
+        - parameter-group
+        - subnet-group
+        - cluster
+        - user
+        - acl
+    DescribeEventsResponse:
+      type: object
+      properties:
+        NextToken:
+          $ref: "#/components/schemas/String"
+          description: An optional argument to pass in case the total number of records exceeds the value of MaxResults. If nextToken is returned, there are more results available. The value of nextToken is a unique pagination token for each page. Make the call again using the returned token to retrieve the next page. Keep all other arguments unchanged.
+        Events:
+          $ref: "#/components/schemas/EventList"
+          description: A list of events. Each element in the list contains detailed information about one event.
+    EventList:
+      type: array
+      items:
+        $ref: "#/components/schemas/Event"
+    Event:
+      description: Represents a single occurrence of something interesting within the system. Some examples of events are creating a cluster or adding or removing a node.
+      type: object
+      properties:
+        SourceName:
+          $ref: "#/components/schemas/String"
+          description: The name for the source of the event. For example, if the event occurred at the cluster level, the identifier would be the name of the cluster.
+        SourceType:
+          $ref: "#/components/schemas/SourceType"
+          description: Specifies the origin of this event - a cluster, a parameter group, a security group, etc.
+        Message:
+          $ref: "#/components/schemas/String"
+          description: The text of the event.
+        Date:
+          $ref: "#/components/schemas/TStamp"
+          description: The date and time when the event occurred.
+    DescribeMultiRegionClustersResponse:
+      type: object
+      properties:
+        NextToken:
+          $ref: "#/components/schemas/String"
+          description: A token to use to retrieve the next page of results.
+        MultiRegionClusters:
+          $ref: "#/components/schemas/MultiRegionClusterList"
+          description: A list of multi-Region clusters.
+    MultiRegionClusterList:
+      type: array
+      items:
+        $ref: "#/components/schemas/MultiRegionCluster"
+    DescribeMultiRegionParameterGroupsResponse:
+      type: object
+      properties:
+        NextToken:
+          $ref: "#/components/schemas/String"
+          description: An optional token to include in the response. If this token is provided, the response includes only results beyond the token, up to the value specified by MaxResults.
+        MultiRegionParameterGroups:
+          $ref: "#/components/schemas/MultiRegionParameterGroupList"
+          description: A list of multi-region parameter groups. Each element in the list contains detailed information about one parameter group.
+    MultiRegionParameterGroupList:
+      type: array
+      items:
+        $ref: "#/components/schemas/MultiRegionParameterGroup"
+    MultiRegionParameterGroup:
+      description: Represents the output of a CreateMultiRegionParameterGroup operation. A multi-region parameter group represents a collection of parameters that can be applied to clusters across multiple regions.
+      type: object
+      properties:
+        Name:
+          $ref: "#/components/schemas/String"
+          description: The name of the multi-region parameter group.
+        Family:
+          $ref: "#/components/schemas/String"
+          description: The name of the parameter group family that this multi-region parameter group is compatible with.
+        Description:
+          $ref: "#/components/schemas/String"
+          description: A description of the multi-region parameter group.
+        ARN:
+          $ref: "#/components/schemas/String"
+          description: The Amazon Resource Name (ARN) of the multi-region parameter group.
+    DescribeMultiRegionParametersResponse:
+      type: object
+      properties:
+        NextToken:
+          $ref: "#/components/schemas/String"
+          description: An optional token to include in the response. If this token is provided, the response includes only results beyond the token, up to the value specified by MaxResults.
+        MultiRegionParameters:
+          $ref: "#/components/schemas/MultiRegionParametersList"
+          description: A list of parameters specific to a particular multi-region parameter group. Each element in the list contains detailed information about one parameter.
+    MultiRegionParametersList:
+      type: array
+      items:
+        $ref: "#/components/schemas/MultiRegionParameter"
+    MultiRegionParameter:
+      description: Describes an individual setting that controls some aspect of MemoryDB behavior across multiple regions.
+      type: object
+      properties:
+        Name:
+          $ref: "#/components/schemas/String"
+          description: The name of the parameter.
+        Value:
+          $ref: "#/components/schemas/String"
+          description: The value of the parameter.
+        Description:
+          $ref: "#/components/schemas/String"
+          description: A description of the parameter.
+        Source:
+          $ref: "#/components/schemas/String"
+          description: "Indicates the source of the parameter value. Valid values: user | system | engine-default"
+        DataType:
+          $ref: "#/components/schemas/String"
+          description: The valid data type for the parameter.
+        AllowedValues:
+          $ref: "#/components/schemas/String"
+          description: The valid range of values for the parameter.
+        MinimumEngineVersion:
+          $ref: "#/components/schemas/String"
+          description: The earliest engine version to which the parameter can apply.
+    DescribeParameterGroupsResponse:
+      type: object
+      properties:
+        NextToken:
+          $ref: "#/components/schemas/String"
+          description: An optional argument to pass in case the total number of records exceeds the value of MaxResults. If nextToken is returned, there are more results available. The value of nextToken is a unique pagination token for each page. Make the call again using the returned token to retrieve the next page. Keep all other arguments unchanged.
+        ParameterGroups:
+          $ref: "#/components/schemas/ParameterGroupList"
+          description: A list of parameter groups. Each element in the list contains detailed information about one parameter group.
+    ParameterGroupList:
+      type: array
+      items:
+        $ref: "#/components/schemas/ParameterGroup"
+    DescribeParametersResponse:
+      type: object
+      properties:
+        NextToken:
+          $ref: "#/components/schemas/String"
+          description: An optional argument to pass in case the total number of records exceeds the value of MaxResults. If nextToken is returned, there are more results available. The value of nextToken is a unique pagination token for each page. Make the call again using the returned token to retrieve the next page. Keep all other arguments unchanged.
+        Parameters:
+          $ref: "#/components/schemas/ParametersList"
+          description: A list of parameters specific to a particular parameter group. Each element in the list contains detailed information about one parameter.
+    ParametersList:
+      type: array
+      items:
+        $ref: "#/components/schemas/Parameter"
+    Parameter:
+      description: Describes an individual setting that controls some aspect of MemoryDB behavior.
+      type: object
+      properties:
+        Name:
+          $ref: "#/components/schemas/String"
+          description: The name of the parameter
+        Value:
+          $ref: "#/components/schemas/String"
+          description: The value of the parameter
+        Description:
+          $ref: "#/components/schemas/String"
+          description: A description of the parameter
+        DataType:
+          $ref: "#/components/schemas/String"
+          description: The parameter's data type
+        AllowedValues:
+          $ref: "#/components/schemas/String"
+          description: The valid range of values for the parameter.
+        MinimumEngineVersion:
+          $ref: "#/components/schemas/String"
+          description: The earliest engine version to which the parameter can apply.
+    DescribeReservedNodesResponse:
+      type: object
+      properties:
+        NextToken:
+          $ref: "#/components/schemas/String"
+          description: An optional marker returned from a prior request. Use this marker for pagination of results from this operation. If this parameter is specified, the response includes only records beyond the marker, up to the value specified by MaxRecords.
+        ReservedNodes:
+          $ref: "#/components/schemas/ReservedNodeList"
+          description: Returns information about reserved nodes for this account, or about a specified reserved node.
+    ReservedNodeList:
+      type: array
+      items:
+        $ref: "#/components/schemas/ReservedNode"
+    ReservedNode:
+      description: Represents the output of a PurchaseReservedNodesOffering operation.
+      type: object
+      properties:
+        ReservationId:
+          $ref: "#/components/schemas/String"
+          description: A customer-specified identifier to track this reservation.
+        ReservedNodesOfferingId:
+          $ref: "#/components/schemas/String"
+          description: The ID of the reserved node offering to purchase.
+        NodeType:
+          $ref: "#/components/schemas/String"
+          description: The node type for the reserved nodes.
+        StartTime:
+          $ref: "#/components/schemas/TStamp"
+          description: The time the reservation started.
+        Duration:
+          $ref: "#/components/schemas/Integer"
+          description: The duration of the reservation in seconds.
+        FixedPrice:
+          $ref: "#/components/schemas/Double"
+          description: The fixed price charged for this reserved node.
+        NodeCount:
+          $ref: "#/components/schemas/Integer"
+          description: The number of nodes that have been reserved.
+        OfferingType:
+          $ref: "#/components/schemas/String"
+          description: The offering type of this reserved node.
+        State:
+          $ref: "#/components/schemas/String"
+          description: The state of the reserved node.
+        RecurringCharges:
+          $ref: "#/components/schemas/RecurringChargeList"
+          description: The recurring price charged to run this reserved node.
+        ARN:
+          $ref: "#/components/schemas/String"
+          description: The Amazon Resource Name (ARN) of the reserved node.
+    RecurringChargeList:
+      type: array
+      items:
+        $ref: "#/components/schemas/RecurringCharge"
+    RecurringCharge:
+      description: The recurring charge to run this reserved node.
+      type: object
+      properties:
+        RecurringChargeAmount:
+          $ref: "#/components/schemas/Double"
+          description: The amount of the recurring charge to run this reserved node.
+        RecurringChargeFrequency:
+          $ref: "#/components/schemas/String"
+          description: The frequency of the recurring price charged to run this reserved node.
+    DescribeReservedNodesOfferingsResponse:
+      type: object
+      properties:
+        NextToken:
+          $ref: "#/components/schemas/String"
+          description: An optional marker returned from a prior request. Use this marker for pagination of results from this operation. If this parameter is specified, the response includes only records beyond the marker, up to the value specified by MaxRecords.
+        ReservedNodesOfferings:
+          $ref: "#/components/schemas/ReservedNodesOfferingList"
+          description: Lists available reserved node offerings.
+    ReservedNodesOfferingList:
+      type: array
+      items:
+        $ref: "#/components/schemas/ReservedNodesOffering"
+    ReservedNodesOffering:
+      description: The offering type of this node.
+      type: object
+      properties:
+        ReservedNodesOfferingId:
+          $ref: "#/components/schemas/String"
+          description: The offering identifier.
+        NodeType:
+          $ref: "#/components/schemas/String"
+          description: The node type for the reserved nodes. For more information, see Supported node types.
+        Duration:
+          $ref: "#/components/schemas/Integer"
+          description: The duration of the reservation in seconds.
+        FixedPrice:
+          $ref: "#/components/schemas/Double"
+          description: The fixed price charged for this reserved node.
+        OfferingType:
+          $ref: "#/components/schemas/String"
+          description: The offering type of this reserved node.
+        RecurringCharges:
+          $ref: "#/components/schemas/RecurringChargeList"
+          description: The recurring price charged to run this reserved node.
+    ServiceUpdateStatusList:
+      type: array
+      items:
+        $ref: "#/components/schemas/ServiceUpdateStatus"
+    DescribeServiceUpdatesResponse:
+      type: object
+      properties:
+        NextToken:
+          $ref: "#/components/schemas/String"
+          description: An optional argument to pass in case the total number of records exceeds the value of MaxResults. If nextToken is returned, there are more results available. The value of nextToken is a unique pagination token for each page. Make the call again using the returned token to retrieve the next page. Keep all other arguments unchanged.
+        ServiceUpdates:
+          $ref: "#/components/schemas/ServiceUpdateList"
+          description: A list of service updates
+    ServiceUpdateList:
+      type: array
+      items:
+        $ref: "#/components/schemas/ServiceUpdate"
+    ServiceUpdate:
+      description: An update that you can apply to your MemoryDB clusters.
+      type: object
+      properties:
+        ClusterName:
+          $ref: "#/components/schemas/String"
+          description: The name of the cluster to which the service update applies
+        ServiceUpdateName:
+          $ref: "#/components/schemas/String"
+          description: The unique ID of the service update
+        ReleaseDate:
+          $ref: "#/components/schemas/TStamp"
+          description: The date when the service update is initially available
+        Description:
+          $ref: "#/components/schemas/String"
+          description: Provides details of the service update
+        Status:
+          $ref: "#/components/schemas/ServiceUpdateStatus"
+          description: The status of the service update
+        Type:
+          $ref: "#/components/schemas/ServiceUpdateType"
+          description: Reflects the nature of the service update
+        Engine:
+          $ref: "#/components/schemas/String"
+          description: The name of the engine for which a service update is available.
+        NodesUpdated:
+          $ref: "#/components/schemas/String"
+          description: A list of nodes updated by the service update
+        AutoUpdateStartDate:
+          $ref: "#/components/schemas/TStamp"
+          description: The date at which the service update will be automatically applied
+    ServiceUpdateType:
+      type: string
+      enum:
+        - security-update
+    DescribeSnapshotsResponse:
+      type: object
+      properties:
+        NextToken:
+          $ref: "#/components/schemas/String"
+          description: An optional argument to pass in case the total number of records exceeds the value of MaxResults. If nextToken is returned, there are more results available. The value of nextToken is a unique pagination token for each page. Make the call again using the returned token to retrieve the next page. Keep all other arguments unchanged.
+        Snapshots:
+          $ref: "#/components/schemas/SnapshotList"
+          description: A list of snapshots. Each item in the list contains detailed information about one snapshot.
+    SnapshotList:
+      type: array
+      items:
+        $ref: "#/components/schemas/Snapshot"
+    DescribeSubnetGroupsResponse:
+      type: object
+      properties:
+        NextToken:
+          $ref: "#/components/schemas/String"
+          description: An optional argument to pass in case the total number of records exceeds the value of MaxResults. If nextToken is returned, there are more results available. The value of nextToken is a unique pagination token for each page. Make the call again using the returned token to retrieve the next page. Keep all other arguments unchanged.
+        SubnetGroups:
+          $ref: "#/components/schemas/SubnetGroupList"
+          description: A list of subnet groups. Each element in the list contains detailed information about one group.
+    SubnetGroupList:
+      type: array
+      items:
+        $ref: "#/components/schemas/SubnetGroup"
+    FilterList:
+      type: array
+      items:
+        $ref: "#/components/schemas/Filter"
+    Filter:
+      description: Used to streamline results of a search based on the property being filtered.
+      type: object
+      properties:
+        Name:
+          $ref: "#/components/schemas/FilterName"
+          description: The property being filtered. For example, UserName.
+        Values:
+          $ref: "#/components/schemas/FilterValueList"
+          description: The property values to filter on. For example, "user-123".
+      required:
+        - Name
+        - Values
+    FilterName:
+      type: string
+      pattern: .*\S.*
+    FilterValueList:
+      type: array
+      items:
+        $ref: "#/components/schemas/FilterValue"
+    FilterValue:
+      type: string
+      pattern: .*\S.*
+    DescribeUsersResponse:
+      type: object
+      properties:
+        Users:
+          $ref: "#/components/schemas/UserList"
+          description: A list of users.
+        NextToken:
+          $ref: "#/components/schemas/String"
+          description: An optional argument to pass in case the total number of records exceeds the value of MaxResults. If nextToken is returned, there are more results available. The value of nextToken is a unique pagination token for each page. Make the call again using the returned token to retrieve the next page. Keep all other arguments unchanged.
+    UserList:
+      type: array
+      items:
+        $ref: "#/components/schemas/User"
+    FailoverShardResponse:
+      type: object
+      properties:
+        Cluster:
+          $ref: "#/components/schemas/Cluster"
+          description: The cluster being failed over.
+    ListAllowedMultiRegionClusterUpdatesResponse:
+      type: object
+      properties:
+        ScaleUpNodeTypes:
+          $ref: "#/components/schemas/NodeTypeList"
+          description: The node types that the cluster can be scaled up to.
+        ScaleDownNodeTypes:
+          $ref: "#/components/schemas/NodeTypeList"
+          description: The node types that the cluster can be scaled down to.
+    NodeTypeList:
+      type: array
+      items:
+        $ref: "#/components/schemas/String"
+    ListAllowedNodeTypeUpdatesResponse:
+      type: object
+      properties:
+        ScaleUpNodeTypes:
+          $ref: "#/components/schemas/NodeTypeList"
+          description: A list node types which you can use to scale up your cluster.
+        ScaleDownNodeTypes:
+          $ref: "#/components/schemas/NodeTypeList"
+          description: A list node types which you can use to scale down your cluster.
+    ListTagsResponse:
+      type: object
+      properties:
+        TagList:
+          $ref: "#/components/schemas/TagList"
+          description: A list of tags as key-value pairs.
+    PurchaseReservedNodesOfferingResponse:
+      type: object
+      properties:
+        ReservedNode:
+          $ref: "#/components/schemas/ReservedNode"
+          description: Represents the output of a PurchaseReservedNodesOffering operation.
+    ParameterNameList:
+      type: array
+      items:
+        $ref: "#/components/schemas/String"
+    ResetParameterGroupResponse:
+      type: object
+      properties:
+        ParameterGroup:
+          $ref: "#/components/schemas/ParameterGroup"
+          description: The parameter group being reset.
+    TagResourceResponse:
+      type: object
+      properties:
+        TagList:
+          $ref: "#/components/schemas/TagList"
+          description: A list of tags as key-value pairs.
+    KeyList:
+      type: array
+      items:
+        $ref: "#/components/schemas/String"
+    UntagResourceResponse:
+      type: object
+      properties:
+        TagList:
+          $ref: "#/components/schemas/TagList"
+          description: The list of tags removed.
+    UpdateACLResponse:
+      type: object
+      properties:
+        ACL:
+          $ref: "#/components/schemas/ACL"
+          description: The updated Access Control List.
+    ReplicaConfigurationRequest:
+      description: A request to configure the number of replicas in a shard
+      type: object
+      properties:
+        ReplicaCount:
+          $ref: "#/components/schemas/Integer"
+          description: The number of replicas to scale up or down to
+    ShardConfigurationRequest:
+      description: A request to configure the sharding properties of a cluster
+      type: object
+      properties:
+        ShardCount:
+          $ref: "#/components/schemas/Integer"
+          description: The number of shards in the cluster
+    UpdateClusterResponse:
+      type: object
+      properties:
+        Cluster:
+          $ref: "#/components/schemas/Cluster"
+          description: The updated cluster.
+    UpdateStrategy:
+      type: string
+      enum:
+        - coordinated
+        - uncoordinated
+    UpdateMultiRegionClusterResponse:
+      type: object
+      properties:
+        MultiRegionCluster:
+          $ref: "#/components/schemas/MultiRegionCluster"
+          description: The status of updating the multi-Region cluster.
+    ParameterNameValueList:
+      type: array
+      items:
+        $ref: "#/components/schemas/ParameterNameValue"
+    ParameterNameValue:
+      description: Describes a name-value pair that is used to update the value of a parameter.
+      type: object
+      properties:
+        ParameterName:
+          $ref: "#/components/schemas/String"
+          description: The name of the parameter
+        ParameterValue:
+          $ref: "#/components/schemas/String"
+          description: The value of the parameter
+    UpdateParameterGroupResponse:
+      type: object
+      properties:
+        ParameterGroup:
+          $ref: "#/components/schemas/ParameterGroup"
+          description: The updated parameter group
+    UpdateSubnetGroupResponse:
+      type: object
+      properties:
+        SubnetGroup:
+          $ref: "#/components/schemas/SubnetGroup"
+          description: The updated subnet group
+    UpdateUserResponse:
+      type: object
+      properties:
+        User:
+          $ref: "#/components/schemas/User"
+          description: The updated user
+  x-stackQL-resources:
+    clusters:
+      id: aws.memorydb.clusters
+      name: clusters
+      title: clusters
+      methods:
+        batch_update_cluster:
+          operation:
+            $ref: "#/paths/~1BatchUpdateCluster/post"
+          response:
+            openAPIDocKey: "200"
+            mediaType: application/json
+          request:
+            nativeCasing: pascal
+            mediaType: application/x-amz-json-1.1
+            base: "{}"
+          config:
+            requestBodyTranslate:
+              algorithm: naive
+        create_cluster:
+          operation:
+            $ref: "#/paths/~1CreateCluster/post"
+          response:
+            openAPIDocKey: "200"
+            mediaType: application/json
+          request:
+            nativeCasing: pascal
+            mediaType: application/x-amz-json-1.1
+            base: "{}"
+          config:
+            requestBodyTranslate:
+              algorithm: naive
+        delete_cluster:
+          operation:
+            $ref: "#/paths/~1DeleteCluster/post"
+          response:
+            openAPIDocKey: "200"
+            mediaType: application/json
+          request:
+            nativeCasing: pascal
+            mediaType: application/x-amz-json-1.1
+            base: "{}"
+          config:
+            requestBodyTranslate:
+              algorithm: naive
+        describe_clusters:
+          operation:
+            $ref: "#/paths/~1DescribeClusters/post"
+          response:
+            openAPIDocKey: "200"
+            mediaType: application/json
+            objectKey: $.Clusters
+          request:
+            nativeCasing: pascal
+            mediaType: application/x-amz-json-1.1
+            base: "{}"
+          config:
+            pagination:
+              requestToken:
+                key: NextToken
+                location: body
+              responseToken:
+                key: $.NextToken
+                location: body
+            requestBodyTranslate:
+              algorithm: naive
+        failover_shard:
+          operation:
+            $ref: "#/paths/~1FailoverShard/post"
+          response:
+            openAPIDocKey: "200"
+            mediaType: application/json
+          request:
+            nativeCasing: pascal
+            mediaType: application/x-amz-json-1.1
+            base: "{}"
+          config:
+            requestBodyTranslate:
+              algorithm: naive
+        update_cluster:
+          operation:
+            $ref: "#/paths/~1UpdateCluster/post"
+          response:
+            openAPIDocKey: "200"
+            mediaType: application/json
+          request:
+            nativeCasing: pascal
+            mediaType: application/x-amz-json-1.1
+            base: "{}"
+          config:
+            requestBodyTranslate:
+              algorithm: naive
+      sqlVerbs:
+        select:
+          - $ref: "#/components/x-stackQL-resources/clusters/methods/describe_clusters"
+        insert:
+          - $ref: "#/components/x-stackQL-resources/clusters/methods/create_cluster"
+        update:
+          - $ref: "#/components/x-stackQL-resources/clusters/methods/update_cluster"
+        delete:
+          - $ref: "#/components/x-stackQL-resources/clusters/methods/delete_cluster"
+    acls:
+      id: aws.memorydb.acls
+      name: acls
+      title: acls
+      methods:
+        create_acl:
+          operation:
+            $ref: "#/paths/~1CreateACL/post"
+          response:
+            openAPIDocKey: "200"
+            mediaType: application/json
+          request:
+            nativeCasing: pascal
+            mediaType: application/x-amz-json-1.1
+            base: "{}"
+          config:
+            requestBodyTranslate:
+              algorithm: naive
+        delete_acl:
+          operation:
+            $ref: "#/paths/~1DeleteACL/post"
+          response:
+            openAPIDocKey: "200"
+            mediaType: application/json
+          request:
+            nativeCasing: pascal
+            mediaType: application/x-amz-json-1.1
+            base: "{}"
+          config:
+            requestBodyTranslate:
+              algorithm: naive
+        update_acl:
+          operation:
+            $ref: "#/paths/~1UpdateACL/post"
+          response:
+            openAPIDocKey: "200"
+            mediaType: application/json
+          request:
+            nativeCasing: pascal
+            mediaType: application/x-amz-json-1.1
+            base: "{}"
+          config:
+            requestBodyTranslate:
+              algorithm: naive
+      sqlVerbs:
+        select: []
+        insert:
+          - $ref: "#/components/x-stackQL-resources/acls/methods/create_acl"
+        update:
+          - $ref: "#/components/x-stackQL-resources/acls/methods/update_acl"
+        delete:
+          - $ref: "#/components/x-stackQL-resources/acls/methods/delete_acl"
+    multi_region_clusters:
+      id: aws.memorydb.multi_region_clusters
+      name: multi_region_clusters
+      title: multi_region_clusters
+      methods:
+        create_multi_region_cluster:
+          operation:
+            $ref: "#/paths/~1CreateMultiRegionCluster/post"
+          response:
+            openAPIDocKey: "200"
+            mediaType: application/json
+          request:
+            nativeCasing: pascal
+            mediaType: application/x-amz-json-1.1
+            base: "{}"
+          config:
+            requestBodyTranslate:
+              algorithm: naive
+        delete_multi_region_cluster:
+          operation:
+            $ref: "#/paths/~1DeleteMultiRegionCluster/post"
+          response:
+            openAPIDocKey: "200"
+            mediaType: application/json
+          request:
+            nativeCasing: pascal
+            mediaType: application/x-amz-json-1.1
+            base: "{}"
+          config:
+            requestBodyTranslate:
+              algorithm: naive
+        describe_multi_region_clusters:
+          operation:
+            $ref: "#/paths/~1DescribeMultiRegionClusters/post"
+          response:
+            openAPIDocKey: "200"
+            mediaType: application/json
+            objectKey: $.MultiRegionClusters
+          request:
+            nativeCasing: pascal
+            mediaType: application/x-amz-json-1.1
+            base: "{}"
+          config:
+            pagination:
+              requestToken:
+                key: NextToken
+                location: body
+              responseToken:
+                key: $.NextToken
+                location: body
+            requestBodyTranslate:
+              algorithm: naive
+        update_multi_region_cluster:
+          operation:
+            $ref: "#/paths/~1UpdateMultiRegionCluster/post"
+          response:
+            openAPIDocKey: "200"
+            mediaType: application/json
+          request:
+            nativeCasing: pascal
+            mediaType: application/x-amz-json-1.1
+            base: "{}"
+          config:
+            requestBodyTranslate:
+              algorithm: naive
+      sqlVerbs:
+        select:
+          - $ref: "#/components/x-stackQL-resources/multi_region_clusters/methods/describe_multi_region_clusters"
+        insert:
+          - $ref: "#/components/x-stackQL-resources/multi_region_clusters/methods/create_multi_region_cluster"
+        update:
+          - $ref: "#/components/x-stackQL-resources/multi_region_clusters/methods/update_multi_region_cluster"
+        delete:
+          - $ref: "#/components/x-stackQL-resources/multi_region_clusters/methods/delete_multi_region_cluster"
+    parameter_groups:
+      id: aws.memorydb.parameter_groups
+      name: parameter_groups
+      title: parameter_groups
+      methods:
+        create_parameter_group:
+          operation:
+            $ref: "#/paths/~1CreateParameterGroup/post"
+          response:
+            openAPIDocKey: "200"
+            mediaType: application/json
+          request:
+            nativeCasing: pascal
+            mediaType: application/x-amz-json-1.1
+            base: "{}"
+          config:
+            requestBodyTranslate:
+              algorithm: naive
+        delete_parameter_group:
+          operation:
+            $ref: "#/paths/~1DeleteParameterGroup/post"
+          response:
+            openAPIDocKey: "200"
+            mediaType: application/json
+          request:
+            nativeCasing: pascal
+            mediaType: application/x-amz-json-1.1
+            base: "{}"
+          config:
+            requestBodyTranslate:
+              algorithm: naive
+        describe_parameter_groups:
+          operation:
+            $ref: "#/paths/~1DescribeParameterGroups/post"
+          response:
+            openAPIDocKey: "200"
+            mediaType: application/json
+            objectKey: $.ParameterGroups
+          request:
+            nativeCasing: pascal
+            mediaType: application/x-amz-json-1.1
+            base: "{}"
+          config:
+            pagination:
+              requestToken:
+                key: NextToken
+                location: body
+              responseToken:
+                key: $.NextToken
+                location: body
+            requestBodyTranslate:
+              algorithm: naive
+        update_parameter_group:
+          operation:
+            $ref: "#/paths/~1UpdateParameterGroup/post"
+          response:
+            openAPIDocKey: "200"
+            mediaType: application/json
+          request:
+            nativeCasing: pascal
+            mediaType: application/x-amz-json-1.1
+            base: "{}"
+          config:
+            requestBodyTranslate:
+              algorithm: naive
+      sqlVerbs:
+        select:
+          - $ref: "#/components/x-stackQL-resources/parameter_groups/methods/describe_parameter_groups"
+        insert:
+          - $ref: "#/components/x-stackQL-resources/parameter_groups/methods/create_parameter_group"
+        update:
+          - $ref: "#/components/x-stackQL-resources/parameter_groups/methods/update_parameter_group"
+        delete:
+          - $ref: "#/components/x-stackQL-resources/parameter_groups/methods/delete_parameter_group"
+    snapshots:
+      id: aws.memorydb.snapshots
+      name: snapshots
+      title: snapshots
+      methods:
+        create_snapshot:
+          operation:
+            $ref: "#/paths/~1CreateSnapshot/post"
+          response:
+            openAPIDocKey: "200"
+            mediaType: application/json
+          request:
+            nativeCasing: pascal
+            mediaType: application/x-amz-json-1.1
+            base: "{}"
+          config:
+            requestBodyTranslate:
+              algorithm: naive
+        delete_snapshot:
+          operation:
+            $ref: "#/paths/~1DeleteSnapshot/post"
+          response:
+            openAPIDocKey: "200"
+            mediaType: application/json
+          request:
+            nativeCasing: pascal
+            mediaType: application/x-amz-json-1.1
+            base: "{}"
+          config:
+            requestBodyTranslate:
+              algorithm: naive
+        describe_snapshots:
+          operation:
+            $ref: "#/paths/~1DescribeSnapshots/post"
+          response:
+            openAPIDocKey: "200"
+            mediaType: application/json
+            objectKey: $.Snapshots
+          request:
+            nativeCasing: pascal
+            mediaType: application/x-amz-json-1.1
+            base: "{}"
+          config:
+            pagination:
+              requestToken:
+                key: NextToken
+                location: body
+              responseToken:
+                key: $.NextToken
+                location: body
+            requestBodyTranslate:
+              algorithm: naive
+      sqlVerbs:
+        select:
+          - $ref: "#/components/x-stackQL-resources/snapshots/methods/describe_snapshots"
+        insert:
+          - $ref: "#/components/x-stackQL-resources/snapshots/methods/create_snapshot"
+        update: []
+        delete:
+          - $ref: "#/components/x-stackQL-resources/snapshots/methods/delete_snapshot"
+    subnet_groups:
+      id: aws.memorydb.subnet_groups
+      name: subnet_groups
+      title: subnet_groups
+      methods:
+        create_subnet_group:
+          operation:
+            $ref: "#/paths/~1CreateSubnetGroup/post"
+          response:
+            openAPIDocKey: "200"
+            mediaType: application/json
+          request:
+            nativeCasing: pascal
+            mediaType: application/x-amz-json-1.1
+            base: "{}"
+          config:
+            requestBodyTranslate:
+              algorithm: naive
+        delete_subnet_group:
+          operation:
+            $ref: "#/paths/~1DeleteSubnetGroup/post"
+          response:
+            openAPIDocKey: "200"
+            mediaType: application/json
+          request:
+            nativeCasing: pascal
+            mediaType: application/x-amz-json-1.1
+            base: "{}"
+          config:
+            requestBodyTranslate:
+              algorithm: naive
+        describe_subnet_groups:
+          operation:
+            $ref: "#/paths/~1DescribeSubnetGroups/post"
+          response:
+            openAPIDocKey: "200"
+            mediaType: application/json
+            objectKey: $.SubnetGroups
+          request:
+            nativeCasing: pascal
+            mediaType: application/x-amz-json-1.1
+            base: "{}"
+          config:
+            pagination:
+              requestToken:
+                key: NextToken
+                location: body
+              responseToken:
+                key: $.NextToken
+                location: body
+            requestBodyTranslate:
+              algorithm: naive
+        update_subnet_group:
+          operation:
+            $ref: "#/paths/~1UpdateSubnetGroup/post"
+          response:
+            openAPIDocKey: "200"
+            mediaType: application/json
+          request:
+            nativeCasing: pascal
+            mediaType: application/x-amz-json-1.1
+            base: "{}"
+          config:
+            requestBodyTranslate:
+              algorithm: naive
+      sqlVerbs:
+        select:
+          - $ref: "#/components/x-stackQL-resources/subnet_groups/methods/describe_subnet_groups"
+        insert:
+          - $ref: "#/components/x-stackQL-resources/subnet_groups/methods/create_subnet_group"
+        update:
+          - $ref: "#/components/x-stackQL-resources/subnet_groups/methods/update_subnet_group"
+        delete:
+          - $ref: "#/components/x-stackQL-resources/subnet_groups/methods/delete_subnet_group"
+    users:
+      id: aws.memorydb.users
+      name: users
+      title: users
+      methods:
+        create_user:
+          operation:
+            $ref: "#/paths/~1CreateUser/post"
+          response:
+            openAPIDocKey: "200"
+            mediaType: application/json
+          request:
+            nativeCasing: pascal
+            mediaType: application/x-amz-json-1.1
+            base: "{}"
+          config:
+            requestBodyTranslate:
+              algorithm: naive
+        delete_user:
+          operation:
+            $ref: "#/paths/~1DeleteUser/post"
+          response:
+            openAPIDocKey: "200"
+            mediaType: application/json
+          request:
+            nativeCasing: pascal
+            mediaType: application/x-amz-json-1.1
+            base: "{}"
+          config:
+            requestBodyTranslate:
+              algorithm: naive
+        describe_users:
+          operation:
+            $ref: "#/paths/~1DescribeUsers/post"
+          response:
+            openAPIDocKey: "200"
+            mediaType: application/json
+            objectKey: $.Users
+          request:
+            nativeCasing: pascal
+            mediaType: application/x-amz-json-1.1
+            base: "{}"
+          config:
+            pagination:
+              requestToken:
+                key: NextToken
+                location: body
+              responseToken:
+                key: $.NextToken
+                location: body
+            requestBodyTranslate:
+              algorithm: naive
+        update_user:
+          operation:
+            $ref: "#/paths/~1UpdateUser/post"
+          response:
+            openAPIDocKey: "200"
+            mediaType: application/json
+          request:
+            nativeCasing: pascal
+            mediaType: application/x-amz-json-1.1
+            base: "{}"
+          config:
+            requestBodyTranslate:
+              algorithm: naive
+      sqlVerbs:
+        select:
+          - $ref: "#/components/x-stackQL-resources/users/methods/describe_users"
+        insert:
+          - $ref: "#/components/x-stackQL-resources/users/methods/create_user"
+        update:
+          - $ref: "#/components/x-stackQL-resources/users/methods/update_user"
+        delete:
+          - $ref: "#/components/x-stackQL-resources/users/methods/delete_user"
+    ac_ls:
+      id: aws.memorydb.ac_ls
+      name: ac_ls
+      title: ac_ls
+      methods:
+        describe_ac_ls:
+          operation:
+            $ref: "#/paths/~1DescribeACLs/post"
+          response:
+            openAPIDocKey: "200"
+            mediaType: application/json
+            objectKey: $.ACLs
+          request:
+            nativeCasing: pascal
+            mediaType: application/x-amz-json-1.1
+            base: "{}"
+          config:
+            pagination:
+              requestToken:
+                key: NextToken
+                location: body
+              responseToken:
+                key: $.NextToken
+                location: body
+            requestBodyTranslate:
+              algorithm: naive
+      sqlVerbs:
+        select:
+          - $ref: "#/components/x-stackQL-resources/ac_ls/methods/describe_ac_ls"
+        insert: []
+        update: []
+        delete: []
+    engine_versions:
+      id: aws.memorydb.engine_versions
+      name: engine_versions
+      title: engine_versions
+      methods:
+        describe_engine_versions:
+          operation:
+            $ref: "#/paths/~1DescribeEngineVersions/post"
+          response:
+            openAPIDocKey: "200"
+            mediaType: application/json
+            objectKey: $.EngineVersions
+          request:
+            nativeCasing: pascal
+            mediaType: application/x-amz-json-1.1
+            base: "{}"
+          config:
+            pagination:
+              requestToken:
+                key: NextToken
+                location: body
+              responseToken:
+                key: $.NextToken
+                location: body
+            requestBodyTranslate:
+              algorithm: naive
+      sqlVerbs:
+        select:
+          - $ref: "#/components/x-stackQL-resources/engine_versions/methods/describe_engine_versions"
+        insert: []
+        update: []
+        delete: []
+    events:
+      id: aws.memorydb.events
+      name: events
+      title: events
+      methods:
+        describe_events:
+          operation:
+            $ref: "#/paths/~1DescribeEvents/post"
+          response:
+            openAPIDocKey: "200"
+            mediaType: application/json
+            objectKey: $.Events
+          request:
+            nativeCasing: pascal
+            mediaType: application/x-amz-json-1.1
+            base: "{}"
+          config:
+            pagination:
+              requestToken:
+                key: NextToken
+                location: body
+              responseToken:
+                key: $.NextToken
+                location: body
+            requestBodyTranslate:
+              algorithm: naive
+      sqlVerbs:
+        select:
+          - $ref: "#/components/x-stackQL-resources/events/methods/describe_events"
+        insert: []
+        update: []
+        delete: []
+    multi_region_parameter_groups:
+      id: aws.memorydb.multi_region_parameter_groups
+      name: multi_region_parameter_groups
+      title: multi_region_parameter_groups
+      methods:
+        describe_multi_region_parameter_groups:
+          operation:
+            $ref: "#/paths/~1DescribeMultiRegionParameterGroups/post"
+          response:
+            openAPIDocKey: "200"
+            mediaType: application/json
+          request:
+            nativeCasing: pascal
+            mediaType: application/x-amz-json-1.1
+            base: "{}"
+          config:
+            requestBodyTranslate:
+              algorithm: naive
+      sqlVerbs:
+        select:
+          - $ref: "#/components/x-stackQL-resources/multi_region_parameter_groups/methods/describe_multi_region_parameter_groups"
+        insert: []
+        update: []
+        delete: []
+    multi_region_parameters:
+      id: aws.memorydb.multi_region_parameters
+      name: multi_region_parameters
+      title: multi_region_parameters
+      methods:
+        describe_multi_region_parameters:
+          operation:
+            $ref: "#/paths/~1DescribeMultiRegionParameters/post"
+          response:
+            openAPIDocKey: "200"
+            mediaType: application/json
+          request:
+            nativeCasing: pascal
+            mediaType: application/x-amz-json-1.1
+            base: "{}"
+          config:
+            requestBodyTranslate:
+              algorithm: naive
+      sqlVerbs:
+        select:
+          - $ref: "#/components/x-stackQL-resources/multi_region_parameters/methods/describe_multi_region_parameters"
+        insert: []
+        update: []
+        delete: []
+    parameters:
+      id: aws.memorydb.parameters
+      name: parameters
+      title: parameters
+      methods:
+        describe_parameters:
+          operation:
+            $ref: "#/paths/~1DescribeParameters/post"
+          response:
+            openAPIDocKey: "200"
+            mediaType: application/json
+            objectKey: $.Parameters
+          request:
+            nativeCasing: pascal
+            mediaType: application/x-amz-json-1.1
+            base: "{}"
+          config:
+            pagination:
+              requestToken:
+                key: NextToken
+                location: body
+              responseToken:
+                key: $.NextToken
+                location: body
+            requestBodyTranslate:
+              algorithm: naive
+        reset_parameter_group:
+          operation:
+            $ref: "#/paths/~1ResetParameterGroup/post"
+          response:
+            openAPIDocKey: "200"
+            mediaType: application/json
+          request:
+            nativeCasing: pascal
+            mediaType: application/x-amz-json-1.1
+            base: "{}"
+          config:
+            requestBodyTranslate:
+              algorithm: naive
+      sqlVerbs:
+        select:
+          - $ref: "#/components/x-stackQL-resources/parameters/methods/describe_parameters"
+        insert: []
+        update: []
+        delete: []
+    reserved_nodes:
+      id: aws.memorydb.reserved_nodes
+      name: reserved_nodes
+      title: reserved_nodes
+      methods:
+        describe_reserved_nodes:
+          operation:
+            $ref: "#/paths/~1DescribeReservedNodes/post"
+          response:
+            openAPIDocKey: "200"
+            mediaType: application/json
+            objectKey: $.ReservedNodes
+          request:
+            nativeCasing: pascal
+            mediaType: application/x-amz-json-1.1
+            base: "{}"
+          config:
+            pagination:
+              requestToken:
+                key: NextToken
+                location: body
+              responseToken:
+                key: $.NextToken
+                location: body
+            requestBodyTranslate:
+              algorithm: naive
+      sqlVerbs:
+        select:
+          - $ref: "#/components/x-stackQL-resources/reserved_nodes/methods/describe_reserved_nodes"
+        insert: []
+        update: []
+        delete: []
+    reserved_nodes_offerings:
+      id: aws.memorydb.reserved_nodes_offerings
+      name: reserved_nodes_offerings
+      title: reserved_nodes_offerings
+      methods:
+        describe_reserved_nodes_offerings:
+          operation:
+            $ref: "#/paths/~1DescribeReservedNodesOfferings/post"
+          response:
+            openAPIDocKey: "200"
+            mediaType: application/json
+            objectKey: $.ReservedNodesOfferings
+          request:
+            nativeCasing: pascal
+            mediaType: application/x-amz-json-1.1
+            base: "{}"
+          config:
+            pagination:
+              requestToken:
+                key: NextToken
+                location: body
+              responseToken:
+                key: $.NextToken
+                location: body
+            requestBodyTranslate:
+              algorithm: naive
+        purchase_reserved_nodes_offering:
+          operation:
+            $ref: "#/paths/~1PurchaseReservedNodesOffering/post"
+          response:
+            openAPIDocKey: "200"
+            mediaType: application/json
+          request:
+            nativeCasing: pascal
+            mediaType: application/x-amz-json-1.1
+            base: "{}"
+          config:
+            requestBodyTranslate:
+              algorithm: naive
+      sqlVerbs:
+        select:
+          - $ref: "#/components/x-stackQL-resources/reserved_nodes_offerings/methods/describe_reserved_nodes_offerings"
+        insert: []
+        update: []
+        delete: []
+    service_updates:
+      id: aws.memorydb.service_updates
+      name: service_updates
+      title: service_updates
+      methods:
+        describe_service_updates:
+          operation:
+            $ref: "#/paths/~1DescribeServiceUpdates/post"
+          response:
+            openAPIDocKey: "200"
+            mediaType: application/json
+            objectKey: $.ServiceUpdates
+          request:
+            nativeCasing: pascal
+            mediaType: application/x-amz-json-1.1
+            base: "{}"
+          config:
+            pagination:
+              requestToken:
+                key: NextToken
+                location: body
+              responseToken:
+                key: $.NextToken
+                location: body
+            requestBodyTranslate:
+              algorithm: naive
+      sqlVerbs:
+        select:
+          - $ref: "#/components/x-stackQL-resources/service_updates/methods/describe_service_updates"
+        insert: []
+        update: []
+        delete: []
+    allowed_multi_region_cluster_updates:
+      id: aws.memorydb.allowed_multi_region_cluster_updates
+      name: allowed_multi_region_cluster_updates
+      title: allowed_multi_region_cluster_updates
+      methods:
+        list_allowed_multi_region_cluster_updates:
+          operation:
+            $ref: "#/paths/~1ListAllowedMultiRegionClusterUpdates/post"
+          response:
+            openAPIDocKey: "200"
+            mediaType: application/json
+          request:
+            nativeCasing: pascal
+            mediaType: application/x-amz-json-1.1
+            base: "{}"
+          config:
+            requestBodyTranslate:
+              algorithm: naive
+      sqlVerbs:
+        select:
+          - $ref: "#/components/x-stackQL-resources/allowed_multi_region_cluster_updates/methods/list_allowed_multi_region_cluster_updates"
+        insert: []
+        update: []
+        delete: []
+    allowed_node_type_updates:
+      id: aws.memorydb.allowed_node_type_updates
+      name: allowed_node_type_updates
+      title: allowed_node_type_updates
+      methods:
+        list_allowed_node_type_updates:
+          operation:
+            $ref: "#/paths/~1ListAllowedNodeTypeUpdates/post"
+          response:
+            openAPIDocKey: "200"
+            mediaType: application/json
+          request:
+            nativeCasing: pascal
+            mediaType: application/x-amz-json-1.1
+            base: "{}"
+          config:
+            requestBodyTranslate:
+              algorithm: naive
+      sqlVerbs:
+        select:
+          - $ref: "#/components/x-stackQL-resources/allowed_node_type_updates/methods/list_allowed_node_type_updates"
+        insert: []
+        update: []
+        delete: []
+    tags:
+      id: aws.memorydb.tags
+      name: tags
+      title: tags
+      methods:
+        list_tags:
+          operation:
+            $ref: "#/paths/~1ListTags/post"
+          response:
+            openAPIDocKey: "200"
+            mediaType: application/json
+          request:
+            nativeCasing: pascal
+            mediaType: application/x-amz-json-1.1
+            base: "{}"
+          config:
+            requestBodyTranslate:
+              algorithm: naive
+        tag_resource:
+          operation:
+            $ref: "#/paths/~1TagResource/post"
+          response:
+            openAPIDocKey: "200"
+            mediaType: application/json
+          request:
+            nativeCasing: pascal
+            mediaType: application/x-amz-json-1.1
+            base: "{}"
+          config:
+            requestBodyTranslate:
+              algorithm: naive
+        untag_resource:
+          operation:
+            $ref: "#/paths/~1UntagResource/post"
+          response:
+            openAPIDocKey: "200"
+            mediaType: application/json
+          request:
+            nativeCasing: pascal
+            mediaType: application/x-amz-json-1.1
+            base: "{}"
+          config:
+            requestBodyTranslate:
+              algorithm: naive
+      sqlVerbs:
+        select:
+          - $ref: "#/components/x-stackQL-resources/tags/methods/list_tags"
+        insert: []
+        update:
+          - $ref: "#/components/x-stackQL-resources/tags/methods/tag_resource"
+          - $ref: "#/components/x-stackQL-resources/tags/methods/untag_resource"
+        delete: []

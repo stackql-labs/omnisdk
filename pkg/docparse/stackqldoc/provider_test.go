@@ -11,7 +11,7 @@ import (
 
 func provider(t *testing.T) aot.Provider {
 	t.Helper()
-	b, err := os.ReadFile("testdata/provider.yaml")
+	b, err := os.ReadFile("testdata/aws/v00.00.00000/provider.yaml")
 	if err != nil {
 		t.Fatal(err)
 	}

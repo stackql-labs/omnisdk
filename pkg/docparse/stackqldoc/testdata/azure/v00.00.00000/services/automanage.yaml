@@ -1,0 +1,2182 @@
+openapi: 3.0.0
+servers:
+  - url: https://management.azure.com/
+info:
+  title: Azure Automanage
+  description: Automated best-practice configuration profiles for virtual machines.
+  contact:
+    name: StackQL Studios
+    url: https://stackql.io/
+    email: info@stackql.io
+  version: 2022-05-04-stackql-generated
+  x-serviceAlias: automanage
+  x-sdkPackage: azure-mgmt-automanage
+  x-plane: mgmt
+security:
+  - azure_auth:
+      - user_impersonation
+components:
+  securitySchemes:
+    azure_auth:
+      description: Azure Active Directory OAuth2 Flow.
+      type: oauth2
+      flows:
+        implicit:
+          authorizationUrl: https://login.microsoftonline.com/common/oauth2/authorize
+          scopes:
+            user_impersonation: impersonate your user account
+  schemas:
+    ConfigurationProfileProperties:
+      type: object
+      description: Automanage configuration profile properties.
+      properties:
+        configuration:
+          type: object
+          properties: {}
+          description: configuration dictionary of the configuration profile.
+    SystemData:
+      type: object
+      description: Metadata pertaining to creation and last modification of the resource.
+      properties:
+        createdBy:
+          type: string
+          description: The identity that created the resource.
+        createdByType:
+          type: string
+          description: 'The type of identity that created the resource. Known values are: "User", "Application", "ManagedIdentity", and "Key".'
+        createdAt:
+          type: string
+          format: date-time
+          description: The timestamp of resource creation (UTC).
+        lastModifiedBy:
+          type: string
+          description: The identity that last modified the resource.
+        lastModifiedByType:
+          type: string
+          description: 'The type of identity that last modified the resource. Known values are: "User", "Application", "ManagedIdentity", and "Key".'
+        lastModifiedAt:
+          type: string
+          format: date-time
+          description: The timestamp of resource last modification (UTC).
+    BestPracticeFlattened:
+      type: object
+      description: Flattened view of BestPractice ('properties' hoisted to the top level).
+      properties:
+        id:
+          type: string
+          description: The fully qualified ID for the best practice. For example, /providers/Microsoft.Automanage/bestPractices/azureBestPracticesProduction.
+        type:
+          type: string
+          description: The type of the resource. For example, Microsoft.Automanage/bestPractices.
+        name:
+          type: string
+          description: The name of the best practice. For example, azureBestPracticesProduction.
+        systemData:
+          $ref: "#/components/schemas/SystemData"
+          description: Azure Resource Manager metadata containing createdBy and modifiedBy information.
+        configuration:
+          type: object
+          properties: {}
+          description: configuration dictionary of the configuration profile.
+    PagedBestPracticeFlattened:
+      type: object
+      properties:
+        value:
+          type: array
+          items:
+            $ref: "#/components/schemas/BestPracticeFlattened"
+        nextLink:
+          type: string
+    ConfigurationProfileAssignmentProperties:
+      type: object
+      description: Automanage configuration profile assignment properties. Variables are only populated by the server, and will be ignored when sending a request.
+      properties:
+        configurationProfile:
+          type: string
+          description: The Automanage configurationProfile ARM Resource URI.
+        targetId:
+          type: string
+          description: The target VM resource URI.
+        status:
+          type: string
+          description: The status of onboarding, which only appears in the response.
+    ConfigurationProfileAssignmentFlattened:
+      type: object
+      description: Flattened view of ConfigurationProfileAssignment ('properties' hoisted to the top level).
+      properties:
+        id:
+          type: string
+          description: Fully qualified resource ID for the resource. Ex - /subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/providers/{resourceProviderNamespace}/{resourceType}/{resourceName}.
+        name:
+          type: string
+          description: The name of the resource.
+        type:
+          type: string
+          description: The type of the resource. E.g. "Microsoft.Compute/virtualMachines" or "Microsoft.Storage/storageAccounts".
+        managedBy:
+          type: string
+          description: Azure resource id. Indicates if this resource is managed by another Azure resource.
+        systemData:
+          $ref: "#/components/schemas/SystemData"
+          description: Azure Resource Manager metadata containing createdBy and modifiedBy information.
+        configurationProfile:
+          type: string
+          description: The Automanage configurationProfile ARM Resource URI.
+        targetId:
+          type: string
+          description: The target VM resource URI.
+        status:
+          type: string
+          description: The status of onboarding, which only appears in the response.
+    PagedConfigurationProfileAssignmentFlattened:
+      type: object
+      properties:
+        value:
+          type: array
+          items:
+            $ref: "#/components/schemas/ConfigurationProfileAssignmentFlattened"
+        nextLink:
+          type: string
+    ConfigurationProfileAssignment:
+      type: object
+      description: Configuration profile assignment is an association between a VM and automanage profile configuration. Variables are only populated by the server, and will be ignored when sending a request.
+      properties:
+        id:
+          type: string
+          description: Fully qualified resource ID for the resource. Ex - /subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/providers/{resourceProviderNamespace}/{resourceType}/{resourceName}.
+        name:
+          type: string
+          description: The name of the resource.
+        type:
+          type: string
+          description: The type of the resource. E.g. "Microsoft.Compute/virtualMachines" or "Microsoft.Storage/storageAccounts".
+        properties:
+          $ref: "#/components/schemas/ConfigurationProfileAssignmentProperties"
+          description: Properties of the configuration profile assignment.
+        managedBy:
+          type: string
+          description: Azure resource id. Indicates if this resource is managed by another Azure resource.
+        systemData:
+          $ref: "#/components/schemas/SystemData"
+          description: Azure Resource Manager metadata containing createdBy and modifiedBy information.
+    ConfigurationProfileFlattened:
+      type: object
+      description: Flattened view of ConfigurationProfile ('properties' hoisted to the top level).
+      properties:
+        id:
+          type: string
+          description: Fully qualified resource ID for the resource. Ex - /subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/providers/{resourceProviderNamespace}/{resourceType}/{resourceName}.
+        name:
+          type: string
+          description: The name of the resource.
+        type:
+          type: string
+          description: The type of the resource. E.g. "Microsoft.Compute/virtualMachines" or "Microsoft.Storage/storageAccounts".
+        tags:
+          type: object
+          properties: {}
+          description: Resource tags.
+        location:
+          type: string
+          description: The geo-location where the resource lives. Required.
+        systemData:
+          $ref: "#/components/schemas/SystemData"
+          description: Azure Resource Manager metadata containing createdBy and modifiedBy information.
+        configuration:
+          type: object
+          properties: {}
+          description: configuration dictionary of the configuration profile.
+    PagedConfigurationProfileFlattened:
+      type: object
+      properties:
+        value:
+          type: array
+          items:
+            $ref: "#/components/schemas/ConfigurationProfileFlattened"
+        nextLink:
+          type: string
+    ConfigurationProfile:
+      type: object
+      description: Definition of the configuration profile. Variables are only populated by the server, and will be ignored when sending a request. All required parameters must be populated in order to send to Azure.
+      properties:
+        id:
+          type: string
+          description: Fully qualified resource ID for the resource. Ex - /subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/providers/{resourceProviderNamespace}/{resourceType}/{resourceName}.
+        name:
+          type: string
+          description: The name of the resource.
+        type:
+          type: string
+          description: The type of the resource. E.g. "Microsoft.Compute/virtualMachines" or "Microsoft.Storage/storageAccounts".
+        tags:
+          type: object
+          properties: {}
+          description: Resource tags.
+        location:
+          type: string
+          description: The geo-location where the resource lives. Required.
+        properties:
+          $ref: "#/components/schemas/ConfigurationProfileProperties"
+          description: Properties of the configuration profile.
+        systemData:
+          $ref: "#/components/schemas/SystemData"
+          description: Azure Resource Manager metadata containing createdBy and modifiedBy information.
+      required:
+        - location
+    AssignmentReportProperties:
+      type: object
+      description: Data related to the report detail. Variables are only populated by the server, and will be ignored when sending a request.
+      properties:
+        startTime:
+          type: string
+          description: Start time of the configuration profile assignment processing.
+        endTime:
+          type: string
+          description: End time of the configuration profile assignment processing.
+        lastModifiedTime:
+          type: string
+          description: Last modified time of the configuration profile assignment processing.
+        duration:
+          type: string
+          description: Duration of the configuration profile assignment processing.
+        type:
+          type: string
+          description: Type of the configuration profile assignment processing (Initial/Consistency).
+        status:
+          type: string
+          description: The status of the configuration profile assignment.
+        configurationProfile:
+          type: string
+          description: The configurationProfile linked to the assignment.
+        resources:
+          type: array
+          items:
+            $ref: "#/components/schemas/ReportResource"
+          description: List of resources processed by the configuration profile assignment.
+        error:
+          $ref: "#/components/schemas/ErrorDetail"
+          description: Error message, if any, returned by the configuration profile assignment processing.
+        reportFormatVersion:
+          type: string
+          description: Version of the report format.
+    ReportResource:
+      type: object
+      description: Details about the resource processed by the configuration profile assignment. Variables are only populated by the server, and will be ignored when sending a request.
+      properties:
+        name:
+          type: string
+          description: Name of the resource.
+        id:
+          type: string
+          description: ARM id of the resource.
+        type:
+          type: string
+          description: Type of the resource.
+        status:
+          type: string
+          description: Status of the resource.
+        error:
+          $ref: "#/components/schemas/ErrorDetail"
+          description: Error message, if any, returned when deploying the resource.
+    ErrorDetail:
+      type: object
+      description: The error detail. Variables are only populated by the server, and will be ignored when sending a request.
+      properties:
+        code:
+          type: string
+          description: The error code.
+        message:
+          type: string
+          description: The error message.
+        target:
+          type: string
+          description: The error target.
+        details:
+          type: array
+          items:
+            $ref: "#/components/schemas/ErrorDetail"
+          description: The error details.
+        additionalInfo:
+          type: array
+          items:
+            $ref: "#/components/schemas/ErrorAdditionalInfo"
+          description: The error additional info.
+    ErrorAdditionalInfo:
+      type: object
+      description: The resource management error additional info. Variables are only populated by the server, and will be ignored when sending a request.
+      properties:
+        type:
+          type: string
+          description: The additional info type.
+        info:
+          type: object
+          properties: {}
+          description: The additional info.
+    ReportFlattened:
+      type: object
+      description: Flattened view of Report ('properties' hoisted to the top level).
+      properties:
+        id:
+          type: string
+          description: Fully qualified resource ID for the resource. Ex - /subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/providers/{resourceProviderNamespace}/{resourceType}/{resourceName}.
+        name:
+          type: string
+          description: The name of the resource.
+        type:
+          type: string
+          description: The type of the resource. E.g. "Microsoft.Compute/virtualMachines" or "Microsoft.Storage/storageAccounts".
+        systemData:
+          $ref: "#/components/schemas/SystemData"
+          description: Azure Resource Manager metadata containing createdBy and modifiedBy information.
+        startTime:
+          type: string
+          description: Start time of the configuration profile assignment processing.
+        endTime:
+          type: string
+          description: End time of the configuration profile assignment processing.
+        lastModifiedTime:
+          type: string
+          description: Last modified time of the configuration profile assignment processing.
+        duration:
+          type: string
+          description: Duration of the configuration profile assignment processing.
+        status:
+          type: string
+          description: The status of the configuration profile assignment.
+        configurationProfile:
+          type: string
+          description: The configurationProfile linked to the assignment.
+        resources:
+          type: array
+          items:
+            $ref: "#/components/schemas/ReportResource"
+          description: List of resources processed by the configuration profile assignment.
+        error:
+          $ref: "#/components/schemas/ErrorDetail"
+          description: Error message, if any, returned by the configuration profile assignment processing.
+        reportFormatVersion:
+          type: string
+          description: Version of the report format.
+    PagedReportFlattened:
+      type: object
+      properties:
+        value:
+          type: array
+          items:
+            $ref: "#/components/schemas/ReportFlattened"
+        nextLink:
+          type: string
+    OperationDisplay:
+      type: object
+      description: Localized display information for this particular operation. Variables are only populated by the server, and will be ignored when sending a request.
+      properties:
+        provider:
+          type: string
+          description: The localized friendly form of the resource provider name, e.g. "Microsoft Monitoring Insights" or "Microsoft Compute".
+        resource:
+          type: string
+          description: The localized friendly name of the resource type related to this operation. E.g. "Virtual Machines" or "Job Schedule Collections".
+        operation:
+          type: string
+          description: The concise, localized friendly name for the operation; suitable for dropdowns. E.g. "Create or Update Virtual Machine", "Restart Virtual Machine".
+        description:
+          type: string
+          description: The short, localized friendly description of the operation; suitable for tool tips and detailed views.
+    Operation:
+      type: object
+      description: Details of a REST API operation, returned from the Resource Provider Operations API. Variables are only populated by the server, and will be ignored when sending a request.
+      properties:
+        name:
+          type: string
+          description: 'The name of the operation, as per Resource-Based Access Control (RBAC). Examples: "Microsoft.Compute/virtualMachines/write", "Microsoft.Compute/virtualMachines/capture/action".'
+        isDataAction:
+          type: boolean
+          description: Whether the operation applies to data-plane. This is "true" for data-plane operations and "false" for ARM/control-plane operations.
+        display:
+          $ref: "#/components/schemas/OperationDisplay"
+          description: Localized display information for this particular operation.
+        origin:
+          type: string
+          description: 'The intended executor of the operation; as in Resource Based Access Control (RBAC) and audit logs UX. Default value is "user,system". Known values are: "user", "system", and "user,system".'
+        actionType:
+          type: string
+          description: Enum. Indicates the action type. "Internal" refers to actions that are for internal only APIs. "Internal"
+    PagedOperation:
+      type: object
+      properties:
+        value:
+          type: array
+          items:
+            $ref: "#/components/schemas/Operation"
+        nextLink:
+          type: string
+    ServicePrincipalProperties:
+      type: object
+      description: The Service Principal properties for the subscription. Variables are only populated by the server, and will be ignored when sending a request.
+      properties:
+        servicePrincipalId:
+          type: string
+          description: The Service Principal Id for the subscription.
+        authorizationSet:
+          type: boolean
+          description: Returns the contributor RBAC Role exist or not for the Service Principal Id.
+    ServicePrincipalFlattened:
+      type: object
+      description: Flattened view of ServicePrincipal ('properties' hoisted to the top level).
+      properties:
+        id:
+          type: string
+          description: Fully qualified resource ID for the resource. Ex - /subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/providers/{resourceProviderNamespace}/{resourceType}/{resourceName}.
+        name:
+          type: string
+          description: The name of the resource.
+        type:
+          type: string
+          description: The type of the resource. E.g. "Microsoft.Compute/virtualMachines" or "Microsoft.Storage/storageAccounts".
+        systemData:
+          $ref: "#/components/schemas/SystemData"
+          description: Azure Resource Manager metadata containing createdBy and modifiedBy information.
+        servicePrincipalId:
+          type: string
+          description: The Service Principal Id for the subscription.
+        authorizationSet:
+          type: boolean
+          description: Returns the contributor RBAC Role exist or not for the Service Principal Id.
+    PagedServicePrincipalFlattened:
+      type: object
+      properties:
+        value:
+          type: array
+          items:
+            $ref: "#/components/schemas/ServicePrincipalFlattened"
+        nextLink:
+          type: string
+  x-stackQL-resources:
+    best_practices:
+      id: azure.automanage.best_practices
+      name: best_practices
+      title: best_practices
+      methods:
+        get:
+          operation:
+            $ref: "#/paths/~1providers~1Microsoft.Automanage~1bestPractices~1{best_practice_name}?api-version=2022-05-04/get"
+          response:
+            openAPIDocKey: "200"
+            mediaType: application/json
+            overrideMediaType: application/json
+            transform:
+              type: golang_template_json_v0.3.0
+              body: '{{ $row := . }}{ {{ $p := index $row "properties" }}{{ if eq (kindOf $p) "map" }}{{ range $k, $v := $p }}{{ printf "%q" $k }}: {{ toJson $v }}, {{ end }}{{ end }}{{ range $k, $v := $row }}{{ printf "%q" $k }}: {{ toJson $v }}, {{ end }}"_flattened": true }'
+        list_by_tenant:
+          operation:
+            $ref: "#/paths/~1providers~1Microsoft.Automanage~1bestPractices?api-version=2022-05-04/get"
+          response:
+            openAPIDocKey: "200"
+            mediaType: application/json
+            objectKey: $.value
+            overrideMediaType: application/json
+            transform:
+              type: golang_template_json_v0.3.0
+              body: |-
+                {"value": [
+                {{- range $i, $row := index . "value" }}{{ if $i }},{{ end }}
+                  { {{ $p := index $row "properties" }}{{ if eq (kindOf $p) "map" }}{{ range $k, $v := $p }}{{ printf "%q" $k }}: {{ toJson $v }}, {{ end }}{{ end }}{{ range $k, $v := $row }}{{ printf "%q" $k }}: {{ toJson $v }}, {{ end }}"_flattened": true }
+                {{- end }}
+                ], "nextLink": {{ toJson (index . "nextLink") }}}
+      sqlVerbs:
+        select:
+          - $ref: "#/components/x-stackQL-resources/best_practices/methods/get"
+          - $ref: "#/components/x-stackQL-resources/best_practices/methods/list_by_tenant"
+        insert: []
+        update: []
+        delete: []
+    best_practices_versions:
+      id: azure.automanage.best_practices_versions
+      name: best_practices_versions
+      title: best_practices_versions
+      methods:
+        get:
+          operation:
+            $ref: "#/paths/~1providers~1Microsoft.Automanage~1bestPractices~1{best_practice_name}~1versions~1{version_name}?api-version=2022-05-04/get"
+          response:
+            openAPIDocKey: "200"
+            mediaType: application/json
+            overrideMediaType: application/json
+            transform:
+              type: golang_template_json_v0.3.0
+              body: '{{ $row := . }}{ {{ $p := index $row "properties" }}{{ if eq (kindOf $p) "map" }}{{ range $k, $v := $p }}{{ printf "%q" $k }}: {{ toJson $v }}, {{ end }}{{ end }}{{ range $k, $v := $row }}{{ printf "%q" $k }}: {{ toJson $v }}, {{ end }}"_flattened": true }'
+        list_by_tenant:
+          operation:
+            $ref: "#/paths/~1providers~1Microsoft.Automanage~1bestPractices~1{best_practice_name}~1versions?api-version=2022-05-04/get"
+          response:
+            openAPIDocKey: "200"
+            mediaType: application/json
+            objectKey: $.value
+            overrideMediaType: application/json
+            transform:
+              type: golang_template_json_v0.3.0
+              body: |-
+                {"value": [
+                {{- range $i, $row := index . "value" }}{{ if $i }},{{ end }}
+                  { {{ $p := index $row "properties" }}{{ if eq (kindOf $p) "map" }}{{ range $k, $v := $p }}{{ printf "%q" $k }}: {{ toJson $v }}, {{ end }}{{ end }}{{ range $k, $v := $row }}{{ printf "%q" $k }}: {{ toJson $v }}, {{ end }}"_flattened": true }
+                {{- end }}
+                ], "nextLink": {{ toJson (index . "nextLink") }}}
+      sqlVerbs:
+        select:
+          - $ref: "#/components/x-stackQL-resources/best_practices_versions/methods/get"
+          - $ref: "#/components/x-stackQL-resources/best_practices_versions/methods/list_by_tenant"
+        insert: []
+        update: []
+        delete: []
+    configuration_profile_assignments:
+      id: azure.automanage.configuration_profile_assignments
+      name: configuration_profile_assignments
+      title: configuration_profile_assignments
+      methods:
+        get:
+          operation:
+            $ref: "#/paths/~1subscriptions~1{subscription_id}~1resourceGroups~1{resource_group_name}~1providers~1Microsoft.Compute~1virtualMachines~1{vm_name}~1providers~1Microsoft.Automanage~1configurationProfileAssignments~1{configuration_profile_assignment_name}?api-version=2022-05-04/get"
+          response:
+            openAPIDocKey: "200"
+            mediaType: application/json
+            overrideMediaType: application/json
+            transform:
+              type: golang_template_json_v0.3.0
+              body: '{{ $row := . }}{ {{ $p := index $row "properties" }}{{ if eq (kindOf $p) "map" }}{{ range $k, $v := $p }}{{ printf "%q" $k }}: {{ toJson $v }}, {{ end }}{{ end }}{{ range $k, $v := $row }}{{ printf "%q" $k }}: {{ toJson $v }}, {{ end }}"_flattened": true }'
+        create_or_update:
+          operation:
+            $ref: "#/paths/~1subscriptions~1{subscription_id}~1resourceGroups~1{resource_group_name}~1providers~1Microsoft.Compute~1virtualMachines~1{vm_name}~1providers~1Microsoft.Automanage~1configurationProfileAssignments~1{configuration_profile_assignment_name}?api-version=2022-05-04/put"
+          response:
+            openAPIDocKey: "200"
+            mediaType: application/json
+          request:
+            nativeCasing: camel
+          config:
+            requestBodyTranslate:
+              algorithm: naive
+        delete:
+          operation:
+            $ref: "#/paths/~1subscriptions~1{subscription_id}~1resourceGroups~1{resource_group_name}~1providers~1Microsoft.Compute~1virtualMachines~1{vm_name}~1providers~1Microsoft.Automanage~1configurationProfileAssignments~1{configuration_profile_assignment_name}?api-version=2022-05-04/delete"
+          response:
+            openAPIDocKey: "204"
+        list:
+          operation:
+            $ref: "#/paths/~1subscriptions~1{subscription_id}~1resourceGroups~1{resource_group_name}~1providers~1Microsoft.Automanage~1configurationProfileAssignments?api-version=2022-05-04/get"
+          response:
+            openAPIDocKey: "200"
+            mediaType: application/json
+            objectKey: $.value
+            overrideMediaType: application/json
+            transform:
+              type: golang_template_json_v0.3.0
+              body: |-
+                {"value": [
+                {{- range $i, $row := index . "value" }}{{ if $i }},{{ end }}
+                  { {{ $p := index $row "properties" }}{{ if eq (kindOf $p) "map" }}{{ range $k, $v := $p }}{{ printf "%q" $k }}: {{ toJson $v }}, {{ end }}{{ end }}{{ range $k, $v := $row }}{{ printf "%q" $k }}: {{ toJson $v }}, {{ end }}"_flattened": true }
+                {{- end }}
+                ], "nextLink": {{ toJson (index . "nextLink") }}}
+        list_by_virtual_machines:
+          operation:
+            $ref: "#/paths/~1subscriptions~1{subscription_id}~1resourceGroups~1{resource_group_name}~1providers~1Microsoft.Compute~1virtualMachines~1{vm_name}~1providers~1Microsoft.Automanage~1configurationProfileAssignments?api-version=2022-05-04/get"
+          response:
+            openAPIDocKey: "200"
+            mediaType: application/json
+            objectKey: $.value
+            overrideMediaType: application/json
+            transform:
+              type: golang_template_json_v0.3.0
+              body: |-
+                {"value": [
+                {{- range $i, $row := index . "value" }}{{ if $i }},{{ end }}
+                  { {{ $p := index $row "properties" }}{{ if eq (kindOf $p) "map" }}{{ range $k, $v := $p }}{{ printf "%q" $k }}: {{ toJson $v }}, {{ end }}{{ end }}{{ range $k, $v := $row }}{{ printf "%q" $k }}: {{ toJson $v }}, {{ end }}"_flattened": true }
+                {{- end }}
+                ], "nextLink": {{ toJson (index . "nextLink") }}}
+        list_by_subscription:
+          operation:
+            $ref: "#/paths/~1subscriptions~1{subscription_id}~1providers~1Microsoft.Automanage~1configurationProfileAssignments?api-version=2022-05-04/get"
+          response:
+            openAPIDocKey: "200"
+            mediaType: application/json
+            objectKey: $.value
+            overrideMediaType: application/json
+            transform:
+              type: golang_template_json_v0.3.0
+              body: |-
+                {"value": [
+                {{- range $i, $row := index . "value" }}{{ if $i }},{{ end }}
+                  { {{ $p := index $row "properties" }}{{ if eq (kindOf $p) "map" }}{{ range $k, $v := $p }}{{ printf "%q" $k }}: {{ toJson $v }}, {{ end }}{{ end }}{{ range $k, $v := $row }}{{ printf "%q" $k }}: {{ toJson $v }}, {{ end }}"_flattened": true }
+                {{- end }}
+                ], "nextLink": {{ toJson (index . "nextLink") }}}
+        list_by_machine_name:
+          operation:
+            $ref: "#/paths/~1subscriptions~1{subscription_id}~1resourceGroups~1{resource_group_name}~1providers~1Microsoft.HybridCompute~1machines~1{machine_name}~1providers~1Microsoft.Automanage~1configurationProfileAssignments?api-version=2022-05-04/get"
+          response:
+            openAPIDocKey: "200"
+            mediaType: application/json
+            objectKey: $.value
+            overrideMediaType: application/json
+            transform:
+              type: golang_template_json_v0.3.0
+              body: |-
+                {"value": [
+                {{- range $i, $row := index . "value" }}{{ if $i }},{{ end }}
+                  { {{ $p := index $row "properties" }}{{ if eq (kindOf $p) "map" }}{{ range $k, $v := $p }}{{ printf "%q" $k }}: {{ toJson $v }}, {{ end }}{{ end }}{{ range $k, $v := $row }}{{ printf "%q" $k }}: {{ toJson $v }}, {{ end }}"_flattened": true }
+                {{- end }}
+                ], "nextLink": {{ toJson (index . "nextLink") }}}
+        list_by_cluster_name:
+          operation:
+            $ref: "#/paths/~1subscriptions~1{subscription_id}~1resourceGroups~1{resource_group_name}~1providers~1Microsoft.AzureStackHci~1clusters~1{cluster_name}~1providers~1Microsoft.Automanage~1configurationProfileAssignments?api-version=2022-05-04/get"
+          response:
+            openAPIDocKey: "200"
+            mediaType: application/json
+            objectKey: $.value
+            overrideMediaType: application/json
+            transform:
+              type: golang_template_json_v0.3.0
+              body: |-
+                {"value": [
+                {{- range $i, $row := index . "value" }}{{ if $i }},{{ end }}
+                  { {{ $p := index $row "properties" }}{{ if eq (kindOf $p) "map" }}{{ range $k, $v := $p }}{{ printf "%q" $k }}: {{ toJson $v }}, {{ end }}{{ end }}{{ range $k, $v := $row }}{{ printf "%q" $k }}: {{ toJson $v }}, {{ end }}"_flattened": true }
+                {{- end }}
+                ], "nextLink": {{ toJson (index . "nextLink") }}}
+      sqlVerbs:
+        select:
+          - $ref: "#/components/x-stackQL-resources/configuration_profile_assignments/methods/get"
+          - $ref: "#/components/x-stackQL-resources/configuration_profile_assignments/methods/list_by_virtual_machines"
+          - $ref: "#/components/x-stackQL-resources/configuration_profile_assignments/methods/list_by_machine_name"
+          - $ref: "#/components/x-stackQL-resources/configuration_profile_assignments/methods/list_by_cluster_name"
+          - $ref: "#/components/x-stackQL-resources/configuration_profile_assignments/methods/list"
+          - $ref: "#/components/x-stackQL-resources/configuration_profile_assignments/methods/list_by_subscription"
+        insert:
+          - $ref: "#/components/x-stackQL-resources/configuration_profile_assignments/methods/create_or_update"
+        update: []
+        replace:
+          - $ref: "#/components/x-stackQL-resources/configuration_profile_assignments/methods/create_or_update"
+        delete:
+          - $ref: "#/components/x-stackQL-resources/configuration_profile_assignments/methods/delete"
+    configuration_profile_hci_assignments:
+      id: azure.automanage.configuration_profile_hci_assignments
+      name: configuration_profile_hci_assignments
+      title: configuration_profile_hci_assignments
+      methods:
+        get:
+          operation:
+            $ref: "#/paths/~1subscriptions~1{subscription_id}~1resourceGroups~1{resource_group_name}~1providers~1Microsoft.AzureStackHci~1clusters~1{cluster_name}~1providers~1Microsoft.Automanage~1configurationProfileAssignments~1{configuration_profile_assignment_name}?api-version=2022-05-04/get"
+          response:
+            openAPIDocKey: "200"
+            mediaType: application/json
+            overrideMediaType: application/json
+            transform:
+              type: golang_template_json_v0.3.0
+              body: '{{ $row := . }}{ {{ $p := index $row "properties" }}{{ if eq (kindOf $p) "map" }}{{ range $k, $v := $p }}{{ printf "%q" $k }}: {{ toJson $v }}, {{ end }}{{ end }}{{ range $k, $v := $row }}{{ printf "%q" $k }}: {{ toJson $v }}, {{ end }}"_flattened": true }'
+        create_or_update:
+          operation:
+            $ref: "#/paths/~1subscriptions~1{subscription_id}~1resourceGroups~1{resource_group_name}~1providers~1Microsoft.AzureStackHci~1clusters~1{cluster_name}~1providers~1Microsoft.Automanage~1configurationProfileAssignments~1{configuration_profile_assignment_name}?api-version=2022-05-04/put"
+          response:
+            openAPIDocKey: "200"
+            mediaType: application/json
+          request:
+            nativeCasing: camel
+          config:
+            requestBodyTranslate:
+              algorithm: naive
+        delete:
+          operation:
+            $ref: "#/paths/~1subscriptions~1{subscription_id}~1resourceGroups~1{resource_group_name}~1providers~1Microsoft.AzureStackHci~1clusters~1{cluster_name}~1providers~1Microsoft.Automanage~1configurationProfileAssignments~1{configuration_profile_assignment_name}?api-version=2022-05-04/delete"
+          response:
+            openAPIDocKey: "204"
+      sqlVerbs:
+        select:
+          - $ref: "#/components/x-stackQL-resources/configuration_profile_hci_assignments/methods/get"
+        insert:
+          - $ref: "#/components/x-stackQL-resources/configuration_profile_hci_assignments/methods/create_or_update"
+        update: []
+        replace:
+          - $ref: "#/components/x-stackQL-resources/configuration_profile_hci_assignments/methods/create_or_update"
+        delete:
+          - $ref: "#/components/x-stackQL-resources/configuration_profile_hci_assignments/methods/delete"
+    configuration_profile_hcrp_assignments:
+      id: azure.automanage.configuration_profile_hcrp_assignments
+      name: configuration_profile_hcrp_assignments
+      title: configuration_profile_hcrp_assignments
+      methods:
+        get:
+          operation:
+            $ref: "#/paths/~1subscriptions~1{subscription_id}~1resourceGroups~1{resource_group_name}~1providers~1Microsoft.HybridCompute~1machines~1{machine_name}~1providers~1Microsoft.Automanage~1configurationProfileAssignments~1{configuration_profile_assignment_name}?api-version=2022-05-04/get"
+          response:
+            openAPIDocKey: "200"
+            mediaType: application/json
+            overrideMediaType: application/json
+            transform:
+              type: golang_template_json_v0.3.0
+              body: '{{ $row := . }}{ {{ $p := index $row "properties" }}{{ if eq (kindOf $p) "map" }}{{ range $k, $v := $p }}{{ printf "%q" $k }}: {{ toJson $v }}, {{ end }}{{ end }}{{ range $k, $v := $row }}{{ printf "%q" $k }}: {{ toJson $v }}, {{ end }}"_flattened": true }'
+        create_or_update:
+          operation:
+            $ref: "#/paths/~1subscriptions~1{subscription_id}~1resourceGroups~1{resource_group_name}~1providers~1Microsoft.HybridCompute~1machines~1{machine_name}~1providers~1Microsoft.Automanage~1configurationProfileAssignments~1{configuration_profile_assignment_name}?api-version=2022-05-04/put"
+          response:
+            openAPIDocKey: "200"
+            mediaType: application/json
+          request:
+            nativeCasing: camel
+          config:
+            requestBodyTranslate:
+              algorithm: naive
+        delete:
+          operation:
+            $ref: "#/paths/~1subscriptions~1{subscription_id}~1resourceGroups~1{resource_group_name}~1providers~1Microsoft.HybridCompute~1machines~1{machine_name}~1providers~1Microsoft.Automanage~1configurationProfileAssignments~1{configuration_profile_assignment_name}?api-version=2022-05-04/delete"
+          response:
+            openAPIDocKey: "204"
+      sqlVerbs:
+        select:
+          - $ref: "#/components/x-stackQL-resources/configuration_profile_hcrp_assignments/methods/get"
+        insert:
+          - $ref: "#/components/x-stackQL-resources/configuration_profile_hcrp_assignments/methods/create_or_update"
+        update: []
+        replace:
+          - $ref: "#/components/x-stackQL-resources/configuration_profile_hcrp_assignments/methods/create_or_update"
+        delete:
+          - $ref: "#/components/x-stackQL-resources/configuration_profile_hcrp_assignments/methods/delete"
+    configuration_profiles:
+      id: azure.automanage.configuration_profiles
+      name: configuration_profiles
+      title: configuration_profiles
+      methods:
+        get:
+          operation:
+            $ref: "#/paths/~1subscriptions~1{subscription_id}~1resourceGroups~1{resource_group_name}~1providers~1Microsoft.Automanage~1configurationProfiles~1{configuration_profile_name}?api-version=2022-05-04/get"
+          response:
+            openAPIDocKey: "200"
+            mediaType: application/json
+            overrideMediaType: application/json
+            transform:
+              type: golang_template_json_v0.3.0
+              body: '{{ $row := . }}{ {{ $p := index $row "properties" }}{{ if eq (kindOf $p) "map" }}{{ range $k, $v := $p }}{{ printf "%q" $k }}: {{ toJson $v }}, {{ end }}{{ end }}{{ range $k, $v := $row }}{{ printf "%q" $k }}: {{ toJson $v }}, {{ end }}"_flattened": true }'
+        create_or_update:
+          operation:
+            $ref: "#/paths/~1subscriptions~1{subscription_id}~1resourceGroups~1{resource_group_name}~1providers~1Microsoft.Automanage~1configurationProfiles~1{configuration_profile_name}?api-version=2022-05-04/put"
+          response:
+            openAPIDocKey: "200"
+            mediaType: application/json
+          request:
+            nativeCasing: camel
+          config:
+            requestBodyTranslate:
+              algorithm: naive
+        delete:
+          operation:
+            $ref: "#/paths/~1subscriptions~1{subscription_id}~1resourceGroups~1{resource_group_name}~1providers~1Microsoft.Automanage~1configurationProfiles~1{configuration_profile_name}?api-version=2022-05-04/delete"
+          response:
+            openAPIDocKey: "204"
+        update:
+          operation:
+            $ref: "#/paths/~1subscriptions~1{subscription_id}~1resourceGroups~1{resource_group_name}~1providers~1Microsoft.Automanage~1configurationProfiles~1{configuration_profile_name}?api-version=2022-05-04/patch"
+          response:
+            openAPIDocKey: "200"
+            mediaType: application/json
+          request:
+            nativeCasing: camel
+          config:
+            requestBodyTranslate:
+              algorithm: naive
+        list_by_resource_group:
+          operation:
+            $ref: "#/paths/~1subscriptions~1{subscription_id}~1resourceGroups~1{resource_group_name}~1providers~1Microsoft.Automanage~1configurationProfiles?api-version=2022-05-04/get"
+          response:
+            openAPIDocKey: "200"
+            mediaType: application/json
+            objectKey: $.value
+            overrideMediaType: application/json
+            transform:
+              type: golang_template_json_v0.3.0
+              body: |-
+                {"value": [
+                {{- range $i, $row := index . "value" }}{{ if $i }},{{ end }}
+                  { {{ $p := index $row "properties" }}{{ if eq (kindOf $p) "map" }}{{ range $k, $v := $p }}{{ printf "%q" $k }}: {{ toJson $v }}, {{ end }}{{ end }}{{ range $k, $v := $row }}{{ printf "%q" $k }}: {{ toJson $v }}, {{ end }}"_flattened": true }
+                {{- end }}
+                ], "nextLink": {{ toJson (index . "nextLink") }}}
+        list_by_subscription:
+          operation:
+            $ref: "#/paths/~1subscriptions~1{subscription_id}~1providers~1Microsoft.Automanage~1configurationProfiles?api-version=2022-05-04/get"
+          response:
+            openAPIDocKey: "200"
+            mediaType: application/json
+            objectKey: $.value
+            overrideMediaType: application/json
+            transform:
+              type: golang_template_json_v0.3.0
+              body: |-
+                {"value": [
+                {{- range $i, $row := index . "value" }}{{ if $i }},{{ end }}
+                  { {{ $p := index $row "properties" }}{{ if eq (kindOf $p) "map" }}{{ range $k, $v := $p }}{{ printf "%q" $k }}: {{ toJson $v }}, {{ end }}{{ end }}{{ range $k, $v := $row }}{{ printf "%q" $k }}: {{ toJson $v }}, {{ end }}"_flattened": true }
+                {{- end }}
+                ], "nextLink": {{ toJson (index . "nextLink") }}}
+      sqlVerbs:
+        select:
+          - $ref: "#/components/x-stackQL-resources/configuration_profiles/methods/get"
+          - $ref: "#/components/x-stackQL-resources/configuration_profiles/methods/list_by_resource_group"
+          - $ref: "#/components/x-stackQL-resources/configuration_profiles/methods/list_by_subscription"
+        insert:
+          - $ref: "#/components/x-stackQL-resources/configuration_profiles/methods/create_or_update"
+        update:
+          - $ref: "#/components/x-stackQL-resources/configuration_profiles/methods/update"
+        replace:
+          - $ref: "#/components/x-stackQL-resources/configuration_profiles/methods/create_or_update"
+        delete:
+          - $ref: "#/components/x-stackQL-resources/configuration_profiles/methods/delete"
+    configuration_profiles_versions:
+      id: azure.automanage.configuration_profiles_versions
+      name: configuration_profiles_versions
+      title: configuration_profiles_versions
+      methods:
+        get:
+          operation:
+            $ref: "#/paths/~1subscriptions~1{subscription_id}~1resourceGroups~1{resource_group_name}~1providers~1Microsoft.Automanage~1configurationProfiles~1{configuration_profile_name}~1versions~1{version_name}?api-version=2022-05-04/get"
+          response:
+            openAPIDocKey: "200"
+            mediaType: application/json
+            overrideMediaType: application/json
+            transform:
+              type: golang_template_json_v0.3.0
+              body: '{{ $row := . }}{ {{ $p := index $row "properties" }}{{ if eq (kindOf $p) "map" }}{{ range $k, $v := $p }}{{ printf "%q" $k }}: {{ toJson $v }}, {{ end }}{{ end }}{{ range $k, $v := $row }}{{ printf "%q" $k }}: {{ toJson $v }}, {{ end }}"_flattened": true }'
+        create_or_update:
+          operation:
+            $ref: "#/paths/~1subscriptions~1{subscription_id}~1resourceGroups~1{resource_group_name}~1providers~1Microsoft.Automanage~1configurationProfiles~1{configuration_profile_name}~1versions~1{version_name}?api-version=2022-05-04/put"
+          response:
+            openAPIDocKey: "200"
+            mediaType: application/json
+          request:
+            nativeCasing: camel
+          config:
+            requestBodyTranslate:
+              algorithm: naive
+        delete:
+          operation:
+            $ref: "#/paths/~1subscriptions~1{subscription_id}~1resourceGroups~1{resource_group_name}~1providers~1Microsoft.Automanage~1configurationProfiles~1{configuration_profile_name}~1versions~1{version_name}?api-version=2022-05-04/delete"
+          response:
+            openAPIDocKey: "204"
+        list_child_resources:
+          operation:
+            $ref: "#/paths/~1subscriptions~1{subscription_id}~1resourceGroups~1{resource_group_name}~1providers~1Microsoft.Automanage~1configurationProfiles~1{configuration_profile_name}~1versions?api-version=2022-05-04/get"
+          response:
+            openAPIDocKey: "200"
+            mediaType: application/json
+            objectKey: $.value
+            overrideMediaType: application/json
+            transform:
+              type: golang_template_json_v0.3.0
+              body: |-
+                {"value": [
+                {{- range $i, $row := index . "value" }}{{ if $i }},{{ end }}
+                  { {{ $p := index $row "properties" }}{{ if eq (kindOf $p) "map" }}{{ range $k, $v := $p }}{{ printf "%q" $k }}: {{ toJson $v }}, {{ end }}{{ end }}{{ range $k, $v := $row }}{{ printf "%q" $k }}: {{ toJson $v }}, {{ end }}"_flattened": true }
+                {{- end }}
+                ], "nextLink": {{ toJson (index . "nextLink") }}}
+      sqlVerbs:
+        select:
+          - $ref: "#/components/x-stackQL-resources/configuration_profiles_versions/methods/get"
+          - $ref: "#/components/x-stackQL-resources/configuration_profiles_versions/methods/list_child_resources"
+        insert:
+          - $ref: "#/components/x-stackQL-resources/configuration_profiles_versions/methods/create_or_update"
+        update: []
+        replace:
+          - $ref: "#/components/x-stackQL-resources/configuration_profiles_versions/methods/create_or_update"
+        delete:
+          - $ref: "#/components/x-stackQL-resources/configuration_profiles_versions/methods/delete"
+    hci_reports:
+      id: azure.automanage.hci_reports
+      name: hci_reports
+      title: hci_reports
+      methods:
+        get:
+          operation:
+            $ref: "#/paths/~1subscriptions~1{subscription_id}~1resourceGroups~1{resource_group_name}~1providers~1Microsoft.AzureStackHci~1clusters~1{cluster_name}~1providers~1Microsoft.Automanage~1configurationProfileAssignments~1{configuration_profile_assignment_name}~1reports~1{report_name}?api-version=2022-05-04/get"
+          response:
+            openAPIDocKey: "200"
+            mediaType: application/json
+            overrideMediaType: application/json
+            transform:
+              type: golang_template_json_v0.3.0
+              body: '{{ $row := . }}{ {{ $p := index $row "properties" }}{{ if eq (kindOf $p) "map" }}{{ range $k, $v := $p }}{{ printf "%q" $k }}: {{ toJson $v }}, {{ end }}{{ end }}{{ range $k, $v := $row }}{{ printf "%q" $k }}: {{ toJson $v }}, {{ end }}"_flattened": true }'
+        list_by_configuration_profile_assignments:
+          operation:
+            $ref: "#/paths/~1subscriptions~1{subscription_id}~1resourceGroups~1{resource_group_name}~1providers~1Microsoft.AzureStackHci~1clusters~1{cluster_name}~1providers~1Microsoft.Automanage~1configurationProfileAssignments~1{configuration_profile_assignment_name}~1reports?api-version=2022-05-04/get"
+          response:
+            openAPIDocKey: "200"
+            mediaType: application/json
+            objectKey: $.value
+            overrideMediaType: application/json
+            transform:
+              type: golang_template_json_v0.3.0
+              body: |-
+                {"value": [
+                {{- range $i, $row := index . "value" }}{{ if $i }},{{ end }}
+                  { {{ $p := index $row "properties" }}{{ if eq (kindOf $p) "map" }}{{ range $k, $v := $p }}{{ printf "%q" $k }}: {{ toJson $v }}, {{ end }}{{ end }}{{ range $k, $v := $row }}{{ printf "%q" $k }}: {{ toJson $v }}, {{ end }}"_flattened": true }
+                {{- end }}
+                ], "nextLink": {{ toJson (index . "nextLink") }}}
+      sqlVerbs:
+        select:
+          - $ref: "#/components/x-stackQL-resources/hci_reports/methods/get"
+          - $ref: "#/components/x-stackQL-resources/hci_reports/methods/list_by_configuration_profile_assignments"
+        insert: []
+        update: []
+        delete: []
+    hcrp_reports:
+      id: azure.automanage.hcrp_reports
+      name: hcrp_reports
+      title: hcrp_reports
+      methods:
+        get:
+          operation:
+            $ref: "#/paths/~1subscriptions~1{subscription_id}~1resourceGroups~1{resource_group_name}~1providers~1Microsoft.HybridCompute~1machines~1{machine_name}~1providers~1Microsoft.Automanage~1configurationProfileAssignments~1{configuration_profile_assignment_name}~1reports~1{report_name}?api-version=2022-05-04/get"
+          response:
+            openAPIDocKey: "200"
+            mediaType: application/json
+            overrideMediaType: application/json
+            transform:
+              type: golang_template_json_v0.3.0
+              body: '{{ $row := . }}{ {{ $p := index $row "properties" }}{{ if eq (kindOf $p) "map" }}{{ range $k, $v := $p }}{{ printf "%q" $k }}: {{ toJson $v }}, {{ end }}{{ end }}{{ range $k, $v := $row }}{{ printf "%q" $k }}: {{ toJson $v }}, {{ end }}"_flattened": true }'
+        list_by_configuration_profile_assignments:
+          operation:
+            $ref: "#/paths/~1subscriptions~1{subscription_id}~1resourceGroups~1{resource_group_name}~1providers~1Microsoft.HybridCompute~1machines~1{machine_name}~1providers~1Microsoft.Automanage~1configurationProfileAssignments~1{configuration_profile_assignment_name}~1reports?api-version=2022-05-04/get"
+          response:
+            openAPIDocKey: "200"
+            mediaType: application/json
+            objectKey: $.value
+            overrideMediaType: application/json
+            transform:
+              type: golang_template_json_v0.3.0
+              body: |-
+                {"value": [
+                {{- range $i, $row := index . "value" }}{{ if $i }},{{ end }}
+                  { {{ $p := index $row "properties" }}{{ if eq (kindOf $p) "map" }}{{ range $k, $v := $p }}{{ printf "%q" $k }}: {{ toJson $v }}, {{ end }}{{ end }}{{ range $k, $v := $row }}{{ printf "%q" $k }}: {{ toJson $v }}, {{ end }}"_flattened": true }
+                {{- end }}
+                ], "nextLink": {{ toJson (index . "nextLink") }}}
+      sqlVerbs:
+        select:
+          - $ref: "#/components/x-stackQL-resources/hcrp_reports/methods/get"
+          - $ref: "#/components/x-stackQL-resources/hcrp_reports/methods/list_by_configuration_profile_assignments"
+        insert: []
+        update: []
+        delete: []
+    operations:
+      id: azure.automanage.operations
+      name: operations
+      title: operations
+      methods:
+        list:
+          operation:
+            $ref: "#/paths/~1providers~1Microsoft.Automanage~1operations?api-version=2022-05-04/get"
+          response:
+            openAPIDocKey: "200"
+            mediaType: application/json
+            objectKey: $.value
+      sqlVerbs:
+        select:
+          - $ref: "#/components/x-stackQL-resources/operations/methods/list"
+        insert: []
+        update: []
+        delete: []
+    reports:
+      id: azure.automanage.reports
+      name: reports
+      title: reports
+      methods:
+        get:
+          operation:
+            $ref: "#/paths/~1subscriptions~1{subscription_id}~1resourceGroups~1{resource_group_name}~1providers~1Microsoft.Compute~1virtualMachines~1{vm_name}~1providers~1Microsoft.Automanage~1configurationProfileAssignments~1{configuration_profile_assignment_name}~1reports~1{report_name}?api-version=2022-05-04/get"
+          response:
+            openAPIDocKey: "200"
+            mediaType: application/json
+            overrideMediaType: application/json
+            transform:
+              type: golang_template_json_v0.3.0
+              body: '{{ $row := . }}{ {{ $p := index $row "properties" }}{{ if eq (kindOf $p) "map" }}{{ range $k, $v := $p }}{{ printf "%q" $k }}: {{ toJson $v }}, {{ end }}{{ end }}{{ range $k, $v := $row }}{{ printf "%q" $k }}: {{ toJson $v }}, {{ end }}"_flattened": true }'
+        list_by_configuration_profile_assignments:
+          operation:
+            $ref: "#/paths/~1subscriptions~1{subscription_id}~1resourceGroups~1{resource_group_name}~1providers~1Microsoft.Compute~1virtualMachines~1{vm_name}~1providers~1Microsoft.Automanage~1configurationProfileAssignments~1{configuration_profile_assignment_name}~1reports?api-version=2022-05-04/get"
+          response:
+            openAPIDocKey: "200"
+            mediaType: application/json
+            objectKey: $.value
+            overrideMediaType: application/json
+            transform:
+              type: golang_template_json_v0.3.0
+              body: |-
+                {"value": [
+                {{- range $i, $row := index . "value" }}{{ if $i }},{{ end }}
+                  { {{ $p := index $row "properties" }}{{ if eq (kindOf $p) "map" }}{{ range $k, $v := $p }}{{ printf "%q" $k }}: {{ toJson $v }}, {{ end }}{{ end }}{{ range $k, $v := $row }}{{ printf "%q" $k }}: {{ toJson $v }}, {{ end }}"_flattened": true }
+                {{- end }}
+                ], "nextLink": {{ toJson (index . "nextLink") }}}
+      sqlVerbs:
+        select:
+          - $ref: "#/components/x-stackQL-resources/reports/methods/get"
+          - $ref: "#/components/x-stackQL-resources/reports/methods/list_by_configuration_profile_assignments"
+        insert: []
+        update: []
+        delete: []
+    service_principals:
+      id: azure.automanage.service_principals
+      name: service_principals
+      title: service_principals
+      methods:
+        get:
+          operation:
+            $ref: "#/paths/~1subscriptions~1{subscription_id}~1providers~1Microsoft.Automanage~1servicePrincipals~1default?api-version=2022-05-04/get"
+          response:
+            openAPIDocKey: "200"
+            mediaType: application/json
+            overrideMediaType: application/json
+            transform:
+              type: golang_template_json_v0.3.0
+              body: '{{ $row := . }}{ {{ $p := index $row "properties" }}{{ if eq (kindOf $p) "map" }}{{ range $k, $v := $p }}{{ printf "%q" $k }}: {{ toJson $v }}, {{ end }}{{ end }}{{ range $k, $v := $row }}{{ printf "%q" $k }}: {{ toJson $v }}, {{ end }}"_flattened": true }'
+        list_by_subscription:
+          operation:
+            $ref: "#/paths/~1subscriptions~1{subscription_id}~1providers~1Microsoft.Automanage~1servicePrincipals?api-version=2022-05-04/get"
+          response:
+            openAPIDocKey: "200"
+            mediaType: application/json
+            objectKey: $.value
+            overrideMediaType: application/json
+            transform:
+              type: golang_template_json_v0.3.0
+              body: |-
+                {"value": [
+                {{- range $i, $row := index . "value" }}{{ if $i }},{{ end }}
+                  { {{ $p := index $row "properties" }}{{ if eq (kindOf $p) "map" }}{{ range $k, $v := $p }}{{ printf "%q" $k }}: {{ toJson $v }}, {{ end }}{{ end }}{{ range $k, $v := $row }}{{ printf "%q" $k }}: {{ toJson $v }}, {{ end }}"_flattened": true }
+                {{- end }}
+                ], "nextLink": {{ toJson (index . "nextLink") }}}
+      sqlVerbs:
+        select:
+          - $ref: "#/components/x-stackQL-resources/service_principals/methods/get"
+        insert: []
+        update: []
+        delete: []
+paths:
+  /providers/Microsoft.Automanage/bestPractices/{best_practice_name}?api-version=2022-05-04:
+    get:
+      operationId: BestPractices_get
+      description: Get information about a Automanage best practice.
+      parameters:
+        - name: best_practice_name
+          in: path
+          required: true
+          schema:
+            type: string
+          description: The Automanage best practice name. Required.
+      responses:
+        "200":
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BestPracticeFlattened"
+  /providers/Microsoft.Automanage/bestPractices?api-version=2022-05-04:
+    get:
+      operationId: BestPractices_list_by_tenant
+      description: Retrieve a list of Automanage best practices.
+      parameters: []
+      responses:
+        "200":
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PagedBestPracticeFlattened"
+  /providers/Microsoft.Automanage/bestPractices/{best_practice_name}/versions/{version_name}?api-version=2022-05-04:
+    get:
+      operationId: BestPracticesVersions_get
+      description: Get information about a Automanage best practice version.
+      parameters:
+        - name: best_practice_name
+          in: path
+          required: true
+          schema:
+            type: string
+          description: The Automanage best practice name. Required.
+        - name: version_name
+          in: path
+          required: true
+          schema:
+            type: string
+          description: The Automanage best practice version name. Required.
+      responses:
+        "200":
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BestPracticeFlattened"
+  /providers/Microsoft.Automanage/bestPractices/{best_practice_name}/versions?api-version=2022-05-04:
+    get:
+      operationId: BestPracticesVersions_list_by_tenant
+      description: Retrieve a list of Automanage best practices versions.
+      parameters:
+        - name: best_practice_name
+          in: path
+          required: true
+          schema:
+            type: string
+          description: The Automanage best practice name. Required.
+      responses:
+        "200":
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PagedBestPracticeFlattened"
+  /subscriptions/{subscription_id}/resourceGroups/{resource_group_name}/providers/Microsoft.Compute/virtualMachines/{vm_name}/providers/Microsoft.Automanage/configurationProfileAssignments/{configuration_profile_assignment_name}?api-version=2022-05-04:
+    get:
+      operationId: ConfigurationProfileAssignments_get
+      description: Get information about a configuration profile assignment.
+      parameters:
+        - name: resource_group_name
+          in: path
+          required: true
+          schema:
+            type: string
+          description: The name of the resource group. The name is case insensitive. Required.
+        - name: configuration_profile_assignment_name
+          in: path
+          required: true
+          schema:
+            type: string
+          description: The configuration profile assignment name. Required.
+        - name: vm_name
+          in: path
+          required: true
+          schema:
+            type: string
+          description: The name of the virtual machine. Required.
+        - name: subscription_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ConfigurationProfileAssignmentFlattened"
+    put:
+      operationId: ConfigurationProfileAssignments_create_or_update
+      description: Creates an association between a VM and Automanage configuration profile.
+      parameters:
+        - name: configuration_profile_assignment_name
+          in: path
+          required: true
+          schema:
+            type: string
+          description: Name of the configuration profile assignment. Only default is supported. Required.
+        - name: resource_group_name
+          in: path
+          required: true
+          schema:
+            type: string
+          description: The name of the resource group. The name is case insensitive. Required.
+        - name: vm_name
+          in: path
+          required: true
+          schema:
+            type: string
+          description: The name of the virtual machine. Required.
+        - name: subscription_id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                properties:
+                  $ref: "#/components/schemas/ConfigurationProfileAssignmentProperties"
+                  description: Properties of the configuration profile assignment.
+      responses:
+        "200":
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ConfigurationProfileAssignment"
+    delete:
+      operationId: ConfigurationProfileAssignments_delete
+      description: Delete a configuration profile assignment.
+      parameters:
+        - name: resource_group_name
+          in: path
+          required: true
+          schema:
+            type: string
+          description: The name of the resource group. The name is case insensitive. Required.
+        - name: configuration_profile_assignment_name
+          in: path
+          required: true
+          schema:
+            type: string
+          description: Name of the configuration profile assignment. Required.
+        - name: vm_name
+          in: path
+          required: true
+          schema:
+            type: string
+          description: The name of the virtual machine. Required.
+        - name: subscription_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "204":
+          description: Success (no content / accepted)
+  /subscriptions/{subscription_id}/resourceGroups/{resource_group_name}/providers/Microsoft.Automanage/configurationProfileAssignments?api-version=2022-05-04:
+    get:
+      operationId: ConfigurationProfileAssignments_list
+      description: Get list of configuration profile assignments.
+      parameters:
+        - name: resource_group_name
+          in: path
+          required: true
+          schema:
+            type: string
+          description: The name of the resource group. The name is case insensitive. Required.
+        - name: subscription_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PagedConfigurationProfileAssignmentFlattened"
+  /subscriptions/{subscription_id}/resourceGroups/{resource_group_name}/providers/Microsoft.Compute/virtualMachines/{vm_name}/providers/Microsoft.Automanage/configurationProfileAssignments?api-version=2022-05-04:
+    get:
+      operationId: ConfigurationProfileAssignments_list_by_virtual_machines
+      description: Get list of configuration profile assignments.
+      parameters:
+        - name: resource_group_name
+          in: path
+          required: true
+          schema:
+            type: string
+          description: The name of the resource group. The name is case insensitive. Required.
+        - name: vm_name
+          in: path
+          required: true
+          schema:
+            type: string
+          description: The name of the virtual machine. Required.
+        - name: subscription_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PagedConfigurationProfileAssignmentFlattened"
+  /subscriptions/{subscription_id}/providers/Microsoft.Automanage/configurationProfileAssignments?api-version=2022-05-04:
+    get:
+      operationId: ConfigurationProfileAssignments_list_by_subscription
+      description: Get list of configuration profile assignments under a given subscription.
+      parameters:
+        - name: subscription_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PagedConfigurationProfileAssignmentFlattened"
+  /subscriptions/{subscription_id}/resourceGroups/{resource_group_name}/providers/Microsoft.HybridCompute/machines/{machine_name}/providers/Microsoft.Automanage/configurationProfileAssignments?api-version=2022-05-04:
+    get:
+      operationId: ConfigurationProfileAssignments_list_by_machine_name
+      description: Get list of configuration profile assignments.
+      parameters:
+        - name: resource_group_name
+          in: path
+          required: true
+          schema:
+            type: string
+          description: The name of the resource group. The name is case insensitive. Required.
+        - name: machine_name
+          in: path
+          required: true
+          schema:
+            type: string
+          description: The name of the Arc machine. Required.
+        - name: subscription_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PagedConfigurationProfileAssignmentFlattened"
+  /subscriptions/{subscription_id}/resourceGroups/{resource_group_name}/providers/Microsoft.AzureStackHci/clusters/{cluster_name}/providers/Microsoft.Automanage/configurationProfileAssignments?api-version=2022-05-04:
+    get:
+      operationId: ConfigurationProfileAssignments_list_by_cluster_name
+      description: Get list of configuration profile assignments.
+      parameters:
+        - name: resource_group_name
+          in: path
+          required: true
+          schema:
+            type: string
+          description: The name of the resource group. The name is case insensitive. Required.
+        - name: cluster_name
+          in: path
+          required: true
+          schema:
+            type: string
+          description: The name of the Arc machine. Required.
+        - name: subscription_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PagedConfigurationProfileAssignmentFlattened"
+  /subscriptions/{subscription_id}/resourceGroups/{resource_group_name}/providers/Microsoft.AzureStackHci/clusters/{cluster_name}/providers/Microsoft.Automanage/configurationProfileAssignments/{configuration_profile_assignment_name}?api-version=2022-05-04:
+    get:
+      operationId: ConfigurationProfileHCIAssignments_get
+      description: Get information about a configuration profile assignment.
+      parameters:
+        - name: resource_group_name
+          in: path
+          required: true
+          schema:
+            type: string
+          description: The name of the resource group. The name is case insensitive. Required.
+        - name: cluster_name
+          in: path
+          required: true
+          schema:
+            type: string
+          description: The name of the Arc machine. Required.
+        - name: configuration_profile_assignment_name
+          in: path
+          required: true
+          schema:
+            type: string
+          description: The configuration profile assignment name. Required.
+        - name: subscription_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ConfigurationProfileAssignmentFlattened"
+    put:
+      operationId: ConfigurationProfileHCIAssignments_create_or_update
+      description: Creates an association between a AzureStackHCI cluster and Automanage configuration profile.
+      parameters:
+        - name: resource_group_name
+          in: path
+          required: true
+          schema:
+            type: string
+          description: The name of the resource group. The name is case insensitive. Required.
+        - name: cluster_name
+          in: path
+          required: true
+          schema:
+            type: string
+          description: The name of the Arc machine. Required.
+        - name: configuration_profile_assignment_name
+          in: path
+          required: true
+          schema:
+            type: string
+          description: Name of the configuration profile assignment. Only default is supported. Required.
+        - name: subscription_id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                properties:
+                  $ref: "#/components/schemas/ConfigurationProfileAssignmentProperties"
+                  description: Properties of the configuration profile assignment.
+      responses:
+        "200":
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ConfigurationProfileAssignment"
+    delete:
+      operationId: ConfigurationProfileHCIAssignments_delete
+      description: Delete a configuration profile assignment.
+      parameters:
+        - name: resource_group_name
+          in: path
+          required: true
+          schema:
+            type: string
+          description: The name of the resource group. The name is case insensitive. Required.
+        - name: cluster_name
+          in: path
+          required: true
+          schema:
+            type: string
+          description: The name of the Arc machine. Required.
+        - name: configuration_profile_assignment_name
+          in: path
+          required: true
+          schema:
+            type: string
+          description: Name of the configuration profile assignment. Required.
+        - name: subscription_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "204":
+          description: Success (no content / accepted)
+  /subscriptions/{subscription_id}/resourceGroups/{resource_group_name}/providers/Microsoft.HybridCompute/machines/{machine_name}/providers/Microsoft.Automanage/configurationProfileAssignments/{configuration_profile_assignment_name}?api-version=2022-05-04:
+    get:
+      operationId: ConfigurationProfileHCRPAssignments_get
+      description: Get information about a configuration profile assignment.
+      parameters:
+        - name: resource_group_name
+          in: path
+          required: true
+          schema:
+            type: string
+          description: The name of the resource group. The name is case insensitive. Required.
+        - name: machine_name
+          in: path
+          required: true
+          schema:
+            type: string
+          description: The name of the Arc machine. Required.
+        - name: configuration_profile_assignment_name
+          in: path
+          required: true
+          schema:
+            type: string
+          description: The configuration profile assignment name. Required.
+        - name: subscription_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ConfigurationProfileAssignmentFlattened"
+    put:
+      operationId: ConfigurationProfileHCRPAssignments_create_or_update
+      description: Creates an association between a ARC machine and Automanage configuration profile.
+      parameters:
+        - name: resource_group_name
+          in: path
+          required: true
+          schema:
+            type: string
+          description: The name of the resource group. The name is case insensitive. Required.
+        - name: machine_name
+          in: path
+          required: true
+          schema:
+            type: string
+          description: The name of the Arc machine. Required.
+        - name: configuration_profile_assignment_name
+          in: path
+          required: true
+          schema:
+            type: string
+          description: Name of the configuration profile assignment. Only default is supported. Required.
+        - name: subscription_id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                properties:
+                  $ref: "#/components/schemas/ConfigurationProfileAssignmentProperties"
+                  description: Properties of the configuration profile assignment.
+      responses:
+        "200":
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ConfigurationProfileAssignment"
+    delete:
+      operationId: ConfigurationProfileHCRPAssignments_delete
+      description: Delete a configuration profile assignment.
+      parameters:
+        - name: resource_group_name
+          in: path
+          required: true
+          schema:
+            type: string
+          description: The name of the resource group. The name is case insensitive. Required.
+        - name: machine_name
+          in: path
+          required: true
+          schema:
+            type: string
+          description: The name of the Arc machine. Required.
+        - name: configuration_profile_assignment_name
+          in: path
+          required: true
+          schema:
+            type: string
+          description: Name of the configuration profile assignment. Required.
+        - name: subscription_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "204":
+          description: Success (no content / accepted)
+  /subscriptions/{subscription_id}/resourceGroups/{resource_group_name}/providers/Microsoft.Automanage/configurationProfiles/{configuration_profile_name}?api-version=2022-05-04:
+    get:
+      operationId: ConfigurationProfiles_get
+      description: Get information about a configuration profile.
+      parameters:
+        - name: configuration_profile_name
+          in: path
+          required: true
+          schema:
+            type: string
+          description: The configuration profile name. Required.
+        - name: resource_group_name
+          in: path
+          required: true
+          schema:
+            type: string
+          description: The name of the resource group. The name is case insensitive. Required.
+        - name: subscription_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ConfigurationProfileFlattened"
+    put:
+      operationId: ConfigurationProfiles_create_or_update
+      description: Creates a configuration profile.
+      parameters:
+        - name: configuration_profile_name
+          in: path
+          required: true
+          schema:
+            type: string
+          description: Name of the configuration profile. Required.
+        - name: resource_group_name
+          in: path
+          required: true
+          schema:
+            type: string
+          description: The name of the resource group. The name is case insensitive. Required.
+        - name: subscription_id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                tags:
+                  type: object
+                  properties: {}
+                  description: Resource tags.
+                location:
+                  type: string
+                  description: The geo-location where the resource lives. Required.
+                properties:
+                  $ref: "#/components/schemas/ConfigurationProfileProperties"
+                  description: Properties of the configuration profile.
+              required:
+                - location
+      responses:
+        "200":
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ConfigurationProfile"
+    delete:
+      operationId: ConfigurationProfiles_delete
+      description: Delete a configuration profile.
+      parameters:
+        - name: resource_group_name
+          in: path
+          required: true
+          schema:
+            type: string
+          description: The name of the resource group. The name is case insensitive. Required.
+        - name: configuration_profile_name
+          in: path
+          required: true
+          schema:
+            type: string
+          description: Name of the configuration profile. Required.
+        - name: subscription_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "204":
+          description: Success (no content / accepted)
+    patch:
+      operationId: ConfigurationProfiles_update
+      description: Updates a configuration profile.
+      parameters:
+        - name: configuration_profile_name
+          in: path
+          required: true
+          schema:
+            type: string
+          description: Name of the configuration profile. Required.
+        - name: resource_group_name
+          in: path
+          required: true
+          schema:
+            type: string
+          description: The name of the resource group. The name is case insensitive. Required.
+        - name: subscription_id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                tags:
+                  type: object
+                  properties: {}
+                  description: The tags of the resource.
+                properties:
+                  $ref: "#/components/schemas/ConfigurationProfileProperties"
+                  description: Properties of the configuration profile.
+      responses:
+        "200":
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ConfigurationProfile"
+  /subscriptions/{subscription_id}/resourceGroups/{resource_group_name}/providers/Microsoft.Automanage/configurationProfiles?api-version=2022-05-04:
+    get:
+      operationId: ConfigurationProfiles_list_by_resource_group
+      description: Retrieve a list of configuration profile within a given resource group.
+      parameters:
+        - name: resource_group_name
+          in: path
+          required: true
+          schema:
+            type: string
+          description: The name of the resource group. The name is case insensitive. Required.
+        - name: subscription_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PagedConfigurationProfileFlattened"
+  /subscriptions/{subscription_id}/providers/Microsoft.Automanage/configurationProfiles?api-version=2022-05-04:
+    get:
+      operationId: ConfigurationProfiles_list_by_subscription
+      description: Retrieve a list of configuration profile within a subscription.
+      parameters:
+        - name: subscription_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PagedConfigurationProfileFlattened"
+  /subscriptions/{subscription_id}/resourceGroups/{resource_group_name}/providers/Microsoft.Automanage/configurationProfiles/{configuration_profile_name}/versions/{version_name}?api-version=2022-05-04:
+    get:
+      operationId: ConfigurationProfilesVersions_get
+      description: Get information about a configuration profile version.
+      parameters:
+        - name: configuration_profile_name
+          in: path
+          required: true
+          schema:
+            type: string
+          description: The configuration profile name. Required.
+        - name: version_name
+          in: path
+          required: true
+          schema:
+            type: string
+          description: The configuration profile version name. Required.
+        - name: resource_group_name
+          in: path
+          required: true
+          schema:
+            type: string
+          description: The name of the resource group. The name is case insensitive. Required.
+        - name: subscription_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ConfigurationProfileFlattened"
+    put:
+      operationId: ConfigurationProfilesVersions_create_or_update
+      description: Creates a configuration profile version.
+      parameters:
+        - name: configuration_profile_name
+          in: path
+          required: true
+          schema:
+            type: string
+          description: Name of the configuration profile. Required.
+        - name: version_name
+          in: path
+          required: true
+          schema:
+            type: string
+          description: The configuration profile version name. Required.
+        - name: resource_group_name
+          in: path
+          required: true
+          schema:
+            type: string
+          description: The name of the resource group. The name is case insensitive. Required.
+        - name: subscription_id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                tags:
+                  type: object
+                  properties: {}
+                  description: Resource tags.
+                location:
+                  type: string
+                  description: The geo-location where the resource lives. Required.
+                properties:
+                  $ref: "#/components/schemas/ConfigurationProfileProperties"
+                  description: Properties of the configuration profile.
+              required:
+                - location
+      responses:
+        "200":
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ConfigurationProfile"
+    delete:
+      operationId: ConfigurationProfilesVersions_delete
+      description: Delete a configuration profile version.
+      parameters:
+        - name: resource_group_name
+          in: path
+          required: true
+          schema:
+            type: string
+          description: The name of the resource group. The name is case insensitive. Required.
+        - name: configuration_profile_name
+          in: path
+          required: true
+          schema:
+            type: string
+          description: Name of the configuration profile. Required.
+        - name: version_name
+          in: path
+          required: true
+          schema:
+            type: string
+          description: The configuration profile version name. Required.
+        - name: subscription_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "204":
+          description: Success (no content / accepted)
+  /subscriptions/{subscription_id}/resourceGroups/{resource_group_name}/providers/Microsoft.Automanage/configurationProfiles/{configuration_profile_name}/versions?api-version=2022-05-04:
+    get:
+      operationId: ConfigurationProfilesVersions_list_child_resources
+      description: Retrieve a list of configuration profile version for a configuration profile.
+      parameters:
+        - name: configuration_profile_name
+          in: path
+          required: true
+          schema:
+            type: string
+          description: Name of the configuration profile. Required.
+        - name: resource_group_name
+          in: path
+          required: true
+          schema:
+            type: string
+          description: The name of the resource group. The name is case insensitive. Required.
+        - name: subscription_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PagedConfigurationProfileFlattened"
+  /subscriptions/{subscription_id}/resourceGroups/{resource_group_name}/providers/Microsoft.AzureStackHci/clusters/{cluster_name}/providers/Microsoft.Automanage/configurationProfileAssignments/{configuration_profile_assignment_name}/reports/{report_name}?api-version=2022-05-04:
+    get:
+      operationId: HCIReports_get
+      description: Get information about a report associated with a configuration profile assignment run.
+      parameters:
+        - name: resource_group_name
+          in: path
+          required: true
+          schema:
+            type: string
+          description: The name of the resource group. The name is case insensitive. Required.
+        - name: cluster_name
+          in: path
+          required: true
+          schema:
+            type: string
+          description: The name of the Arc machine. Required.
+        - name: configuration_profile_assignment_name
+          in: path
+          required: true
+          schema:
+            type: string
+          description: The configuration profile assignment name. Required.
+        - name: report_name
+          in: path
+          required: true
+          schema:
+            type: string
+          description: The report name. Required.
+        - name: subscription_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ReportFlattened"
+  /subscriptions/{subscription_id}/resourceGroups/{resource_group_name}/providers/Microsoft.AzureStackHci/clusters/{cluster_name}/providers/Microsoft.Automanage/configurationProfileAssignments/{configuration_profile_assignment_name}/reports?api-version=2022-05-04:
+    get:
+      operationId: HCIReports_list_by_configuration_profile_assignments
+      description: Retrieve a list of reports within a given configuration profile assignment.
+      parameters:
+        - name: resource_group_name
+          in: path
+          required: true
+          schema:
+            type: string
+          description: The name of the resource group. The name is case insensitive. Required.
+        - name: cluster_name
+          in: path
+          required: true
+          schema:
+            type: string
+          description: The name of the Arc machine. Required.
+        - name: configuration_profile_assignment_name
+          in: path
+          required: true
+          schema:
+            type: string
+          description: The configuration profile assignment name. Required.
+        - name: subscription_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PagedReportFlattened"
+  /subscriptions/{subscription_id}/resourceGroups/{resource_group_name}/providers/Microsoft.HybridCompute/machines/{machine_name}/providers/Microsoft.Automanage/configurationProfileAssignments/{configuration_profile_assignment_name}/reports/{report_name}?api-version=2022-05-04:
+    get:
+      operationId: HCRPReports_get
+      description: Get information about a report associated with a configuration profile assignment run.
+      parameters:
+        - name: resource_group_name
+          in: path
+          required: true
+          schema:
+            type: string
+          description: The name of the resource group. The name is case insensitive. Required.
+        - name: machine_name
+          in: path
+          required: true
+          schema:
+            type: string
+          description: The name of the Arc machine. Required.
+        - name: configuration_profile_assignment_name
+          in: path
+          required: true
+          schema:
+            type: string
+          description: The configuration profile assignment name. Required.
+        - name: report_name
+          in: path
+          required: true
+          schema:
+            type: string
+          description: The report name. Required.
+        - name: subscription_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ReportFlattened"
+  /subscriptions/{subscription_id}/resourceGroups/{resource_group_name}/providers/Microsoft.HybridCompute/machines/{machine_name}/providers/Microsoft.Automanage/configurationProfileAssignments/{configuration_profile_assignment_name}/reports?api-version=2022-05-04:
+    get:
+      operationId: HCRPReports_list_by_configuration_profile_assignments
+      description: Retrieve a list of reports within a given configuration profile assignment.
+      parameters:
+        - name: resource_group_name
+          in: path
+          required: true
+          schema:
+            type: string
+          description: The name of the resource group. The name is case insensitive. Required.
+        - name: machine_name
+          in: path
+          required: true
+          schema:
+            type: string
+          description: The name of the Arc machine. Required.
+        - name: configuration_profile_assignment_name
+          in: path
+          required: true
+          schema:
+            type: string
+          description: The configuration profile assignment name. Required.
+        - name: subscription_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PagedReportFlattened"
+  /providers/Microsoft.Automanage/operations?api-version=2022-05-04:
+    get:
+      operationId: automanage_list
+      description: Lists all of the available Automanage REST API operations.
+      parameters: []
+      responses:
+        "200":
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PagedOperation"
+  /subscriptions/{subscription_id}/resourceGroups/{resource_group_name}/providers/Microsoft.Compute/virtualMachines/{vm_name}/providers/Microsoft.Automanage/configurationProfileAssignments/{configuration_profile_assignment_name}/reports/{report_name}?api-version=2022-05-04:
+    get:
+      operationId: Reports_get
+      description: Get information about a report associated with a configuration profile assignment run.
+      parameters:
+        - name: resource_group_name
+          in: path
+          required: true
+          schema:
+            type: string
+          description: The name of the resource group. The name is case insensitive. Required.
+        - name: configuration_profile_assignment_name
+          in: path
+          required: true
+          schema:
+            type: string
+          description: The configuration profile assignment name. Required.
+        - name: report_name
+          in: path
+          required: true
+          schema:
+            type: string
+          description: The report name. Required.
+        - name: vm_name
+          in: path
+          required: true
+          schema:
+            type: string
+          description: The name of the virtual machine. Required.
+        - name: subscription_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ReportFlattened"
+  /subscriptions/{subscription_id}/resourceGroups/{resource_group_name}/providers/Microsoft.Compute/virtualMachines/{vm_name}/providers/Microsoft.Automanage/configurationProfileAssignments/{configuration_profile_assignment_name}/reports?api-version=2022-05-04:
+    get:
+      operationId: Reports_list_by_configuration_profile_assignments
+      description: Retrieve a list of reports within a given configuration profile assignment.
+      parameters:
+        - name: resource_group_name
+          in: path
+          required: true
+          schema:
+            type: string
+          description: The name of the resource group. The name is case insensitive. Required.
+        - name: configuration_profile_assignment_name
+          in: path
+          required: true
+          schema:
+            type: string
+          description: The configuration profile assignment name. Required.
+        - name: vm_name
+          in: path
+          required: true
+          schema:
+            type: string
+          description: The name of the virtual machine. Required.
+        - name: subscription_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PagedReportFlattened"
+  /subscriptions/{subscription_id}/providers/Microsoft.Automanage/servicePrincipals/default?api-version=2022-05-04:
+    get:
+      operationId: ServicePrincipals_get
+      description: Get the Automanage AAD first party Application Service Principal details for the subscription id.
+      parameters:
+        - name: subscription_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ServicePrincipalFlattened"
+  /subscriptions/{subscription_id}/providers/Microsoft.Automanage/servicePrincipals?api-version=2022-05-04:
+    get:
+      operationId: ServicePrincipals_list_by_subscription
+      description: Get the Automanage AAD first party Application Service Principal details for the subscription id.
+      parameters:
+        - name: subscription_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PagedServicePrincipalFlattened"

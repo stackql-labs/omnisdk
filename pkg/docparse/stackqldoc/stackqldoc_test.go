@@ -10,7 +10,7 @@ import (
 
 func load(t *testing.T) stackqldoc.Doc {
 	t.Helper()
-	b, err := os.ReadFile("testdata/services/ec2.yaml")
+	b, err := os.ReadFile("testdata/aws/v00.00.00000/services/ec2.yaml")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -28,7 +28,8 @@ func TestSelectInstancesResolvesFromDocument(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if ex.Name() != "instances" {
+	// the exchange is named for the METHOD that backs SELECT, since a resource may bind several
+	if ex.Name() != "describe_instances" {
 		t.Fatalf("Name() = %q", ex.Name())
 	}
 	// the server URL's {region} variable becomes a bound input — scope the caller supplies, never
@@ -54,11 +55,11 @@ func TestResponseTransformIsDeclaredNotApplied(t *testing.T) {
 		t.Fatal(err)
 	}
 	resp := ex.Response()
-	if resp.MediaType() != "text/xml" || resp.OverrideMediaType() != "application/json" {
+	if resp.MediaType() != "application/xml" || resp.OverrideMediaType() != "application/json" {
 		t.Fatalf("media types = %q → %q", resp.MediaType(), resp.OverrideMediaType())
 	}
 	tr := resp.Transform()
-	if tr.Type() != "golang_template_mxj_v0.2.0" {
+	if tr.Type() != "golang_template_mxj_v0.3.0" {
 		t.Fatalf("Transform().Type() = %q", tr.Type())
 	}
 	if !strings.Contains(tr.Body(), "line_items") {
@@ -70,21 +71,16 @@ func TestResponseTransformIsDeclaredNotApplied(t *testing.T) {
 	}
 }
 
-// Pagination tokens are declared against the transformed body too.
+// Pagination is read from the document when it declares any; this operation declares none, and
+// reporting that faithfully is the point — an invented default would page a call that does not page.
 func TestPaginationIsDeclared(t *testing.T) {
 	ex, err := load(t).Select("instances")
 	if err != nil {
 		t.Fatal(err)
 	}
-	p := ex.Response().Pagination()
-	if !p.Declared() {
-		t.Fatal("DescribeInstances declares pagination")
-	}
-	if k, loc := p.RequestToken(); k != "NextToken" || loc != "body" {
-		t.Fatalf("RequestToken = %q/%q", k, loc)
-	}
-	if k, loc := p.ResponseToken(); k != "$.next_page_token" || loc != "body" {
-		t.Fatalf("ResponseToken = %q/%q", k, loc)
+	if p := ex.Response().Pagination(); p.Declared() {
+		k, loc := p.ResponseToken()
+		t.Fatalf("expected none declared, got %q/%q", k, loc)
 	}
 }
 
@@ -97,25 +93,28 @@ func TestResolvedRequestIsTheRealCall(t *testing.T) {
 		t.Fatal(err)
 	}
 	req := ex.Request()
-	if req.Method() != "POST" {
+	if req.Method() != "GET" {
 		t.Fatalf("Method = %q", req.Method())
 	}
 	// {region} survives as a template — a binder substitutes it from the bound row
-	if req.URL() != "https://ec2.{region}.amazonaws.com/" {
+	if !strings.HasPrefix(req.URL(), "https://ec2.{region}.amazonaws.com/") {
 		t.Fatalf("URL = %q", req.URL())
 	}
-	params := req.Params()
-	if params["Action"] != "DescribeInstances" || params["Version"] != "2016-11-15" {
-		t.Fatalf("params = %v, want the action lifted out of the path key", params)
+	// this document states the action as ordinary query parameters, so they belong in the URL. An
+	// earlier one marked them with a __ prefix, meaning "not a query parameter" — the difference is
+	// the document's to make, and reading it wrongly sends a different call.
+	if !strings.Contains(req.URL(), "Action=DescribeInstances") ||
+		!strings.Contains(req.URL(), "Version=2016-11-15") {
+		t.Fatalf("URL lost the action: %q", req.URL())
 	}
 	// no __-prefixed marker may survive into the wire request
-	for k := range params {
+	if strings.Contains(req.URL(), "__") {
+		t.Fatalf("pseudo-parameter leaked into the URL: %q", req.URL())
+	}
+	for k := range req.Params() {
 		if strings.HasPrefix(k, "__") {
 			t.Fatalf("pseudo-parameter %q leaked into the request", k)
 		}
-	}
-	if strings.Contains(req.URL(), "__") {
-		t.Fatalf("pseudo-parameter leaked into the URL: %q", req.URL())
 	}
 }
 

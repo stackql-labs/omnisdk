@@ -1,0 +1,3091 @@
+openapi: 3.0.0
+servers:
+  - url: https://management.azure.com/
+info:
+  title: Azure SignalR Service
+  description: SignalR resources, custom domains, replicas and private endpoints for real-time messaging.
+  contact:
+    name: StackQL Studios
+    url: https://stackql.io/
+    email: info@stackql.io
+  version: 2023-08-01-preview-stackql-generated
+  x-serviceAlias: signalr
+  x-sdkPackage: azure-mgmt-signalr
+  x-plane: mgmt
+security:
+  - azure_auth:
+      - user_impersonation
+components:
+  securitySchemes:
+    azure_auth:
+      description: Azure Active Directory OAuth2 Flow.
+      type: oauth2
+      flows:
+        implicit:
+          authorizationUrl: https://login.microsoftonline.com/common/oauth2/authorize
+          scopes:
+            user_impersonation: impersonate your user account
+  schemas:
+    OperationDisplay:
+      type: object
+      description: The object that describes a operation.
+      properties:
+        provider:
+          type: string
+          description: Friendly name of the resource provider.
+        resource:
+          type: string
+          description: Resource type on which the operation is performed.
+        operation:
+          type: string
+          description: The localized friendly name for the operation.
+        description:
+          type: string
+          description: The localized friendly description for the operation.
+    OperationProperties:
+      type: object
+      description: Extra Operation properties.
+      properties:
+        serviceSpecification:
+          $ref: "#/components/schemas/ServiceSpecification"
+          description: An object that describes a specification.
+    ServiceSpecification:
+      type: object
+      description: An object that describes a specification.
+      properties:
+        metricSpecifications:
+          type: array
+          items:
+            $ref: "#/components/schemas/MetricSpecification"
+          description: Specifications of the Metrics for Azure Monitoring.
+        logSpecifications:
+          type: array
+          items:
+            $ref: "#/components/schemas/LogSpecification"
+          description: Specifications of the Logs for Azure Monitoring.
+    MetricSpecification:
+      type: object
+      description: Specifications of the Metrics for Azure Monitoring.
+      properties:
+        name:
+          type: string
+          description: Name of the metric.
+        displayName:
+          type: string
+          description: Localized friendly display name of the metric.
+        displayDescription:
+          type: string
+          description: Localized friendly description of the metric.
+        unit:
+          type: string
+          description: The unit that makes sense for the metric.
+        aggregationType:
+          type: string
+          description: "Only provide one value for this field. Valid values: Average, Minimum, Maximum, Total, Count."
+        fillGapWithZero:
+          type: string
+          description: Optional. If set to true, then zero will be returned for time duration where no metric is emitted/published. Ex. a metric that returns the number of times a particular error code was emitted. The error code may not appear often, instead of the RP publishing 0, Shoebox can auto fill in 0s for time periods where nothing was emitted.
+        category:
+          type: string
+          description: The name of the metric category that the metric belongs to. A metric can only belong to a single category.
+        dimensions:
+          type: array
+          items:
+            $ref: "#/components/schemas/Dimension"
+          description: The dimensions of the metrics.
+    Dimension:
+      type: object
+      description: Specifications of the Dimension of metrics.
+      properties:
+        name:
+          type: string
+          description: The public facing name of the dimension.
+        displayName:
+          type: string
+          description: Localized friendly display name of the dimension.
+        internalName:
+          type: string
+          description: Name of the dimension as it appears in MDM.
+        toBeExportedForShoebox:
+          type: boolean
+          description: A Boolean flag indicating whether this dimension should be included for the shoebox export scenario.
+    LogSpecification:
+      type: object
+      description: Specifications of the Logs for Azure Monitoring.
+      properties:
+        name:
+          type: string
+          description: Name of the log.
+        displayName:
+          type: string
+          description: Localized friendly display name of the log.
+    OperationFlattened:
+      type: object
+      description: Flattened view of Operation ('properties' hoisted to the top level).
+      properties:
+        name:
+          type: string
+          description: "Name of the operation with format: {provider}/{resource}/{operation}."
+        isDataAction:
+          type: boolean
+          description: If the operation is a data action. (for data plane rbac).
+        display:
+          $ref: "#/components/schemas/OperationDisplay"
+          description: The object that describes a operation.
+        origin:
+          type: string
+          description: Optional. The intended executor of the operation; governs the display of the operation in the RBAC UX and the audit logs UX.
+        serviceSpecification:
+          $ref: "#/components/schemas/ServiceSpecification"
+          description: An object that describes a specification.
+    PagedOperationFlattened:
+      type: object
+      properties:
+        value:
+          type: array
+          items:
+            $ref: "#/components/schemas/OperationFlattened"
+        nextLink:
+          type: string
+    SystemData:
+      type: object
+      description: Metadata pertaining to creation and last modification of the resource.
+      properties:
+        createdBy:
+          type: string
+          description: The identity that created the resource.
+        createdByType:
+          type: string
+          description: 'The type of identity that created the resource. Known values are: "User", "Application", "ManagedIdentity", and "Key".'
+        createdAt:
+          type: string
+          format: date-time
+          description: The timestamp of resource creation (UTC).
+        lastModifiedBy:
+          type: string
+          description: The identity that last modified the resource.
+        lastModifiedByType:
+          type: string
+          description: 'The type of identity that last modified the resource. Known values are: "User", "Application", "ManagedIdentity", and "Key".'
+        lastModifiedAt:
+          type: string
+          format: date-time
+          description: The timestamp of resource last modification (UTC).
+    CustomCertificateFlattened:
+      type: object
+      description: Flattened view of CustomCertificate ('properties' hoisted to the top level).
+      properties:
+        id:
+          type: string
+          description: Fully qualified resource ID for the resource. E.g. "/subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/providers/{resourceProviderNamespace}/{resourceType}/{resourceName}".
+        name:
+          type: string
+          description: The name of the resource.
+        type:
+          type: string
+          description: The type of the resource. E.g. "Microsoft.Compute/virtualMachines" or "Microsoft.Storage/storageAccounts".
+        systemData:
+          $ref: "#/components/schemas/SystemData"
+          description: Azure Resource Manager metadata containing createdBy and modifiedBy information.
+        provisioningState:
+          type: string
+          description: 'Provisioning state of the resource. Known values are: "Unknown", "Succeeded", "Failed", "Canceled", "Running", "Creating", "Updating", "Deleting", and "Moving".'
+        keyVaultBaseUri:
+          type: string
+          description: Base uri of the KeyVault that stores certificate. Required.
+        keyVaultSecretName:
+          type: string
+          description: Certificate secret name. Required.
+        keyVaultSecretVersion:
+          type: string
+          description: Certificate secret version.
+    PagedCustomCertificateFlattened:
+      type: object
+      properties:
+        value:
+          type: array
+          items:
+            $ref: "#/components/schemas/CustomCertificateFlattened"
+        nextLink:
+          type: string
+    CustomCertificate:
+      type: object
+      description: A custom certificate. Variables are only populated by the server, and will be ignored when sending a request. All required parameters must be populated in order to send to Azure.
+      properties:
+        id:
+          type: string
+          description: Fully qualified resource ID for the resource. E.g. "/subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/providers/{resourceProviderNamespace}/{resourceType}/{resourceName}".
+        name:
+          type: string
+          description: The name of the resource.
+        type:
+          type: string
+          description: The type of the resource. E.g. "Microsoft.Compute/virtualMachines" or "Microsoft.Storage/storageAccounts".
+        systemData:
+          $ref: "#/components/schemas/SystemData"
+          description: Azure Resource Manager metadata containing createdBy and modifiedBy information.
+        properties:
+          type: object
+          properties:
+            provisioningState:
+              type: string
+              description: 'Provisioning state of the resource. Known values are: "Unknown", "Succeeded", "Failed", "Canceled", "Running", "Creating", "Updating", "Deleting", and "Moving".'
+            keyVaultBaseUri:
+              type: string
+              description: Base uri of the KeyVault that stores certificate. Required.
+            keyVaultSecretName:
+              type: string
+              description: Certificate secret name. Required.
+            keyVaultSecretVersion:
+              type: string
+              description: Certificate secret version.
+      required:
+        - properties
+    ResourceReference:
+      type: object
+      description: Reference to a resource.
+      properties:
+        id:
+          type: string
+          description: Resource ID.
+    CustomDomainFlattened:
+      type: object
+      description: Flattened view of CustomDomain ('properties' hoisted to the top level).
+      properties:
+        id:
+          type: string
+          description: Fully qualified resource ID for the resource. E.g. "/subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/providers/{resourceProviderNamespace}/{resourceType}/{resourceName}".
+        name:
+          type: string
+          description: The name of the resource.
+        type:
+          type: string
+          description: The type of the resource. E.g. "Microsoft.Compute/virtualMachines" or "Microsoft.Storage/storageAccounts".
+        systemData:
+          $ref: "#/components/schemas/SystemData"
+          description: Azure Resource Manager metadata containing createdBy and modifiedBy information.
+        provisioningState:
+          type: string
+          description: 'Provisioning state of the resource. Known values are: "Unknown", "Succeeded", "Failed", "Canceled", "Running", "Creating", "Updating", "Deleting", and "Moving".'
+        domainName:
+          type: string
+          description: The custom domain name. Required.
+        customCertificate:
+          $ref: "#/components/schemas/ResourceReference"
+          description: Reference to a resource. Required.
+    PagedCustomDomainFlattened:
+      type: object
+      properties:
+        value:
+          type: array
+          items:
+            $ref: "#/components/schemas/CustomDomainFlattened"
+        nextLink:
+          type: string
+    CustomDomain:
+      type: object
+      description: A custom domain. Variables are only populated by the server, and will be ignored when sending a request. All required parameters must be populated in order to send to Azure.
+      properties:
+        id:
+          type: string
+          description: Fully qualified resource ID for the resource. E.g. "/subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/providers/{resourceProviderNamespace}/{resourceType}/{resourceName}".
+        name:
+          type: string
+          description: The name of the resource.
+        type:
+          type: string
+          description: The type of the resource. E.g. "Microsoft.Compute/virtualMachines" or "Microsoft.Storage/storageAccounts".
+        systemData:
+          $ref: "#/components/schemas/SystemData"
+          description: Azure Resource Manager metadata containing createdBy and modifiedBy information.
+        properties:
+          type: object
+          properties:
+            provisioningState:
+              type: string
+              description: 'Provisioning state of the resource. Known values are: "Unknown", "Succeeded", "Failed", "Canceled", "Running", "Creating", "Updating", "Deleting", and "Moving".'
+            domainName:
+              type: string
+              description: The custom domain name. Required.
+            customCertificate:
+              $ref: "#/components/schemas/ResourceReference"
+              description: Reference to a resource. Required.
+      required:
+        - properties
+    ResourceSku:
+      type: object
+      description: The billing information of the resource. Variables are only populated by the server, and will be ignored when sending a request. All required parameters must be populated in order to send to Azure.
+      properties:
+        name:
+          type: string
+          description: "The name of the SKU. Required. Allowed values: Standard_S1, Free_F1, Premium_P1. Required."
+        tier:
+          type: string
+          description: "Optional tier of this particular SKU. 'Standard' or 'Free'. `Basic` is deprecated, use `Standard` instead. Known values are: \"Free\", \"Basic\", \"Standard\", and \"Premium\"."
+        size:
+          type: string
+          description: Not used. Retained for future use.
+        family:
+          type: string
+          description: Not used. Retained for future use.
+        capacity:
+          type: integer
+          description: "Optional, integer. The unit count of the resource. 1 by default. If present, following values are allowed: Free: 1; Standard: 1,2,3,4,5,6,7,8,9,10,20,30,40,50,60,70,80,90,100; Premium: 1,2,3,4,5,6,7,8,9,10,20,30,40,50,60,70,80,90,100;."
+      required:
+        - name
+    ManagedIdentity:
+      type: object
+      description: A class represent managed identities used for request and response. Variables are only populated by the server, and will be ignored when sending a request.
+      properties:
+        type:
+          type: string
+          description: 'Represents the identity type: systemAssigned, userAssigned, None. Known values are: "None", "SystemAssigned", and "UserAssigned".'
+        userAssignedIdentities:
+          type: object
+          properties: {}
+          description: Get or set the user assigned identities.
+        principalId:
+          type: string
+          description: Get the principal id for the system assigned identity. Only be used in response.
+        tenantId:
+          type: string
+          description: Get the tenant id for the system assigned identity. Only be used in response.
+    PrivateEndpointConnection:
+      type: object
+      description: A private endpoint connection to an azure resource. Variables are only populated by the server, and will be ignored when sending a request.
+      properties:
+        id:
+          type: string
+          description: Fully qualified resource ID for the resource. E.g. "/subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/providers/{resourceProviderNamespace}/{resourceType}/{resourceName}".
+        name:
+          type: string
+          description: The name of the resource.
+        type:
+          type: string
+          description: The type of the resource. E.g. "Microsoft.Compute/virtualMachines" or "Microsoft.Storage/storageAccounts".
+        systemData:
+          $ref: "#/components/schemas/SystemData"
+          description: Azure Resource Manager metadata containing createdBy and modifiedBy information.
+        properties:
+          type: object
+          properties:
+            provisioningState:
+              type: string
+              description: 'Provisioning state of the resource. Known values are: "Unknown", "Succeeded", "Failed", "Canceled", "Running", "Creating", "Updating", "Deleting", and "Moving".'
+            privateEndpoint:
+              $ref: "#/components/schemas/PrivateEndpoint"
+              description: Private endpoint.
+            groupIds:
+              type: array
+              items:
+                type: string
+              description: Group IDs.
+            privateLinkServiceConnectionState:
+              $ref: "#/components/schemas/PrivateLinkServiceConnectionState"
+              description: Connection state of the private endpoint connection.
+    PrivateEndpoint:
+      type: object
+      description: Private endpoint.
+      properties:
+        id:
+          type: string
+          description: Full qualified Id of the private endpoint.
+    PrivateLinkServiceConnectionState:
+      type: object
+      description: Connection state of the private endpoint connection.
+      properties:
+        status:
+          type: string
+          description: 'Indicates whether the connection has been Approved/Rejected/Removed by the owner of the service. Known values are: "Pending", "Approved", "Rejected", and "Disconnected".'
+        description:
+          type: string
+          description: The reason for approval/rejection of the connection.
+        actionsRequired:
+          type: string
+          description: A message indicating if changes on the service provider require any updates on the consumer.
+    SharedPrivateLinkResource:
+      type: object
+      description: Describes a Shared Private Link Resource. Variables are only populated by the server, and will be ignored when sending a request.
+      properties:
+        id:
+          type: string
+          description: Fully qualified resource ID for the resource. E.g. "/subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/providers/{resourceProviderNamespace}/{resourceType}/{resourceName}".
+        name:
+          type: string
+          description: The name of the resource.
+        type:
+          type: string
+          description: The type of the resource. E.g. "Microsoft.Compute/virtualMachines" or "Microsoft.Storage/storageAccounts".
+        systemData:
+          $ref: "#/components/schemas/SystemData"
+          description: Azure Resource Manager metadata containing createdBy and modifiedBy information.
+        properties:
+          type: object
+          properties:
+            groupId:
+              type: string
+              description: The group id from the provider of resource the shared private link resource is for.
+            privateLinkResourceId:
+              type: string
+              description: The resource id of the resource the shared private link resource is for.
+            provisioningState:
+              type: string
+              description: 'Provisioning state of the resource. Known values are: "Unknown", "Succeeded", "Failed", "Canceled", "Running", "Creating", "Updating", "Deleting", and "Moving".'
+            requestMessage:
+              type: string
+              description: The request message for requesting approval of the shared private link resource.
+            status:
+              type: string
+              description: 'Status of the shared private link resource. Known values are: "Pending", "Approved", "Rejected", "Disconnected", and "Timeout".'
+    SignalRTlsSettings:
+      type: object
+      description: TLS settings for the resource.
+      properties:
+        clientCertEnabled:
+          type: boolean
+          description: Request client certificate during TLS handshake if enabled. Not supported for free tier. Any input will be ignored for free tier.
+    SignalRFeature:
+      type: object
+      description: Feature of a resource, which controls the runtime behavior. All required parameters must be populated in order to send to Azure.
+      properties:
+        flag:
+          type: string
+          description: "FeatureFlags is the supported features of Azure SignalR service. * ServiceMode: Flag for backend server for SignalR service. Values allowed: \"Default\": have your own backend server; \"Serverless\": your application doesn't have a backend server; \"Classic\": for backward compatibility. Support both Default and Serverless mode but not recommended; \"PredefinedOnly\": for future use. * EnableConnectivityLogs: \"true\"/\"false\", to enable/disable the connectivity log category respectively. * EnableMessagingLogs: \"true\"/\"false\", to enable/disable the connectivity log category respectively. * EnableLiveTrace: Live Trace allows you to know what's happening inside Azure SignalR service, it will give you live traces in real time, it will be helpful when you developing your own Azure SignalR based web application or self-troubleshooting some issues. Please note that live traces are counted as outbound messages that will be charged. Values allowed: \"true\"/\"false\", to enable/disable live trace feature. Required. Known values are: \"ServiceMode\", \"EnableConnectivityLogs\", \"EnableMessagingLogs\", and \"EnableLiveTrace\"."
+        value:
+          type: string
+          description: Value of the feature flag. See Azure SignalR service document https://docs.microsoft.com/azure/azure-signalr/ for allowed values. Required.
+        properties:
+          type: object
+          properties: {}
+          description: Optional properties related to this feature.
+      required:
+        - flag
+        - value
+    LiveTraceConfiguration:
+      type: object
+      description: Live trace configuration of a Microsoft.SignalRService resource.
+      properties:
+        enabled:
+          type: string
+          description: "Indicates whether or not enable live trace. When it's set to true, live trace client can connect to the service. Otherwise, live trace client can't connect to the service, so that you are unable to receive any log, no matter what you configure in \"categories\". Available values: true, false. Case insensitive."
+        categories:
+          type: array
+          items:
+            $ref: "#/components/schemas/LiveTraceCategory"
+          description: Gets or sets the list of category configurations.
+    LiveTraceCategory:
+      type: object
+      description: Live trace category configuration of a Microsoft.SignalRService resource.
+      properties:
+        name:
+          type: string
+          description: "Gets or sets the live trace category's name. Available values: ConnectivityLogs, MessagingLogs. Case insensitive."
+        enabled:
+          type: string
+          description: "Indicates whether or the live trace category is enabled. Available values: true, false. Case insensitive."
+    ResourceLogConfiguration:
+      type: object
+      description: Resource log configuration of a Microsoft.SignalRService resource.
+      properties:
+        categories:
+          type: array
+          items:
+            $ref: "#/components/schemas/ResourceLogCategory"
+          description: Gets or sets the list of category configurations.
+    ResourceLogCategory:
+      type: object
+      description: Resource log category configuration of a Microsoft.SignalRService resource.
+      properties:
+        name:
+          type: string
+          description: "Gets or sets the resource log category's name. Available values: ConnectivityLogs, MessagingLogs. Case insensitive."
+        enabled:
+          type: string
+          description: "Indicates whether or the resource log category is enabled. Available values: true, false. Case insensitive."
+    SignalRCorsSettings:
+      type: object
+      description: Cross-Origin Resource Sharing (CORS) settings.
+      properties:
+        allowedOrigins:
+          type: array
+          items:
+            type: string
+          description: 'Gets or sets the list of origins that should be allowed to make cross-origin calls (for example: http://example.com:12345). Use "*" to allow all. If omitted, allow all by default.'
+    ServerlessSettings:
+      type: object
+      description: Serverless settings.
+      properties:
+        connectionTimeoutInSeconds:
+          type: integer
+          description: Gets or sets Client Connection Timeout. Optional to be set. Value in seconds. Default value is 30 seconds. Customer should set the timeout to a shorter period if messages are expected to be sent in shorter intervals, and want the client to disconnect more quickly after the last message is sent. You can set the timeout to a longer period if messages are expected to be sent in longer intervals, and they want to keep the same client connection alive during this session. The service considers the client disconnected if it hasn't received a message (including keep-alive) in this interval.
+    ServerlessUpstreamSettings:
+      type: object
+      description: The settings for the Upstream when the service is in server-less mode.
+      properties:
+        templates:
+          type: array
+          items:
+            $ref: "#/components/schemas/UpstreamTemplate"
+          description: Gets or sets the list of Upstream URL templates. Order matters, and the first matching template takes effects.
+    UpstreamTemplate:
+      type: object
+      description: Upstream template item settings. It defines the Upstream URL of the incoming requests. The template defines the pattern of the event, the hub or the category of the incoming request that matches current URL template. All required parameters must be populated in order to send to Azure.
+      properties:
+        hubPattern:
+          type: string
+          description: 'Gets or sets the matching pattern for hub names. If not set, it matches any hub. There are 3 kind of patterns supported: .. code-block:: 1. "*", it to matches any hub name. 2. Combine multiple hubs with ",", for example "hub1,hub2", it matches "hub1" and "hub2". 3. The single hub name, for example, "hub1", it matches "hub1".'
+        eventPattern:
+          type: string
+          description: 'Gets or sets the matching pattern for event names. If not set, it matches any event. There are 3 kind of patterns supported: .. code-block:: 1. "*", it to matches any event name. 2. Combine multiple events with ",", for example "connect,disconnect", it matches event "connect" and "disconnect". 3. The single event name, for example, "connect", it matches "connect".'
+        categoryPattern:
+          type: string
+          description: 'Gets or sets the matching pattern for category names. If not set, it matches any category. There are 3 kind of patterns supported: .. code-block:: 1. "*", it to matches any category name. 2. Combine multiple categories with ",", for example "connections,messages", it matches category "connections" and "messages". 3. The single category name, for example, "connections", it matches the category "connections".'
+        urlTemplate:
+          type: string
+          description: "Gets or sets the Upstream URL template. You can use 3 predefined parameters {hub}, {category} {event} inside the template, the value of the Upstream URL is dynamically calculated when the client request comes in. For example, if the urlTemplate is `http://example.com/{hub}/api/{event}`\\ , with a client request from hub `chat` connects, it will first POST to this URL: `http://example.com/chat/api/connect`. Required."
+        auth:
+          $ref: "#/components/schemas/UpstreamAuthSettings"
+          description: Upstream auth settings. If not set, no auth is used for upstream messages.
+      required:
+        - urlTemplate
+    UpstreamAuthSettings:
+      type: object
+      description: Upstream auth settings. If not set, no auth is used for upstream messages.
+      properties:
+        type:
+          type: string
+          description: 'Upstream auth type enum. Known values are: "None" and "ManagedIdentity".'
+        managedIdentity:
+          $ref: "#/components/schemas/ManagedIdentitySettings"
+          description: Managed identity settings for upstream.
+    ManagedIdentitySettings:
+      type: object
+      description: Managed identity settings for upstream.
+      properties:
+        resource:
+          type: string
+          description: The Resource indicating the App ID URI of the target resource. It also appears in the aud (audience) claim of the issued token.
+    SignalRNetworkACLs:
+      type: object
+      description: Network ACLs for the resource.
+      properties:
+        defaultAction:
+          type: string
+          description: 'Azure Networking ACL Action. Known values are: "Allow" and "Deny".'
+        publicNetwork:
+          $ref: "#/components/schemas/NetworkACL"
+          description: Network ACL.
+        privateEndpoints:
+          type: array
+          items:
+            $ref: "#/components/schemas/PrivateEndpointACL"
+          description: ACLs for requests from private endpoints.
+        ipRules:
+          type: array
+          items:
+            $ref: "#/components/schemas/IPRule"
+          description: IP rules for filtering public traffic.
+    NetworkACL:
+      type: object
+      description: Network ACL.
+      properties:
+        allow:
+          type: array
+          items:
+            type: string
+          description: "Allowed request types. The value can be one or more of: ClientConnection, ServerConnection, RESTAPI."
+        deny:
+          type: array
+          items:
+            type: string
+          description: "Denied request types. The value can be one or more of: ClientConnection, ServerConnection, RESTAPI."
+    PrivateEndpointACL:
+      type: object
+      description: ACL for a private endpoint. All required parameters must be populated in order to send to Azure.
+      properties:
+        allow:
+          type: array
+          items:
+            type: string
+          description: "Allowed request types. The value can be one or more of: ClientConnection, ServerConnection, RESTAPI."
+        deny:
+          type: array
+          items:
+            type: string
+          description: "Denied request types. The value can be one or more of: ClientConnection, ServerConnection, RESTAPI."
+        name:
+          type: string
+          description: Name of the private endpoint connection. Required.
+      required:
+        - name
+    IPRule:
+      type: object
+      description: An IP rule.
+      properties:
+        value:
+          type: string
+          description: An IP or CIDR or ServiceTag.
+        action:
+          type: string
+          description: 'Azure Networking ACL Action. Known values are: "Allow" and "Deny".'
+    SignalRResourceFlattened:
+      type: object
+      description: Flattened view of SignalRResource ('properties' hoisted to the top level).
+      properties:
+        id:
+          type: string
+          description: Fully qualified resource ID for the resource. E.g. "/subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/providers/{resourceProviderNamespace}/{resourceType}/{resourceName}".
+        name:
+          type: string
+          description: The name of the resource.
+        type:
+          type: string
+          description: The type of the resource. E.g. "Microsoft.Compute/virtualMachines" or "Microsoft.Storage/storageAccounts".
+        systemData:
+          $ref: "#/components/schemas/SystemData"
+          description: Azure Resource Manager metadata containing createdBy and modifiedBy information.
+        tags:
+          type: object
+          properties: {}
+          description: Resource tags.
+        location:
+          type: string
+          description: The geo-location where the resource lives. Required.
+        sku:
+          $ref: "#/components/schemas/ResourceSku"
+          description: The billing information of the resource.
+        kind:
+          type: string
+          description: 'The kind of the service. Known values are: "SignalR" and "RawWebSockets".'
+        identity:
+          $ref: "#/components/schemas/ManagedIdentity"
+          description: A class represent managed identities used for request and response.
+        provisioningState:
+          type: string
+          description: 'Provisioning state of the resource. Known values are: "Unknown", "Succeeded", "Failed", "Canceled", "Running", "Creating", "Updating", "Deleting", and "Moving".'
+        externalIP:
+          type: string
+          description: The publicly accessible IP of the resource.
+        hostName:
+          type: string
+          description: FQDN of the service instance.
+        publicPort:
+          type: integer
+          description: The publicly accessible port of the resource which is designed for browser/client side usage.
+        serverPort:
+          type: integer
+          description: The publicly accessible port of the resource which is designed for customer server side usage.
+        version:
+          type: string
+          description: Version of the resource. Probably you need the same or higher version of client SDKs.
+        privateEndpointConnections:
+          type: array
+          items:
+            $ref: "#/components/schemas/PrivateEndpointConnection"
+          description: Private endpoint connections to the resource.
+        sharedPrivateLinkResources:
+          type: array
+          items:
+            $ref: "#/components/schemas/SharedPrivateLinkResource"
+          description: The list of shared private link resources.
+        tls:
+          $ref: "#/components/schemas/SignalRTlsSettings"
+          description: TLS settings for the resource.
+        hostNamePrefix:
+          type: string
+          description: Deprecated.
+        features:
+          type: array
+          items:
+            $ref: "#/components/schemas/SignalRFeature"
+          description: List of the featureFlags. FeatureFlags that are not included in the parameters for the update operation will not be modified. And the response will only include featureFlags that are explicitly set. When a featureFlag is not explicitly set, its globally default value will be used But keep in mind, the default value doesn't mean "false". It varies in terms of different FeatureFlags.
+        liveTraceConfiguration:
+          $ref: "#/components/schemas/LiveTraceConfiguration"
+          description: Live trace configuration of a Microsoft.SignalRService resource.
+        resourceLogConfiguration:
+          $ref: "#/components/schemas/ResourceLogConfiguration"
+          description: Resource log configuration of a Microsoft.SignalRService resource.
+        cors:
+          $ref: "#/components/schemas/SignalRCorsSettings"
+          description: Cross-Origin Resource Sharing (CORS) settings.
+        serverless:
+          $ref: "#/components/schemas/ServerlessSettings"
+          description: Serverless settings.
+        upstream:
+          $ref: "#/components/schemas/ServerlessUpstreamSettings"
+          description: The settings for the Upstream when the service is in server-less mode.
+        networkACLs:
+          $ref: "#/components/schemas/SignalRNetworkACLs"
+          description: Network ACLs for the resource.
+        publicNetworkAccess:
+          type: string
+          description: Enable or disable public network access. Default to "Enabled". When it's Enabled, network ACLs still apply. When it's Disabled, public network access is always disabled no matter what you set in network ACLs.
+        disableLocalAuth:
+          type: boolean
+          description: DisableLocalAuth Enable or disable local auth with AccessKey When set as true, connection with AccessKey=xxx won't work.
+        disableAadAuth:
+          type: boolean
+          description: DisableLocalAuth Enable or disable aad auth When set as true, connection with AuthType=aad won't work.
+        regionEndpointEnabled:
+          type: string
+          description: Enable or disable the regional endpoint. Default to "Enabled". When it's Disabled, new connections will not be routed to this endpoint, however existing connections will not be affected. This property is replica specific. Disable the regional endpoint without replica is not allowed.
+        resourceStopped:
+          type: string
+          description: Stop or start the resource. Default to "False". When it's true, the data plane of the resource is shutdown. When it's false, the data plane of the resource is started.
+    PagedSignalRResourceFlattened:
+      type: object
+      properties:
+        value:
+          type: array
+          items:
+            $ref: "#/components/schemas/SignalRResourceFlattened"
+        nextLink:
+          type: string
+    SignalRResource:
+      type: object
+      description: A class represent a resource. Variables are only populated by the server, and will be ignored when sending a request. All required parameters must be populated in order to send to Azure.
+      properties:
+        id:
+          type: string
+          description: Fully qualified resource ID for the resource. E.g. "/subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/providers/{resourceProviderNamespace}/{resourceType}/{resourceName}".
+        name:
+          type: string
+          description: The name of the resource.
+        type:
+          type: string
+          description: The type of the resource. E.g. "Microsoft.Compute/virtualMachines" or "Microsoft.Storage/storageAccounts".
+        systemData:
+          $ref: "#/components/schemas/SystemData"
+          description: Azure Resource Manager metadata containing createdBy and modifiedBy information.
+        tags:
+          type: object
+          properties: {}
+          description: Resource tags.
+        location:
+          type: string
+          description: The geo-location where the resource lives. Required.
+        sku:
+          $ref: "#/components/schemas/ResourceSku"
+          description: The billing information of the resource.
+        kind:
+          type: string
+          description: 'The kind of the service. Known values are: "SignalR" and "RawWebSockets".'
+        identity:
+          $ref: "#/components/schemas/ManagedIdentity"
+          description: A class represent managed identities used for request and response.
+        properties:
+          type: object
+          properties:
+            provisioningState:
+              type: string
+              description: 'Provisioning state of the resource. Known values are: "Unknown", "Succeeded", "Failed", "Canceled", "Running", "Creating", "Updating", "Deleting", and "Moving".'
+            externalIP:
+              type: string
+              description: The publicly accessible IP of the resource.
+            hostName:
+              type: string
+              description: FQDN of the service instance.
+            publicPort:
+              type: integer
+              description: The publicly accessible port of the resource which is designed for browser/client side usage.
+            serverPort:
+              type: integer
+              description: The publicly accessible port of the resource which is designed for customer server side usage.
+            version:
+              type: string
+              description: Version of the resource. Probably you need the same or higher version of client SDKs.
+            privateEndpointConnections:
+              type: array
+              items:
+                $ref: "#/components/schemas/PrivateEndpointConnection"
+              description: Private endpoint connections to the resource.
+            sharedPrivateLinkResources:
+              type: array
+              items:
+                $ref: "#/components/schemas/SharedPrivateLinkResource"
+              description: The list of shared private link resources.
+            tls:
+              $ref: "#/components/schemas/SignalRTlsSettings"
+              description: TLS settings for the resource.
+            hostNamePrefix:
+              type: string
+              description: Deprecated.
+            features:
+              type: array
+              items:
+                $ref: "#/components/schemas/SignalRFeature"
+              description: List of the featureFlags. FeatureFlags that are not included in the parameters for the update operation will not be modified. And the response will only include featureFlags that are explicitly set. When a featureFlag is not explicitly set, its globally default value will be used But keep in mind, the default value doesn't mean "false". It varies in terms of different FeatureFlags.
+            liveTraceConfiguration:
+              $ref: "#/components/schemas/LiveTraceConfiguration"
+              description: Live trace configuration of a Microsoft.SignalRService resource.
+            resourceLogConfiguration:
+              $ref: "#/components/schemas/ResourceLogConfiguration"
+              description: Resource log configuration of a Microsoft.SignalRService resource.
+            cors:
+              $ref: "#/components/schemas/SignalRCorsSettings"
+              description: Cross-Origin Resource Sharing (CORS) settings.
+            serverless:
+              $ref: "#/components/schemas/ServerlessSettings"
+              description: Serverless settings.
+            upstream:
+              $ref: "#/components/schemas/ServerlessUpstreamSettings"
+              description: The settings for the Upstream when the service is in server-less mode.
+            networkACLs:
+              $ref: "#/components/schemas/SignalRNetworkACLs"
+              description: Network ACLs for the resource.
+            publicNetworkAccess:
+              type: string
+              description: Enable or disable public network access. Default to "Enabled". When it's Enabled, network ACLs still apply. When it's Disabled, public network access is always disabled no matter what you set in network ACLs.
+            disableLocalAuth:
+              type: boolean
+              description: DisableLocalAuth Enable or disable local auth with AccessKey When set as true, connection with AccessKey=xxx won't work.
+            disableAadAuth:
+              type: boolean
+              description: DisableLocalAuth Enable or disable aad auth When set as true, connection with AuthType=aad won't work.
+            regionEndpointEnabled:
+              type: string
+              description: Enable or disable the regional endpoint. Default to "Enabled". When it's Disabled, new connections will not be routed to this endpoint, however existing connections will not be affected. This property is replica specific. Disable the regional endpoint without replica is not allowed.
+            resourceStopped:
+              type: string
+              description: Stop or start the resource. Default to "False". When it's true, the data plane of the resource is shutdown. When it's false, the data plane of the resource is started.
+      required:
+        - location
+    SignalRKeys:
+      type: object
+      description: A class represents the access keys of the resource.
+      properties:
+        primaryKey:
+          type: string
+          description: The primary access key.
+        secondaryKey:
+          type: string
+          description: The secondary access key.
+        primaryConnectionString:
+          type: string
+          description: Connection string constructed via the primaryKey.
+        secondaryConnectionString:
+          type: string
+          description: Connection string constructed via the secondaryKey.
+    Sku:
+      type: object
+      description: Describes an available sku.". Variables are only populated by the server, and will be ignored when sending a request.
+      properties:
+        resourceType:
+          type: string
+          description: The resource type that this object applies to.
+        sku:
+          $ref: "#/components/schemas/ResourceSku"
+          description: The billing information of the resource.
+        capacity:
+          $ref: "#/components/schemas/SkuCapacity"
+          description: Describes scaling information of a sku.
+    SkuCapacity:
+      type: object
+      description: Describes scaling information of a sku. Variables are only populated by the server, and will be ignored when sending a request.
+      properties:
+        minimum:
+          type: integer
+          description: The lowest permitted capacity for this resource.
+        maximum:
+          type: integer
+          description: The highest permitted capacity for this resource.
+        default:
+          type: integer
+          description: The default capacity.
+        allowedValues:
+          type: array
+          items:
+            type: integer
+          description: Allows capacity value list.
+        scaleType:
+          type: string
+          description: 'The scale type applicable to the sku. Known values are: "None", "Manual", and "Automatic".'
+    SkuList:
+      type: object
+      description: The list skus operation response. Variables are only populated by the server, and will be ignored when sending a request.
+      properties:
+        value:
+          type: array
+          items:
+            $ref: "#/components/schemas/Sku"
+          description: The list of skus available for the resource.
+        nextLink:
+          type: string
+          description: The URL the client should use to fetch the next page (per server side paging). It's null for now, added for future use.
+    NameAvailability:
+      type: object
+      description: Result of the request to check name availability. It contains a flag and possible reason of failure.
+      properties:
+        nameAvailable:
+          type: boolean
+          description: Indicates whether the name is available or not.
+        reason:
+          type: string
+          description: The reason of the availability. Required if name is not available.
+        message:
+          type: string
+          description: The message of the operation.
+    PrivateEndpointConnectionFlattened:
+      type: object
+      description: Flattened view of PrivateEndpointConnection ('properties' hoisted to the top level).
+      properties:
+        id:
+          type: string
+          description: Fully qualified resource ID for the resource. E.g. "/subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/providers/{resourceProviderNamespace}/{resourceType}/{resourceName}".
+        name:
+          type: string
+          description: The name of the resource.
+        type:
+          type: string
+          description: The type of the resource. E.g. "Microsoft.Compute/virtualMachines" or "Microsoft.Storage/storageAccounts".
+        systemData:
+          $ref: "#/components/schemas/SystemData"
+          description: Azure Resource Manager metadata containing createdBy and modifiedBy information.
+        provisioningState:
+          type: string
+          description: 'Provisioning state of the resource. Known values are: "Unknown", "Succeeded", "Failed", "Canceled", "Running", "Creating", "Updating", "Deleting", and "Moving".'
+        privateEndpoint:
+          $ref: "#/components/schemas/PrivateEndpoint"
+          description: Private endpoint.
+        groupIds:
+          type: array
+          items:
+            type: string
+          description: Group IDs.
+        privateLinkServiceConnectionState:
+          $ref: "#/components/schemas/PrivateLinkServiceConnectionState"
+          description: Connection state of the private endpoint connection.
+    PagedPrivateEndpointConnectionFlattened:
+      type: object
+      properties:
+        value:
+          type: array
+          items:
+            $ref: "#/components/schemas/PrivateEndpointConnectionFlattened"
+        nextLink:
+          type: string
+    ShareablePrivateLinkResourceType:
+      type: object
+      description: Describes a resource type that has been onboarded to private link service.
+      properties:
+        name:
+          type: string
+          description: The name of the resource type that has been onboarded to private link service.
+        properties:
+          $ref: "#/components/schemas/ShareablePrivateLinkResourceProperties"
+          description: Describes the properties of a resource type that has been onboarded to private link service.
+    ShareablePrivateLinkResourceProperties:
+      type: object
+      description: Describes the properties of a resource type that has been onboarded to private link service.
+      properties:
+        description:
+          type: string
+          description: The description of the resource type that has been onboarded to private link service.
+        groupId:
+          type: string
+          description: The resource provider group id for the resource that has been onboarded to private link service.
+        type:
+          type: string
+          description: The resource provider type for the resource that has been onboarded to private link service.
+    PrivateLinkResourceFlattened:
+      type: object
+      description: Flattened view of PrivateLinkResource ('properties' hoisted to the top level).
+      properties:
+        id:
+          type: string
+          description: Fully qualified resource ID for the resource. E.g. "/subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/providers/{resourceProviderNamespace}/{resourceType}/{resourceName}".
+        name:
+          type: string
+          description: The name of the resource.
+        type:
+          type: string
+          description: The type of the resource. E.g. "Microsoft.Compute/virtualMachines" or "Microsoft.Storage/storageAccounts".
+        systemData:
+          $ref: "#/components/schemas/SystemData"
+          description: Azure Resource Manager metadata containing createdBy and modifiedBy information.
+        groupId:
+          type: string
+          description: Group Id of the private link resource.
+        requiredMembers:
+          type: array
+          items:
+            type: string
+          description: Required members of the private link resource.
+        requiredZoneNames:
+          type: array
+          items:
+            type: string
+          description: Required private DNS zone names.
+        shareablePrivateLinkResourceTypes:
+          type: array
+          items:
+            $ref: "#/components/schemas/ShareablePrivateLinkResourceType"
+          description: The list of resources that are onboarded to private link service.
+    PagedPrivateLinkResourceFlattened:
+      type: object
+      properties:
+        value:
+          type: array
+          items:
+            $ref: "#/components/schemas/PrivateLinkResourceFlattened"
+        nextLink:
+          type: string
+    ReplicaFlattened:
+      type: object
+      description: Flattened view of Replica ('properties' hoisted to the top level).
+      properties:
+        id:
+          type: string
+          description: Fully qualified resource ID for the resource. E.g. "/subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/providers/{resourceProviderNamespace}/{resourceType}/{resourceName}".
+        name:
+          type: string
+          description: The name of the resource.
+        type:
+          type: string
+          description: The type of the resource. E.g. "Microsoft.Compute/virtualMachines" or "Microsoft.Storage/storageAccounts".
+        systemData:
+          $ref: "#/components/schemas/SystemData"
+          description: Azure Resource Manager metadata containing createdBy and modifiedBy information.
+        tags:
+          type: object
+          properties: {}
+          description: Resource tags.
+        location:
+          type: string
+          description: The geo-location where the resource lives. Required.
+        sku:
+          $ref: "#/components/schemas/ResourceSku"
+          description: The billing information of the resource.
+        provisioningState:
+          type: string
+          description: 'Provisioning state of the resource. Known values are: "Unknown", "Succeeded", "Failed", "Canceled", "Running", "Creating", "Updating", "Deleting", and "Moving".'
+        regionEndpointEnabled:
+          type: string
+          description: Enable or disable the regional endpoint. Default to "Enabled". When it's Disabled, new connections will not be routed to this endpoint, however existing connections will not be affected.
+        resourceStopped:
+          type: string
+          description: Stop or start the resource. Default to "false". When it's true, the data plane of the resource is shutdown. When it's false, the data plane of the resource is started.
+    PagedReplicaFlattened:
+      type: object
+      properties:
+        value:
+          type: array
+          items:
+            $ref: "#/components/schemas/ReplicaFlattened"
+        nextLink:
+          type: string
+    Replica:
+      type: object
+      description: A class represent a replica resource. Variables are only populated by the server, and will be ignored when sending a request. All required parameters must be populated in order to send to Azure.
+      properties:
+        id:
+          type: string
+          description: Fully qualified resource ID for the resource. E.g. "/subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/providers/{resourceProviderNamespace}/{resourceType}/{resourceName}".
+        name:
+          type: string
+          description: The name of the resource.
+        type:
+          type: string
+          description: The type of the resource. E.g. "Microsoft.Compute/virtualMachines" or "Microsoft.Storage/storageAccounts".
+        systemData:
+          $ref: "#/components/schemas/SystemData"
+          description: Azure Resource Manager metadata containing createdBy and modifiedBy information.
+        tags:
+          type: object
+          properties: {}
+          description: Resource tags.
+        location:
+          type: string
+          description: The geo-location where the resource lives. Required.
+        sku:
+          $ref: "#/components/schemas/ResourceSku"
+          description: The billing information of the resource.
+        properties:
+          type: object
+          properties:
+            provisioningState:
+              type: string
+              description: 'Provisioning state of the resource. Known values are: "Unknown", "Succeeded", "Failed", "Canceled", "Running", "Creating", "Updating", "Deleting", and "Moving".'
+            regionEndpointEnabled:
+              type: string
+              description: Enable or disable the regional endpoint. Default to "Enabled". When it's Disabled, new connections will not be routed to this endpoint, however existing connections will not be affected.
+            resourceStopped:
+              type: string
+              description: Stop or start the resource. Default to "false". When it's true, the data plane of the resource is shutdown. When it's false, the data plane of the resource is started.
+      required:
+        - location
+    SharedPrivateLinkResourceFlattened:
+      type: object
+      description: Flattened view of SharedPrivateLinkResource ('properties' hoisted to the top level).
+      properties:
+        id:
+          type: string
+          description: Fully qualified resource ID for the resource. E.g. "/subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/providers/{resourceProviderNamespace}/{resourceType}/{resourceName}".
+        name:
+          type: string
+          description: The name of the resource.
+        type:
+          type: string
+          description: The type of the resource. E.g. "Microsoft.Compute/virtualMachines" or "Microsoft.Storage/storageAccounts".
+        systemData:
+          $ref: "#/components/schemas/SystemData"
+          description: Azure Resource Manager metadata containing createdBy and modifiedBy information.
+        groupId:
+          type: string
+          description: The group id from the provider of resource the shared private link resource is for.
+        privateLinkResourceId:
+          type: string
+          description: The resource id of the resource the shared private link resource is for.
+        provisioningState:
+          type: string
+          description: 'Provisioning state of the resource. Known values are: "Unknown", "Succeeded", "Failed", "Canceled", "Running", "Creating", "Updating", "Deleting", and "Moving".'
+        requestMessage:
+          type: string
+          description: The request message for requesting approval of the shared private link resource.
+        status:
+          type: string
+          description: 'Status of the shared private link resource. Known values are: "Pending", "Approved", "Rejected", "Disconnected", and "Timeout".'
+    PagedSharedPrivateLinkResourceFlattened:
+      type: object
+      properties:
+        value:
+          type: array
+          items:
+            $ref: "#/components/schemas/SharedPrivateLinkResourceFlattened"
+        nextLink:
+          type: string
+    SignalRUsageName:
+      type: object
+      description: Localizable String object containing the name and a localized value.
+      properties:
+        value:
+          type: string
+          description: The identifier of the usage.
+        localizedValue:
+          type: string
+          description: Localized name of the usage.
+    SignalRUsage:
+      type: object
+      description: Object that describes a specific usage of the resources.
+      properties:
+        id:
+          type: string
+          description: Fully qualified ARM resource id.
+        currentValue:
+          type: integer
+          description: Current value for the usage quota.
+        limit:
+          type: integer
+          description: The maximum permitted value for the usage quota. If there is no limit, this value will be -1.
+        name:
+          $ref: "#/components/schemas/SignalRUsageName"
+          description: Localizable String object containing the name and a localized value.
+        unit:
+          type: string
+          description: "Representing the units of the usage quota. Possible values are: Count, Bytes, Seconds, Percent, CountPerSecond, BytesPerSecond."
+    PagedSignalRUsage:
+      type: object
+      properties:
+        value:
+          type: array
+          items:
+            $ref: "#/components/schemas/SignalRUsage"
+        nextLink:
+          type: string
+  x-stackQL-resources:
+    operations:
+      id: azure.signalr.operations
+      name: operations
+      title: operations
+      methods:
+        list:
+          operation:
+            $ref: "#/paths/~1providers~1Microsoft.SignalRService~1operations?api-version=2023-08-01-preview/get"
+          response:
+            openAPIDocKey: "200"
+            mediaType: application/json
+            objectKey: $.value
+            overrideMediaType: application/json
+            transform:
+              type: golang_template_json_v0.3.0
+              body: |-
+                {"value": [
+                {{- range $i, $row := index . "value" }}{{ if $i }},{{ end }}
+                  { {{ $p := index $row "properties" }}{{ if eq (kindOf $p) "map" }}{{ range $k, $v := $p }}{{ printf "%q" $k }}: {{ toJson $v }}, {{ end }}{{ end }}{{ range $k, $v := $row }}{{ printf "%q" $k }}: {{ toJson $v }}, {{ end }}"_flattened": true }
+                {{- end }}
+                ], "nextLink": {{ toJson (index . "nextLink") }}}
+      sqlVerbs:
+        select:
+          - $ref: "#/components/x-stackQL-resources/operations/methods/list"
+        insert: []
+        update: []
+        delete: []
+    signalr_custom_certificates:
+      id: azure.signalr.signalr_custom_certificates
+      name: signalr_custom_certificates
+      title: signalr_custom_certificates
+      methods:
+        get:
+          operation:
+            $ref: "#/paths/~1subscriptions~1{subscription_id}~1resourceGroups~1{resource_group_name}~1providers~1Microsoft.SignalRService~1signalR~1{resource_name}~1customCertificates~1{certificate_name}?api-version=2023-08-01-preview/get"
+          response:
+            openAPIDocKey: "200"
+            mediaType: application/json
+            overrideMediaType: application/json
+            transform:
+              type: golang_template_json_v0.3.0
+              body: '{{ $row := . }}{ {{ $p := index $row "properties" }}{{ if eq (kindOf $p) "map" }}{{ range $k, $v := $p }}{{ printf "%q" $k }}: {{ toJson $v }}, {{ end }}{{ end }}{{ range $k, $v := $row }}{{ printf "%q" $k }}: {{ toJson $v }}, {{ end }}"_flattened": true }'
+        create_or_update:
+          operation:
+            $ref: "#/paths/~1subscriptions~1{subscription_id}~1resourceGroups~1{resource_group_name}~1providers~1Microsoft.SignalRService~1signalR~1{resource_name}~1customCertificates~1{certificate_name}?api-version=2023-08-01-preview/put"
+          response:
+            openAPIDocKey: "200"
+            mediaType: application/json
+          request:
+            nativeCasing: camel
+          config:
+            requestBodyTranslate:
+              algorithm: naive
+        delete:
+          operation:
+            $ref: "#/paths/~1subscriptions~1{subscription_id}~1resourceGroups~1{resource_group_name}~1providers~1Microsoft.SignalRService~1signalR~1{resource_name}~1customCertificates~1{certificate_name}?api-version=2023-08-01-preview/delete"
+          response:
+            openAPIDocKey: "204"
+        list:
+          operation:
+            $ref: "#/paths/~1subscriptions~1{subscription_id}~1resourceGroups~1{resource_group_name}~1providers~1Microsoft.SignalRService~1signalR~1{resource_name}~1customCertificates?api-version=2023-08-01-preview/get"
+          response:
+            openAPIDocKey: "200"
+            mediaType: application/json
+            objectKey: $.value
+            overrideMediaType: application/json
+            transform:
+              type: golang_template_json_v0.3.0
+              body: |-
+                {"value": [
+                {{- range $i, $row := index . "value" }}{{ if $i }},{{ end }}
+                  { {{ $p := index $row "properties" }}{{ if eq (kindOf $p) "map" }}{{ range $k, $v := $p }}{{ printf "%q" $k }}: {{ toJson $v }}, {{ end }}{{ end }}{{ range $k, $v := $row }}{{ printf "%q" $k }}: {{ toJson $v }}, {{ end }}"_flattened": true }
+                {{- end }}
+                ], "nextLink": {{ toJson (index . "nextLink") }}}
+      sqlVerbs:
+        select:
+          - $ref: "#/components/x-stackQL-resources/signalr_custom_certificates/methods/get"
+          - $ref: "#/components/x-stackQL-resources/signalr_custom_certificates/methods/list"
+        insert:
+          - $ref: "#/components/x-stackQL-resources/signalr_custom_certificates/methods/create_or_update"
+        update: []
+        replace:
+          - $ref: "#/components/x-stackQL-resources/signalr_custom_certificates/methods/create_or_update"
+        delete:
+          - $ref: "#/components/x-stackQL-resources/signalr_custom_certificates/methods/delete"
+    signalr_custom_domains:
+      id: azure.signalr.signalr_custom_domains
+      name: signalr_custom_domains
+      title: signalr_custom_domains
+      methods:
+        get:
+          operation:
+            $ref: "#/paths/~1subscriptions~1{subscription_id}~1resourceGroups~1{resource_group_name}~1providers~1Microsoft.SignalRService~1signalR~1{resource_name}~1customDomains~1{name}?api-version=2023-08-01-preview/get"
+          response:
+            openAPIDocKey: "200"
+            mediaType: application/json
+            overrideMediaType: application/json
+            transform:
+              type: golang_template_json_v0.3.0
+              body: '{{ $row := . }}{ {{ $p := index $row "properties" }}{{ if eq (kindOf $p) "map" }}{{ range $k, $v := $p }}{{ printf "%q" $k }}: {{ toJson $v }}, {{ end }}{{ end }}{{ range $k, $v := $row }}{{ printf "%q" $k }}: {{ toJson $v }}, {{ end }}"_flattened": true }'
+        create_or_update:
+          operation:
+            $ref: "#/paths/~1subscriptions~1{subscription_id}~1resourceGroups~1{resource_group_name}~1providers~1Microsoft.SignalRService~1signalR~1{resource_name}~1customDomains~1{name}?api-version=2023-08-01-preview/put"
+          response:
+            openAPIDocKey: "200"
+            mediaType: application/json
+          request:
+            nativeCasing: camel
+          config:
+            requestBodyTranslate:
+              algorithm: naive
+        delete:
+          operation:
+            $ref: "#/paths/~1subscriptions~1{subscription_id}~1resourceGroups~1{resource_group_name}~1providers~1Microsoft.SignalRService~1signalR~1{resource_name}~1customDomains~1{name}?api-version=2023-08-01-preview/delete"
+          response:
+            openAPIDocKey: "204"
+        list:
+          operation:
+            $ref: "#/paths/~1subscriptions~1{subscription_id}~1resourceGroups~1{resource_group_name}~1providers~1Microsoft.SignalRService~1signalR~1{resource_name}~1customDomains?api-version=2023-08-01-preview/get"
+          response:
+            openAPIDocKey: "200"
+            mediaType: application/json
+            objectKey: $.value
+            overrideMediaType: application/json
+            transform:
+              type: golang_template_json_v0.3.0
+              body: |-
+                {"value": [
+                {{- range $i, $row := index . "value" }}{{ if $i }},{{ end }}
+                  { {{ $p := index $row "properties" }}{{ if eq (kindOf $p) "map" }}{{ range $k, $v := $p }}{{ printf "%q" $k }}: {{ toJson $v }}, {{ end }}{{ end }}{{ range $k, $v := $row }}{{ printf "%q" $k }}: {{ toJson $v }}, {{ end }}"_flattened": true }
+                {{- end }}
+                ], "nextLink": {{ toJson (index . "nextLink") }}}
+      sqlVerbs:
+        select:
+          - $ref: "#/components/x-stackQL-resources/signalr_custom_domains/methods/get"
+          - $ref: "#/components/x-stackQL-resources/signalr_custom_domains/methods/list"
+        insert:
+          - $ref: "#/components/x-stackQL-resources/signalr_custom_domains/methods/create_or_update"
+        update: []
+        replace:
+          - $ref: "#/components/x-stackQL-resources/signalr_custom_domains/methods/create_or_update"
+        delete:
+          - $ref: "#/components/x-stackQL-resources/signalr_custom_domains/methods/delete"
+    signalr:
+      id: azure.signalr.signalr
+      name: signalr
+      title: signalr
+      methods:
+        get:
+          operation:
+            $ref: "#/paths/~1subscriptions~1{subscription_id}~1resourceGroups~1{resource_group_name}~1providers~1Microsoft.SignalRService~1signalR~1{resource_name}?api-version=2023-08-01-preview/get"
+          response:
+            openAPIDocKey: "200"
+            mediaType: application/json
+            overrideMediaType: application/json
+            transform:
+              type: golang_template_json_v0.3.0
+              body: '{{ $row := . }}{ {{ $p := index $row "properties" }}{{ if eq (kindOf $p) "map" }}{{ range $k, $v := $p }}{{ printf "%q" $k }}: {{ toJson $v }}, {{ end }}{{ end }}{{ range $k, $v := $row }}{{ printf "%q" $k }}: {{ toJson $v }}, {{ end }}"_flattened": true }'
+        create_or_update:
+          operation:
+            $ref: "#/paths/~1subscriptions~1{subscription_id}~1resourceGroups~1{resource_group_name}~1providers~1Microsoft.SignalRService~1signalR~1{resource_name}?api-version=2023-08-01-preview/put"
+          response:
+            openAPIDocKey: "200"
+            mediaType: application/json
+          request:
+            nativeCasing: camel
+          config:
+            requestBodyTranslate:
+              algorithm: naive
+        delete:
+          operation:
+            $ref: "#/paths/~1subscriptions~1{subscription_id}~1resourceGroups~1{resource_group_name}~1providers~1Microsoft.SignalRService~1signalR~1{resource_name}?api-version=2023-08-01-preview/delete"
+          response:
+            openAPIDocKey: "204"
+        update:
+          operation:
+            $ref: "#/paths/~1subscriptions~1{subscription_id}~1resourceGroups~1{resource_group_name}~1providers~1Microsoft.SignalRService~1signalR~1{resource_name}?api-version=2023-08-01-preview/patch"
+          response:
+            openAPIDocKey: "200"
+            mediaType: application/json
+          request:
+            nativeCasing: camel
+          config:
+            requestBodyTranslate:
+              algorithm: naive
+        list_by_subscription:
+          operation:
+            $ref: "#/paths/~1subscriptions~1{subscription_id}~1providers~1Microsoft.SignalRService~1signalR?api-version=2023-08-01-preview/get"
+          response:
+            openAPIDocKey: "200"
+            mediaType: application/json
+            objectKey: $.value
+            overrideMediaType: application/json
+            transform:
+              type: golang_template_json_v0.3.0
+              body: |-
+                {"value": [
+                {{- range $i, $row := index . "value" }}{{ if $i }},{{ end }}
+                  { {{ $p := index $row "properties" }}{{ if eq (kindOf $p) "map" }}{{ range $k, $v := $p }}{{ printf "%q" $k }}: {{ toJson $v }}, {{ end }}{{ end }}{{ range $k, $v := $row }}{{ printf "%q" $k }}: {{ toJson $v }}, {{ end }}"_flattened": true }
+                {{- end }}
+                ], "nextLink": {{ toJson (index . "nextLink") }}}
+        list_by_resource_group:
+          operation:
+            $ref: "#/paths/~1subscriptions~1{subscription_id}~1resourceGroups~1{resource_group_name}~1providers~1Microsoft.SignalRService~1signalR?api-version=2023-08-01-preview/get"
+          response:
+            openAPIDocKey: "200"
+            mediaType: application/json
+            objectKey: $.value
+            overrideMediaType: application/json
+            transform:
+              type: golang_template_json_v0.3.0
+              body: |-
+                {"value": [
+                {{- range $i, $row := index . "value" }}{{ if $i }},{{ end }}
+                  { {{ $p := index $row "properties" }}{{ if eq (kindOf $p) "map" }}{{ range $k, $v := $p }}{{ printf "%q" $k }}: {{ toJson $v }}, {{ end }}{{ end }}{{ range $k, $v := $row }}{{ printf "%q" $k }}: {{ toJson $v }}, {{ end }}"_flattened": true }
+                {{- end }}
+                ], "nextLink": {{ toJson (index . "nextLink") }}}
+        list_keys:
+          operation:
+            $ref: "#/paths/~1subscriptions~1{subscription_id}~1resourceGroups~1{resource_group_name}~1providers~1Microsoft.SignalRService~1signalR~1{resource_name}~1listKeys?api-version=2023-08-01-preview/post"
+          response:
+            openAPIDocKey: "200"
+            mediaType: application/json
+        list_replica_skus:
+          operation:
+            $ref: "#/paths/~1subscriptions~1{subscription_id}~1resourceGroups~1{resource_group_name}~1providers~1Microsoft.SignalRService~1signalR~1{resource_name}~1replicas~1{replica_name}~1skus?api-version=2023-08-01-preview/get"
+          response:
+            openAPIDocKey: "200"
+            mediaType: application/json
+            objectKey: $.value
+        list_skus:
+          operation:
+            $ref: "#/paths/~1subscriptions~1{subscription_id}~1resourceGroups~1{resource_group_name}~1providers~1Microsoft.SignalRService~1signalR~1{resource_name}~1skus?api-version=2023-08-01-preview/get"
+          response:
+            openAPIDocKey: "200"
+            mediaType: application/json
+            objectKey: $.value
+        check_name_availability:
+          operation:
+            $ref: "#/paths/~1subscriptions~1{subscription_id}~1providers~1Microsoft.SignalRService~1locations~1{location}~1checkNameAvailability?api-version=2023-08-01-preview/post"
+          response:
+            openAPIDocKey: "200"
+            mediaType: application/json
+          request:
+            nativeCasing: camel
+          config:
+            requestBodyTranslate:
+              algorithm: naive
+        regenerate_key:
+          operation:
+            $ref: "#/paths/~1subscriptions~1{subscription_id}~1resourceGroups~1{resource_group_name}~1providers~1Microsoft.SignalRService~1signalR~1{resource_name}~1regenerateKey?api-version=2023-08-01-preview/post"
+          response:
+            openAPIDocKey: "200"
+            mediaType: application/json
+          request:
+            nativeCasing: camel
+          config:
+            requestBodyTranslate:
+              algorithm: naive
+        restart:
+          operation:
+            $ref: "#/paths/~1subscriptions~1{subscription_id}~1resourceGroups~1{resource_group_name}~1providers~1Microsoft.SignalRService~1signalR~1{resource_name}~1restart?api-version=2023-08-01-preview/post"
+          response:
+            openAPIDocKey: "204"
+      sqlVerbs:
+        select:
+          - $ref: "#/components/x-stackQL-resources/signalr/methods/list_replica_skus"
+          - $ref: "#/components/x-stackQL-resources/signalr/methods/check_name_availability"
+          - $ref: "#/components/x-stackQL-resources/signalr/methods/get"
+          - $ref: "#/components/x-stackQL-resources/signalr/methods/list_by_resource_group"
+          - $ref: "#/components/x-stackQL-resources/signalr/methods/list_by_subscription"
+        insert:
+          - $ref: "#/components/x-stackQL-resources/signalr/methods/create_or_update"
+        update:
+          - $ref: "#/components/x-stackQL-resources/signalr/methods/update"
+        replace:
+          - $ref: "#/components/x-stackQL-resources/signalr/methods/create_or_update"
+        delete:
+          - $ref: "#/components/x-stackQL-resources/signalr/methods/delete"
+    signalr_private_endpoint_connections:
+      id: azure.signalr.signalr_private_endpoint_connections
+      name: signalr_private_endpoint_connections
+      title: signalr_private_endpoint_connections
+      methods:
+        get:
+          operation:
+            $ref: "#/paths/~1subscriptions~1{subscription_id}~1resourceGroups~1{resource_group_name}~1providers~1Microsoft.SignalRService~1signalR~1{resource_name}~1privateEndpointConnections~1{private_endpoint_connection_name}?api-version=2023-08-01-preview/get"
+          response:
+            openAPIDocKey: "200"
+            mediaType: application/json
+            overrideMediaType: application/json
+            transform:
+              type: golang_template_json_v0.3.0
+              body: '{{ $row := . }}{ {{ $p := index $row "properties" }}{{ if eq (kindOf $p) "map" }}{{ range $k, $v := $p }}{{ printf "%q" $k }}: {{ toJson $v }}, {{ end }}{{ end }}{{ range $k, $v := $row }}{{ printf "%q" $k }}: {{ toJson $v }}, {{ end }}"_flattened": true }'
+        update:
+          operation:
+            $ref: "#/paths/~1subscriptions~1{subscription_id}~1resourceGroups~1{resource_group_name}~1providers~1Microsoft.SignalRService~1signalR~1{resource_name}~1privateEndpointConnections~1{private_endpoint_connection_name}?api-version=2023-08-01-preview/put"
+          response:
+            openAPIDocKey: "200"
+            mediaType: application/json
+          request:
+            nativeCasing: camel
+          config:
+            requestBodyTranslate:
+              algorithm: naive
+        delete:
+          operation:
+            $ref: "#/paths/~1subscriptions~1{subscription_id}~1resourceGroups~1{resource_group_name}~1providers~1Microsoft.SignalRService~1signalR~1{resource_name}~1privateEndpointConnections~1{private_endpoint_connection_name}?api-version=2023-08-01-preview/delete"
+          response:
+            openAPIDocKey: "204"
+        list:
+          operation:
+            $ref: "#/paths/~1subscriptions~1{subscription_id}~1resourceGroups~1{resource_group_name}~1providers~1Microsoft.SignalRService~1signalR~1{resource_name}~1privateEndpointConnections?api-version=2023-08-01-preview/get"
+          response:
+            openAPIDocKey: "200"
+            mediaType: application/json
+            objectKey: $.value
+            overrideMediaType: application/json
+            transform:
+              type: golang_template_json_v0.3.0
+              body: |-
+                {"value": [
+                {{- range $i, $row := index . "value" }}{{ if $i }},{{ end }}
+                  { {{ $p := index $row "properties" }}{{ if eq (kindOf $p) "map" }}{{ range $k, $v := $p }}{{ printf "%q" $k }}: {{ toJson $v }}, {{ end }}{{ end }}{{ range $k, $v := $row }}{{ printf "%q" $k }}: {{ toJson $v }}, {{ end }}"_flattened": true }
+                {{- end }}
+                ], "nextLink": {{ toJson (index . "nextLink") }}}
+      sqlVerbs:
+        select:
+          - $ref: "#/components/x-stackQL-resources/signalr_private_endpoint_connections/methods/get"
+          - $ref: "#/components/x-stackQL-resources/signalr_private_endpoint_connections/methods/list"
+        insert: []
+        update:
+          - $ref: "#/components/x-stackQL-resources/signalr_private_endpoint_connections/methods/update"
+        delete:
+          - $ref: "#/components/x-stackQL-resources/signalr_private_endpoint_connections/methods/delete"
+    signalr_private_link_resources:
+      id: azure.signalr.signalr_private_link_resources
+      name: signalr_private_link_resources
+      title: signalr_private_link_resources
+      methods:
+        list:
+          operation:
+            $ref: "#/paths/~1subscriptions~1{subscription_id}~1resourceGroups~1{resource_group_name}~1providers~1Microsoft.SignalRService~1signalR~1{resource_name}~1privateLinkResources?api-version=2023-08-01-preview/get"
+          response:
+            openAPIDocKey: "200"
+            mediaType: application/json
+            objectKey: $.value
+            overrideMediaType: application/json
+            transform:
+              type: golang_template_json_v0.3.0
+              body: |-
+                {"value": [
+                {{- range $i, $row := index . "value" }}{{ if $i }},{{ end }}
+                  { {{ $p := index $row "properties" }}{{ if eq (kindOf $p) "map" }}{{ range $k, $v := $p }}{{ printf "%q" $k }}: {{ toJson $v }}, {{ end }}{{ end }}{{ range $k, $v := $row }}{{ printf "%q" $k }}: {{ toJson $v }}, {{ end }}"_flattened": true }
+                {{- end }}
+                ], "nextLink": {{ toJson (index . "nextLink") }}}
+      sqlVerbs:
+        select:
+          - $ref: "#/components/x-stackQL-resources/signalr_private_link_resources/methods/list"
+        insert: []
+        update: []
+        delete: []
+    signalr_replicas:
+      id: azure.signalr.signalr_replicas
+      name: signalr_replicas
+      title: signalr_replicas
+      methods:
+        get:
+          operation:
+            $ref: "#/paths/~1subscriptions~1{subscription_id}~1resourceGroups~1{resource_group_name}~1providers~1Microsoft.SignalRService~1signalR~1{resource_name}~1replicas~1{replica_name}?api-version=2023-08-01-preview/get"
+          response:
+            openAPIDocKey: "200"
+            mediaType: application/json
+            overrideMediaType: application/json
+            transform:
+              type: golang_template_json_v0.3.0
+              body: '{{ $row := . }}{ {{ $p := index $row "properties" }}{{ if eq (kindOf $p) "map" }}{{ range $k, $v := $p }}{{ printf "%q" $k }}: {{ toJson $v }}, {{ end }}{{ end }}{{ range $k, $v := $row }}{{ printf "%q" $k }}: {{ toJson $v }}, {{ end }}"_flattened": true }'
+        create_or_update:
+          operation:
+            $ref: "#/paths/~1subscriptions~1{subscription_id}~1resourceGroups~1{resource_group_name}~1providers~1Microsoft.SignalRService~1signalR~1{resource_name}~1replicas~1{replica_name}?api-version=2023-08-01-preview/put"
+          response:
+            openAPIDocKey: "200"
+            mediaType: application/json
+          request:
+            nativeCasing: camel
+          config:
+            requestBodyTranslate:
+              algorithm: naive
+        delete:
+          operation:
+            $ref: "#/paths/~1subscriptions~1{subscription_id}~1resourceGroups~1{resource_group_name}~1providers~1Microsoft.SignalRService~1signalR~1{resource_name}~1replicas~1{replica_name}?api-version=2023-08-01-preview/delete"
+          response:
+            openAPIDocKey: "204"
+        update:
+          operation:
+            $ref: "#/paths/~1subscriptions~1{subscription_id}~1resourceGroups~1{resource_group_name}~1providers~1Microsoft.SignalRService~1signalR~1{resource_name}~1replicas~1{replica_name}?api-version=2023-08-01-preview/patch"
+          response:
+            openAPIDocKey: "200"
+            mediaType: application/json
+          request:
+            nativeCasing: camel
+          config:
+            requestBodyTranslate:
+              algorithm: naive
+        list:
+          operation:
+            $ref: "#/paths/~1subscriptions~1{subscription_id}~1resourceGroups~1{resource_group_name}~1providers~1Microsoft.SignalRService~1signalR~1{resource_name}~1replicas?api-version=2023-08-01-preview/get"
+          response:
+            openAPIDocKey: "200"
+            mediaType: application/json
+            objectKey: $.value
+            overrideMediaType: application/json
+            transform:
+              type: golang_template_json_v0.3.0
+              body: |-
+                {"value": [
+                {{- range $i, $row := index . "value" }}{{ if $i }},{{ end }}
+                  { {{ $p := index $row "properties" }}{{ if eq (kindOf $p) "map" }}{{ range $k, $v := $p }}{{ printf "%q" $k }}: {{ toJson $v }}, {{ end }}{{ end }}{{ range $k, $v := $row }}{{ printf "%q" $k }}: {{ toJson $v }}, {{ end }}"_flattened": true }
+                {{- end }}
+                ], "nextLink": {{ toJson (index . "nextLink") }}}
+        restart:
+          operation:
+            $ref: "#/paths/~1subscriptions~1{subscription_id}~1resourceGroups~1{resource_group_name}~1providers~1Microsoft.SignalRService~1signalR~1{resource_name}~1replicas~1{replica_name}~1restart?api-version=2023-08-01-preview/post"
+          response:
+            openAPIDocKey: "204"
+      sqlVerbs:
+        select:
+          - $ref: "#/components/x-stackQL-resources/signalr_replicas/methods/get"
+          - $ref: "#/components/x-stackQL-resources/signalr_replicas/methods/list"
+        insert:
+          - $ref: "#/components/x-stackQL-resources/signalr_replicas/methods/create_or_update"
+        update:
+          - $ref: "#/components/x-stackQL-resources/signalr_replicas/methods/update"
+        replace:
+          - $ref: "#/components/x-stackQL-resources/signalr_replicas/methods/create_or_update"
+        delete:
+          - $ref: "#/components/x-stackQL-resources/signalr_replicas/methods/delete"
+    signalr_shared_private_link_resources:
+      id: azure.signalr.signalr_shared_private_link_resources
+      name: signalr_shared_private_link_resources
+      title: signalr_shared_private_link_resources
+      methods:
+        get:
+          operation:
+            $ref: "#/paths/~1subscriptions~1{subscription_id}~1resourceGroups~1{resource_group_name}~1providers~1Microsoft.SignalRService~1signalR~1{resource_name}~1sharedPrivateLinkResources~1{shared_private_link_resource_name}?api-version=2023-08-01-preview/get"
+          response:
+            openAPIDocKey: "200"
+            mediaType: application/json
+            overrideMediaType: application/json
+            transform:
+              type: golang_template_json_v0.3.0
+              body: '{{ $row := . }}{ {{ $p := index $row "properties" }}{{ if eq (kindOf $p) "map" }}{{ range $k, $v := $p }}{{ printf "%q" $k }}: {{ toJson $v }}, {{ end }}{{ end }}{{ range $k, $v := $row }}{{ printf "%q" $k }}: {{ toJson $v }}, {{ end }}"_flattened": true }'
+        create_or_update:
+          operation:
+            $ref: "#/paths/~1subscriptions~1{subscription_id}~1resourceGroups~1{resource_group_name}~1providers~1Microsoft.SignalRService~1signalR~1{resource_name}~1sharedPrivateLinkResources~1{shared_private_link_resource_name}?api-version=2023-08-01-preview/put"
+          response:
+            openAPIDocKey: "200"
+            mediaType: application/json
+          request:
+            nativeCasing: camel
+          config:
+            requestBodyTranslate:
+              algorithm: naive
+        delete:
+          operation:
+            $ref: "#/paths/~1subscriptions~1{subscription_id}~1resourceGroups~1{resource_group_name}~1providers~1Microsoft.SignalRService~1signalR~1{resource_name}~1sharedPrivateLinkResources~1{shared_private_link_resource_name}?api-version=2023-08-01-preview/delete"
+          response:
+            openAPIDocKey: "204"
+        list:
+          operation:
+            $ref: "#/paths/~1subscriptions~1{subscription_id}~1resourceGroups~1{resource_group_name}~1providers~1Microsoft.SignalRService~1signalR~1{resource_name}~1sharedPrivateLinkResources?api-version=2023-08-01-preview/get"
+          response:
+            openAPIDocKey: "200"
+            mediaType: application/json
+            objectKey: $.value
+            overrideMediaType: application/json
+            transform:
+              type: golang_template_json_v0.3.0
+              body: |-
+                {"value": [
+                {{- range $i, $row := index . "value" }}{{ if $i }},{{ end }}
+                  { {{ $p := index $row "properties" }}{{ if eq (kindOf $p) "map" }}{{ range $k, $v := $p }}{{ printf "%q" $k }}: {{ toJson $v }}, {{ end }}{{ end }}{{ range $k, $v := $row }}{{ printf "%q" $k }}: {{ toJson $v }}, {{ end }}"_flattened": true }
+                {{- end }}
+                ], "nextLink": {{ toJson (index . "nextLink") }}}
+      sqlVerbs:
+        select:
+          - $ref: "#/components/x-stackQL-resources/signalr_shared_private_link_resources/methods/get"
+          - $ref: "#/components/x-stackQL-resources/signalr_shared_private_link_resources/methods/list"
+        insert:
+          - $ref: "#/components/x-stackQL-resources/signalr_shared_private_link_resources/methods/create_or_update"
+        update: []
+        replace:
+          - $ref: "#/components/x-stackQL-resources/signalr_shared_private_link_resources/methods/create_or_update"
+        delete:
+          - $ref: "#/components/x-stackQL-resources/signalr_shared_private_link_resources/methods/delete"
+    usages:
+      id: azure.signalr.usages
+      name: usages
+      title: usages
+      methods:
+        list:
+          operation:
+            $ref: "#/paths/~1subscriptions~1{subscription_id}~1providers~1Microsoft.SignalRService~1locations~1{location}~1usages?api-version=2023-08-01-preview/get"
+          response:
+            openAPIDocKey: "200"
+            mediaType: application/json
+            objectKey: $.value
+      sqlVerbs:
+        select:
+          - $ref: "#/components/x-stackQL-resources/usages/methods/list"
+        insert: []
+        update: []
+        delete: []
+paths:
+  /providers/Microsoft.SignalRService/operations?api-version=2023-08-01-preview:
+    get:
+      operationId: signalr_list
+      description: Lists all of the available REST API operations of the Microsoft.SignalRService provider.
+      parameters: []
+      responses:
+        "200":
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PagedOperationFlattened"
+  /subscriptions/{subscription_id}/resourceGroups/{resource_group_name}/providers/Microsoft.SignalRService/signalR/{resource_name}/customCertificates/{certificate_name}?api-version=2023-08-01-preview:
+    get:
+      operationId: SignalRCustomCertificates_get
+      description: Get a custom certificate.
+      parameters:
+        - name: resource_group_name
+          in: path
+          required: true
+          schema:
+            type: string
+          description: The name of the resource group. The name is case insensitive. Required.
+        - name: resource_name
+          in: path
+          required: true
+          schema:
+            type: string
+          description: The name of the resource. Required.
+        - name: certificate_name
+          in: path
+          required: true
+          schema:
+            type: string
+          description: Custom certificate name. Required.
+        - name: subscription_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CustomCertificateFlattened"
+    put:
+      operationId: SignalRCustomCertificates_begin_create_or_update
+      description: Create or update a custom certificate.
+      parameters:
+        - name: resource_group_name
+          in: path
+          required: true
+          schema:
+            type: string
+          description: The name of the resource group. The name is case insensitive. Required.
+        - name: resource_name
+          in: path
+          required: true
+          schema:
+            type: string
+          description: The name of the resource. Required.
+        - name: certificate_name
+          in: path
+          required: true
+          schema:
+            type: string
+          description: Custom certificate name. Required.
+        - name: subscription_id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                properties:
+                  type: object
+                  properties:
+                    keyVaultBaseUri:
+                      type: string
+                      description: Base uri of the KeyVault that stores certificate. Required.
+                    keyVaultSecretName:
+                      type: string
+                      description: Certificate secret name. Required.
+                    keyVaultSecretVersion:
+                      type: string
+                      description: Certificate secret version.
+              required:
+                - properties
+      responses:
+        "200":
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CustomCertificate"
+    delete:
+      operationId: SignalRCustomCertificates_delete
+      description: Delete a custom certificate.
+      parameters:
+        - name: resource_group_name
+          in: path
+          required: true
+          schema:
+            type: string
+          description: The name of the resource group. The name is case insensitive. Required.
+        - name: resource_name
+          in: path
+          required: true
+          schema:
+            type: string
+          description: The name of the resource. Required.
+        - name: certificate_name
+          in: path
+          required: true
+          schema:
+            type: string
+          description: Custom certificate name. Required.
+        - name: subscription_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "204":
+          description: Success (no content / accepted)
+  /subscriptions/{subscription_id}/resourceGroups/{resource_group_name}/providers/Microsoft.SignalRService/signalR/{resource_name}/customCertificates?api-version=2023-08-01-preview:
+    get:
+      operationId: SignalRCustomCertificates_list
+      description: List all custom certificates.
+      parameters:
+        - name: resource_group_name
+          in: path
+          required: true
+          schema:
+            type: string
+          description: The name of the resource group. The name is case insensitive. Required.
+        - name: resource_name
+          in: path
+          required: true
+          schema:
+            type: string
+          description: The name of the resource. Required.
+        - name: subscription_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PagedCustomCertificateFlattened"
+  /subscriptions/{subscription_id}/resourceGroups/{resource_group_name}/providers/Microsoft.SignalRService/signalR/{resource_name}/customDomains/{name}?api-version=2023-08-01-preview:
+    get:
+      operationId: SignalRCustomDomains_get
+      description: Get a custom domain.
+      parameters:
+        - name: resource_group_name
+          in: path
+          required: true
+          schema:
+            type: string
+          description: The name of the resource group. The name is case insensitive. Required.
+        - name: resource_name
+          in: path
+          required: true
+          schema:
+            type: string
+          description: The name of the resource. Required.
+        - name: name
+          in: path
+          required: true
+          schema:
+            type: string
+          description: Custom domain name. Required.
+        - name: subscription_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CustomDomainFlattened"
+    put:
+      operationId: SignalRCustomDomains_begin_create_or_update
+      description: Create or update a custom domain.
+      parameters:
+        - name: resource_group_name
+          in: path
+          required: true
+          schema:
+            type: string
+          description: The name of the resource group. The name is case insensitive. Required.
+        - name: resource_name
+          in: path
+          required: true
+          schema:
+            type: string
+          description: The name of the resource. Required.
+        - name: name
+          in: path
+          required: true
+          schema:
+            type: string
+          description: Custom domain name. Required.
+        - name: subscription_id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                properties:
+                  type: object
+                  properties:
+                    domainName:
+                      type: string
+                      description: The custom domain name. Required.
+                    customCertificate:
+                      $ref: "#/components/schemas/ResourceReference"
+                      description: Reference to a resource. Required.
+              required:
+                - properties
+      responses:
+        "200":
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CustomDomain"
+    delete:
+      operationId: SignalRCustomDomains_begin_delete
+      description: Delete a custom domain.
+      parameters:
+        - name: resource_group_name
+          in: path
+          required: true
+          schema:
+            type: string
+          description: The name of the resource group. The name is case insensitive. Required.
+        - name: resource_name
+          in: path
+          required: true
+          schema:
+            type: string
+          description: The name of the resource. Required.
+        - name: name
+          in: path
+          required: true
+          schema:
+            type: string
+          description: Custom domain name. Required.
+        - name: subscription_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "204":
+          description: Success (no content / accepted)
+  /subscriptions/{subscription_id}/resourceGroups/{resource_group_name}/providers/Microsoft.SignalRService/signalR/{resource_name}/customDomains?api-version=2023-08-01-preview:
+    get:
+      operationId: SignalRCustomDomains_list
+      description: List all custom domains.
+      parameters:
+        - name: resource_group_name
+          in: path
+          required: true
+          schema:
+            type: string
+          description: The name of the resource group. The name is case insensitive. Required.
+        - name: resource_name
+          in: path
+          required: true
+          schema:
+            type: string
+          description: The name of the resource. Required.
+        - name: subscription_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PagedCustomDomainFlattened"
+  /subscriptions/{subscription_id}/resourceGroups/{resource_group_name}/providers/Microsoft.SignalRService/signalR/{resource_name}?api-version=2023-08-01-preview:
+    get:
+      operationId: SignalR_get
+      description: Get the resource and its properties.
+      parameters:
+        - name: resource_group_name
+          in: path
+          required: true
+          schema:
+            type: string
+          description: The name of the resource group. The name is case insensitive. Required.
+        - name: resource_name
+          in: path
+          required: true
+          schema:
+            type: string
+          description: The name of the resource. Required.
+        - name: subscription_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SignalRResourceFlattened"
+    put:
+      operationId: SignalR_begin_create_or_update
+      description: Create or update a resource.
+      parameters:
+        - name: resource_group_name
+          in: path
+          required: true
+          schema:
+            type: string
+          description: The name of the resource group. The name is case insensitive. Required.
+        - name: resource_name
+          in: path
+          required: true
+          schema:
+            type: string
+          description: The name of the resource. Required.
+        - name: subscription_id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                tags:
+                  type: object
+                  properties: {}
+                  description: Resource tags.
+                location:
+                  type: string
+                  description: The geo-location where the resource lives. Required.
+                sku:
+                  $ref: "#/components/schemas/ResourceSku"
+                  description: The billing information of the resource.
+                kind:
+                  type: string
+                  description: 'The kind of the service. Known values are: "SignalR" and "RawWebSockets".'
+                identity:
+                  $ref: "#/components/schemas/ManagedIdentity"
+                  description: A class represent managed identities used for request and response.
+                properties:
+                  type: object
+                  properties:
+                    tls:
+                      $ref: "#/components/schemas/SignalRTlsSettings"
+                      description: TLS settings for the resource.
+                    features:
+                      type: array
+                      items:
+                        $ref: "#/components/schemas/SignalRFeature"
+                      description: List of the featureFlags. FeatureFlags that are not included in the parameters for the update operation will not be modified. And the response will only include featureFlags that are explicitly set. When a featureFlag is not explicitly set, its globally default value will be used But keep in mind, the default value doesn't mean "false". It varies in terms of different FeatureFlags.
+                    liveTraceConfiguration:
+                      $ref: "#/components/schemas/LiveTraceConfiguration"
+                      description: Live trace configuration of a Microsoft.SignalRService resource.
+                    resourceLogConfiguration:
+                      $ref: "#/components/schemas/ResourceLogConfiguration"
+                      description: Resource log configuration of a Microsoft.SignalRService resource.
+                    cors:
+                      $ref: "#/components/schemas/SignalRCorsSettings"
+                      description: Cross-Origin Resource Sharing (CORS) settings.
+                    serverless:
+                      $ref: "#/components/schemas/ServerlessSettings"
+                      description: Serverless settings.
+                    upstream:
+                      $ref: "#/components/schemas/ServerlessUpstreamSettings"
+                      description: The settings for the Upstream when the service is in server-less mode.
+                    networkACLs:
+                      $ref: "#/components/schemas/SignalRNetworkACLs"
+                      description: Network ACLs for the resource.
+                    publicNetworkAccess:
+                      type: string
+                      description: Enable or disable public network access. Default to "Enabled". When it's Enabled, network ACLs still apply. When it's Disabled, public network access is always disabled no matter what you set in network ACLs.
+                    disableLocalAuth:
+                      type: boolean
+                      description: DisableLocalAuth Enable or disable local auth with AccessKey When set as true, connection with AccessKey=xxx won't work.
+                    disableAadAuth:
+                      type: boolean
+                      description: DisableLocalAuth Enable or disable aad auth When set as true, connection with AuthType=aad won't work.
+                    regionEndpointEnabled:
+                      type: string
+                      description: Enable or disable the regional endpoint. Default to "Enabled". When it's Disabled, new connections will not be routed to this endpoint, however existing connections will not be affected. This property is replica specific. Disable the regional endpoint without replica is not allowed.
+                    resourceStopped:
+                      type: string
+                      description: Stop or start the resource. Default to "False". When it's true, the data plane of the resource is shutdown. When it's false, the data plane of the resource is started.
+              required:
+                - location
+      responses:
+        "200":
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SignalRResource"
+    delete:
+      operationId: SignalR_begin_delete
+      description: Operation to delete a resource.
+      parameters:
+        - name: resource_group_name
+          in: path
+          required: true
+          schema:
+            type: string
+          description: The name of the resource group. The name is case insensitive. Required.
+        - name: resource_name
+          in: path
+          required: true
+          schema:
+            type: string
+          description: The name of the resource. Required.
+        - name: subscription_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "204":
+          description: Success (no content / accepted)
+    patch:
+      operationId: SignalR_begin_update
+      description: Operation to update an exiting resource.
+      parameters:
+        - name: resource_group_name
+          in: path
+          required: true
+          schema:
+            type: string
+          description: The name of the resource group. The name is case insensitive. Required.
+        - name: resource_name
+          in: path
+          required: true
+          schema:
+            type: string
+          description: The name of the resource. Required.
+        - name: subscription_id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                tags:
+                  type: object
+                  properties: {}
+                  description: Resource tags.
+                location:
+                  type: string
+                  description: The geo-location where the resource lives. Required.
+                sku:
+                  $ref: "#/components/schemas/ResourceSku"
+                  description: The billing information of the resource.
+                kind:
+                  type: string
+                  description: 'The kind of the service. Known values are: "SignalR" and "RawWebSockets".'
+                identity:
+                  $ref: "#/components/schemas/ManagedIdentity"
+                  description: A class represent managed identities used for request and response.
+                properties:
+                  type: object
+                  properties:
+                    tls:
+                      $ref: "#/components/schemas/SignalRTlsSettings"
+                      description: TLS settings for the resource.
+                    features:
+                      type: array
+                      items:
+                        $ref: "#/components/schemas/SignalRFeature"
+                      description: List of the featureFlags. FeatureFlags that are not included in the parameters for the update operation will not be modified. And the response will only include featureFlags that are explicitly set. When a featureFlag is not explicitly set, its globally default value will be used But keep in mind, the default value doesn't mean "false". It varies in terms of different FeatureFlags.
+                    liveTraceConfiguration:
+                      $ref: "#/components/schemas/LiveTraceConfiguration"
+                      description: Live trace configuration of a Microsoft.SignalRService resource.
+                    resourceLogConfiguration:
+                      $ref: "#/components/schemas/ResourceLogConfiguration"
+                      description: Resource log configuration of a Microsoft.SignalRService resource.
+                    cors:
+                      $ref: "#/components/schemas/SignalRCorsSettings"
+                      description: Cross-Origin Resource Sharing (CORS) settings.
+                    serverless:
+                      $ref: "#/components/schemas/ServerlessSettings"
+                      description: Serverless settings.
+                    upstream:
+                      $ref: "#/components/schemas/ServerlessUpstreamSettings"
+                      description: The settings for the Upstream when the service is in server-less mode.
+                    networkACLs:
+                      $ref: "#/components/schemas/SignalRNetworkACLs"
+                      description: Network ACLs for the resource.
+                    publicNetworkAccess:
+                      type: string
+                      description: Enable or disable public network access. Default to "Enabled". When it's Enabled, network ACLs still apply. When it's Disabled, public network access is always disabled no matter what you set in network ACLs.
+                    disableLocalAuth:
+                      type: boolean
+                      description: DisableLocalAuth Enable or disable local auth with AccessKey When set as true, connection with AccessKey=xxx won't work.
+                    disableAadAuth:
+                      type: boolean
+                      description: DisableLocalAuth Enable or disable aad auth When set as true, connection with AuthType=aad won't work.
+                    regionEndpointEnabled:
+                      type: string
+                      description: Enable or disable the regional endpoint. Default to "Enabled". When it's Disabled, new connections will not be routed to this endpoint, however existing connections will not be affected. This property is replica specific. Disable the regional endpoint without replica is not allowed.
+                    resourceStopped:
+                      type: string
+                      description: Stop or start the resource. Default to "False". When it's true, the data plane of the resource is shutdown. When it's false, the data plane of the resource is started.
+              required:
+                - location
+      responses:
+        "200":
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SignalRResource"
+  /subscriptions/{subscription_id}/providers/Microsoft.SignalRService/signalR?api-version=2023-08-01-preview:
+    get:
+      operationId: SignalR_list_by_subscription
+      description: Handles requests to list all resources in a subscription.
+      parameters:
+        - name: subscription_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PagedSignalRResourceFlattened"
+  /subscriptions/{subscription_id}/resourceGroups/{resource_group_name}/providers/Microsoft.SignalRService/signalR?api-version=2023-08-01-preview:
+    get:
+      operationId: SignalR_list_by_resource_group
+      description: Handles requests to list all resources in a resource group.
+      parameters:
+        - name: resource_group_name
+          in: path
+          required: true
+          schema:
+            type: string
+          description: The name of the resource group. The name is case insensitive. Required.
+        - name: subscription_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PagedSignalRResourceFlattened"
+  /subscriptions/{subscription_id}/resourceGroups/{resource_group_name}/providers/Microsoft.SignalRService/signalR/{resource_name}/listKeys?api-version=2023-08-01-preview:
+    post:
+      operationId: SignalR_list_keys
+      description: Get the access keys of the resource.
+      parameters:
+        - name: resource_group_name
+          in: path
+          required: true
+          schema:
+            type: string
+          description: The name of the resource group. The name is case insensitive. Required.
+        - name: resource_name
+          in: path
+          required: true
+          schema:
+            type: string
+          description: The name of the resource. Required.
+        - name: subscription_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SignalRKeys"
+  /subscriptions/{subscription_id}/resourceGroups/{resource_group_name}/providers/Microsoft.SignalRService/signalR/{resource_name}/replicas/{replica_name}/skus?api-version=2023-08-01-preview:
+    get:
+      operationId: SignalR_list_replica_skus
+      description: List all available skus of the replica resource.
+      parameters:
+        - name: resource_group_name
+          in: path
+          required: true
+          schema:
+            type: string
+          description: The name of the resource group. The name is case insensitive. Required.
+        - name: resource_name
+          in: path
+          required: true
+          schema:
+            type: string
+          description: The name of the resource. Required.
+        - name: replica_name
+          in: path
+          required: true
+          schema:
+            type: string
+          description: The name of the replica. Required.
+        - name: subscription_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SkuList"
+  /subscriptions/{subscription_id}/resourceGroups/{resource_group_name}/providers/Microsoft.SignalRService/signalR/{resource_name}/skus?api-version=2023-08-01-preview:
+    get:
+      operationId: SignalR_list_skus
+      description: List all available skus of the resource.
+      parameters:
+        - name: resource_group_name
+          in: path
+          required: true
+          schema:
+            type: string
+          description: The name of the resource group. The name is case insensitive. Required.
+        - name: resource_name
+          in: path
+          required: true
+          schema:
+            type: string
+          description: The name of the resource. Required.
+        - name: subscription_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SkuList"
+  /subscriptions/{subscription_id}/providers/Microsoft.SignalRService/locations/{location}/checkNameAvailability?api-version=2023-08-01-preview:
+    post:
+      operationId: SignalR_check_name_availability
+      description: Checks that the resource name is valid and is not already in use.
+      parameters:
+        - name: location
+          in: path
+          required: true
+          schema:
+            type: string
+          description: the region. Required.
+        - name: subscription_id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                type:
+                  type: string
+                  description: The resource type. Can be "Microsoft.SignalRService/SignalR", "Microsoft.SignalRService/WebPubSub", "Microsoft.SignalRService/SignalR/replicas" or "Microsoft.SignalRService/WebPubSub/replicas". Required.
+                name:
+                  type: string
+                  description: The resource name to validate. e.g."my-resource-name". Required.
+              required:
+                - type
+                - name
+      responses:
+        "200":
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/NameAvailability"
+  /subscriptions/{subscription_id}/resourceGroups/{resource_group_name}/providers/Microsoft.SignalRService/signalR/{resource_name}/regenerateKey?api-version=2023-08-01-preview:
+    post:
+      operationId: SignalR_begin_regenerate_key
+      description: Regenerate the access key for the resource. PrimaryKey and SecondaryKey cannot be regenerated at the same time.
+      parameters:
+        - name: resource_group_name
+          in: path
+          required: true
+          schema:
+            type: string
+          description: The name of the resource group. The name is case insensitive. Required.
+        - name: resource_name
+          in: path
+          required: true
+          schema:
+            type: string
+          description: The name of the resource. Required.
+        - name: subscription_id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                keyType:
+                  type: string
+                  description: 'The type of access key. Known values are: "Primary", "Secondary", and "Salt".'
+      responses:
+        "200":
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SignalRKeys"
+  /subscriptions/{subscription_id}/resourceGroups/{resource_group_name}/providers/Microsoft.SignalRService/signalR/{resource_name}/restart?api-version=2023-08-01-preview:
+    post:
+      operationId: SignalR_begin_restart
+      description: Operation to restart a resource.
+      parameters:
+        - name: resource_group_name
+          in: path
+          required: true
+          schema:
+            type: string
+          description: The name of the resource group. The name is case insensitive. Required.
+        - name: resource_name
+          in: path
+          required: true
+          schema:
+            type: string
+          description: The name of the resource. Required.
+        - name: subscription_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "204":
+          description: Success (no content / accepted)
+  /subscriptions/{subscription_id}/resourceGroups/{resource_group_name}/providers/Microsoft.SignalRService/signalR/{resource_name}/privateEndpointConnections/{private_endpoint_connection_name}?api-version=2023-08-01-preview:
+    get:
+      operationId: SignalRPrivateEndpointConnections_get
+      description: Get the specified private endpoint connection.
+      parameters:
+        - name: private_endpoint_connection_name
+          in: path
+          required: true
+          schema:
+            type: string
+          description: The name of the private endpoint connection associated with the Azure resource. Required.
+        - name: resource_group_name
+          in: path
+          required: true
+          schema:
+            type: string
+          description: The name of the resource group. The name is case insensitive. Required.
+        - name: resource_name
+          in: path
+          required: true
+          schema:
+            type: string
+          description: The name of the resource. Required.
+        - name: subscription_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PrivateEndpointConnectionFlattened"
+    put:
+      operationId: SignalRPrivateEndpointConnections_update
+      description: Update the state of specified private endpoint connection.
+      parameters:
+        - name: private_endpoint_connection_name
+          in: path
+          required: true
+          schema:
+            type: string
+          description: The name of the private endpoint connection associated with the Azure resource. Required.
+        - name: resource_group_name
+          in: path
+          required: true
+          schema:
+            type: string
+          description: The name of the resource group. The name is case insensitive. Required.
+        - name: resource_name
+          in: path
+          required: true
+          schema:
+            type: string
+          description: The name of the resource. Required.
+        - name: subscription_id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                properties:
+                  type: object
+                  properties:
+                    privateEndpoint:
+                      $ref: "#/components/schemas/PrivateEndpoint"
+                      description: Private endpoint.
+                    privateLinkServiceConnectionState:
+                      $ref: "#/components/schemas/PrivateLinkServiceConnectionState"
+                      description: Connection state of the private endpoint connection.
+      responses:
+        "200":
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PrivateEndpointConnection"
+    delete:
+      operationId: SignalRPrivateEndpointConnections_begin_delete
+      description: Delete the specified private endpoint connection.
+      parameters:
+        - name: private_endpoint_connection_name
+          in: path
+          required: true
+          schema:
+            type: string
+          description: The name of the private endpoint connection associated with the Azure resource. Required.
+        - name: resource_group_name
+          in: path
+          required: true
+          schema:
+            type: string
+          description: The name of the resource group. The name is case insensitive. Required.
+        - name: resource_name
+          in: path
+          required: true
+          schema:
+            type: string
+          description: The name of the resource. Required.
+        - name: subscription_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "204":
+          description: Success (no content / accepted)
+  /subscriptions/{subscription_id}/resourceGroups/{resource_group_name}/providers/Microsoft.SignalRService/signalR/{resource_name}/privateEndpointConnections?api-version=2023-08-01-preview:
+    get:
+      operationId: SignalRPrivateEndpointConnections_list
+      description: List private endpoint connections.
+      parameters:
+        - name: resource_group_name
+          in: path
+          required: true
+          schema:
+            type: string
+          description: The name of the resource group. The name is case insensitive. Required.
+        - name: resource_name
+          in: path
+          required: true
+          schema:
+            type: string
+          description: The name of the resource. Required.
+        - name: subscription_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PagedPrivateEndpointConnectionFlattened"
+  /subscriptions/{subscription_id}/resourceGroups/{resource_group_name}/providers/Microsoft.SignalRService/signalR/{resource_name}/privateLinkResources?api-version=2023-08-01-preview:
+    get:
+      operationId: SignalRPrivateLinkResources_list
+      description: Get the private link resources that need to be created for a resource.
+      parameters:
+        - name: resource_group_name
+          in: path
+          required: true
+          schema:
+            type: string
+          description: The name of the resource group. The name is case insensitive. Required.
+        - name: resource_name
+          in: path
+          required: true
+          schema:
+            type: string
+          description: The name of the resource. Required.
+        - name: subscription_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PagedPrivateLinkResourceFlattened"
+  /subscriptions/{subscription_id}/resourceGroups/{resource_group_name}/providers/Microsoft.SignalRService/signalR/{resource_name}/replicas/{replica_name}?api-version=2023-08-01-preview:
+    get:
+      operationId: SignalRReplicas_get
+      description: Get the replica and its properties.
+      parameters:
+        - name: resource_group_name
+          in: path
+          required: true
+          schema:
+            type: string
+          description: The name of the resource group. The name is case insensitive. Required.
+        - name: resource_name
+          in: path
+          required: true
+          schema:
+            type: string
+          description: The name of the resource. Required.
+        - name: replica_name
+          in: path
+          required: true
+          schema:
+            type: string
+          description: The name of the replica. Required.
+        - name: subscription_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ReplicaFlattened"
+    put:
+      operationId: SignalRReplicas_begin_create_or_update
+      description: Create or update a replica.
+      parameters:
+        - name: resource_group_name
+          in: path
+          required: true
+          schema:
+            type: string
+          description: The name of the resource group. The name is case insensitive. Required.
+        - name: resource_name
+          in: path
+          required: true
+          schema:
+            type: string
+          description: The name of the resource. Required.
+        - name: replica_name
+          in: path
+          required: true
+          schema:
+            type: string
+          description: The name of the replica. Required.
+        - name: subscription_id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                tags:
+                  type: object
+                  properties: {}
+                  description: Resource tags.
+                location:
+                  type: string
+                  description: The geo-location where the resource lives. Required.
+                sku:
+                  $ref: "#/components/schemas/ResourceSku"
+                  description: The billing information of the resource.
+                properties:
+                  type: object
+                  properties:
+                    regionEndpointEnabled:
+                      type: string
+                      description: Enable or disable the regional endpoint. Default to "Enabled". When it's Disabled, new connections will not be routed to this endpoint, however existing connections will not be affected.
+                    resourceStopped:
+                      type: string
+                      description: Stop or start the resource. Default to "false". When it's true, the data plane of the resource is shutdown. When it's false, the data plane of the resource is started.
+              required:
+                - location
+      responses:
+        "200":
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Replica"
+    delete:
+      operationId: SignalRReplicas_delete
+      description: Operation to delete a replica.
+      parameters:
+        - name: resource_group_name
+          in: path
+          required: true
+          schema:
+            type: string
+          description: The name of the resource group. The name is case insensitive. Required.
+        - name: resource_name
+          in: path
+          required: true
+          schema:
+            type: string
+          description: The name of the resource. Required.
+        - name: replica_name
+          in: path
+          required: true
+          schema:
+            type: string
+          description: The name of the replica. Required.
+        - name: subscription_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "204":
+          description: Success (no content / accepted)
+    patch:
+      operationId: SignalRReplicas_begin_update
+      description: Operation to update an exiting replica.
+      parameters:
+        - name: resource_group_name
+          in: path
+          required: true
+          schema:
+            type: string
+          description: The name of the resource group. The name is case insensitive. Required.
+        - name: resource_name
+          in: path
+          required: true
+          schema:
+            type: string
+          description: The name of the resource. Required.
+        - name: replica_name
+          in: path
+          required: true
+          schema:
+            type: string
+          description: The name of the replica. Required.
+        - name: subscription_id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                tags:
+                  type: object
+                  properties: {}
+                  description: Resource tags.
+                location:
+                  type: string
+                  description: The geo-location where the resource lives. Required.
+                sku:
+                  $ref: "#/components/schemas/ResourceSku"
+                  description: The billing information of the resource.
+                properties:
+                  type: object
+                  properties:
+                    regionEndpointEnabled:
+                      type: string
+                      description: Enable or disable the regional endpoint. Default to "Enabled". When it's Disabled, new connections will not be routed to this endpoint, however existing connections will not be affected.
+                    resourceStopped:
+                      type: string
+                      description: Stop or start the resource. Default to "false". When it's true, the data plane of the resource is shutdown. When it's false, the data plane of the resource is started.
+              required:
+                - location
+      responses:
+        "200":
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Replica"
+  /subscriptions/{subscription_id}/resourceGroups/{resource_group_name}/providers/Microsoft.SignalRService/signalR/{resource_name}/replicas?api-version=2023-08-01-preview:
+    get:
+      operationId: SignalRReplicas_list
+      description: List all replicas belong to this resource.
+      parameters:
+        - name: resource_group_name
+          in: path
+          required: true
+          schema:
+            type: string
+          description: The name of the resource group. The name is case insensitive. Required.
+        - name: resource_name
+          in: path
+          required: true
+          schema:
+            type: string
+          description: The name of the resource. Required.
+        - name: subscription_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PagedReplicaFlattened"
+  /subscriptions/{subscription_id}/resourceGroups/{resource_group_name}/providers/Microsoft.SignalRService/signalR/{resource_name}/replicas/{replica_name}/restart?api-version=2023-08-01-preview:
+    post:
+      operationId: SignalRReplicas_begin_restart
+      description: Operation to restart a replica.
+      parameters:
+        - name: resource_group_name
+          in: path
+          required: true
+          schema:
+            type: string
+          description: The name of the resource group. The name is case insensitive. Required.
+        - name: resource_name
+          in: path
+          required: true
+          schema:
+            type: string
+          description: The name of the resource. Required.
+        - name: replica_name
+          in: path
+          required: true
+          schema:
+            type: string
+          description: The name of the replica. Required.
+        - name: subscription_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "204":
+          description: Success (no content / accepted)
+  /subscriptions/{subscription_id}/resourceGroups/{resource_group_name}/providers/Microsoft.SignalRService/signalR/{resource_name}/sharedPrivateLinkResources/{shared_private_link_resource_name}?api-version=2023-08-01-preview:
+    get:
+      operationId: SignalRSharedPrivateLinkResources_get
+      description: Get the specified shared private link resource.
+      parameters:
+        - name: shared_private_link_resource_name
+          in: path
+          required: true
+          schema:
+            type: string
+          description: The name of the shared private link resource. Required.
+        - name: resource_group_name
+          in: path
+          required: true
+          schema:
+            type: string
+          description: The name of the resource group. The name is case insensitive. Required.
+        - name: resource_name
+          in: path
+          required: true
+          schema:
+            type: string
+          description: The name of the resource. Required.
+        - name: subscription_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SharedPrivateLinkResourceFlattened"
+    put:
+      operationId: SignalRSharedPrivateLinkResources_begin_create_or_update
+      description: Create or update a shared private link resource.
+      parameters:
+        - name: shared_private_link_resource_name
+          in: path
+          required: true
+          schema:
+            type: string
+          description: The name of the shared private link resource. Required.
+        - name: resource_group_name
+          in: path
+          required: true
+          schema:
+            type: string
+          description: The name of the resource group. The name is case insensitive. Required.
+        - name: resource_name
+          in: path
+          required: true
+          schema:
+            type: string
+          description: The name of the resource. Required.
+        - name: subscription_id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                properties:
+                  type: object
+                  properties:
+                    groupId:
+                      type: string
+                      description: The group id from the provider of resource the shared private link resource is for.
+                    privateLinkResourceId:
+                      type: string
+                      description: The resource id of the resource the shared private link resource is for.
+                    requestMessage:
+                      type: string
+                      description: The request message for requesting approval of the shared private link resource.
+      responses:
+        "200":
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SharedPrivateLinkResource"
+    delete:
+      operationId: SignalRSharedPrivateLinkResources_begin_delete
+      description: Delete the specified shared private link resource.
+      parameters:
+        - name: shared_private_link_resource_name
+          in: path
+          required: true
+          schema:
+            type: string
+          description: The name of the shared private link resource. Required.
+        - name: resource_group_name
+          in: path
+          required: true
+          schema:
+            type: string
+          description: The name of the resource group. The name is case insensitive. Required.
+        - name: resource_name
+          in: path
+          required: true
+          schema:
+            type: string
+          description: The name of the resource. Required.
+        - name: subscription_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "204":
+          description: Success (no content / accepted)
+  /subscriptions/{subscription_id}/resourceGroups/{resource_group_name}/providers/Microsoft.SignalRService/signalR/{resource_name}/sharedPrivateLinkResources?api-version=2023-08-01-preview:
+    get:
+      operationId: SignalRSharedPrivateLinkResources_list
+      description: List shared private link resources.
+      parameters:
+        - name: resource_group_name
+          in: path
+          required: true
+          schema:
+            type: string
+          description: The name of the resource group. The name is case insensitive. Required.
+        - name: resource_name
+          in: path
+          required: true
+          schema:
+            type: string
+          description: The name of the resource. Required.
+        - name: subscription_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PagedSharedPrivateLinkResourceFlattened"
+  /subscriptions/{subscription_id}/providers/Microsoft.SignalRService/locations/{location}/usages?api-version=2023-08-01-preview:
+    get:
+      operationId: Usages_list
+      description: List resource usage quotas by location.
+      parameters:
+        - name: location
+          in: path
+          required: true
+          schema:
+            type: string
+          description: the location like "eastus". Required.
+        - name: subscription_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PagedSignalRUsage"

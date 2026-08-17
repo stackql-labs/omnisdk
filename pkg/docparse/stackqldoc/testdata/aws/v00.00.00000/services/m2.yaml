@@ -1,0 +1,3385 @@
+openapi: 3.0.0
+info:
+  version: "2021-04-28"
+  title: AWSMainframeModernization
+  description: AWSMainframeModernization
+  x-serviceName: m2
+  x-serviceAlias: m2
+  x-protocol: rest-json
+  x-apiVersion: "2021-04-28"
+  x-endpointPrefix: m2
+  x-jsonVersion: "1.1"
+servers:
+  - url: https://m2.{region}.amazonaws.com
+    variables:
+      region:
+        default: us-east-1
+        description: AWS region
+    description: Regional endpoint for m2
+paths:
+  /applications/{application_id}/batch-job-executions/{execution_id}/cancel:
+    post:
+      operationId: CancelBatchJobExecution
+      description: Cancels the running of a specific batch job execution.
+      parameters:
+        - name: application_id
+          in: path
+          required: true
+          schema:
+            $ref: "#/components/schemas/Identifier"
+          description: The unique identifier of the application.
+        - name: execution_id
+          in: path
+          required: true
+          schema:
+            $ref: "#/components/schemas/Identifier"
+          description: The unique identifier of the batch job execution.
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                authSecretsManagerArn:
+                  $ref: "#/components/schemas/AuthSecretsManagerArn"
+      responses:
+        "200":
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CancelBatchJobExecutionResponse"
+  /applications:
+    post:
+      operationId: CreateApplication
+      description: Creates a new application with given parameters. Requires an existing runtime environment and application definition file.
+      parameters: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                clientToken:
+                  $ref: "#/components/schemas/ClientToken"
+                definition:
+                  $ref: "#/components/schemas/Definition"
+                description:
+                  $ref: "#/components/schemas/EntityDescription"
+                engineType:
+                  $ref: "#/components/schemas/EngineType"
+                kmsKeyId:
+                  $ref: "#/components/schemas/String"
+                name:
+                  $ref: "#/components/schemas/EntityName"
+                roleArn:
+                  $ref: "#/components/schemas/Arn"
+                tags:
+                  $ref: "#/components/schemas/TagMap"
+              required:
+                - definition
+                - engineType
+                - name
+      responses:
+        "200":
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CreateApplicationResponse"
+    get:
+      operationId: ListApplications
+      description: Lists the applications associated with a specific Amazon Web Services account. You can provide the unique identifier of a specific runtime environment in a query parameter to see all applications associated with that environment.
+      parameters:
+        - name: environmentId
+          in: query
+          required: false
+          schema:
+            $ref: "#/components/schemas/Identifier"
+          description: The unique identifier of the runtime environment where the applications are deployed.
+        - name: maxResults
+          in: query
+          required: false
+          schema:
+            $ref: "#/components/schemas/MaxResults"
+          description: The maximum number of applications to return.
+        - name: names
+          in: query
+          required: false
+          schema:
+            $ref: "#/components/schemas/EntityNameList"
+          description: The names of the applications.
+        - name: nextToken
+          in: query
+          required: false
+          schema:
+            $ref: "#/components/schemas/NextToken"
+          description: A pagination token to control the number of applications displayed in the list.
+      responses:
+        "200":
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ListApplicationsResponse"
+  /applications/{application_id}/dataset-export-task:
+    post:
+      operationId: CreateDataSetExportTask
+      description: Starts a data set export task for a specific application.
+      parameters:
+        - name: application_id
+          in: path
+          required: true
+          schema:
+            $ref: "#/components/schemas/Identifier"
+          description: The unique identifier of the application for which you want to export data sets.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                clientToken:
+                  $ref: "#/components/schemas/ClientToken"
+                exportConfig:
+                  $ref: "#/components/schemas/DataSetExportConfig"
+                kmsKeyId:
+                  $ref: "#/components/schemas/KMSKeyId"
+              required:
+                - exportConfig
+      responses:
+        "200":
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CreateDataSetExportTaskResponse"
+  /applications/{application_id}/dataset-import-task:
+    post:
+      operationId: CreateDataSetImportTask
+      description: Starts a data set import task for a specific application.
+      parameters:
+        - name: application_id
+          in: path
+          required: true
+          schema:
+            $ref: "#/components/schemas/Identifier"
+          description: The unique identifier of the application for which you want to import data sets.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                clientToken:
+                  $ref: "#/components/schemas/ClientToken"
+                importConfig:
+                  $ref: "#/components/schemas/DataSetImportConfig"
+              required:
+                - importConfig
+      responses:
+        "200":
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CreateDataSetImportTaskResponse"
+  /applications/{application_id}/deployments:
+    post:
+      operationId: CreateDeployment
+      description: Creates and starts a deployment to deploy an application into a runtime environment.
+      parameters:
+        - name: application_id
+          in: path
+          required: true
+          schema:
+            $ref: "#/components/schemas/Identifier"
+          description: The application identifier.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                applicationVersion:
+                  $ref: "#/components/schemas/Version"
+                clientToken:
+                  $ref: "#/components/schemas/ClientToken"
+                environmentId:
+                  $ref: "#/components/schemas/Identifier"
+              required:
+                - applicationVersion
+                - environmentId
+      responses:
+        "200":
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CreateDeploymentResponse"
+    get:
+      operationId: ListDeployments
+      description: Returns a list of all deployments of a specific application. A deployment is a combination of a specific application and a specific version of that application. Each deployment is mapped to a particular application version.
+      parameters:
+        - name: application_id
+          in: path
+          required: true
+          schema:
+            $ref: "#/components/schemas/Identifier"
+          description: The application identifier.
+        - name: maxResults
+          in: query
+          required: false
+          schema:
+            $ref: "#/components/schemas/MaxResults"
+          description: The maximum number of objects to return.
+        - name: nextToken
+          in: query
+          required: false
+          schema:
+            $ref: "#/components/schemas/NextToken"
+          description: A pagination token returned from a previous call to this operation. This specifies the next item to return. To return to the beginning of the list, exclude this parameter.
+      responses:
+        "200":
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ListDeploymentsResponse"
+  /environments:
+    post:
+      operationId: CreateEnvironment
+      description: Creates a runtime environment for a given runtime engine.
+      parameters: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                clientToken:
+                  $ref: "#/components/schemas/ClientToken"
+                description:
+                  $ref: "#/components/schemas/EntityDescription"
+                engineType:
+                  $ref: "#/components/schemas/EngineType"
+                engineVersion:
+                  $ref: "#/components/schemas/EngineVersion"
+                highAvailabilityConfig:
+                  $ref: "#/components/schemas/HighAvailabilityConfig"
+                instanceType:
+                  $ref: "#/components/schemas/String20"
+                kmsKeyId:
+                  $ref: "#/components/schemas/String"
+                name:
+                  $ref: "#/components/schemas/EntityName"
+                networkType:
+                  $ref: "#/components/schemas/NetworkType"
+                preferredMaintenanceWindow:
+                  $ref: "#/components/schemas/String50"
+                publiclyAccessible:
+                  $ref: "#/components/schemas/Boolean"
+                securityGroupIds:
+                  $ref: "#/components/schemas/String50List"
+                storageConfigurations:
+                  $ref: "#/components/schemas/StorageConfigurationList"
+                subnetIds:
+                  $ref: "#/components/schemas/String50List"
+                tags:
+                  $ref: "#/components/schemas/TagMap"
+              required:
+                - engineType
+                - instanceType
+                - name
+      responses:
+        "200":
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CreateEnvironmentResponse"
+    get:
+      operationId: ListEnvironments
+      description: Lists the runtime environments.
+      parameters:
+        - name: engineType
+          in: query
+          required: false
+          schema:
+            $ref: "#/components/schemas/EngineType"
+          description: The engine type for the runtime environment.
+        - name: maxResults
+          in: query
+          required: false
+          schema:
+            $ref: "#/components/schemas/MaxResults"
+          description: The maximum number of runtime environments to return.
+        - name: names
+          in: query
+          required: false
+          schema:
+            $ref: "#/components/schemas/EntityNameList"
+          description: The names of the runtime environments. Must be unique within the account.
+        - name: nextToken
+          in: query
+          required: false
+          schema:
+            $ref: "#/components/schemas/NextToken"
+          description: A pagination token to control the number of runtime environments displayed in the list.
+      responses:
+        "200":
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ListEnvironmentsResponse"
+  /applications/{application_id}:
+    delete:
+      operationId: DeleteApplication
+      description: Deletes a specific application. You cannot delete a running application.
+      parameters:
+        - name: application_id
+          in: path
+          required: true
+          schema:
+            $ref: "#/components/schemas/Identifier"
+          description: The unique identifier of the application you want to delete.
+      responses:
+        "200":
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DeleteApplicationResponse"
+    get:
+      operationId: GetApplication
+      description: Describes the details of a specific application.
+      parameters:
+        - name: application_id
+          in: path
+          required: true
+          schema:
+            $ref: "#/components/schemas/Identifier"
+          description: The identifier of the application.
+      responses:
+        "200":
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/GetApplicationResponse"
+    patch:
+      operationId: UpdateApplication
+      description: Updates an application and creates a new version.
+      parameters:
+        - name: application_id
+          in: path
+          required: true
+          schema:
+            $ref: "#/components/schemas/Identifier"
+          description: The unique identifier of the application you want to update.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                currentApplicationVersion:
+                  $ref: "#/components/schemas/Version"
+                definition:
+                  $ref: "#/components/schemas/Definition"
+                description:
+                  $ref: "#/components/schemas/EntityDescription"
+              required:
+                - currentApplicationVersion
+      responses:
+        "200":
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UpdateApplicationResponse"
+  /applications/{application_id}/environment/{environment_id}:
+    delete:
+      operationId: DeleteApplicationFromEnvironment
+      description: Deletes a specific application from the specific runtime environment where it was previously deployed. You cannot delete a runtime environment using DeleteEnvironment if any application has ever been deployed to it. This API removes the association of the application with the runtime environment so you can delete the environment smoothly.
+      parameters:
+        - name: application_id
+          in: path
+          required: true
+          schema:
+            $ref: "#/components/schemas/Identifier"
+          description: The unique identifier of the application you want to delete.
+        - name: environment_id
+          in: path
+          required: true
+          schema:
+            $ref: "#/components/schemas/Identifier"
+          description: The unique identifier of the runtime environment where the application was previously deployed.
+      responses:
+        "200":
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DeleteApplicationFromEnvironmentResponse"
+  /environments/{environment_id}:
+    delete:
+      operationId: DeleteEnvironment
+      description: Deletes a specific runtime environment. The environment cannot contain deployed applications. If it does, you must delete those applications before you delete the environment.
+      parameters:
+        - name: environment_id
+          in: path
+          required: true
+          schema:
+            $ref: "#/components/schemas/Identifier"
+          description: The unique identifier of the runtime environment you want to delete.
+      responses:
+        "200":
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DeleteEnvironmentResponse"
+    get:
+      operationId: GetEnvironment
+      description: Describes a specific runtime environment.
+      parameters:
+        - name: environment_id
+          in: path
+          required: true
+          schema:
+            $ref: "#/components/schemas/Identifier"
+          description: The unique identifier of the runtime environment.
+      responses:
+        "200":
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/GetEnvironmentResponse"
+    patch:
+      operationId: UpdateEnvironment
+      description: Updates the configuration details for a specific runtime environment.
+      parameters:
+        - name: environment_id
+          in: path
+          required: true
+          schema:
+            $ref: "#/components/schemas/Identifier"
+          description: The unique identifier of the runtime environment that you want to update.
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                applyDuringMaintenanceWindow:
+                  $ref: "#/components/schemas/Boolean"
+                desiredCapacity:
+                  $ref: "#/components/schemas/CapacityValue"
+                engineVersion:
+                  $ref: "#/components/schemas/EngineVersion"
+                forceUpdate:
+                  $ref: "#/components/schemas/Boolean"
+                instanceType:
+                  $ref: "#/components/schemas/String20"
+                preferredMaintenanceWindow:
+                  $ref: "#/components/schemas/String"
+      responses:
+        "200":
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UpdateEnvironmentResponse"
+  /applications/{application_id}/versions/{application_version}:
+    get:
+      operationId: GetApplicationVersion
+      description: Returns details about a specific version of a specific application.
+      parameters:
+        - name: application_id
+          in: path
+          required: true
+          schema:
+            $ref: "#/components/schemas/Identifier"
+          description: The unique identifier of the application.
+        - name: application_version
+          in: path
+          required: true
+          schema:
+            $ref: "#/components/schemas/Version"
+          description: The specific version of the application.
+      responses:
+        "200":
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/GetApplicationVersionResponse"
+  /applications/{application_id}/batch-job-executions/{execution_id}:
+    get:
+      operationId: GetBatchJobExecution
+      description: Gets the details of a specific batch job execution for a specific application.
+      parameters:
+        - name: application_id
+          in: path
+          required: true
+          schema:
+            $ref: "#/components/schemas/Identifier"
+          description: The identifier of the application.
+        - name: execution_id
+          in: path
+          required: true
+          schema:
+            $ref: "#/components/schemas/Identifier"
+          description: The unique identifier of the batch job execution.
+      responses:
+        "200":
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/GetBatchJobExecutionResponse"
+  /applications/{application_id}/datasets/{data_set_name}:
+    get:
+      operationId: GetDataSetDetails
+      description: Gets the details of a specific data set.
+      parameters:
+        - name: application_id
+          in: path
+          required: true
+          schema:
+            $ref: "#/components/schemas/Identifier"
+          description: The unique identifier of the application that this data set is associated with.
+        - name: data_set_name
+          in: path
+          required: true
+          schema:
+            $ref: "#/components/schemas/String200"
+          description: The name of the data set.
+      responses:
+        "200":
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/GetDataSetDetailsResponse"
+  /applications/{application_id}/dataset-export-tasks/{task_id}:
+    get:
+      operationId: GetDataSetExportTask
+      description: Gets the status of a data set import task initiated with the CreateDataSetExportTask operation.
+      parameters:
+        - name: application_id
+          in: path
+          required: true
+          schema:
+            $ref: "#/components/schemas/Identifier"
+          description: The application identifier.
+        - name: task_id
+          in: path
+          required: true
+          schema:
+            $ref: "#/components/schemas/Identifier"
+          description: The task identifier returned by the CreateDataSetExportTask operation.
+      responses:
+        "200":
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/GetDataSetExportTaskResponse"
+  /applications/{application_id}/dataset-import-tasks/{task_id}:
+    get:
+      operationId: GetDataSetImportTask
+      description: Gets the status of a data set import task initiated with the CreateDataSetImportTask operation.
+      parameters:
+        - name: application_id
+          in: path
+          required: true
+          schema:
+            $ref: "#/components/schemas/Identifier"
+          description: The application identifier.
+        - name: task_id
+          in: path
+          required: true
+          schema:
+            $ref: "#/components/schemas/Identifier"
+          description: The task identifier returned by the CreateDataSetImportTask operation.
+      responses:
+        "200":
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/GetDataSetImportTaskResponse"
+  /applications/{application_id}/deployments/{deployment_id}:
+    get:
+      operationId: GetDeployment
+      description: Gets details of a specific deployment with a given deployment identifier.
+      parameters:
+        - name: application_id
+          in: path
+          required: true
+          schema:
+            $ref: "#/components/schemas/Identifier"
+          description: The unique identifier of the application.
+        - name: deployment_id
+          in: path
+          required: true
+          schema:
+            $ref: "#/components/schemas/Identifier"
+          description: The unique identifier for the deployment.
+      responses:
+        "200":
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/GetDeploymentResponse"
+  /signed-bi-url:
+    get:
+      operationId: GetSignedBluinsightsUrl
+      description: Gets a single sign-on URL that can be used to connect to AWS Blu Insights.
+      parameters: []
+      responses:
+        "200":
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/GetSignedBluinsightsUrlResponse"
+  /applications/{application_id}/versions:
+    get:
+      operationId: ListApplicationVersions
+      description: Returns a list of the application versions for a specific application.
+      parameters:
+        - name: application_id
+          in: path
+          required: true
+          schema:
+            $ref: "#/components/schemas/Identifier"
+          description: The unique identifier of the application.
+        - name: maxResults
+          in: query
+          required: false
+          schema:
+            $ref: "#/components/schemas/MaxResults"
+          description: The maximum number of application versions to return.
+        - name: nextToken
+          in: query
+          required: false
+          schema:
+            $ref: "#/components/schemas/NextToken"
+          description: A pagination token returned from a previous call to this operation. This specifies the next item to return. To return to the beginning of the list, exclude this parameter.
+      responses:
+        "200":
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ListApplicationVersionsResponse"
+  /applications/{application_id}/batch-job-definitions:
+    get:
+      operationId: ListBatchJobDefinitions
+      description: Lists all the available batch job definitions based on the batch job resources uploaded during the application creation. You can use the batch job definitions in the list to start a batch job.
+      parameters:
+        - name: application_id
+          in: path
+          required: true
+          schema:
+            $ref: "#/components/schemas/Identifier"
+          description: The identifier of the application.
+        - name: maxResults
+          in: query
+          required: false
+          schema:
+            $ref: "#/components/schemas/MaxResults"
+          description: The maximum number of batch job definitions to return.
+        - name: nextToken
+          in: query
+          required: false
+          schema:
+            $ref: "#/components/schemas/NextToken"
+          description: A pagination token returned from a previous call to this operation. This specifies the next item to return. To return to the beginning of the list, exclude this parameter.
+        - name: prefix
+          in: query
+          required: false
+          schema:
+            $ref: "#/components/schemas/String"
+          description: If the batch job definition is a FileBatchJobDefinition, the prefix allows you to search on the file names of FileBatchJobDefinitions.
+      responses:
+        "200":
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ListBatchJobDefinitionsResponse"
+  /applications/{application_id}/batch-job-executions:
+    get:
+      operationId: ListBatchJobExecutions
+      description: Lists historical, current, and scheduled batch job executions for a specific application.
+      parameters:
+        - name: application_id
+          in: path
+          required: true
+          schema:
+            $ref: "#/components/schemas/Identifier"
+          description: The unique identifier of the application.
+        - name: executionIds
+          in: query
+          required: false
+          schema:
+            $ref: "#/components/schemas/IdentifierList"
+          description: The unique identifier of each batch job execution.
+        - name: jobName
+          in: query
+          required: false
+          schema:
+            $ref: "#/components/schemas/String100"
+          description: The name of each batch job execution.
+        - name: maxResults
+          in: query
+          required: false
+          schema:
+            $ref: "#/components/schemas/MaxResults"
+          description: The maximum number of batch job executions to return.
+        - name: nextToken
+          in: query
+          required: false
+          schema:
+            $ref: "#/components/schemas/NextToken"
+          description: A pagination token to control the number of batch job executions displayed in the list.
+        - name: startedAfter
+          in: query
+          required: false
+          schema:
+            $ref: "#/components/schemas/Timestamp"
+          description: The time after which the batch job executions started.
+        - name: startedBefore
+          in: query
+          required: false
+          schema:
+            $ref: "#/components/schemas/Timestamp"
+          description: The time before the batch job executions started.
+        - name: status
+          in: query
+          required: false
+          schema:
+            $ref: "#/components/schemas/BatchJobExecutionStatus"
+          description: The status of the batch job executions.
+      responses:
+        "200":
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ListBatchJobExecutionsResponse"
+  /applications/{application_id}/batch-job-executions/{execution_id}/steps:
+    get:
+      operationId: ListBatchJobRestartPoints
+      description: Lists all the job steps for a JCL file to restart a batch job. This is only applicable for Micro Focus engine with versions 8.0.6 and above.
+      parameters:
+        - name: application_id
+          in: path
+          required: true
+          schema:
+            $ref: "#/components/schemas/Identifier"
+          description: The unique identifier of the application.
+        - name: authSecretsManagerArn
+          in: query
+          required: false
+          schema:
+            $ref: "#/components/schemas/AuthSecretsManagerArn"
+          description: The Amazon Web Services Secrets Manager containing user's credentials for authentication and authorization for List Batch Job Restart Points operation.
+        - name: execution_id
+          in: path
+          required: true
+          schema:
+            $ref: "#/components/schemas/Identifier"
+          description: The unique identifier of the batch job execution.
+      responses:
+        "200":
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ListBatchJobRestartPointsResponse"
+  /applications/{application_id}/dataset-export-tasks:
+    get:
+      operationId: ListDataSetExportHistory
+      description: Lists the data set exports for the specified application.
+      parameters:
+        - name: application_id
+          in: path
+          required: true
+          schema:
+            $ref: "#/components/schemas/Identifier"
+          description: The unique identifier of the application.
+        - name: maxResults
+          in: query
+          required: false
+          schema:
+            $ref: "#/components/schemas/MaxResults"
+          description: The maximum number of objects to return.
+        - name: nextToken
+          in: query
+          required: false
+          schema:
+            $ref: "#/components/schemas/NextToken"
+          description: A pagination token returned from a previous call to this operation. This specifies the next item to return. To return to the beginning of the list, exclude this parameter.
+      responses:
+        "200":
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ListDataSetExportHistoryResponse"
+  /applications/{application_id}/dataset-import-tasks:
+    get:
+      operationId: ListDataSetImportHistory
+      description: Lists the data set imports for the specified application.
+      parameters:
+        - name: application_id
+          in: path
+          required: true
+          schema:
+            $ref: "#/components/schemas/Identifier"
+          description: The unique identifier of the application.
+        - name: maxResults
+          in: query
+          required: false
+          schema:
+            $ref: "#/components/schemas/MaxResults"
+          description: The maximum number of objects to return.
+        - name: nextToken
+          in: query
+          required: false
+          schema:
+            $ref: "#/components/schemas/NextToken"
+          description: A pagination token returned from a previous call to this operation. This specifies the next item to return. To return to the beginning of the list, exclude this parameter.
+      responses:
+        "200":
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ListDataSetImportHistoryResponse"
+  /applications/{application_id}/datasets:
+    get:
+      operationId: ListDataSets
+      description: Lists the data sets imported for a specific application. In Amazon Web Services Mainframe Modernization, data sets are associated with applications deployed on runtime environments. This is known as importing data sets. Currently, Amazon Web Services Mainframe Modernization can import data sets into catalogs using CreateDataSetImportTask.
+      parameters:
+        - name: application_id
+          in: path
+          required: true
+          schema:
+            $ref: "#/components/schemas/Identifier"
+          description: The unique identifier of the application for which you want to list the associated data sets.
+        - name: maxResults
+          in: query
+          required: false
+          schema:
+            $ref: "#/components/schemas/MaxResults"
+          description: The maximum number of objects to return.
+        - name: nameFilter
+          in: query
+          required: false
+          schema:
+            $ref: "#/components/schemas/String200"
+          description: Filter dataset name matching the specified pattern. Can use * and % as wild cards.
+        - name: nextToken
+          in: query
+          required: false
+          schema:
+            $ref: "#/components/schemas/NextToken"
+          description: A pagination token returned from a previous call to this operation. This specifies the next item to return. To return to the beginning of the list, exclude this parameter.
+        - name: prefix
+          in: query
+          required: false
+          schema:
+            $ref: "#/components/schemas/String200"
+          description: The prefix of the data set name, which you can use to filter the list of data sets.
+      responses:
+        "200":
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ListDataSetsResponse"
+  /engine-versions:
+    get:
+      operationId: ListEngineVersions
+      description: Lists the available engine versions.
+      parameters:
+        - name: engineType
+          in: query
+          required: false
+          schema:
+            $ref: "#/components/schemas/EngineType"
+          description: The type of target platform.
+        - name: maxResults
+          in: query
+          required: false
+          schema:
+            $ref: "#/components/schemas/MaxResults"
+          description: The maximum number of objects to return.
+        - name: nextToken
+          in: query
+          required: false
+          schema:
+            $ref: "#/components/schemas/NextToken"
+          description: A pagination token returned from a previous call to this operation. This specifies the next item to return. To return to the beginning of the list, exclude this parameter.
+      responses:
+        "200":
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ListEngineVersionsResponse"
+  /tags/{resource_arn}:
+    get:
+      operationId: ListTagsForResource
+      description: Lists the tags for the specified resource.
+      parameters:
+        - name: resource_arn
+          in: path
+          required: true
+          schema:
+            $ref: "#/components/schemas/Arn"
+          description: The Amazon Resource Name (ARN) of the resource.
+      responses:
+        "200":
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ListTagsForResourceResponse"
+    post:
+      operationId: TagResource
+      description: Adds one or more tags to the specified resource.
+      parameters:
+        - name: resource_arn
+          in: path
+          required: true
+          schema:
+            $ref: "#/components/schemas/Arn"
+          description: The Amazon Resource Name (ARN) of the resource.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                tags:
+                  $ref: "#/components/schemas/TagMap"
+              required:
+                - tags
+      responses:
+        "200":
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TagResourceResponse"
+    delete:
+      operationId: UntagResource
+      description: Removes one or more tags from the specified resource.
+      parameters:
+        - name: resource_arn
+          in: path
+          required: true
+          schema:
+            $ref: "#/components/schemas/Arn"
+          description: The Amazon Resource Name (ARN) of the resource.
+        - name: tagKeys
+          in: query
+          required: true
+          schema:
+            $ref: "#/components/schemas/TagKeyList"
+          description: The keys of the tags to remove.
+      responses:
+        "200":
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UntagResourceResponse"
+  /applications/{application_id}/start:
+    post:
+      operationId: StartApplication
+      description: Starts an application that is currently stopped.
+      parameters:
+        - name: application_id
+          in: path
+          required: true
+          schema:
+            $ref: "#/components/schemas/Identifier"
+          description: The unique identifier of the application you want to start.
+      responses:
+        "200":
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StartApplicationResponse"
+  /applications/{application_id}/batch-job:
+    post:
+      operationId: StartBatchJob
+      description: Starts a batch job and returns the unique identifier of this execution of the batch job. The associated application must be running in order to start the batch job.
+      parameters:
+        - name: application_id
+          in: path
+          required: true
+          schema:
+            $ref: "#/components/schemas/Identifier"
+          description: The unique identifier of the application associated with this batch job.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                authSecretsManagerArn:
+                  $ref: "#/components/schemas/AuthSecretsManagerArn"
+                batchJobIdentifier:
+                  $ref: "#/components/schemas/BatchJobIdentifier"
+                jobParams:
+                  $ref: "#/components/schemas/BatchJobParametersMap"
+              required:
+                - batchJobIdentifier
+      responses:
+        "200":
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StartBatchJobResponse"
+  /applications/{application_id}/stop:
+    post:
+      operationId: StopApplication
+      description: Stops a running application.
+      parameters:
+        - name: application_id
+          in: path
+          required: true
+          schema:
+            $ref: "#/components/schemas/Identifier"
+          description: The unique identifier of the application you want to stop.
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                forceStop:
+                  $ref: "#/components/schemas/Boolean"
+      responses:
+        "200":
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StopApplicationResponse"
+components:
+  parameters:
+    X-Amz-Content-Sha256:
+      in: header
+      name: X-Amz-Content-Sha256
+      required: false
+      schema:
+        type: string
+    X-Amz-Date:
+      in: header
+      name: X-Amz-Date
+      required: false
+      schema:
+        type: string
+    X-Amz-Algorithm:
+      in: header
+      name: X-Amz-Algorithm
+      required: false
+      schema:
+        type: string
+    X-Amz-Credential:
+      in: header
+      name: X-Amz-Credential
+      required: false
+      schema:
+        type: string
+    X-Amz-Security-Token:
+      in: header
+      name: X-Amz-Security-Token
+      required: false
+      schema:
+        type: string
+    X-Amz-Signature:
+      in: header
+      name: X-Amz-Signature
+      required: false
+      schema:
+        type: string
+    X-Amz-SignedHeaders:
+      in: header
+      name: X-Amz-SignedHeaders
+      required: false
+      schema:
+        type: string
+  schemas:
+    Identifier:
+      type: string
+      pattern: ^\S{1,80}$
+    AuthSecretsManagerArn:
+      type: string
+      minLength: 20
+      maxLength: 2048
+    CancelBatchJobExecutionResponse:
+      type: object
+    ClientToken:
+      description: A client token is a unique, case-sensitive string of up to 128 ASCII characters with ASCII values of 33-126 inclusive. It is generated by the client to ensure idempotent operations, allowing safe retries without unintended side effects.
+      type: string
+      minLength: 0
+      maxLength: 128
+      pattern: ^[!-~]+$
+    Definition:
+      description: The application definition for a particular application.
+      type: object
+      properties:
+        content:
+          $ref: "#/components/schemas/StringFree65000"
+          description: The content of the application definition. This is a JSON object that contains the resource configuration/definitions that identify an application.
+        s3Location:
+          $ref: "#/components/schemas/String2000"
+          description: The S3 bucket that contains the application definition.
+    StringFree65000:
+      type: string
+      minLength: 1
+      maxLength: 65000
+    String2000:
+      type: string
+      pattern: ^\S{1,2000}$
+    EntityDescription:
+      type: string
+      minLength: 0
+      maxLength: 500
+    EngineType:
+      type: string
+      enum:
+        - microfocus
+        - bluage
+    String:
+      type: string
+    EntityName:
+      type: string
+      pattern: ^[A-Za-z0-9][A-Za-z0-9_\-]{1,59}$
+    Arn:
+      type: string
+      pattern: ^arn:(aws|aws-cn|aws-iso|aws-iso-[a-z]{1}|aws-us-gov):[A-Za-z0-9][A-Za-z0-9_/.-]{0,62}:([a-z]{2}-((iso[a-z]{0,1}-)|(gov-)){0,1}[a-z]+-[0-9]|):[0-9]{12}:[A-Za-z0-9/][A-Za-z0-9:_/+=,@.-]{0,1023}$
+    TagMap:
+      type: object
+      properties: {}
+    CreateApplicationResponse:
+      type: object
+      properties:
+        applicationArn:
+          $ref: "#/components/schemas/Arn"
+          description: The Amazon Resource Name (ARN) of the application.
+        applicationId:
+          $ref: "#/components/schemas/Identifier"
+          description: The unique application identifier.
+        applicationVersion:
+          $ref: "#/components/schemas/Version"
+          description: The version number of the application.
+      required:
+        - applicationArn
+        - applicationId
+        - applicationVersion
+    Version:
+      type: integer
+      minimum: 1
+    DataSetExportConfig:
+      description: Identifies one or more data sets you want to import with the CreateDataSetExportTask operation.
+      type: object
+      properties:
+        dataSets:
+          $ref: "#/components/schemas/DataSetExportList"
+          description: The data sets.
+        s3Location:
+          $ref: "#/components/schemas/String"
+          description: The Amazon S3 location of the data sets.
+    DataSetExportList:
+      type: array
+      items:
+        $ref: "#/components/schemas/DataSetExportItem"
+    DataSetExportItem:
+      description: Identifies a specific data set to export from an external location.
+      type: object
+      properties:
+        datasetName:
+          $ref: "#/components/schemas/String200"
+          description: The data set.
+        externalLocation:
+          $ref: "#/components/schemas/ExternalLocation"
+          description: The location of the data set.
+      required:
+        - datasetName
+        - externalLocation
+    String200:
+      type: string
+      pattern: ^\S{1,200}$
+    ExternalLocation:
+      description: Defines an external storage location.
+      type: object
+      properties:
+        s3Location:
+          $ref: "#/components/schemas/String2000"
+          description: The URI of the Amazon S3 bucket.
+    KMSKeyId:
+      type: string
+      minLength: 1
+      maxLength: 256
+      pattern: ^[a-zA-Z0-9:/_-]+$
+    CreateDataSetExportTaskResponse:
+      type: object
+      properties:
+        taskId:
+          $ref: "#/components/schemas/Identifier"
+          description: The task identifier. This operation is asynchronous. Use this identifier with the GetDataSetExportTask operation to obtain the status of this task.
+      required:
+        - taskId
+    DataSetImportConfig:
+      description: Identifies one or more data sets you want to import with the CreateDataSetImportTask operation.
+      type: object
+      properties:
+        dataSets:
+          $ref: "#/components/schemas/DataSetImportList"
+          description: The data sets.
+        s3Location:
+          $ref: "#/components/schemas/String2000"
+          description: The Amazon S3 location of the data sets.
+    DataSetImportList:
+      type: array
+      items:
+        $ref: "#/components/schemas/DataSetImportItem"
+    DataSetImportItem:
+      description: Identifies a specific data set to import from an external location.
+      type: object
+      properties:
+        dataSet:
+          $ref: "#/components/schemas/DataSet"
+          description: The data set.
+        externalLocation:
+          $ref: "#/components/schemas/ExternalLocation"
+          description: The location of the data set.
+      required:
+        - dataSet
+        - externalLocation
+    DataSet:
+      description: Defines a data set.
+      type: object
+      properties:
+        datasetName:
+          $ref: "#/components/schemas/String"
+          description: The logical identifier for a specific data set (in mainframe format).
+        datasetOrg:
+          $ref: "#/components/schemas/DatasetOrgAttributes"
+          description: The type of dataset. The only supported value is VSAM.
+        recordLength:
+          $ref: "#/components/schemas/RecordLength"
+          description: The length of a record.
+        relativePath:
+          $ref: "#/components/schemas/String"
+          description: The relative location of the data set in the database or file system.
+        storageType:
+          $ref: "#/components/schemas/String"
+          description: "The storage type of the data set: database or file system. For Micro Focus, database corresponds to datastore and file system corresponds to EFS/FSX. For Blu Age, there is no support of file system and database corresponds to Blusam."
+      required:
+        - datasetName
+        - datasetOrg
+        - recordLength
+    DatasetOrgAttributes:
+      description: Additional details about the data set. Different attributes correspond to different data set organizations. The values are populated based on datasetOrg, storageType and backend (Blu Age or Micro Focus).
+      type: object
+      properties:
+        gdg:
+          $ref: "#/components/schemas/GdgAttributes"
+          description: The generation data group of the data set.
+        po:
+          $ref: "#/components/schemas/PoAttributes"
+          description: The details of a PO type data set.
+        ps:
+          $ref: "#/components/schemas/PsAttributes"
+          description: The details of a PS type data set.
+        vsam:
+          $ref: "#/components/schemas/VsamAttributes"
+          description: The details of a VSAM data set.
+    GdgAttributes:
+      description: The required attributes for a generation data group data set. A generation data set is one of a collection of successive, historically related, catalogued data sets that together are known as a generation data group (GDG). Use this structure when you want to import a GDG. For more information on GDG, see Generation data sets.
+      type: object
+      properties:
+        limit:
+          $ref: "#/components/schemas/Integer"
+          description: The maximum number of generation data sets, up to 255, in a GDG.
+        rollDisposition:
+          $ref: "#/components/schemas/String"
+          description: The disposition of the data set in the catalog.
+    Integer:
+      type: integer
+    PoAttributes:
+      description: The supported properties for a PO type data set.
+      type: object
+      properties:
+        encoding:
+          $ref: "#/components/schemas/String"
+          description: The character set encoding of the data set.
+        format_:
+          $ref: "#/components/schemas/String"
+          description: The format of the data set records.
+        memberFileExtensions:
+          $ref: "#/components/schemas/String20List"
+          description: An array containing one or more filename extensions, allowing you to specify which files to be included as PDS member.
+      required:
+        - format_
+        - memberFileExtensions
+    String20List:
+      type: array
+      items:
+        $ref: "#/components/schemas/String20"
+    String20:
+      type: string
+      pattern: ^\S{1,20}$
+    PsAttributes:
+      description: The supported properties for a PS type data set.
+      type: object
+      properties:
+        encoding:
+          $ref: "#/components/schemas/String"
+          description: The character set encoding of the data set.
+        format_:
+          $ref: "#/components/schemas/String"
+          description: The format of the data set records.
+      required:
+        - format_
+    VsamAttributes:
+      description: The attributes of a VSAM type data set.
+      type: object
+      properties:
+        alternateKeys:
+          $ref: "#/components/schemas/AlternateKeyList"
+          description: The alternate key definitions, if any. A legacy dataset might not have any alternate key defined, but if those alternate keys definitions exist, provide them as some applications will make use of them.
+        compressed:
+          $ref: "#/components/schemas/Boolean"
+          description: Indicates whether indexes for this dataset are stored as compressed values. If you have a large data set (typically > 100 Mb), consider setting this flag to True.
+        encoding:
+          $ref: "#/components/schemas/String"
+          description: The character set used by the data set. Can be ASCII, EBCDIC, or unknown.
+        format_:
+          $ref: "#/components/schemas/String"
+          description: The record format of the data set.
+        primaryKey:
+          $ref: "#/components/schemas/PrimaryKey"
+          description: The primary key of the data set.
+      required:
+        - format_
+    AlternateKeyList:
+      type: array
+      items:
+        $ref: "#/components/schemas/AlternateKey"
+    AlternateKey:
+      description: Defines an alternate key. This value is optional. A legacy data set might not have any alternate key defined but if those alternate keys definitions exist, provide them, as some applications will make use of them.
+      type: object
+      properties:
+        allowDuplicates:
+          $ref: "#/components/schemas/Boolean"
+          description: Indicates whether the alternate key values are supposed to be unique for the given data set.
+        length:
+          $ref: "#/components/schemas/Integer"
+          description: A strictly positive integer value representing the length of the alternate key.
+        name:
+          $ref: "#/components/schemas/String"
+          description: The name of the alternate key.
+        offset:
+          $ref: "#/components/schemas/Integer"
+          description: A positive integer value representing the offset to mark the start of the alternate key part in the record byte array.
+      required:
+        - length
+        - offset
+    Boolean:
+      type: boolean
+    PrimaryKey:
+      description: The primary key for a KSDS data set.
+      type: object
+      properties:
+        length:
+          $ref: "#/components/schemas/Integer"
+          description: A strictly positive integer value representing the length of the primary key.
+        name:
+          $ref: "#/components/schemas/String"
+          description: A name for the Primary Key.
+        offset:
+          $ref: "#/components/schemas/Integer"
+          description: A positive integer value representing the offset to mark the start of the primary key in the record byte array.
+      required:
+        - length
+        - offset
+    RecordLength:
+      description: The length of the records in the data set.
+      type: object
+      properties:
+        max:
+          $ref: "#/components/schemas/Integer"
+          description: The maximum record length. In case of fixed, both minimum and maximum are the same.
+        min:
+          $ref: "#/components/schemas/Integer"
+          description: The minimum record length of a record.
+      required:
+        - max
+        - min
+    CreateDataSetImportTaskResponse:
+      type: object
+      properties:
+        taskId:
+          $ref: "#/components/schemas/Identifier"
+          description: The task identifier. This operation is asynchronous. Use this identifier with the GetDataSetImportTask operation to obtain the status of this task.
+      required:
+        - taskId
+    CreateDeploymentResponse:
+      type: object
+      properties:
+        deploymentId:
+          $ref: "#/components/schemas/Identifier"
+          description: The unique identifier of the deployment.
+      required:
+        - deploymentId
+    EngineVersion:
+      type: string
+      pattern: ^\S{1,10}$
+    HighAvailabilityConfig:
+      description: Defines the details of a high availability configuration.
+      type: object
+      properties:
+        desiredCapacity:
+          $ref: "#/components/schemas/CapacityValue"
+          description: The number of instances in a high availability configuration. The minimum possible value is 1 and the maximum is 100.
+      required:
+        - desiredCapacity
+    CapacityValue:
+      type: integer
+    NetworkType:
+      type: string
+      enum:
+        - ipv4
+        - dual
+    String50:
+      type: string
+      pattern: ^\S{1,50}$
+    String50List:
+      type: array
+      items:
+        $ref: "#/components/schemas/String50"
+    StorageConfigurationList:
+      type: array
+      items:
+        $ref: "#/components/schemas/StorageConfiguration"
+    StorageConfiguration:
+      description: Defines the storage configuration for a runtime environment.
+      type: object
+      properties:
+        efs:
+          $ref: "#/components/schemas/EfsStorageConfiguration"
+          description: Defines the storage configuration for an Amazon EFS file system.
+        fsx:
+          $ref: "#/components/schemas/FsxStorageConfiguration"
+          description: Defines the storage configuration for an Amazon FSx file system.
+    EfsStorageConfiguration:
+      description: Defines the storage configuration for an Amazon EFS file system.
+      type: object
+      properties:
+        fileSystemId:
+          $ref: "#/components/schemas/String200"
+          description: The file system identifier.
+        mountPoint:
+          $ref: "#/components/schemas/String200"
+          description: The mount point for the file system.
+      required:
+        - fileSystemId
+        - mountPoint
+    FsxStorageConfiguration:
+      description: Defines the storage configuration for an Amazon FSx file system.
+      type: object
+      properties:
+        fileSystemId:
+          $ref: "#/components/schemas/String200"
+          description: The file system identifier.
+        mountPoint:
+          $ref: "#/components/schemas/String200"
+          description: The mount point for the file system.
+      required:
+        - fileSystemId
+        - mountPoint
+    CreateEnvironmentResponse:
+      type: object
+      properties:
+        environmentId:
+          $ref: "#/components/schemas/Identifier"
+          description: The unique identifier of the runtime environment.
+      required:
+        - environmentId
+    DeleteApplicationResponse:
+      type: object
+    DeleteApplicationFromEnvironmentResponse:
+      type: object
+    DeleteEnvironmentResponse:
+      type: object
+    GetApplicationResponse:
+      type: object
+      properties:
+        applicationArn:
+          $ref: "#/components/schemas/Arn"
+          description: The Amazon Resource Name (ARN) of the application.
+        applicationId:
+          $ref: "#/components/schemas/Identifier"
+          description: The identifier of the application.
+        creationTime:
+          $ref: "#/components/schemas/Timestamp"
+          description: The timestamp when this application was created.
+        deployedVersion:
+          $ref: "#/components/schemas/DeployedVersionSummary"
+          description: The version of the application that is deployed.
+        description:
+          $ref: "#/components/schemas/EntityDescription"
+          description: The description of the application.
+        engineType:
+          $ref: "#/components/schemas/EngineType"
+          description: The type of the target platform for the application.
+        environmentId:
+          $ref: "#/components/schemas/Identifier"
+          description: The identifier of the runtime environment where you want to deploy the application.
+        kmsKeyId:
+          $ref: "#/components/schemas/String"
+          description: The identifier of a customer managed key.
+        lastStartTime:
+          $ref: "#/components/schemas/Timestamp"
+          description: The timestamp when you last started the application. Null until the application runs for the first time.
+        latestVersion:
+          $ref: "#/components/schemas/ApplicationVersionSummary"
+          description: The latest version of the application.
+        listenerArns:
+          $ref: "#/components/schemas/ArnList"
+          description: The Amazon Resource Name (ARN) for the network load balancer listener created in your Amazon Web Services account. Amazon Web Services Mainframe Modernization creates this listener for you the first time you deploy an application.
+        listenerPorts:
+          $ref: "#/components/schemas/PortList"
+          description: The port associated with the network load balancer listener created in your Amazon Web Services account.
+        loadBalancerDnsName:
+          $ref: "#/components/schemas/String100"
+          description: The public DNS name of the load balancer created in your Amazon Web Services account.
+        logGroups:
+          $ref: "#/components/schemas/LogGroupSummaries"
+          description: The list of log summaries. Each log summary includes the log type as well as the log group identifier. These are CloudWatch logs. Amazon Web Services Mainframe Modernization pushes the application log to CloudWatch under the customer's account.
+        name:
+          $ref: "#/components/schemas/EntityName"
+          description: The unique identifier of the application.
+        roleArn:
+          $ref: "#/components/schemas/Arn"
+          description: The Amazon Resource Name (ARN) of the role associated with the application.
+        status:
+          $ref: "#/components/schemas/ApplicationLifecycle"
+          description: The status of the application.
+        statusReason:
+          $ref: "#/components/schemas/String"
+          description: The reason for the reported status.
+        tags:
+          type: object
+          properties: {}
+          description: A list of tags associated with the application.
+        targetGroupArns:
+          $ref: "#/components/schemas/ArnList"
+          description: Returns the Amazon Resource Names (ARNs) of the target groups that are attached to the network load balancer.
+      required:
+        - applicationArn
+        - applicationId
+        - creationTime
+        - engineType
+        - latestVersion
+        - name
+        - status
+    Timestamp:
+      type: string
+      format: date-time
+    DeployedVersionSummary:
+      description: Contains a summary of a deployed application.
+      type: object
+      properties:
+        applicationVersion:
+          $ref: "#/components/schemas/Version"
+          description: The version of the deployed application.
+        status:
+          $ref: "#/components/schemas/DeploymentLifecycle"
+          description: The status of the deployment.
+        statusReason:
+          $ref: "#/components/schemas/String"
+          description: The reason for the reported status.
+      required:
+        - applicationVersion
+        - status
+    DeploymentLifecycle:
+      type: string
+      enum:
+        - Deploying
+        - Succeeded
+        - Failed
+        - Updating Deployment
+    ApplicationVersionSummary:
+      description: Defines an application version summary.
+      type: object
+      properties:
+        applicationVersion:
+          $ref: "#/components/schemas/Version"
+          description: The application version.
+        creationTime:
+          $ref: "#/components/schemas/Timestamp"
+          description: The timestamp when the application version was created.
+        status:
+          $ref: "#/components/schemas/ApplicationVersionLifecycle"
+          description: The status of the application.
+        statusReason:
+          $ref: "#/components/schemas/String"
+          description: The reason for the reported status.
+      required:
+        - applicationVersion
+        - creationTime
+        - status
+    ApplicationVersionLifecycle:
+      type: string
+      enum:
+        - Creating
+        - Available
+        - Failed
+    ArnList:
+      type: array
+      items:
+        $ref: "#/components/schemas/Arn"
+    PortList:
+      type: array
+      items:
+        $ref: "#/components/schemas/Integer"
+    String100:
+      type: string
+      pattern: ^\S{1,100}$
+    LogGroupSummaries:
+      type: array
+      items:
+        $ref: "#/components/schemas/LogGroupSummary"
+    LogGroupSummary:
+      description: A subset of the attributes that describe a log group. In CloudWatch a log group is a group of log streams that share the same retention, monitoring, and access control settings.
+      type: object
+      properties:
+        logGroupName:
+          $ref: "#/components/schemas/LogGroupIdentifier"
+          description: The name of the log group.
+        logType:
+          $ref: "#/components/schemas/String20"
+          description: The type of log.
+      required:
+        - logGroupName
+        - logType
+    LogGroupIdentifier:
+      type: string
+      minLength: 1
+      maxLength: 512
+    ApplicationLifecycle:
+      type: string
+      enum:
+        - Creating
+        - Created
+        - Available
+        - Ready
+        - Starting
+        - Running
+        - Stopping
+        - Stopped
+        - Failed
+        - Deleting
+        - Deleting From Environment
+    GetApplicationVersionResponse:
+      type: object
+      properties:
+        applicationVersion:
+          $ref: "#/components/schemas/Version"
+          description: The specific version of the application.
+        creationTime:
+          $ref: "#/components/schemas/Timestamp"
+          description: The timestamp when the application version was created.
+        definitionContent:
+          $ref: "#/components/schemas/StringFree65000"
+          description: The content of the application definition. This is a JSON object that contains the resource configuration and definitions that identify an application.
+        description:
+          $ref: "#/components/schemas/EntityDescription"
+          description: The application description.
+        name:
+          $ref: "#/components/schemas/EntityName"
+          description: The name of the application version.
+        status:
+          $ref: "#/components/schemas/ApplicationVersionLifecycle"
+          description: The status of the application version.
+        statusReason:
+          $ref: "#/components/schemas/String"
+          description: The reason for the reported status.
+      required:
+        - applicationVersion
+        - creationTime
+        - definitionContent
+        - name
+        - status
+    GetBatchJobExecutionResponse:
+      type: object
+      properties:
+        applicationId:
+          $ref: "#/components/schemas/Identifier"
+          description: The identifier of the application.
+        batchJobIdentifier:
+          $ref: "#/components/schemas/BatchJobIdentifier"
+          description: The unique identifier of this batch job.
+        endTime:
+          $ref: "#/components/schemas/Timestamp"
+          description: The timestamp when the batch job execution ended.
+        executionId:
+          $ref: "#/components/schemas/Identifier"
+          description: The unique identifier for this batch job execution.
+        jobId:
+          $ref: "#/components/schemas/String100"
+          description: The unique identifier for this batch job.
+        jobName:
+          $ref: "#/components/schemas/String100"
+          description: The name of this batch job.
+        jobStepRestartMarker:
+          $ref: "#/components/schemas/JobStepRestartMarker"
+          description: The step/procedure step information for the restart batch job operation.
+        jobType:
+          $ref: "#/components/schemas/BatchJobType"
+          description: The type of job.
+        jobUser:
+          $ref: "#/components/schemas/String100"
+          description: The user for the job.
+        returnCode:
+          $ref: "#/components/schemas/String"
+          description: The batch job return code from either the Blu Age or Micro Focus runtime engines. For more information, see Batch return codes in the IBM WebSphere Application Server documentation.
+        startTime:
+          $ref: "#/components/schemas/Timestamp"
+          description: The timestamp when the batch job execution started.
+        status:
+          $ref: "#/components/schemas/BatchJobExecutionStatus"
+          description: The status of the batch job execution.
+        statusReason:
+          $ref: "#/components/schemas/String"
+          description: The reason for the reported status.
+      required:
+        - applicationId
+        - executionId
+        - startTime
+        - status
+    BatchJobIdentifier:
+      description: Identifies a specific batch job.
+      type: object
+      properties:
+        fileBatchJobIdentifier:
+          $ref: "#/components/schemas/FileBatchJobIdentifier"
+          description: Specifies a file associated with a specific batch job.
+        restartBatchJobIdentifier:
+          $ref: "#/components/schemas/RestartBatchJobIdentifier"
+          description: Specifies the required information for restart, including executionId and JobStepRestartMarker.
+        s3BatchJobIdentifier:
+          $ref: "#/components/schemas/S3BatchJobIdentifier"
+          description: Specifies an Amazon S3 location that identifies the batch jobs that you want to run. Use this identifier to run ad hoc batch jobs.
+        scriptBatchJobIdentifier:
+          $ref: "#/components/schemas/ScriptBatchJobIdentifier"
+          description: A batch job identifier in which the batch job to run is identified by the script name.
+    FileBatchJobIdentifier:
+      description: A batch job identifier in which the batch job to run is identified by the file name and the relative path to the file name.
+      type: object
+      properties:
+        fileName:
+          $ref: "#/components/schemas/String"
+          description: The file name for the batch job identifier.
+        folderPath:
+          $ref: "#/components/schemas/String"
+          description: The relative path to the file name for the batch job identifier.
+      required:
+        - fileName
+    RestartBatchJobIdentifier:
+      description: An identifier for the StartBatchJob API to show that it is a restart operation.
+      type: object
+      properties:
+        executionId:
+          $ref: "#/components/schemas/Identifier"
+          description: The executionId from the StartBatchJob response when the job ran for the first time.
+        jobStepRestartMarker:
+          $ref: "#/components/schemas/JobStepRestartMarker"
+          description: The step/procedure step information for a restart batch job operation.
+      required:
+        - executionId
+        - jobStepRestartMarker
+    JobStepRestartMarker:
+      description: Provides step/procedure step information for a restart batch job operation.
+      type: object
+      properties:
+        fromProcStep:
+          $ref: "#/components/schemas/String"
+          description: The procedure step name that a batch job was restarted from.
+        fromStep:
+          $ref: "#/components/schemas/String"
+          description: The step name that a batch job was restarted from.
+        skip:
+          $ref: "#/components/schemas/Boolean"
+          description: The step-level checkpoint timestamp (creation or last modification) for an Amazon Web Services Blu Age application batch job.
+        stepCheckpoint:
+          $ref: "#/components/schemas/Integer"
+          description: Skip selected step and issue a restart from immediate successor step for an Amazon Web Services Blu Age application batch job.
+        toProcStep:
+          $ref: "#/components/schemas/String"
+          description: The procedure step name that a batch job was restarted to.
+        toStep:
+          $ref: "#/components/schemas/String"
+          description: The step name that a batch job was restarted to.
+      required:
+        - fromStep
+    S3BatchJobIdentifier:
+      description: A batch job identifier in which the batch jobs to run are identified by an Amazon S3 location.
+      type: object
+      properties:
+        bucket:
+          $ref: "#/components/schemas/String"
+          description: The Amazon S3 bucket that contains the batch job definitions.
+        identifier:
+          $ref: "#/components/schemas/JobIdentifier"
+          description: Identifies the batch job definition. This identifier can also point to any batch job definition that already exists in the application or to one of the batch job definitions within the directory that is specified in keyPrefix.
+        keyPrefix:
+          $ref: "#/components/schemas/String"
+          description: The key prefix that specifies the path to the folder in the S3 bucket that has the batch job definitions.
+      required:
+        - bucket
+        - identifier
+    JobIdentifier:
+      description: Identifies a specific batch job.
+      type: object
+      properties:
+        fileName:
+          $ref: "#/components/schemas/String"
+          description: The name of the file that contains the batch job definition.
+        scriptName:
+          $ref: "#/components/schemas/String"
+          description: The name of the script that contains the batch job definition.
+    ScriptBatchJobIdentifier:
+      description: A batch job identifier in which the batch job to run is identified by the script name.
+      type: object
+      properties:
+        scriptName:
+          $ref: "#/components/schemas/String"
+          description: The name of the script containing the batch job definition.
+      required:
+        - scriptName
+    BatchJobType:
+      type: string
+      enum:
+        - VSE
+        - JES2
+        - JES3
+    BatchJobExecutionStatus:
+      type: string
+      enum:
+        - Submitting
+        - Holding
+        - Dispatching
+        - Running
+        - Cancelling
+        - Cancelled
+        - Succeeded
+        - Failed
+        - Purged
+        - Succeeded With Warning
+    GetDataSetDetailsResponse:
+      type: object
+      properties:
+        blocksize:
+          $ref: "#/components/schemas/Integer"
+          description: The size of the block on disk.
+        creationTime:
+          $ref: "#/components/schemas/Timestamp"
+          description: The timestamp when the data set was created.
+        dataSetName:
+          $ref: "#/components/schemas/String200"
+          description: The name of the data set.
+        dataSetOrg:
+          $ref: "#/components/schemas/DatasetDetailOrgAttributes"
+          description: The type of data set. The only supported value is VSAM.
+        fileSize:
+          $ref: "#/components/schemas/Long"
+          description: File size of the dataset.
+        lastReferencedTime:
+          $ref: "#/components/schemas/Timestamp"
+          description: The last time the data set was referenced.
+        lastUpdatedTime:
+          $ref: "#/components/schemas/Timestamp"
+          description: The last time the data set was updated.
+        location:
+          $ref: "#/components/schemas/String2000"
+          description: The location where the data set is stored.
+        recordLength:
+          $ref: "#/components/schemas/Integer"
+          description: The length of records in the data set.
+      required:
+        - dataSetName
+    DatasetDetailOrgAttributes:
+      description: Additional details about the data set. Different attributes correspond to different data set organizations. The values are populated based on datasetOrg, storageType and backend (Blu Age or Micro Focus).
+      type: object
+      properties:
+        gdg:
+          $ref: "#/components/schemas/GdgDetailAttributes"
+          description: The generation data group of the data set.
+        po:
+          $ref: "#/components/schemas/PoDetailAttributes"
+          description: The details of a PO type data set.
+        ps:
+          $ref: "#/components/schemas/PsDetailAttributes"
+          description: The details of a PS type data set.
+        vsam:
+          $ref: "#/components/schemas/VsamDetailAttributes"
+          description: The details of a VSAM data set.
+    GdgDetailAttributes:
+      description: The required attributes for a generation data group data set. A generation data set is one of a collection of successive, historically related, catalogued data sets that together are known as a generation data group (GDG). Use this structure when you want to import a GDG. For more information on GDG, see Generation data sets.
+      type: object
+      properties:
+        limit:
+          $ref: "#/components/schemas/Integer"
+          description: The maximum number of generation data sets, up to 255, in a GDG.
+        rollDisposition:
+          $ref: "#/components/schemas/String50"
+          description: The disposition of the data set in the catalog.
+    PoDetailAttributes:
+      description: The supported properties for a PO type data set.
+      type: object
+      properties:
+        encoding:
+          $ref: "#/components/schemas/String"
+          description: The character set encoding of the data set.
+        format_:
+          $ref: "#/components/schemas/String"
+          description: The format of the data set records.
+      required:
+        - encoding
+        - format_
+    PsDetailAttributes:
+      description: The supported properties for a PS type data set.
+      type: object
+      properties:
+        encoding:
+          $ref: "#/components/schemas/String"
+          description: The character set encoding of the data set.
+        format_:
+          $ref: "#/components/schemas/String"
+          description: The format of the data set records.
+      required:
+        - encoding
+        - format_
+    VsamDetailAttributes:
+      description: The attributes of a VSAM type data set.
+      type: object
+      properties:
+        alternateKeys:
+          $ref: "#/components/schemas/AlternateKeyList"
+          description: The alternate key definitions, if any. A legacy dataset might not have any alternate key defined, but if those alternate keys definitions exist, provide them as some applications will make use of them.
+        cacheAtStartup:
+          $ref: "#/components/schemas/Boolean"
+          description: If set to True, enforces loading the data set into cache before it’s used by the application.
+        compressed:
+          $ref: "#/components/schemas/Boolean"
+          description: Indicates whether indexes for this dataset are stored as compressed values. If you have a large data set (typically > 100 Mb), consider setting this flag to True.
+        encoding:
+          $ref: "#/components/schemas/String20"
+          description: The character set used by the data set. Can be ASCII, EBCDIC, or unknown.
+        primaryKey:
+          $ref: "#/components/schemas/PrimaryKey"
+          description: The primary key of the data set.
+        recordFormat:
+          $ref: "#/components/schemas/String20"
+          description: The record format of the data set.
+    Long:
+      type: integer
+      format: int64
+    GetDataSetExportTaskResponse:
+      type: object
+      properties:
+        kmsKeyArn:
+          $ref: "#/components/schemas/String"
+          description: The identifier of a customer managed key used for exported data set encryption.
+        status:
+          $ref: "#/components/schemas/DataSetTaskLifecycle"
+          description: The status of the task.
+        statusReason:
+          $ref: "#/components/schemas/String"
+          description: If dataset export failed, the failure reason will show here.
+        summary:
+          $ref: "#/components/schemas/DataSetExportSummary"
+          description: A summary of the status of the task.
+        taskId:
+          $ref: "#/components/schemas/Identifier"
+          description: The task identifier.
+      required:
+        - status
+        - taskId
+    DataSetTaskLifecycle:
+      type: string
+      enum:
+        - Creating
+        - Running
+        - Completed
+        - Failed
+    DataSetExportSummary:
+      description: Represents a summary of data set exports.
+      type: object
+      properties:
+        failed:
+          $ref: "#/components/schemas/Integer"
+          description: The number of data set exports that have failed.
+        inProgress:
+          $ref: "#/components/schemas/Integer"
+          description: The number of data set exports that are in progress.
+        pending:
+          $ref: "#/components/schemas/Integer"
+          description: The number of data set exports that are pending.
+        succeeded:
+          $ref: "#/components/schemas/Integer"
+          description: The number of data set exports that have succeeded.
+        total:
+          $ref: "#/components/schemas/Integer"
+          description: The total number of data set exports.
+      required:
+        - failed
+        - inProgress
+        - pending
+        - succeeded
+        - total
+    GetDataSetImportTaskResponse:
+      type: object
+      properties:
+        status:
+          $ref: "#/components/schemas/DataSetTaskLifecycle"
+          description: The status of the task.
+        summary:
+          $ref: "#/components/schemas/DataSetImportSummary"
+          description: A summary of the status of the task.
+        taskId:
+          $ref: "#/components/schemas/Identifier"
+          description: The task identifier.
+      required:
+        - status
+        - taskId
+    DataSetImportSummary:
+      description: Represents a summary of data set imports.
+      type: object
+      properties:
+        failed:
+          $ref: "#/components/schemas/Integer"
+          description: The number of data set imports that have failed.
+        inProgress:
+          $ref: "#/components/schemas/Integer"
+          description: The number of data set imports that are in progress.
+        pending:
+          $ref: "#/components/schemas/Integer"
+          description: The number of data set imports that are pending.
+        succeeded:
+          $ref: "#/components/schemas/Integer"
+          description: The number of data set imports that have succeeded.
+        total:
+          $ref: "#/components/schemas/Integer"
+          description: The total number of data set imports.
+      required:
+        - failed
+        - inProgress
+        - pending
+        - succeeded
+        - total
+    GetDeploymentResponse:
+      type: object
+      properties:
+        applicationId:
+          $ref: "#/components/schemas/Identifier"
+          description: The unique identifier of the application.
+        applicationVersion:
+          $ref: "#/components/schemas/Version"
+          description: The application version.
+        creationTime:
+          $ref: "#/components/schemas/Timestamp"
+          description: The timestamp when the deployment was created.
+        deploymentId:
+          $ref: "#/components/schemas/Identifier"
+          description: The unique identifier of the deployment.
+        environmentId:
+          $ref: "#/components/schemas/Identifier"
+          description: The unique identifier of the runtime environment.
+        status:
+          $ref: "#/components/schemas/DeploymentLifecycle"
+          description: The status of the deployment.
+        statusReason:
+          $ref: "#/components/schemas/String"
+          description: The reason for the reported status.
+      required:
+        - applicationId
+        - applicationVersion
+        - creationTime
+        - deploymentId
+        - environmentId
+        - status
+    GetEnvironmentResponse:
+      type: object
+      properties:
+        actualCapacity:
+          $ref: "#/components/schemas/CapacityValue"
+          description: The number of instances included in the runtime environment. A standalone runtime environment has a maximum of one instance. Currently, a high availability runtime environment has a maximum of two instances.
+        creationTime:
+          $ref: "#/components/schemas/Timestamp"
+          description: The timestamp when the runtime environment was created.
+        description:
+          $ref: "#/components/schemas/EntityDescription"
+          description: The description of the runtime environment.
+        engineType:
+          $ref: "#/components/schemas/EngineType"
+          description: The target platform for the runtime environment.
+        engineVersion:
+          $ref: "#/components/schemas/EngineVersion"
+          description: The version of the runtime engine.
+        environmentArn:
+          $ref: "#/components/schemas/Arn"
+          description: The Amazon Resource Name (ARN) of the runtime environment.
+        environmentId:
+          $ref: "#/components/schemas/Identifier"
+          description: The unique identifier of the runtime environment.
+        highAvailabilityConfig:
+          $ref: "#/components/schemas/HighAvailabilityConfig"
+          description: The desired capacity of the high availability configuration for the runtime environment.
+        instanceType:
+          $ref: "#/components/schemas/String20"
+          description: The type of instance underlying the runtime environment.
+        kmsKeyId:
+          $ref: "#/components/schemas/String"
+          description: The identifier of a customer managed key.
+        loadBalancerArn:
+          $ref: "#/components/schemas/String"
+          description: The Amazon Resource Name (ARN) for the load balancer used with the runtime environment.
+        name:
+          $ref: "#/components/schemas/EntityName"
+          description: The name of the runtime environment. Must be unique within the account.
+        networkType:
+          $ref: "#/components/schemas/NetworkType"
+          description: The network type supported by the runtime environment.
+        pendingMaintenance:
+          $ref: "#/components/schemas/PendingMaintenance"
+          description: Indicates the pending maintenance scheduled on this environment.
+        preferredMaintenanceWindow:
+          $ref: "#/components/schemas/String50"
+          description: The maintenance window for the runtime environment. If you don't provide a value for the maintenance window, the service assigns a random value.
+        publiclyAccessible:
+          $ref: "#/components/schemas/Boolean"
+          description: Whether applications running in this runtime environment are publicly accessible.
+        securityGroupIds:
+          $ref: "#/components/schemas/String50List"
+          description: The unique identifiers of the security groups assigned to this runtime environment.
+        status:
+          $ref: "#/components/schemas/EnvironmentLifecycle"
+          description: The status of the runtime environment. If the Amazon Web Services Mainframe Modernization environment is missing a connection to the customer owned dependent resource, the status will be Unhealthy.
+        statusReason:
+          $ref: "#/components/schemas/String"
+          description: The reason for the reported status.
+        storageConfigurations:
+          $ref: "#/components/schemas/StorageConfigurationList"
+          description: The storage configurations defined for the runtime environment.
+        subnetIds:
+          $ref: "#/components/schemas/String50List"
+          description: The unique identifiers of the subnets assigned to this runtime environment.
+        tags:
+          type: object
+          properties: {}
+          description: The tags defined for this runtime environment.
+        vpcId:
+          $ref: "#/components/schemas/String50"
+          description: The unique identifier for the VPC used with this runtime environment.
+      required:
+        - creationTime
+        - engineType
+        - engineVersion
+        - environmentArn
+        - environmentId
+        - instanceType
+        - name
+        - securityGroupIds
+        - status
+        - subnetIds
+        - vpcId
+    PendingMaintenance:
+      description: The scheduled maintenance for a runtime engine.
+      type: object
+      properties:
+        engineVersion:
+          $ref: "#/components/schemas/String"
+          description: The specific runtime engine that the maintenance schedule applies to.
+        schedule:
+          $ref: "#/components/schemas/MaintenanceSchedule"
+          description: The maintenance schedule for the runtime engine version.
+    MaintenanceSchedule:
+      description: The information about the maintenance schedule.
+      type: object
+      properties:
+        endTime:
+          $ref: "#/components/schemas/Timestamp"
+          description: The time the scheduled maintenance is to end.
+        startTime:
+          $ref: "#/components/schemas/Timestamp"
+          description: The time the scheduled maintenance is to start.
+    EnvironmentLifecycle:
+      type: string
+      enum:
+        - Creating
+        - Available
+        - Updating
+        - Deleting
+        - Failed
+        - UnHealthy
+    GetSignedBluinsightsUrlResponse:
+      type: object
+      properties:
+        signedBiUrl:
+          $ref: "#/components/schemas/String"
+          description: Single sign-on AWS Blu Insights URL.
+      required:
+        - signedBiUrl
+    MaxResults:
+      type: integer
+      minimum: 1
+      maximum: 2000
+    NextToken:
+      type: string
+      pattern: ^\S{1,2000}$
+    ListApplicationVersionsResponse:
+      type: object
+      properties:
+        applicationVersions:
+          $ref: "#/components/schemas/ApplicationVersionSummaryList"
+          description: The list of application versions.
+        nextToken:
+          $ref: "#/components/schemas/NextToken"
+          description: If there are more items to return, this contains a token that is passed to a subsequent call to this operation to retrieve the next set of items.
+      required:
+        - applicationVersions
+    ApplicationVersionSummaryList:
+      type: array
+      items:
+        $ref: "#/components/schemas/ApplicationVersionSummary"
+    EntityNameList:
+      type: array
+      items:
+        $ref: "#/components/schemas/EntityName"
+    ListApplicationsResponse:
+      type: object
+      properties:
+        applications:
+          $ref: "#/components/schemas/ApplicationSummaryList"
+          description: Returns a list of summary details for all the applications in a runtime environment.
+        nextToken:
+          $ref: "#/components/schemas/NextToken"
+          description: A pagination token that's returned when the response doesn't contain all applications.
+      required:
+        - applications
+    ApplicationSummaryList:
+      type: array
+      items:
+        $ref: "#/components/schemas/ApplicationSummary"
+    ApplicationSummary:
+      description: A subset of the possible application attributes. Used in the application list.
+      type: object
+      properties:
+        applicationArn:
+          $ref: "#/components/schemas/Arn"
+          description: The Amazon Resource Name (ARN) of the application.
+        applicationId:
+          $ref: "#/components/schemas/Identifier"
+          description: The unique identifier of the application.
+        applicationVersion:
+          $ref: "#/components/schemas/Version"
+          description: The version of the application.
+        creationTime:
+          $ref: "#/components/schemas/Timestamp"
+          description: The timestamp when the application was created.
+        deploymentStatus:
+          $ref: "#/components/schemas/ApplicationDeploymentLifecycle"
+          description: Indicates either an ongoing deployment or if the application has ever deployed successfully.
+        description:
+          $ref: "#/components/schemas/EntityDescription"
+          description: The description of the application.
+        engineType:
+          $ref: "#/components/schemas/EngineType"
+          description: The type of the target platform for this application.
+        environmentId:
+          $ref: "#/components/schemas/Identifier"
+          description: The unique identifier of the runtime environment that hosts this application.
+        lastStartTime:
+          $ref: "#/components/schemas/Timestamp"
+          description: The timestamp when you last started the application. Null until the application runs for the first time.
+        name:
+          $ref: "#/components/schemas/EntityName"
+          description: The name of the application.
+        roleArn:
+          $ref: "#/components/schemas/Arn"
+          description: The Amazon Resource Name (ARN) of the role associated with the application.
+        status:
+          $ref: "#/components/schemas/ApplicationLifecycle"
+          description: The status of the application.
+        versionStatus:
+          $ref: "#/components/schemas/ApplicationVersionLifecycle"
+          description: Indicates the status of the latest version of the application.
+      required:
+        - applicationArn
+        - applicationId
+        - applicationVersion
+        - creationTime
+        - engineType
+        - name
+        - status
+    ApplicationDeploymentLifecycle:
+      type: string
+      enum:
+        - Deploying
+        - Deployed
+    ListBatchJobDefinitionsResponse:
+      type: object
+      properties:
+        batchJobDefinitions:
+          $ref: "#/components/schemas/BatchJobDefinitions"
+          description: The list of batch job definitions.
+        nextToken:
+          $ref: "#/components/schemas/NextToken"
+          description: If there are more items to return, this contains a token that is passed to a subsequent call to this operation to retrieve the next set of items.
+      required:
+        - batchJobDefinitions
+    BatchJobDefinitions:
+      type: array
+      items:
+        $ref: "#/components/schemas/BatchJobDefinition"
+    BatchJobDefinition:
+      description: Defines the details of a batch job.
+      type: object
+      properties:
+        fileBatchJobDefinition:
+          $ref: "#/components/schemas/FileBatchJobDefinition"
+          description: Specifies a file containing a batch job definition.
+        scriptBatchJobDefinition:
+          $ref: "#/components/schemas/ScriptBatchJobDefinition"
+          description: A script containing a batch job definition.
+    FileBatchJobDefinition:
+      description: A file containing a batch job definition.
+      type: object
+      properties:
+        fileName:
+          $ref: "#/components/schemas/String"
+          description: The name of the file containing the batch job definition.
+        folderPath:
+          $ref: "#/components/schemas/String"
+          description: The path to the file containing the batch job definition.
+      required:
+        - fileName
+    ScriptBatchJobDefinition:
+      description: A batch job definition contained in a script.
+      type: object
+      properties:
+        scriptName:
+          $ref: "#/components/schemas/String"
+          description: The name of the script containing the batch job definition.
+      required:
+        - scriptName
+    IdentifierList:
+      type: array
+      items:
+        $ref: "#/components/schemas/Identifier"
+    ListBatchJobExecutionsResponse:
+      type: object
+      properties:
+        batchJobExecutions:
+          $ref: "#/components/schemas/BatchJobExecutionSummaryList"
+          description: Returns a list of batch job executions for an application.
+        nextToken:
+          $ref: "#/components/schemas/NextToken"
+          description: A pagination token that's returned when the response doesn't contain all batch job executions.
+      required:
+        - batchJobExecutions
+    BatchJobExecutionSummaryList:
+      type: array
+      items:
+        $ref: "#/components/schemas/BatchJobExecutionSummary"
+    BatchJobExecutionSummary:
+      description: A subset of the possible batch job attributes. Used in the batch job list.
+      type: object
+      properties:
+        applicationId:
+          $ref: "#/components/schemas/Identifier"
+          description: The unique identifier of the application that hosts this batch job.
+        batchJobIdentifier:
+          $ref: "#/components/schemas/BatchJobIdentifier"
+          description: The unique identifier of this batch job.
+        endTime:
+          $ref: "#/components/schemas/Timestamp"
+          description: The timestamp when this batch job execution ended.
+        executionId:
+          $ref: "#/components/schemas/Identifier"
+          description: The unique identifier of this execution of the batch job.
+        jobId:
+          $ref: "#/components/schemas/String100"
+          description: The unique identifier of a particular batch job.
+        jobName:
+          $ref: "#/components/schemas/String100"
+          description: The name of a particular batch job.
+        jobType:
+          $ref: "#/components/schemas/BatchJobType"
+          description: The type of a particular batch job execution.
+        returnCode:
+          $ref: "#/components/schemas/String"
+          description: The batch job return code from either the Blu Age or Micro Focus runtime engines. For more information, see Batch return codes in the IBM WebSphere Application Server documentation.
+        startTime:
+          $ref: "#/components/schemas/Timestamp"
+          description: The timestamp when a particular batch job execution started.
+        status:
+          $ref: "#/components/schemas/BatchJobExecutionStatus"
+          description: The status of a particular batch job execution.
+      required:
+        - applicationId
+        - executionId
+        - startTime
+        - status
+    ListBatchJobRestartPointsResponse:
+      type: object
+      properties:
+        batchJobSteps:
+          $ref: "#/components/schemas/BatchJobStepList"
+          description: Returns all the batch job steps and related information for a batch job that previously ran.
+    BatchJobStepList:
+      type: array
+      items:
+        $ref: "#/components/schemas/JobStep"
+    JobStep:
+      description: Provides information related to a job step.
+      type: object
+      properties:
+        procStepName:
+          $ref: "#/components/schemas/String"
+          description: The name of a procedure step.
+        procStepNumber:
+          $ref: "#/components/schemas/Integer"
+          description: The number of a procedure step.
+        stepCheckpoint:
+          $ref: "#/components/schemas/Integer"
+          description: A registered step-level checkpoint identifier that can be used for restarting an Amazon Web Services Blu Age application batch job.
+        stepCheckpointStatus:
+          $ref: "#/components/schemas/String"
+          description: The step-level checkpoint status for an Amazon Web Services Blu Age application batch job.
+        stepCheckpointTime:
+          $ref: "#/components/schemas/Timestamp"
+          description: The step-level checkpoint status for an Amazon Web Services Blu Age application batch job.
+        stepCondCode:
+          $ref: "#/components/schemas/String"
+          description: The condition code of a step.
+        stepName:
+          $ref: "#/components/schemas/String"
+          description: The name of a step.
+        stepNumber:
+          $ref: "#/components/schemas/Integer"
+          description: The number of a step.
+        stepRestartable:
+          $ref: "#/components/schemas/Boolean"
+          description: Specifies if a step can be restarted or not.
+    ListDataSetExportHistoryResponse:
+      type: object
+      properties:
+        dataSetExportTasks:
+          $ref: "#/components/schemas/DataSetExportTaskList"
+          description: The data set export tasks.
+        nextToken:
+          $ref: "#/components/schemas/NextToken"
+          description: If there are more items to return, this contains a token that is passed to a subsequent call to this operation to retrieve the next set of items.
+      required:
+        - dataSetExportTasks
+    DataSetExportTaskList:
+      type: array
+      items:
+        $ref: "#/components/schemas/DataSetExportTask"
+    DataSetExportTask:
+      description: Contains information about a data set export task.
+      type: object
+      properties:
+        status:
+          $ref: "#/components/schemas/DataSetTaskLifecycle"
+          description: The status of the data set export task.
+        statusReason:
+          $ref: "#/components/schemas/String"
+          description: If dataset exports failed, the failure reason will show here.
+        summary:
+          $ref: "#/components/schemas/DataSetExportSummary"
+          description: A summary of the data set export task.
+        taskId:
+          $ref: "#/components/schemas/Identifier"
+          description: The identifier of the data set export task.
+      required:
+        - status
+        - summary
+        - taskId
+    ListDataSetImportHistoryResponse:
+      type: object
+      properties:
+        dataSetImportTasks:
+          $ref: "#/components/schemas/DataSetImportTaskList"
+          description: The data set import tasks.
+        nextToken:
+          $ref: "#/components/schemas/NextToken"
+          description: If there are more items to return, this contains a token that is passed to a subsequent call to this operation to retrieve the next set of items.
+      required:
+        - dataSetImportTasks
+    DataSetImportTaskList:
+      type: array
+      items:
+        $ref: "#/components/schemas/DataSetImportTask"
+    DataSetImportTask:
+      description: Contains information about a data set import task.
+      type: object
+      properties:
+        status:
+          $ref: "#/components/schemas/DataSetTaskLifecycle"
+          description: The status of the data set import task.
+        statusReason:
+          $ref: "#/components/schemas/String"
+          description: If dataset import failed, the failure reason will show here.
+        summary:
+          $ref: "#/components/schemas/DataSetImportSummary"
+          description: A summary of the data set import task.
+        taskId:
+          $ref: "#/components/schemas/Identifier"
+          description: The identifier of the data set import task.
+      required:
+        - status
+        - summary
+        - taskId
+    ListDataSetsResponse:
+      type: object
+      properties:
+        dataSets:
+          $ref: "#/components/schemas/DataSetsSummaryList"
+          description: The list of data sets, containing information including the creation time, the data set name, the data set organization, the data set format, and the last time the data set was referenced or updated.
+        nextToken:
+          $ref: "#/components/schemas/NextToken"
+          description: If there are more items to return, this contains a token that is passed to a subsequent call to this operation to retrieve the next set of items.
+      required:
+        - dataSets
+    DataSetsSummaryList:
+      type: array
+      items:
+        $ref: "#/components/schemas/DataSetSummary"
+    DataSetSummary:
+      description: A subset of the possible data set attributes.
+      type: object
+      properties:
+        creationTime:
+          $ref: "#/components/schemas/Timestamp"
+          description: The timestamp when the data set was created.
+        dataSetName:
+          $ref: "#/components/schemas/String200"
+          description: The name of the data set.
+        dataSetOrg:
+          $ref: "#/components/schemas/String20"
+          description: The type of data set. The only supported value is VSAM.
+        format_:
+          $ref: "#/components/schemas/String20"
+          description: The format of the data set.
+        lastReferencedTime:
+          $ref: "#/components/schemas/Timestamp"
+          description: The last time the data set was referenced.
+        lastUpdatedTime:
+          $ref: "#/components/schemas/Timestamp"
+          description: The last time the data set was updated.
+      required:
+        - dataSetName
+    ListDeploymentsResponse:
+      type: object
+      properties:
+        deployments:
+          $ref: "#/components/schemas/DeploymentList"
+          description: The list of deployments that is returned.
+        nextToken:
+          $ref: "#/components/schemas/NextToken"
+          description: If there are more items to return, this contains a token that is passed to a subsequent call to this operation to retrieve the next set of items.
+      required:
+        - deployments
+    DeploymentList:
+      type: array
+      items:
+        $ref: "#/components/schemas/DeploymentSummary"
+    DeploymentSummary:
+      description: A subset of information about a specific deployment.
+      type: object
+      properties:
+        applicationId:
+          $ref: "#/components/schemas/Identifier"
+          description: The unique identifier of the application.
+        applicationVersion:
+          $ref: "#/components/schemas/Version"
+          description: The version of the application.
+        creationTime:
+          $ref: "#/components/schemas/Timestamp"
+          description: The timestamp when the deployment was created.
+        deploymentId:
+          $ref: "#/components/schemas/Identifier"
+          description: The unique identifier of the deployment.
+        environmentId:
+          $ref: "#/components/schemas/Identifier"
+          description: The unique identifier of the runtime environment.
+        status:
+          $ref: "#/components/schemas/DeploymentLifecycle"
+          description: The current status of the deployment.
+        statusReason:
+          $ref: "#/components/schemas/String"
+          description: The reason for the reported status.
+      required:
+        - applicationId
+        - applicationVersion
+        - creationTime
+        - deploymentId
+        - environmentId
+        - status
+    ListEngineVersionsResponse:
+      type: object
+      properties:
+        engineVersions:
+          $ref: "#/components/schemas/EngineVersionsSummaryList"
+          description: Returns the engine versions.
+        nextToken:
+          $ref: "#/components/schemas/NextToken"
+          description: If there are more items to return, this contains a token that is passed to a subsequent call to this operation to retrieve the next set of items.
+      required:
+        - engineVersions
+    EngineVersionsSummaryList:
+      type: array
+      items:
+        $ref: "#/components/schemas/EngineVersionsSummary"
+    EngineVersionsSummary:
+      description: A subset of information about the engine version for a specific application.
+      type: object
+      properties:
+        engineType:
+          $ref: "#/components/schemas/String"
+          description: The type of target platform for the application.
+        engineVersion:
+          $ref: "#/components/schemas/String"
+          description: The version of the engine type used by the application.
+      required:
+        - engineType
+        - engineVersion
+    ListEnvironmentsResponse:
+      type: object
+      properties:
+        environments:
+          $ref: "#/components/schemas/EnvironmentSummaryList"
+          description: Returns a list of summary details for all the runtime environments in your account.
+        nextToken:
+          $ref: "#/components/schemas/NextToken"
+          description: A pagination token that's returned when the response doesn't contain all the runtime environments.
+      required:
+        - environments
+    EnvironmentSummaryList:
+      type: array
+      items:
+        $ref: "#/components/schemas/EnvironmentSummary"
+    EnvironmentSummary:
+      description: Contains a subset of the possible runtime environment attributes. Used in the environment list.
+      type: object
+      properties:
+        creationTime:
+          $ref: "#/components/schemas/Timestamp"
+          description: The timestamp when the runtime environment was created.
+        engineType:
+          $ref: "#/components/schemas/EngineType"
+          description: The target platform for the runtime environment.
+        engineVersion:
+          $ref: "#/components/schemas/EngineVersion"
+          description: The version of the runtime engine.
+        environmentArn:
+          $ref: "#/components/schemas/Arn"
+          description: The Amazon Resource Name (ARN) of a particular runtime environment.
+        environmentId:
+          $ref: "#/components/schemas/Identifier"
+          description: The unique identifier of a particular runtime environment.
+        instanceType:
+          $ref: "#/components/schemas/String20"
+          description: The instance type of the runtime environment.
+        name:
+          $ref: "#/components/schemas/EntityName"
+          description: The name of the runtime environment.
+        networkType:
+          $ref: "#/components/schemas/NetworkType"
+          description: The network type supported by the runtime environment.
+        status:
+          $ref: "#/components/schemas/EnvironmentLifecycle"
+          description: The status of the runtime environment
+      required:
+        - creationTime
+        - engineType
+        - engineVersion
+        - environmentArn
+        - environmentId
+        - instanceType
+        - name
+        - status
+    ListTagsForResourceResponse:
+      type: object
+      properties:
+        tags:
+          type: object
+          properties: {}
+          description: The tags for the resource.
+      required:
+        - tags
+    StartApplicationResponse:
+      type: object
+    BatchJobParametersMap:
+      description: Job parameters are optional. Can contain up to 500 entries.
+      type: object
+      properties: {}
+    StartBatchJobResponse:
+      type: object
+      properties:
+        executionId:
+          $ref: "#/components/schemas/Identifier"
+          description: The unique identifier of this execution of the batch job.
+      required:
+        - executionId
+    StopApplicationResponse:
+      type: object
+    TagResourceResponse:
+      type: object
+    TagKeyList:
+      type: array
+      items:
+        $ref: "#/components/schemas/TagKey"
+    TagKey:
+      type: string
+      minLength: 1
+      maxLength: 128
+      pattern: ^(?!aws:).+$
+    UntagResourceResponse:
+      type: object
+    UpdateApplicationResponse:
+      type: object
+      properties:
+        applicationVersion:
+          $ref: "#/components/schemas/Version"
+          description: The new version of the application.
+      required:
+        - applicationVersion
+    UpdateEnvironmentResponse:
+      type: object
+      properties:
+        environmentId:
+          $ref: "#/components/schemas/Identifier"
+          description: The unique identifier of the runtime environment that was updated.
+      required:
+        - environmentId
+  x-stackQL-resources:
+    applications:
+      id: aws.m2.applications
+      name: applications
+      title: applications
+      methods:
+        cancel_batch_job_execution:
+          operation:
+            $ref: "#/paths/~1applications~1{application_id}~1batch-job-executions~1{execution_id}~1cancel/post"
+          response:
+            openAPIDocKey: "200"
+            mediaType: application/json
+          request:
+            nativeCasing: pascal
+          config:
+            requestBodyTranslate:
+              algorithm: naive
+        create_application:
+          operation:
+            $ref: "#/paths/~1applications/post"
+          response:
+            openAPIDocKey: "200"
+            mediaType: application/json
+          request:
+            nativeCasing: pascal
+          config:
+            requestBodyTranslate:
+              algorithm: naive
+        list_applications:
+          operation:
+            $ref: "#/paths/~1applications/get"
+          response:
+            openAPIDocKey: "200"
+            mediaType: application/json
+            objectKey: $.applications
+          request:
+            nativeCasing: pascal
+          config:
+            pagination:
+              requestToken:
+                key: nextToken
+                location: query
+              responseToken:
+                key: $.nextToken
+                location: body
+        delete_application:
+          operation:
+            $ref: "#/paths/~1applications~1{application_id}/delete"
+          response:
+            openAPIDocKey: "200"
+            mediaType: application/json
+        get_application:
+          operation:
+            $ref: "#/paths/~1applications~1{application_id}/get"
+          response:
+            openAPIDocKey: "200"
+            mediaType: application/json
+        update_application:
+          operation:
+            $ref: "#/paths/~1applications~1{application_id}/patch"
+          response:
+            openAPIDocKey: "200"
+            mediaType: application/json
+          request:
+            nativeCasing: pascal
+          config:
+            requestBodyTranslate:
+              algorithm: naive
+        start_application:
+          operation:
+            $ref: "#/paths/~1applications~1{application_id}~1start/post"
+          response:
+            openAPIDocKey: "200"
+            mediaType: application/json
+        start_batch_job:
+          operation:
+            $ref: "#/paths/~1applications~1{application_id}~1batch-job/post"
+          response:
+            openAPIDocKey: "200"
+            mediaType: application/json
+          request:
+            nativeCasing: pascal
+          config:
+            requestBodyTranslate:
+              algorithm: naive
+        stop_application:
+          operation:
+            $ref: "#/paths/~1applications~1{application_id}~1stop/post"
+          response:
+            openAPIDocKey: "200"
+            mediaType: application/json
+          request:
+            nativeCasing: pascal
+          config:
+            requestBodyTranslate:
+              algorithm: naive
+      sqlVerbs:
+        select:
+          - $ref: "#/components/x-stackQL-resources/applications/methods/get_application"
+          - $ref: "#/components/x-stackQL-resources/applications/methods/list_applications"
+        insert:
+          - $ref: "#/components/x-stackQL-resources/applications/methods/create_application"
+        update:
+          - $ref: "#/components/x-stackQL-resources/applications/methods/update_application"
+        delete:
+          - $ref: "#/components/x-stackQL-resources/applications/methods/delete_application"
+    data_set_export_tasks:
+      id: aws.m2.data_set_export_tasks
+      name: data_set_export_tasks
+      title: data_set_export_tasks
+      methods:
+        create_data_set_export_task:
+          operation:
+            $ref: "#/paths/~1applications~1{application_id}~1dataset-export-task/post"
+          response:
+            openAPIDocKey: "200"
+            mediaType: application/json
+          request:
+            nativeCasing: pascal
+          config:
+            requestBodyTranslate:
+              algorithm: naive
+        get_data_set_export_task:
+          operation:
+            $ref: "#/paths/~1applications~1{application_id}~1dataset-export-tasks~1{task_id}/get"
+          response:
+            openAPIDocKey: "200"
+            mediaType: application/json
+      sqlVerbs:
+        select:
+          - $ref: "#/components/x-stackQL-resources/data_set_export_tasks/methods/get_data_set_export_task"
+        insert:
+          - $ref: "#/components/x-stackQL-resources/data_set_export_tasks/methods/create_data_set_export_task"
+        update: []
+        delete: []
+    data_set_import_tasks:
+      id: aws.m2.data_set_import_tasks
+      name: data_set_import_tasks
+      title: data_set_import_tasks
+      methods:
+        create_data_set_import_task:
+          operation:
+            $ref: "#/paths/~1applications~1{application_id}~1dataset-import-task/post"
+          response:
+            openAPIDocKey: "200"
+            mediaType: application/json
+          request:
+            nativeCasing: pascal
+          config:
+            requestBodyTranslate:
+              algorithm: naive
+        get_data_set_import_task:
+          operation:
+            $ref: "#/paths/~1applications~1{application_id}~1dataset-import-tasks~1{task_id}/get"
+          response:
+            openAPIDocKey: "200"
+            mediaType: application/json
+      sqlVerbs:
+        select:
+          - $ref: "#/components/x-stackQL-resources/data_set_import_tasks/methods/get_data_set_import_task"
+        insert:
+          - $ref: "#/components/x-stackQL-resources/data_set_import_tasks/methods/create_data_set_import_task"
+        update: []
+        delete: []
+    deployments:
+      id: aws.m2.deployments
+      name: deployments
+      title: deployments
+      methods:
+        create_deployment:
+          operation:
+            $ref: "#/paths/~1applications~1{application_id}~1deployments/post"
+          response:
+            openAPIDocKey: "200"
+            mediaType: application/json
+          request:
+            nativeCasing: pascal
+          config:
+            requestBodyTranslate:
+              algorithm: naive
+        list_deployments:
+          operation:
+            $ref: "#/paths/~1applications~1{application_id}~1deployments/get"
+          response:
+            openAPIDocKey: "200"
+            mediaType: application/json
+            objectKey: $.deployments
+          request:
+            nativeCasing: pascal
+          config:
+            pagination:
+              requestToken:
+                key: nextToken
+                location: query
+              responseToken:
+                key: $.nextToken
+                location: body
+        get_deployment:
+          operation:
+            $ref: "#/paths/~1applications~1{application_id}~1deployments~1{deployment_id}/get"
+          response:
+            openAPIDocKey: "200"
+            mediaType: application/json
+      sqlVerbs:
+        select:
+          - $ref: "#/components/x-stackQL-resources/deployments/methods/get_deployment"
+          - $ref: "#/components/x-stackQL-resources/deployments/methods/list_deployments"
+        insert:
+          - $ref: "#/components/x-stackQL-resources/deployments/methods/create_deployment"
+        update: []
+        delete: []
+    environments:
+      id: aws.m2.environments
+      name: environments
+      title: environments
+      methods:
+        create_environment:
+          operation:
+            $ref: "#/paths/~1environments/post"
+          response:
+            openAPIDocKey: "200"
+            mediaType: application/json
+          request:
+            nativeCasing: pascal
+          config:
+            requestBodyTranslate:
+              algorithm: naive
+        list_environments:
+          operation:
+            $ref: "#/paths/~1environments/get"
+          response:
+            openAPIDocKey: "200"
+            mediaType: application/json
+            objectKey: $.environments
+          request:
+            nativeCasing: pascal
+          config:
+            pagination:
+              requestToken:
+                key: nextToken
+                location: query
+              responseToken:
+                key: $.nextToken
+                location: body
+        delete_application_from_environment:
+          operation:
+            $ref: "#/paths/~1applications~1{application_id}~1environment~1{environment_id}/delete"
+          response:
+            openAPIDocKey: "200"
+            mediaType: application/json
+        delete_environment:
+          operation:
+            $ref: "#/paths/~1environments~1{environment_id}/delete"
+          response:
+            openAPIDocKey: "200"
+            mediaType: application/json
+        get_environment:
+          operation:
+            $ref: "#/paths/~1environments~1{environment_id}/get"
+          response:
+            openAPIDocKey: "200"
+            mediaType: application/json
+        update_environment:
+          operation:
+            $ref: "#/paths/~1environments~1{environment_id}/patch"
+          response:
+            openAPIDocKey: "200"
+            mediaType: application/json
+          request:
+            nativeCasing: pascal
+          config:
+            requestBodyTranslate:
+              algorithm: naive
+      sqlVerbs:
+        select:
+          - $ref: "#/components/x-stackQL-resources/environments/methods/get_environment"
+          - $ref: "#/components/x-stackQL-resources/environments/methods/list_environments"
+        insert:
+          - $ref: "#/components/x-stackQL-resources/environments/methods/create_environment"
+        update:
+          - $ref: "#/components/x-stackQL-resources/environments/methods/update_environment"
+        delete:
+          - $ref: "#/components/x-stackQL-resources/environments/methods/delete_application_from_environment"
+          - $ref: "#/components/x-stackQL-resources/environments/methods/delete_environment"
+    application_versions:
+      id: aws.m2.application_versions
+      name: application_versions
+      title: application_versions
+      methods:
+        get_application_version:
+          operation:
+            $ref: "#/paths/~1applications~1{application_id}~1versions~1{application_version}/get"
+          response:
+            openAPIDocKey: "200"
+            mediaType: application/json
+        list_application_versions:
+          operation:
+            $ref: "#/paths/~1applications~1{application_id}~1versions/get"
+          response:
+            openAPIDocKey: "200"
+            mediaType: application/json
+            objectKey: $.applicationVersions
+          request:
+            nativeCasing: pascal
+          config:
+            pagination:
+              requestToken:
+                key: nextToken
+                location: query
+              responseToken:
+                key: $.nextToken
+                location: body
+      sqlVerbs:
+        select:
+          - $ref: "#/components/x-stackQL-resources/application_versions/methods/get_application_version"
+          - $ref: "#/components/x-stackQL-resources/application_versions/methods/list_application_versions"
+        insert: []
+        update: []
+        delete: []
+    batch_job_executions:
+      id: aws.m2.batch_job_executions
+      name: batch_job_executions
+      title: batch_job_executions
+      methods:
+        get_batch_job_execution:
+          operation:
+            $ref: "#/paths/~1applications~1{application_id}~1batch-job-executions~1{execution_id}/get"
+          response:
+            openAPIDocKey: "200"
+            mediaType: application/json
+        list_batch_job_executions:
+          operation:
+            $ref: "#/paths/~1applications~1{application_id}~1batch-job-executions/get"
+          response:
+            openAPIDocKey: "200"
+            mediaType: application/json
+            objectKey: $.batchJobExecutions
+          request:
+            nativeCasing: pascal
+          config:
+            pagination:
+              requestToken:
+                key: nextToken
+                location: query
+              responseToken:
+                key: $.nextToken
+                location: body
+      sqlVerbs:
+        select:
+          - $ref: "#/components/x-stackQL-resources/batch_job_executions/methods/get_batch_job_execution"
+          - $ref: "#/components/x-stackQL-resources/batch_job_executions/methods/list_batch_job_executions"
+        insert: []
+        update: []
+        delete: []
+    data_set_details:
+      id: aws.m2.data_set_details
+      name: data_set_details
+      title: data_set_details
+      methods:
+        get_data_set_details:
+          operation:
+            $ref: "#/paths/~1applications~1{application_id}~1datasets~1{data_set_name}/get"
+          response:
+            openAPIDocKey: "200"
+            mediaType: application/json
+      sqlVerbs:
+        select:
+          - $ref: "#/components/x-stackQL-resources/data_set_details/methods/get_data_set_details"
+        insert: []
+        update: []
+        delete: []
+    signed_bluinsights_urls:
+      id: aws.m2.signed_bluinsights_urls
+      name: signed_bluinsights_urls
+      title: signed_bluinsights_urls
+      methods:
+        get_signed_bluinsights_url:
+          operation:
+            $ref: "#/paths/~1signed-bi-url/get"
+          response:
+            openAPIDocKey: "200"
+            mediaType: application/json
+      sqlVerbs:
+        select:
+          - $ref: "#/components/x-stackQL-resources/signed_bluinsights_urls/methods/get_signed_bluinsights_url"
+        insert: []
+        update: []
+        delete: []
+    batch_job_definitions:
+      id: aws.m2.batch_job_definitions
+      name: batch_job_definitions
+      title: batch_job_definitions
+      methods:
+        list_batch_job_definitions:
+          operation:
+            $ref: "#/paths/~1applications~1{application_id}~1batch-job-definitions/get"
+          response:
+            openAPIDocKey: "200"
+            mediaType: application/json
+            objectKey: $.batchJobDefinitions
+          request:
+            nativeCasing: pascal
+          config:
+            pagination:
+              requestToken:
+                key: nextToken
+                location: query
+              responseToken:
+                key: $.nextToken
+                location: body
+      sqlVerbs:
+        select:
+          - $ref: "#/components/x-stackQL-resources/batch_job_definitions/methods/list_batch_job_definitions"
+        insert: []
+        update: []
+        delete: []
+    batch_job_restart_points:
+      id: aws.m2.batch_job_restart_points
+      name: batch_job_restart_points
+      title: batch_job_restart_points
+      methods:
+        list_batch_job_restart_points:
+          operation:
+            $ref: "#/paths/~1applications~1{application_id}~1batch-job-executions~1{execution_id}~1steps/get"
+          response:
+            openAPIDocKey: "200"
+            mediaType: application/json
+          request:
+            nativeCasing: pascal
+      sqlVerbs:
+        select:
+          - $ref: "#/components/x-stackQL-resources/batch_job_restart_points/methods/list_batch_job_restart_points"
+        insert: []
+        update: []
+        delete: []
+    data_set_export_histories:
+      id: aws.m2.data_set_export_histories
+      name: data_set_export_histories
+      title: data_set_export_histories
+      methods:
+        list_data_set_export_history:
+          operation:
+            $ref: "#/paths/~1applications~1{application_id}~1dataset-export-tasks/get"
+          response:
+            openAPIDocKey: "200"
+            mediaType: application/json
+            objectKey: $.dataSetExportTasks
+          request:
+            nativeCasing: pascal
+          config:
+            pagination:
+              requestToken:
+                key: nextToken
+                location: query
+              responseToken:
+                key: $.nextToken
+                location: body
+      sqlVerbs:
+        select:
+          - $ref: "#/components/x-stackQL-resources/data_set_export_histories/methods/list_data_set_export_history"
+        insert: []
+        update: []
+        delete: []
+    data_set_import_histories:
+      id: aws.m2.data_set_import_histories
+      name: data_set_import_histories
+      title: data_set_import_histories
+      methods:
+        list_data_set_import_history:
+          operation:
+            $ref: "#/paths/~1applications~1{application_id}~1dataset-import-tasks/get"
+          response:
+            openAPIDocKey: "200"
+            mediaType: application/json
+            objectKey: $.dataSetImportTasks
+          request:
+            nativeCasing: pascal
+          config:
+            pagination:
+              requestToken:
+                key: nextToken
+                location: query
+              responseToken:
+                key: $.nextToken
+                location: body
+      sqlVerbs:
+        select:
+          - $ref: "#/components/x-stackQL-resources/data_set_import_histories/methods/list_data_set_import_history"
+        insert: []
+        update: []
+        delete: []
+    data_sets:
+      id: aws.m2.data_sets
+      name: data_sets
+      title: data_sets
+      methods:
+        list_data_sets:
+          operation:
+            $ref: "#/paths/~1applications~1{application_id}~1datasets/get"
+          response:
+            openAPIDocKey: "200"
+            mediaType: application/json
+            objectKey: $.dataSets
+          request:
+            nativeCasing: pascal
+          config:
+            pagination:
+              requestToken:
+                key: nextToken
+                location: query
+              responseToken:
+                key: $.nextToken
+                location: body
+      sqlVerbs:
+        select:
+          - $ref: "#/components/x-stackQL-resources/data_sets/methods/list_data_sets"
+        insert: []
+        update: []
+        delete: []
+    engine_versions:
+      id: aws.m2.engine_versions
+      name: engine_versions
+      title: engine_versions
+      methods:
+        list_engine_versions:
+          operation:
+            $ref: "#/paths/~1engine-versions/get"
+          response:
+            openAPIDocKey: "200"
+            mediaType: application/json
+            objectKey: $.engineVersions
+          request:
+            nativeCasing: pascal
+          config:
+            pagination:
+              requestToken:
+                key: nextToken
+                location: query
+              responseToken:
+                key: $.nextToken
+                location: body
+      sqlVerbs:
+        select:
+          - $ref: "#/components/x-stackQL-resources/engine_versions/methods/list_engine_versions"
+        insert: []
+        update: []
+        delete: []
+    tags:
+      id: aws.m2.tags
+      name: tags
+      title: tags
+      methods:
+        list_tags_for_resource:
+          operation:
+            $ref: "#/paths/~1tags~1{resource_arn}/get"
+          response:
+            openAPIDocKey: "200"
+            mediaType: application/json
+        tag_resource:
+          operation:
+            $ref: "#/paths/~1tags~1{resource_arn}/post"
+          response:
+            openAPIDocKey: "200"
+            mediaType: application/json
+          request:
+            nativeCasing: pascal
+          config:
+            requestBodyTranslate:
+              algorithm: naive
+        untag_resource:
+          operation:
+            $ref: "#/paths/~1tags~1{resource_arn}/delete"
+          response:
+            openAPIDocKey: "200"
+            mediaType: application/json
+          request:
+            nativeCasing: pascal
+      sqlVerbs:
+        select:
+          - $ref: "#/components/x-stackQL-resources/tags/methods/list_tags_for_resource"
+        insert: []
+        update:
+          - $ref: "#/components/x-stackQL-resources/tags/methods/tag_resource"
+          - $ref: "#/components/x-stackQL-resources/tags/methods/untag_resource"
+        delete: []
