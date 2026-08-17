@@ -371,6 +371,11 @@ var resources = map[string]Resource{
 		Summary: "AWS IAM principals (users)",
 		Schema:  principalSchema,
 	},
+	"gcp.iam.principals": {
+		Path:    "gcp.iam.principals",
+		Summary: "GCP principals granted a role on a project or across an org",
+		Schema:  principalSchema,
+	},
 	"entra.identities": {
 		Path:    "entra.identities",
 		Summary: "Entra ID directory identities",
@@ -541,6 +546,26 @@ var methods = map[string]methodDef{
 			return sdk.EntraPrincipalsPlan(args.Endpoint, a)
 		},
 	},
+	"gcp.iam.principals.list": {
+		Method: Method{
+			Path:     "gcp.iam.principals.list",
+			Resource: "gcp.iam.principals",
+			Summary:  "List principals holding a role on a project OR across a whole org",
+			Params: []Param{
+				{Name: "google_project", Required: false, Description: "single GCP project (mutually exclusive with google_org)"},
+				{Name: "google_org", Required: false, Description: "every project under the org, recursive folder descent (mutually exclusive with google_project)"},
+			},
+			ExactlyOne: [][]string{{"google_project", "google_org"}},
+			Schema:     principalSchema,
+		},
+		build: func(args Args) (plan.Plan, error) {
+			creds, err := gcpCreds(args)
+			if err != nil {
+				return nil, err
+			}
+			return sdk.GCPIAMPrincipalsPlan(args.Endpoint, creds, args.param("google_project"), args.param("google_org")), nil
+		},
+	},
 	"omni.iam.principals.list": {
 		Method: Method{
 			Path:     "omni.iam.principals.list",
@@ -548,10 +573,13 @@ var methods = map[string]methodDef{
 			Summary:  "Every principal across every identity source, as one comparable population",
 			Params: []Param{
 				{Name: "region", Required: true, Description: "AWS region to sign with (AWS leg)"},
+				{Name: "google_project", Required: false, Description: "single GCP project (mutually exclusive with google_org)"},
+				{Name: "google_org", Required: false, Description: "every project under the GCP org (mutually exclusive with google_project)"},
 			},
-			Schema: principalSchema,
+			ExactlyOne: [][]string{{"google_project", "google_org"}},
+			Schema:     principalSchema,
 		},
-		members: []string{"aws.iam.principals.list", "entra.identities.list"},
+		members: []string{"aws.iam.principals.list", "entra.identities.list", "gcp.iam.principals.list"},
 	},
 	"aws.s3.buckets.enumerate": {
 		Method: Method{

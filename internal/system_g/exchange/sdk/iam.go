@@ -2,6 +2,7 @@ package sdk
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/stackql-labs/omnisdk/internal/system_g/auth"
 	"github.com/stackql-labs/omnisdk/internal/system_g/bind"
@@ -26,6 +27,7 @@ var PrincipalSchema = []BlobColumn{
 	{Name: "principal_id", Type: "string"},             // the provider's stable id
 	{Name: "scope", Type: "string", Nullable: true},    // account / tenant / org it lives in
 	{Name: "enabled", Type: "boolean", Nullable: true}, // null where the provider does not say
+	{Name: "grant", Type: "string", Nullable: true},    // the role/policy held, where the source states one
 	{Name: "created", Type: "string", Nullable: true},  // age is the finding for stale identities
 }
 
@@ -165,4 +167,99 @@ func EntraPrincipalsPlan(endpoint string, cfg auth.AuthStruct) (plan.Plan, error
 // errUnsupportedEntraAuth names the two shapes Graph accepts, rather than failing vaguely.
 func errUnsupportedEntraAuth(kind auth.Kind) error {
 	return fmt.Errorf("entra auth: %s not supported here (use client_credentials or bearer)", kind)
+}
+
+// gcpIAMBindingsSpec reads a project's IAM policy and emits one row per MEMBER per role. GCP grants
+// are policy bindings, not principal objects — the member string ("user:a@b.com", "serviceAccount:…")
+// is both the identity and its type, so the principal population comes from the grants themselves.
+func gcpIAMBindingsSpec(endpoint string) plan.ExchangeSpec {
+	req := httpx.Request{
+		Method:  "POST",
+		URL:     gcpCRMv3Base(endpoint) + "/projects/{project}:getIamPolicy",
+		Headers: map[string]string{"Authorization": "Bearer {token}"},
+		Body:    httpx.Body{Encoding: httpx.EncodingJSON, Params: map[string]any{}},
+	}
+	return plan.NewExchangeSpec("IAMPolicy", []string{"token", "project"}, []string{"principal"},
+		func(bound map[string]any) facade.Operator {
+			send := httpx.Make(req, nil)(bound)
+			checked := exchange.NewTransformExchange(0, send, httpx.NewRequireOK(), 1)
+			decoded := exchange.NewTransformExchange(0, checked, transform.NewJSONToAgnostic(), 1)
+			bindings := exchange.NewTransformExchange(0, decoded, gcpBindingRows{}, 1)
+			return exchange.NewExplodeRows(bindings, 1)
+		}, bind.NewInnerFlatten()) // a project with no readable policy contributes no principals
+}
+
+// gcpBindingRows flattens bindings[{role, members[]}] into one row per member. A projection cannot do
+// it: the repeating element is nested inside another repeating element, and the role has to travel
+// down with each member or the grant loses its meaning.
+type gcpBindingRows struct{}
+
+func (gcpBindingRows) Apply(in facade.Page) (facade.Record, error) {
+	doc, _ := in.Doc(facade.AnonymousPayload)
+	m, _ := doc.(map[string]any)
+	bindings, _ := m["bindings"].([]any)
+	out := make([]any, 0, len(bindings))
+	for _, b := range bindings {
+		bm, ok := b.(map[string]any)
+		if !ok {
+			continue
+		}
+		role, _ := bm["role"].(string)
+		members, _ := bm["members"].([]any)
+		for _, mem := range members {
+			s, ok := mem.(string)
+			if !ok {
+				continue
+			}
+			// "serviceAccount:x@y" — the prefix is the principal TYPE, which GCP states nowhere else.
+			kind, name, found := strings.Cut(s, ":")
+			if !found {
+				kind, name = "unknown", s
+			}
+			out = append(out, map[string]any{
+				"principal":      name,
+				"principal_id":   s,
+				"principal_type": gcpPrincipalType(kind),
+				"grant":          role,
+			})
+		}
+	}
+	return record.NewRecord(map[string]facade.Value{facade.AnonymousPayload: value.NewDocValue(out)}), nil
+}
+
+// gcpPrincipalType maps GCP's member prefixes onto the shared vocabulary.
+func gcpPrincipalType(prefix string) string {
+	switch prefix {
+	case "user":
+		return "user"
+	case "group":
+		return "group"
+	case "serviceAccount":
+		return "service_principal"
+	default:
+		return prefix
+	}
+}
+
+// GCPIAMPrincipalsPlan lists principals granted a role on a project, or on EVERY project under an org
+// — the same recursive descent the bucket audit uses, with IAM as the visitor.
+func GCPIAMPrincipalsPlan(endpoint string, creds GCPCredentials, project, org string) plan.Plan {
+	oauth, jwt := gcpOAuth(endpoint, creds, gcpCloudPlatformScope)
+	if org != "" {
+		specs := append([]plan.ExchangeSpec{oauth}, gcpOrgProjectSpecs(endpoint)...)
+		specs = append(specs, gcpIAMBindingsSpec(endpoint))
+		betas := []plan.BetaEdge{
+			plan.NewBetaEdge("OAuth", "Folders", "token", "token"),
+			plan.NewBetaEdge("OAuth", "Projects", "token", "token"),
+			plan.NewBetaEdge("OAuth", "IAMPolicy", "token", "token"),
+			plan.NewBetaEdge("Folders", "Projects", "node", "node"),
+			plan.NewBetaEdge("Projects", "IAMPolicy", "project", "project"),
+		}
+		return plan.NewPlan(specs, betas, nil,
+			map[string]any{"assertion": jwt, "org": org}, principalEgress("gcp"), encoder.NewJSONLEncoder())
+	}
+	specs := []plan.ExchangeSpec{oauth, gcpIAMBindingsSpec(endpoint)}
+	betas := []plan.BetaEdge{plan.NewBetaEdge("OAuth", "IAMPolicy", "token", "token")}
+	return plan.NewPlan(specs, betas, nil,
+		map[string]any{"assertion": jwt, "project": project}, principalEgress("gcp"), encoder.NewJSONLEncoder())
 }

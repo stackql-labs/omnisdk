@@ -45,6 +45,11 @@ _now="$(date +%s)" &&
   ./build/omnicli gcp-provision --project "${_GOOGLE_PROJECT_ID}" --region us-central1 \
     --out "./cicd/out/gcp-${_now}.jsonl" --log "./cicd/out/gcp-${_now}.log"
 
+# Access review: principals across AWS IAM + Entra ID + GCP IAM bindings (see use_cases.md)
+_now="$(date +%s)" && ./build/omnicli run omni.iam.principals.list \
+  '{"params":{"region":"'"${_AWS_REGION}"'","google_project":"'"${_GOOGLE_PROJECT_ID}"'"}}' \
+  --out "./cicd/out/principals-${_now}.jsonl"
+
 _now="$(date +%s)" && ./build/omnicli azure-vnets --out "./cicd/out/azure-${_now}.jsonl" --log "./cicd/out/azure-${_now}.log"
 
 # Blob-store encryption audit across all three (AWS_*/AZURE_*/GOOGLE_CREDENTIALS from the secrets file).
