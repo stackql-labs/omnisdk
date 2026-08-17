@@ -122,6 +122,17 @@ type CredentialSource interface {
 	SecretEnvVar() string
 }
 
+// DefaultProviderPrefix namespaces DOCUMENT-DERIVED providers. A hand-authored catalog entry and a
+// document-derived one can describe the same cloud without describing the same thing —
+// aws.iam.principals is a curated, normalized view; the document-derived aws.iam_native.users is
+// whatever the document says. Colliding them would make an address ambiguous and silently change what
+// a caller gets as documents mature, so the namespaces stay separate and the prefix states which
+// guarantees apply.
+//
+// "unstable" is the honest word: these addresses follow the documents, so they can change shape when
+// the documents do. A caller that has decided otherwise can set its own prefix.
+const DefaultProviderPrefix = "stackql_unstable_"
+
 // Catalog is a whole provider bundle resolved to ADDRESSABLE exchanges: a provider document plus the
 // service documents present alongside it. An address is "<provider>.<service>.<resource>", the same
 // dot-path the documents give their resources, so what a caller names is what the document called it.
@@ -148,4 +159,18 @@ type Method interface {
 	// SQLVerb is select/insert/update/delete/exec, or empty when the document maps it to none.
 	SQLVerb() string
 	OperationID() string
+}
+
+// Registry is a directory of PROVIDERS — the shape a tool like stackql already keeps on disk
+// (<root>/<provider>/<version>/provider.yaml + services/). It exists so a caller can hand over the
+// root and have everything become addressable, rather than naming one bundle at a time.
+type Registry interface {
+	// Providers are the provider names present, sorted.
+	Providers() []string
+	// Version is the version resolved for a provider — the newest present, unless one was pinned.
+	Version(provider string) (string, bool)
+	// Catalog is one provider's bundle.
+	Catalog(provider string) (Catalog, error)
+	// Exchange resolves a "<provider>.<service>.<resource>" address against whichever provider it names.
+	Exchange(address string) (AOTExchange, error)
 }

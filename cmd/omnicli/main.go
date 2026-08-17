@@ -255,14 +255,14 @@ func main() {
 	// resources, +resource → methods. Documents are parsed on demand and not retained by a listing,
 	// so walking a 232-service bundle costs one document at a time.
 	catCmd := &cobra.Command{
-		Use:   "doc-catalog <bundle-dir> [service] [resource]",
-		Short: "List a bundle's services, a service's resources, or a resource's methods",
-		Args:  cobra.RangeArgs(1, 3),
+		Use:   "doc-catalog <dir> [provider] [service] [resource]",
+		Short: "Browse a provider bundle OR a registry root: providers → services → resources → methods",
+		Args:  cobra.RangeArgs(1, 4),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			quiet, _ := cmd.Flags().GetBool("quiet")
 			switch len(args) {
-			case 3:
-				ms, err := omnisdk.DocMethods(args[0], args[1], args[2])
+			case 4:
+				ms, err := omnisdk.DocMethods(args[0], args[1], args[2], args[3])
 				if err != nil {
 					return err
 				}
@@ -273,8 +273,8 @@ func main() {
 					return nil
 				}
 				return printJSON(ms)
-			case 2:
-				rs, err := omnisdk.DocResources(args[0], args[1])
+			case 3:
+				rs, err := omnisdk.DocResources(args[0], args[1], args[2])
 				if err != nil {
 					return err
 				}
@@ -285,7 +285,32 @@ func main() {
 					return nil
 				}
 				return printJSON(rs)
+			case 2:
+				services, addresses, err := omnisdk.DocCatalog(args[0], args[1])
+				if err != nil {
+					return err
+				}
+				if quiet {
+					for _, a := range addresses {
+						fmt.Println(a)
+					}
+					return nil
+				}
+				return printJSON(map[string]any{
+					"services": services, "service_count": len(services),
+					"addresses": addresses, "address_count": len(addresses),
+				})
 			default:
+				// A registry root has no single catalogue to list, so listing it lists the providers.
+				if provs, err := omnisdk.DocProviders(args[0]); err == nil {
+					if quiet {
+						for p := range provs {
+							fmt.Println(p)
+						}
+						return nil
+					}
+					return printJSON(provs)
+				}
 				services, addresses, err := omnisdk.DocCatalog(args[0])
 				if err != nil {
 					return err

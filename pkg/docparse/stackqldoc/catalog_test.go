@@ -44,11 +44,11 @@ func TestBundleResolvesToAddresses(t *testing.T) {
 	found := map[string]bool{}
 	for _, p := range paths {
 		found[p] = true
-		if !strings.HasPrefix(p, "aws.") {
+		if !strings.HasPrefix(p, "stackql_unstable_aws.") {
 			t.Fatalf("unexpected address %q", p)
 		}
 	}
-	for _, want := range []string{"aws.ec2.instances", "aws.ec2.volumes", "aws.ec2.vpcs"} {
+	for _, want := range []string{"stackql_unstable_aws.ec2.instances", "stackql_unstable_aws.ec2.volumes", "stackql_unstable_aws.ec2.vpcs"} {
 		if !found[want] {
 			t.Fatalf("%s missing from %d addresses", want, len(paths))
 		}
@@ -57,7 +57,7 @@ func TestBundleResolvesToAddresses(t *testing.T) {
 
 // An address resolves to the same exchange the service document yields directly.
 func TestAddressResolvesToExchange(t *testing.T) {
-	ex, err := catalog(t).Exchange("aws.ec2.instances")
+	ex, err := catalog(t).Exchange("stackql_unstable_aws.ec2.instances")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -73,17 +73,38 @@ func TestAddressResolvesToExchange(t *testing.T) {
 func TestAddressErrorsAreSpecific(t *testing.T) {
 	c := catalog(t)
 	for _, tc := range []struct{ addr, want string }{
-		{"aws.ec2", "not <provider>.<service>.<resource>"},
+		{"stackql_unstable_aws.ec2", "not <provider>.<service>.<resource>"},
 		{"gcp.ec2.instances", "not for provider"},
-		{"aws.nosuchservice.things", "no document in this bundle"},
+		{"stackql_unstable_aws.nosuchservice.things", "no document in this bundle"},
 		// s3.buckets IS in the bundle, but its select is a cloud_control view rather than an
 		// operation — so it is genuinely not addressable, and says which of the two it is
-		{"aws.s3.buckets", "declares no select verb"},
-		{"aws.ec2.no_such_resource", "no resource"},
+		{"stackql_unstable_aws.s3.buckets", "declares no select verb"},
+		{"stackql_unstable_aws.ec2.no_such_resource", "no resource"},
 	} {
 		_, err := c.Exchange(tc.addr)
 		if err == nil || !strings.Contains(err.Error(), tc.want) {
 			t.Fatalf("Exchange(%q) = %v, want %q", tc.addr, err, tc.want)
+		}
+	}
+}
+
+// The namespace is a caller's decision, not a constant. A consumer that has decided the documents are
+// authoritative can drop or rename it without this package caring.
+func TestProviderPrefixIsConfigurable(t *testing.T) {
+	for _, tc := range []struct {
+		opts []stackqldoc.Option
+		want string
+	}{
+		{nil, "stackql_unstable_aws.ec2.instances"},
+		{[]stackqldoc.Option{stackqldoc.WithProviderPrefix("preview_")}, "preview_aws.ec2.instances"},
+		{[]stackqldoc.Option{stackqldoc.WithProviderPrefix("")}, "aws.ec2.instances"},
+	} {
+		c, err := stackqldoc.Open(os.DirFS("testdata"), tc.opts...)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := c.Exchange(tc.want); err != nil {
+			t.Fatalf("Exchange(%q) = %v", tc.want, err)
 		}
 	}
 }

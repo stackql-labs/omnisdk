@@ -15,6 +15,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"regexp"
 	"sort"
@@ -40,6 +41,7 @@ import (
 	"github.com/stackql-labs/omnisdk/internal/system_g/secret"
 	"github.com/stackql-labs/omnisdk/internal/system_g/sink"
 	"github.com/stackql-labs/omnisdk/internal/system_g/trace"
+	"github.com/stackql-labs/omnisdk/pkg/docparse/aot"
 	"github.com/stackql-labs/omnisdk/pkg/docparse/dsl"
 	"github.com/stackql-labs/omnisdk/pkg/docparse/dsl/gotemplate"
 	"github.com/stackql-labs/omnisdk/pkg/docparse/stackqldoc"
@@ -920,12 +922,59 @@ func NewFromDoc(doc []byte, resource string, args Args) (Plan, error) {
 	return &cannedPlan{plan: pl, args: args}, nil
 }
 
+// openDocs resolves dir as either a single provider BUNDLE (provider.yaml present) or a REGISTRY ROOT
+// holding many providers. Which one it is, is a fact about the directory; asking a caller to declare
+// it would be asking them to restate what is already on disk. address names the provider inside a
+// registry and is ignored for a bundle.
+func openDocs(dir, address string) (aot.Catalog, error) {
+	fsys := os.DirFS(dir)
+	if _, err := fs.Stat(fsys, "provider.yaml"); err == nil {
+		return stackqldoc.Open(fsys)
+	}
+	reg, err := stackqldoc.OpenRegistry(fsys)
+	if err != nil {
+		return nil, err
+	}
+	provider, _, _ := strings.Cut(address, ".")
+	if provider == "" {
+		return nil, fmt.Errorf("omnisdk: %q holds %d providers — name one, e.g. %q",
+			dir, len(reg.Providers()), firstOr(reg.Providers()))
+	}
+	return reg.Catalog(provider)
+}
+
+func firstOr(ss []string) string {
+	if len(ss) > 0 {
+		return ss[0]
+	}
+	return aot.DefaultProviderPrefix + "aws"
+}
+
+// DocProviders lists a registry root's providers with the version resolved for each — the newest
+// present, discovered rather than configured.
+func DocProviders(dir string) (map[string]string, error) {
+	reg, err := stackqldoc.OpenRegistry(os.DirFS(dir))
+	if err != nil {
+		return nil, err
+	}
+	out := map[string]string{}
+	for _, p := range reg.Providers() {
+		v, _ := reg.Version(p)
+		out[p] = v
+	}
+	return out, nil
+}
+
 // DocCatalog lists a provider BUNDLE (a directory holding provider.yaml and its services/): the
 // services whose documents are present, and every addressable exchange. An address is
 // "<provider>.<service>.<resource>". The provider lists more services than any bundle ships, and only
 // the present ones are addressable.
-func DocCatalog(dir string) (services []string, addresses []string, err error) {
-	c, err := stackqldoc.Open(os.DirFS(dir))
+func DocCatalog(dir string, provider ...string) (services []string, addresses []string, err error) {
+	var addr string
+	if len(provider) > 0 {
+		addr = provider[0]
+	}
+	c, err := openDocs(dir, addr)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -934,8 +983,8 @@ func DocCatalog(dir string) (services []string, addresses []string, err error) {
 
 // DocResources lists a service's resources — every one it declares, not only those with a runnable
 // SELECT.
-func DocResources(dir, service string) ([]string, error) {
-	c, err := stackqldoc.Open(os.DirFS(dir))
+func DocResources(dir, provider, service string) ([]string, error) {
+	c, err := openDocs(dir, provider)
 	if err != nil {
 		return nil, err
 	}
@@ -951,8 +1000,8 @@ type DocMethod struct {
 }
 
 // DocMethods lists a resource's methods.
-func DocMethods(dir, service, resource string) ([]DocMethod, error) {
-	c, err := stackqldoc.Open(os.DirFS(dir))
+func DocMethods(dir, provider, service, resource string) ([]DocMethod, error) {
+	c, err := openDocs(dir, provider)
 	if err != nil {
 		return nil, err
 	}
@@ -973,7 +1022,7 @@ func NewFromCatalog(dir, address string, args Args) (Plan, error) {
 	if err := checkEndpoint(args); err != nil {
 		return nil, err
 	}
-	c, err := stackqldoc.Open(os.DirFS(dir))
+	c, err := openDocs(dir, address)
 	if err != nil {
 		return nil, err
 	}

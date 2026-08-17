@@ -189,13 +189,30 @@ the services, resources, methods, the call itself and its auth all come out of t
 
 ### Browse
 
-`doc-catalog` drills down by how many arguments you give it. `-q` prints bare names, one per line.
+`doc-catalog` takes either a single bundle or a REGISTRY ROOT of many providers — whichever the
+directory is. It drills down by how many arguments you give it; `-q` prints bare names, one per line.
+
+```bash
+R=~/.stackql/src                              # a registry root: <provider>/<version>/provider.yaml
+
+./build/omnicli doc-catalog $R                             # providers + the version resolved for each
+./build/omnicli doc-catalog $R stackql_unstable_github     # that provider's services + addresses
+./build/omnicli doc-catalog $R stackql_unstable_github -q  # just the addresses, pipeable
+./build/omnicli doc-catalog $R stackql_unstable_github repos           # that service's resources
+./build/omnicli doc-catalog $R stackql_unstable_github repos releases  # its methods + SQL verbs
+```
+
+```json
+{"stackql_unstable_github": "v26.05.00393", "stackql_unstable_vercel": "v23.12.00183"}
+```
+
+Providers and versions are discovered, not configured: the newest version directory holding a
+`provider.yaml` wins. A single bundle works the same way, minus the provider argument:
 
 ```bash
 D=pkg/docparse/stackqldoc/testdata
 
 ./build/omnicli doc-catalog $D                # services present + every addressable exchange
-./build/omnicli doc-catalog $D -q             # just the addresses, pipeable
 ./build/omnicli doc-catalog $D ec2            # that service's resources
 ./build/omnicli doc-catalog $D ec2 instances  # that resource's methods + the SQL verb each is bound to
 ```
@@ -209,7 +226,12 @@ D=pkg/docparse/stackqldoc/testdata
 ]
 ```
 
-An address is `<provider>.<service>.<resource>`. The AWS bundle has 232 services and 400 addressable
+An address is `<prefix><provider>.<service>.<resource>`. Document-derived providers are namespaced
+`stackql_unstable_` by default, so they cannot collide with hand-authored catalog entries — the
+curated `aws.iam.principals` and the document-derived `stackql_unstable_aws.iam_native.users` are
+different things with different guarantees. Configurable via `stackqldoc.WithProviderPrefix`.
+
+The AWS bundle has 232 services and 400 addressable
 exchanges — a resource is addressable only if its SELECT is backed by an **operation**. Many
 `cloud_control` resources define SELECT as a SQL **view** instead, and those say so rather than
 appearing and then failing:
@@ -223,7 +245,7 @@ stackqldoc: resource "buckets" declares no select verb
 ```bash
 source cicd/vol/vendor-secrets/secrets.sh
 
-_now="$(date +%s)" && ./build/omnicli doc-run $D aws.ec2.instances \
+_now="$(date +%s)" && ./build/omnicli doc-run $D stackql_unstable_aws.ec2.instances \
   --aws-region "${_AWS_REGION}" \
   --out "./cicd/out/doc-instances-${_now}.jsonl" --log "./cicd/out/doc-instances-${_now}.log"
 ```

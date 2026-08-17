@@ -11,10 +11,30 @@ import (
 	"github.com/stackql-labs/omnisdk/pkg/docparse/aot"
 )
 
+// Option configures how a bundle is resolved.
+type Option func(*settings)
+
+type settings struct{ prefix string }
+
+// WithProviderPrefix sets the namespace document-derived addresses live under. Empty means none — a
+// caller that treats the documents as authoritative can drop it deliberately, which is different from
+// forgetting it was there.
+func WithProviderPrefix(prefix string) Option {
+	return func(s *settings) { s.prefix = prefix }
+}
+
+func resolveSettings(opts []Option) settings {
+	s := settings{prefix: aot.DefaultProviderPrefix}
+	for _, o := range opts {
+		o(&s)
+	}
+	return s
+}
+
 // Open resolves a provider bundle — provider.yaml plus the service documents beside it — into
 // addressable exchanges. Service documents are parsed LAZILY: a provider lists hundreds and each is
 // megabytes, so resolving an address must not cost the whole catalogue.
-func Open(fsys fs.FS) (aot.Catalog, error) {
+func Open(fsys fs.FS, opts ...Option) (aot.Catalog, error) {
 	b, err := fs.ReadFile(fsys, "provider.yaml")
 	if err != nil {
 		return nil, fmt.Errorf("stackqldoc: open provider: %w", err)
@@ -23,7 +43,7 @@ func Open(fsys fs.FS) (aot.Catalog, error) {
 	if err != nil {
 		return nil, err
 	}
-	c := &catalog{fsys: fsys, provider: p, files: map[string]string{}}
+	c := &catalog{fsys: fsys, provider: p, files: map[string]string{}, prefix: resolveSettings(opts).prefix}
 	// A provider lists every service it could offer; only those whose document is present here are
 	// addressable. Which is which is a fact about the bundle, so it is settled once, up front.
 	for _, s := range p.Services() {
@@ -44,6 +64,8 @@ func Open(fsys fs.FS) (aot.Catalog, error) {
 type catalog struct {
 	fsys     fs.FS
 	provider aot.Provider
+
+	prefix string // the namespace addresses live under
 
 	mu    sync.Mutex
 	files map[string]string // service → document path, for services actually present
@@ -103,8 +125,9 @@ func (c *catalog) Exchange(addr string) (aot.AOTExchange, error) {
 	if err != nil {
 		return nil, err
 	}
-	if prov != c.provider.Name() {
-		return nil, fmt.Errorf("stackqldoc: address %q is not for provider %q", addr, c.provider.Name())
+	if prov != c.prefix+c.provider.Name() {
+		return nil, fmt.Errorf("stackqldoc: address %q is not for provider %q", addr,
+			c.prefix+c.provider.Name())
 	}
 	doc, err := c.doc(svc)
 	if err != nil {
@@ -113,9 +136,10 @@ func (c *catalog) Exchange(addr string) (aot.AOTExchange, error) {
 	return doc.Select(res)
 }
 
-// address is the dot-path for a resource, matching the id the documents use for themselves.
+// address is the dot-path for a resource: the document's own provider/service/resource, under the
+// document-derived namespace.
 func (c *catalog) address(service, resource string) string {
-	return c.provider.Name() + "." + service + "." + resource
+	return c.prefix + c.provider.Name() + "." + service + "." + resource
 }
 
 // split parses an address. A resource name may itself contain dots, so only the first two segments
