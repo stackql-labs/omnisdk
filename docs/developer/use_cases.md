@@ -9,5 +9,14 @@ go build -o build/omnicli ./cmd/omnicli
 
 source cicd/vol/vendor-secrets/secrets.sh # populate according to dev guide
 
+```
+
+## Bucket check cross cloud
+
+```bash
+
+_now="$(date +%s)" && ./build/omnicli run omni.storage.buckets.list \
+  '{"params":{"region":"'"${_AWS_REGION}"'","google_project":"'"${_GOOGLE_PROJECT_ID}"'"}}' \
+  --out "./cicd/out/dto-omni-${_now}.jsonl" --log "./cicd/out/dto-omni-${_now}.log"
 
 ```
