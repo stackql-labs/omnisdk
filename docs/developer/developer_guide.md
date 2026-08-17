@@ -156,6 +156,13 @@ M=http://127.0.0.1:8085
 #   {"gcp.crm":{"path":"/v4"}}   → https://cloudresourcemanager.googleapis.com/v4
 ```
 
+Mocks serving a self-signed certificate need `--tls-skip-verify` (`Args.InsecureSkipTLSVerify`).
+Applies to every exchange in the run, hand-authored or document-compiled:
+
+```bash
+./build/omnicli run omni.iam.principals.access '{...}' --endpoint https://127.0.0.1:8443 --tls-skip-verify
+```
+
 A typo fails up front rather than silently leaving the run on the real cloud:
 
 ```

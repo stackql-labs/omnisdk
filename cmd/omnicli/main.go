@@ -24,6 +24,7 @@ import (
 
 func main() {
 	var outPath, logPath, endpoint string
+	var insecureTLS bool
 	var awsRegion string
 	var t tune
 
@@ -37,6 +38,7 @@ func main() {
 	pf.StringVarP(&outPath, "out", "o", "", "output file (default stdout)")
 	pf.StringVar(&logPath, "log", "", "log raw responses to this file (default off)")
 	pf.StringVar(&endpoint, "endpoint", "", "endpoint override, path-style (e.g. http://localhost:8085); default real cloud")
+	pf.BoolVar(&insecureTLS, "tls-skip-verify", false, "accept a self-signed certificate; only applies with --endpoint")
 	pf.IntVar(&t.parallelism, "parallelism", 16, "max concurrent fan-out units (bind-join inners)")
 	pf.IntVar(&t.perHost, "max-per-host", 8, "max concurrent requests per backend host")
 	pf.IntVar(&t.retryTries, "retry-tries", 4, "total attempts per request incl. the first (ephemeral failures)")
@@ -94,6 +96,7 @@ func main() {
 				return e
 			}
 			a.Endpoint, a.Log, a.Tuning = endpoint, logw, t.facade()
+			a.InsecureSkipTLSVerify = insecureTLS
 			pl, e := plan(a)
 			if e != nil {
 				return e
@@ -354,6 +357,9 @@ func main() {
 			if a.Endpoint == "" {
 				a.Endpoint = endpoint
 			}
+			if !a.InsecureSkipTLSVerify {
+				a.InsecureSkipTLSVerify = insecureTLS
+			}
 			if (a.Tuning == omnisdk.Tuning{}) {
 				a.Tuning = t.facade()
 			}
@@ -445,6 +451,9 @@ func main() {
 			a.Log = logw
 			if a.Endpoint == "" {
 				a.Endpoint = endpoint
+			}
+			if !a.InsecureSkipTLSVerify {
+				a.InsecureSkipTLSVerify = insecureTLS
 			}
 			if (a.Tuning == omnisdk.Tuning{}) {
 				a.Tuning = t.facade()

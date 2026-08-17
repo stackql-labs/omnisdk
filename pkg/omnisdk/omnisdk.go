@@ -35,6 +35,7 @@ import (
 	"github.com/stackql-labs/omnisdk/internal/system_g/exchange/sdk"
 	"github.com/stackql-labs/omnisdk/internal/system_g/facade"
 	"github.com/stackql-labs/omnisdk/internal/system_g/grpcx"
+	"github.com/stackql-labs/omnisdk/internal/system_g/httpx"
 	"github.com/stackql-labs/omnisdk/internal/system_g/plan"
 	"github.com/stackql-labs/omnisdk/internal/system_g/retry"
 	"github.com/stackql-labs/omnisdk/internal/system_g/schedule"
@@ -135,8 +136,13 @@ type Args struct {
 	Params   map[string]string
 	Auth     *Auth
 	Endpoint string
-	Tuning   Tuning
-	Log      io.Writer
+	// InsecureSkipTLSVerify accepts any certificate. It exists for mocks that serve a self-signed one,
+	// but it is not tied to Endpoint: a private CA or an intercepting proxy is a real reason to need it
+	// against a real host, and a flag that silently did nothing in that case would be worse than the
+	// risk it guards.
+	InsecureSkipTLSVerify bool
+	Tuning                Tuning
+	Log                   io.Writer
 }
 
 func (a Args) param(name string) string { return a.Params[name] }
@@ -1283,6 +1289,11 @@ func (c *cannedPlan) decorate(parent context.Context) (context.Context, context.
 	timeoutCancel := func() {}
 	if c.args.Tuning.Timeout > 0 {
 		ctx, timeoutCancel = context.WithTimeout(parent, c.args.Tuning.Timeout)
+	}
+	// The HTTP client is a run policy like the rest: set once here, obeyed by every exchange, so a
+	// document-compiled plan and a hand-authored one behave identically.
+	if c.args.InsecureSkipTLSVerify {
+		ctx = httpx.WithClient(ctx, httpx.InsecureClient())
 	}
 	ctx, abortCancel := abort.WithSignal(ctx)
 	ctx = abort.WithLimit(ctx, c.args.Tuning.Limit)
