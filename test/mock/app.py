@@ -41,9 +41,12 @@ def list_buckets():
 
 
 @app.post("/")
-def ec2_query():
-    # EC2 Query API: params ride the POST form body (Action, VpcId, ...).
+def aws_query():
+    # The AWS query protocol: EVERY service posts to / with an Action form param, so one dispatcher
+    # serves EC2 and IAM alike — which is also why they cannot be separate Flask routes.
     action = request.form.get("Action")
+    if action and action.startswith(("ListUsers", "ListAttachedUserPolicies", "ListMFADevices")):
+        return aws_iam_query(action, request.form.get("UserName", ""))
     if action == "CreateVpc":
         return Response(render_template("create_vpc.xml.j2", **PROVISION), mimetype=XML)
     if action == "CreateSubnet":
@@ -220,6 +223,85 @@ def azure_containers(sub, rg, acct):
     return jsonify(value=[
         {"name": "data", "properties": {"publicAccess": "None"}},
         {"name": "public-assets", "properties": {"publicAccess": "Blob"}},
+    ])
+
+
+# --- AWS IAM (query protocol: POST / with an Action form param) ---------------
+# The access review's AWS leg: users, then per-user attached policies and MFA devices.
+
+IAM_USERS = [
+    ("alice", "AIDAALICE", "2023-01-31T00:31:12Z"),
+    ("bob", "AIDABOB", "2022-12-09T04:15:24Z"),
+]
+IAM_POLICIES = {"alice": ["AdministratorAccess"], "bob": ["ReadOnlyAccess", "IAMFullAccess"]}
+IAM_MFA = {"alice": "arn:aws:iam::000000000000:mfa/alice"}
+
+
+def aws_iam_query(action, user):
+    if action == "ListUsers":
+        members = "".join(
+            f"<member><UserName>{n}</UserName><UserId>{i}</UserId>"
+            f"<Arn>arn:aws:iam::000000000000:user/{n}</Arn><CreateDate>{c}</CreateDate></member>"
+            for n, i, c in IAM_USERS)
+        return Response(f'<ListUsersResponse><ListUsersResult><Users>{members}</Users>'
+                        "<IsTruncated>false</IsTruncated></ListUsersResult></ListUsersResponse>",
+                        mimetype=XML)
+    if action == "ListAttachedUserPolicies":
+        members = "".join(f"<member><PolicyName>{p}</PolicyName></member>"
+                          for p in IAM_POLICIES.get(user, []))
+        return Response("<ListAttachedUserPoliciesResponse><ListAttachedUserPoliciesResult>"
+                        f"<AttachedPolicies>{members}</AttachedPolicies>"
+                        "</ListAttachedUserPoliciesResult></ListAttachedUserPoliciesResponse>",
+                        mimetype=XML)
+    if action == "ListMFADevices":
+        serial = IAM_MFA.get(user)
+        members = (f"<member><SerialNumber>{serial}</SerialNumber><UserName>{user}</UserName></member>"
+                   if serial else "")
+        return Response("<ListMFADevicesResponse><ListMFADevicesResult>"
+                        f"<MFADevices>{members}</MFADevices>"
+                        "</ListMFADevicesResult></ListMFADevicesResponse>", mimetype=XML)
+    return Response(f"<ErrorResponse><Error><Code>InvalidAction</Code>"
+                    f"<Message>{action}</Message></Error></ErrorResponse>", status=400, mimetype=XML)
+
+
+# --- Microsoft Graph (Entra directory) ----------------------------------------
+
+GRAPH_USERS = [
+    ("11111111-1111-1111-1111-111111111111", "ada@example.onmicrosoft.com", "2022-03-28T06:05:22Z"),
+    ("22222222-2222-2222-2222-222222222222", "grace@example.onmicrosoft.com", "2022-10-21T10:56:02Z"),
+]
+GRAPH_ROLES = {"11111111-1111-1111-1111-111111111111": ["Global Administrator"]}
+
+
+@app.get("/v1.0/users")
+def graph_users():
+    if (err := require_azure_token()):
+        return err
+    return jsonify(value=[
+        {"id": i, "userPrincipalName": upn, "displayName": upn.split("@")[0],
+         "accountEnabled": True, "createdDateTime": c}
+        for i, upn, c in GRAPH_USERS])
+
+
+@app.get("/v1.0/users/<uid>/memberOf")
+def graph_member_of(uid):
+    if (err := require_azure_token()):
+        return err
+    return jsonify(value=[
+        {"@odata.type": "#microsoft.graph.directoryRole", "displayName": r}
+        for r in GRAPH_ROLES.get(uid, [])])
+
+
+# --- GCP Cloud Resource Manager: project IAM policy ---------------------------
+
+
+@app.post("/v3/projects/<project>:getIamPolicy")
+def gcp_get_iam_policy(project):
+    return jsonify(bindings=[
+        {"role": "roles/owner", "members": ["user:carol@example.com"]},
+        {"role": "roles/viewer",
+         "members": ["group:auditors@example.com",
+                     f"serviceAccount:svc@{project}.iam.gserviceaccount.com"]},
     ])
 
 

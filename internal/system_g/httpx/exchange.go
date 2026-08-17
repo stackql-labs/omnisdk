@@ -41,7 +41,8 @@ const KeyStatus = "status"
 // own; anything else is injected. reqT is the request pipeline (e.g. SigV4).
 func Make(req Request, decode facade.Transform, reqT ...facade.Transform) func(bound map[string]any) facade.Operator {
 	return func(bound map[string]any) facade.Operator {
-		return &op{req: req, bound: bound, decode: decode, reqT: reqT, client: http.DefaultClient}
+		// client is resolved from ctx at Open, so the run's decision wins over this default.
+		return &op{req: req, bound: bound, decode: decode, reqT: reqT, client: nil}
 	}
 }
 
@@ -252,7 +253,7 @@ func (o *op) sendOnce(ctx context.Context, rec facade.Record) (int, []byte, http
 			req.Header.Add(k, v)
 		}
 	}
-	resp, err := o.client.Do(req)
+	resp, err := ClientFrom(ctx, o.client).Do(req)
 	if err != nil {
 		return 0, nil, nil, err
 	}

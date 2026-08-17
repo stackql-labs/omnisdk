@@ -15,6 +15,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"regexp"
 	"sort"
@@ -30,15 +31,21 @@ import (
 	"github.com/stackql-labs/omnisdk/internal/system_g/auth"
 	"github.com/stackql-labs/omnisdk/internal/system_g/bind"
 	"github.com/stackql-labs/omnisdk/internal/system_g/endpoint"
+	"github.com/stackql-labs/omnisdk/internal/system_g/exchange/docx"
 	"github.com/stackql-labs/omnisdk/internal/system_g/exchange/sdk"
 	"github.com/stackql-labs/omnisdk/internal/system_g/facade"
 	"github.com/stackql-labs/omnisdk/internal/system_g/grpcx"
+	"github.com/stackql-labs/omnisdk/internal/system_g/httpx"
 	"github.com/stackql-labs/omnisdk/internal/system_g/plan"
 	"github.com/stackql-labs/omnisdk/internal/system_g/retry"
 	"github.com/stackql-labs/omnisdk/internal/system_g/schedule"
 	"github.com/stackql-labs/omnisdk/internal/system_g/secret"
 	"github.com/stackql-labs/omnisdk/internal/system_g/sink"
 	"github.com/stackql-labs/omnisdk/internal/system_g/trace"
+	"github.com/stackql-labs/omnisdk/pkg/docparse/aot"
+	"github.com/stackql-labs/omnisdk/pkg/docparse/dsl"
+	"github.com/stackql-labs/omnisdk/pkg/docparse/dsl/gotemplate"
+	"github.com/stackql-labs/omnisdk/pkg/docparse/stackqldoc"
 )
 
 // Auth is the caller-supplied authentication config (a pared, stackql-shaped auth struct). It is the
@@ -129,8 +136,13 @@ type Args struct {
 	Params   map[string]string
 	Auth     *Auth
 	Endpoint string
-	Tuning   Tuning
-	Log      io.Writer
+	// InsecureSkipTLSVerify accepts any certificate. It exists for mocks that serve a self-signed one,
+	// but it is not tied to Endpoint: a private CA or an intercepting proxy is a real reason to need it
+	// against a real host, and a flag that silently did nothing in that case would be worse than the
+	// risk it guards.
+	InsecureSkipTLSVerify bool
+	Tuning                Tuning
+	Log                   io.Writer
 }
 
 func (a Args) param(name string) string { return a.Params[name] }
@@ -196,6 +208,10 @@ var blobSchema = jsonSchema(sdk.BlobSchema)
 // Schemas for the non-blob methods, each DERIVED from the columns that method's egress select emits
 // (single source of truth → the contract can't drift). str is the string-column shorthand.
 func str(name string) sdk.BlobColumn { return sdk.BlobColumn{Name: name, Type: "string"} }
+
+// principalSchema is the uniform access-review row, DERIVED from sdk.PrincipalSchema so the published
+// contract cannot drift from what the egress actually emits.
+var principalSchema = jsonSchema(sdk.PrincipalSchema)
 
 var (
 	s3ListSchema    = jsonSchema([]sdk.BlobColumn{str("name"), str("created"), str("arn")})
@@ -358,6 +374,29 @@ var resources = map[string]Resource{
 		Summary: "Azure blob containers (the bucket analogue: subscription → account → container)",
 		Schema:  blobSchema,
 	},
+	"aws.iam.principals": {
+		Path:    "aws.iam.principals",
+		Summary: "AWS IAM principals (users)",
+		Schema:  principalSchema,
+	},
+	"gcp.iam.principals": {
+		Path:    "gcp.iam.principals",
+		Summary: "GCP principals granted a role on a project or across an org",
+		Schema:  principalSchema,
+	},
+	"entra.identities": {
+		Path:    "entra.identities",
+		Summary: "Entra ID directory identities",
+		Schema:  principalSchema,
+	},
+	// The access-review population: every principal, every cloud, one comparable shape. The legs are
+	// hand-authored today and doc-compiled later — the address, schema and composite do not change
+	// when they are, which is the point of resolving them behind a catalog entry.
+	"omni.iam.principals": {
+		Path:    "omni.iam.principals",
+		Summary: "Principals across every identity source (AWS IAM + Entra ID)",
+		Schema:  principalSchema,
+	},
 	// The cross-cloud composite as a FIRST-CLASS thing: blob stores wherever they live. Every provider
 	// leg already normalizes to the one blob schema, so the union is a single coherent resource — not a
 	// client-side stitch-up — and it carries that same canonical schema.
@@ -411,7 +450,7 @@ var methods = map[string]methodDef{
 			Schema:   blobSchema,
 		},
 		build: func(args Args) (plan.Plan, error) {
-			a, err := azureAuth(args)
+			a, err := azureAuth(args, endpoint.AzureMgmt)
 			if err != nil {
 				return nil, err
 			}
@@ -480,6 +519,124 @@ var methods = map[string]methodDef{
 			"azure.storage.containers.list",
 			"google.storage.buckets.list",
 		},
+	},
+	"aws.iam.principals.list": {
+		Method: Method{
+			Path:     "aws.iam.principals.list",
+			Resource: "aws.iam.principals",
+			Summary:  "List IAM users in the credentials' account",
+			Params:   []Param{{Name: "region", Required: true, Description: "AWS region to sign with (IAM is global; SigV4 still scopes to a region)"}},
+			Schema:   principalSchema,
+		},
+		build: func(args Args) (plan.Plan, error) {
+			creds, err := awsCreds(args)
+			if err != nil {
+				return nil, err
+			}
+			return sdk.AWSIAMPrincipalsPlan(args.param("region"), creds, args.Endpoint), nil
+		},
+	},
+	"entra.identities.list": {
+		Method: Method{
+			Path:     "entra.identities.list",
+			Resource: "entra.identities",
+			Summary:  "List Entra ID users (Microsoft Graph); scope is the tenant the credentials belong to",
+			Params:   nil, // the tenant is the credentials' own; nothing to choose
+			Schema:   principalSchema,
+		},
+		build: func(args Args) (plan.Plan, error) {
+			// Same client-credentials exchange as the ARM audit — only the SCOPE differs, and that is
+			// derived from the service rather than configured.
+			a, err := azureAuth(args, endpoint.AzureGraph)
+			if err != nil {
+				return nil, err
+			}
+			return sdk.EntraPrincipalsPlan(args.Endpoint, a)
+		},
+	},
+	"gcp.iam.principals.list": {
+		Method: Method{
+			Path:     "gcp.iam.principals.list",
+			Resource: "gcp.iam.principals",
+			Summary:  "List principals holding a role on a project OR across a whole org",
+			Params: []Param{
+				{Name: "google_project", Required: false, Description: "single GCP project (mutually exclusive with google_org)"},
+				{Name: "google_org", Required: false, Description: "every project under the org, recursive folder descent (mutually exclusive with google_project)"},
+			},
+			ExactlyOne: [][]string{{"google_project", "google_org"}},
+			Schema:     principalSchema,
+		},
+		build: func(args Args) (plan.Plan, error) {
+			creds, err := gcpCreds(args)
+			if err != nil {
+				return nil, err
+			}
+			return sdk.GCPIAMPrincipalsPlan(args.Endpoint, creds, args.param("google_project"), args.param("google_org")), nil
+		},
+	},
+	"aws.iam.principals.access": {
+		Method: Method{
+			Path:     "aws.iam.principals.access",
+			Resource: "aws.iam.principals",
+			Summary:  "DEEP:each IAM user with its attached policies and MFA enrolment",
+			Params:   []Param{{Name: "region", Required: true, Description: "AWS region to sign with"}},
+			Schema:   principalSchema,
+		},
+		build: func(args Args) (plan.Plan, error) {
+			creds, err := awsCreds(args)
+			if err != nil {
+				return nil, err
+			}
+			return sdk.AWSIAMAccessPlan(args.param("region"), creds, args.Endpoint), nil
+		},
+	},
+	"entra.identities.access": {
+		Method: Method{
+			Path:     "entra.identities.access",
+			Resource: "entra.identities",
+			Summary:  "DEEP: each Entra user with the directory roles it holds",
+			Params:   nil,
+			Schema:   principalSchema,
+		},
+		build: func(args Args) (plan.Plan, error) {
+			a, err := azureAuth(args, endpoint.AzureGraph)
+			if err != nil {
+				return nil, err
+			}
+			tenant, _ := secret.Optional(secret.Literal(authOf(args).Tenant),
+				secret.Env(orStr(authOf(args).TenantEnvVar, "AZURE_TENANT_ID"))), error(nil)
+			return sdk.EntraAccessPlan(args.Endpoint, a, tenant)
+		},
+	},
+	"omni.iam.principals.access": {
+		Method: Method{
+			Path:     "omni.iam.principals.access",
+			Resource: "omni.iam.principals",
+			Summary:  "DEEP access review: every principal with its grants, MFA and owning scope",
+			Params: []Param{
+				{Name: "region", Required: true, Description: "AWS region to sign with (AWS leg)"},
+				{Name: "google_project", Required: false, Description: "single GCP project (mutually exclusive with google_org)"},
+				{Name: "google_org", Required: false, Description: "every project under the GCP org (mutually exclusive with google_project)"},
+			},
+			ExactlyOne: [][]string{{"google_project", "google_org"}},
+			Schema:     principalSchema,
+		},
+		members: []string{"aws.iam.principals.access", "entra.identities.access", "gcp.iam.principals.list"},
+	},
+	"omni.iam.principals.list": {
+		Method: Method{
+			Path:     "omni.iam.principals.list",
+			Resource: "omni.iam.principals",
+			Summary:  "Every principal across every identity source, as one comparable population",
+			Params: []Param{
+				{Name: "region", Required: true, Description: "AWS region to sign with (AWS leg)"},
+				{Name: "google_project", Required: false, Description: "single GCP project (mutually exclusive with google_org)"},
+				{Name: "google_org", Required: false, Description: "every project under the GCP org (mutually exclusive with google_project)"},
+			},
+			ExactlyOne: [][]string{{"google_project", "google_org"}},
+			Schema:     principalSchema,
+		},
+		members: []string{"aws.iam.principals.list", "entra.identities.list", "gcp.iam.principals.list"},
 	},
 	"aws.s3.buckets.enumerate": {
 		Method: Method{
@@ -752,6 +909,219 @@ func checkEndpoint(args Args) error {
 	return nil
 }
 
+// NewFromDoc plans a resource's SELECT straight from a provider DOCUMENT, with no catalog entry: the
+// document supplies the call, and the declared auth scheme is applied implicitly. This is the same
+// Plan a catalog method returns, so a consumer runs it identically — the difference is only where the
+// metadata came from, which is the whole point of the document path.
+func NewFromDoc(doc []byte, resource string, args Args) (Plan, error) {
+	if err := checkEndpoint(args); err != nil {
+		return nil, err
+	}
+	reg, err := dsl.NewRegistry(gotemplate.Evaluators()...)
+	if err != nil {
+		return nil, err
+	}
+	pl, err := docx.SelectPlan(doc, resource, docInputs(args), reg, docOptions(args)...)
+	if err != nil {
+		return nil, err
+	}
+	return &cannedPlan{plan: pl, args: args}, nil
+}
+
+// openDocs resolves dir as either a single provider BUNDLE (provider.yaml present) or a REGISTRY ROOT
+// holding many providers. Which one it is, is a fact about the directory; asking a caller to declare
+// it would be asking them to restate what is already on disk. address names the provider inside a
+// registry and is ignored for a bundle.
+func openDocs(dir, address string) (aot.Catalog, error) {
+	fsys := os.DirFS(dir)
+	if _, err := fs.Stat(fsys, "provider.yaml"); err == nil {
+		return stackqldoc.Open(fsys)
+	}
+	reg, err := stackqldoc.OpenRegistry(fsys)
+	if err != nil {
+		return nil, err
+	}
+	provider := address
+	if provider == "" {
+		return nil, fmt.Errorf("omnisdk: %q holds %d providers — name one, e.g. %q",
+			dir, len(reg.Providers()), firstOr(reg.Providers()))
+	}
+	return reg.Catalog(provider)
+}
+
+func firstOr(ss []string) string {
+	if len(ss) > 0 {
+		return ss[0]
+	}
+	return aot.DefaultProviderPrefix + "aws"
+}
+
+// DocProviders lists a registry root's providers with the version resolved for each — the newest
+// present, discovered rather than configured.
+func DocProviders(dir string) (map[string]string, error) {
+	reg, err := stackqldoc.OpenRegistry(os.DirFS(dir))
+	if err != nil {
+		return nil, err
+	}
+	out := map[string]string{}
+	for _, p := range reg.Providers() {
+		v, _ := reg.Version(p)
+		out[p] = v
+	}
+	return out, nil
+}
+
+// DocCatalog lists a provider BUNDLE (a directory holding provider.yaml and its services/): the
+// services whose documents are present, and every addressable exchange. An address is
+// "<provider>.<service>.<resource>". The provider lists more services than any bundle ships, and only
+// the present ones are addressable.
+func DocCatalog(dir string, provider ...string) (services []string, addresses []string, err error) {
+	var addr string
+	if len(provider) > 0 {
+		addr = provider[0]
+	}
+	c, err := openDocs(dir, addr)
+	if err != nil {
+		return nil, nil, err
+	}
+	return c.Services(), c.Paths(), nil
+}
+
+// DocResources lists a service's resources — every one it declares, not only those with a runnable
+// SELECT.
+func DocResources(dir, provider, service string) ([]string, error) {
+	c, err := openDocs(dir, provider)
+	if err != nil {
+		return nil, err
+	}
+	return c.Resources(service)
+}
+
+// DocMethod is a method as a document declares it: its name, the SQL verb it is bound to (empty when
+// none), and the operation behind it.
+type DocMethod struct {
+	Name        string `json:"name"`
+	SQLVerb     string `json:"sql_verb,omitempty"`
+	OperationID string `json:"operation_id,omitempty"`
+}
+
+// DocMethods lists a resource's methods.
+func DocMethods(dir, provider, service, resource string) ([]DocMethod, error) {
+	c, err := openDocs(dir, provider)
+	if err != nil {
+		return nil, err
+	}
+	ms, err := c.Methods(service, resource)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]DocMethod, len(ms))
+	for i, m := range ms {
+		out[i] = DocMethod{Name: m.Name(), SQLVerb: m.SQLVerb(), OperationID: m.OperationID()}
+	}
+	return out, nil
+}
+
+// NewFromCatalog plans one addressed exchange out of a provider bundle. Same Plan a catalog method
+// returns, so a consumer runs it identically.
+func NewFromCatalog(dir, address string, args Args) (Plan, error) {
+	if err := checkEndpoint(args); err != nil {
+		return nil, err
+	}
+	c, err := openDocs(dir, address)
+	if err != nil {
+		return nil, err
+	}
+	candidates, err := c.Exchanges(address)
+	if err != nil {
+		return nil, err
+	}
+	ex, err := chooseExchange(candidates, docInputs(args))
+	if err != nil {
+		return nil, fmt.Errorf("omnisdk: %s: %w", address, err)
+	}
+	reg, err := dsl.NewRegistry(gotemplate.Evaluators()...)
+	if err != nil {
+		return nil, err
+	}
+	opts := docOptions(args)
+	if p := c.Provider(); p != nil {
+		opts = append(opts, docx.WithProviderSecurity(p.Security()))
+	}
+	pl, err := docx.PlanFor(ex, docInputs(args), reg, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return &cannedPlan{plan: pl, args: args}, nil
+}
+
+// chooseExchange picks the SELECT the caller actually asked for. A document binds several to one
+// resource — a get by identifier and a list by scope are both SELECT — and only the supplied
+// parameters say which. The most SPECIFIC satisfiable one wins (most required parameters met), since
+// supplying an identifier means asking for that one thing. A tie is ambiguous and says so rather than
+// guessing; nothing satisfiable says what each would have needed.
+func chooseExchange(candidates []aot.AOTExchange, inputs map[string]any) (aot.AOTExchange, error) {
+	var best aot.AOTExchange
+	var bestScore int
+	var tie bool
+	var unmet []string
+	for _, ex := range candidates {
+		score, ok := 0, true
+		for _, p := range ex.Request().Parameters() {
+			if !p.Required() {
+				continue
+			}
+			if v, supplied := inputs[p.Name()]; !supplied || v == "" {
+				ok = false
+				unmet = append(unmet, ex.Name()+" needs "+p.Name())
+				break
+			}
+			score++
+		}
+		if !ok {
+			continue
+		}
+		switch {
+		case best == nil || score > bestScore:
+			best, bestScore, tie = ex, score, false
+		case score == bestScore:
+			tie = true
+		}
+	}
+	switch {
+	case best == nil:
+		return nil, fmt.Errorf("no satisfiable select method (%s)", strings.Join(unmet, "; "))
+	case tie:
+		return nil, fmt.Errorf("several select methods are satisfiable; supply a parameter that distinguishes them")
+	}
+	return best, nil
+}
+
+// docInputs are the caller's params as κ inputs.
+func docInputs(args Args) map[string]any {
+	out := map[string]any{}
+	for k, v := range args.Params {
+		out[k] = v
+	}
+	return out
+}
+
+// docOptions carry the endpoint override and AWS credentials, resolved exactly as for a catalog
+// method — a document that declares signing but finds no credentials fails at plan time.
+func docOptions(args Args) []docx.Option {
+	var opts []docx.Option
+	if args.Endpoint != "" {
+		opts = append(opts, docx.WithBaseURL(args.Endpoint))
+	}
+	if creds, err := awsCreds(args); err == nil {
+		opts = append(opts, docx.WithAWSCredentials(creds))
+	}
+	if creds, err := gcpCreds(args); err == nil {
+		opts = append(opts, docx.WithGoogleCredentials(creds))
+	}
+	return opts
+}
+
 // authOf returns args.Auth, or a zero Auth when none was supplied — so resolution always reads from a
 // struct and every field falls back to its canonical env var / file.
 func authOf(args Args) Auth {
@@ -792,7 +1162,7 @@ func awsCreds(args Args) (sdk.Credentials, error) {
 // env, the token URL taken as-is or built from the tenant (endpoint-aware, so a mock's
 // /<tenant>/oauth2/v2.0/token is reachable). Everything defaults to canonical AZURE_* vars, so a nil
 // Auth still audits with the standard environment.
-func azureAuth(args Args) (auth.AuthStruct, error) {
+func azureAuth(args Args, service string) (auth.AuthStruct, error) {
 	a := authOf(args)
 	if a.Type == "bearer" {
 		return a.internal(), nil
@@ -817,7 +1187,7 @@ func azureAuth(args Args) (auth.AuthStruct, error) {
 	}
 	cfg.ClientID, cfg.ClientSecret = id, sec
 	if len(cfg.Scopes) == 0 {
-		cfg.Scopes = []string{"https://management.azure.com/.default"}
+		cfg.Scopes = []string{azureScope(service)}
 	}
 	if cfg.TokenURL == "" {
 		tenant, err := secret.Require("Azure tenant id",
@@ -828,6 +1198,22 @@ func azureAuth(args Args) (auth.AuthStruct, error) {
 		cfg.TokenURL = azureTokenURL(args.Endpoint, tenant)
 	}
 	return cfg, nil
+}
+
+// azureScope is the OAuth resource scope for an Azure service. It is DERIVED, not configured: an
+// Azure scope IS the service's own base URL plus "/.default", so the registry already knows it. That
+// matters because one run legitimately needs several — ARM for role assignments, Graph for the
+// directory behind them — and a single constant cannot express two.
+//
+// Deliberately the REGISTERED default, not the resolved endpoint: a mock changes where the request
+// goes, never which resource the token is for. Signing a token for http://127.0.0.1 would be asking
+// Entra for an audience that does not exist.
+func azureScope(service string) string {
+	base := endpoint.Default(service)
+	if base == "" {
+		base = endpoint.Default(endpoint.AzureMgmt)
+	}
+	return strings.TrimRight(base, "/") + "/.default"
 }
 
 // azureTokenURL is the OAuth2 token endpoint for a tenant, targeting an endpoint override when set.
@@ -903,6 +1289,11 @@ func (c *cannedPlan) decorate(parent context.Context) (context.Context, context.
 	timeoutCancel := func() {}
 	if c.args.Tuning.Timeout > 0 {
 		ctx, timeoutCancel = context.WithTimeout(parent, c.args.Tuning.Timeout)
+	}
+	// The HTTP client is a run policy like the rest: set once here, obeyed by every exchange, so a
+	// document-compiled plan and a hand-authored one behave identically.
+	if c.args.InsecureSkipTLSVerify {
+		ctx = httpx.WithClient(ctx, httpx.InsecureClient())
 	}
 	ctx, abortCancel := abort.WithSignal(ctx)
 	ctx = abort.WithLimit(ctx, c.args.Tuning.Limit)

@@ -109,7 +109,7 @@ func (e *sendExchange) send(ctx context.Context, rec facade.Record) (int, []byte
 			req.Header.Add(name, v)
 		}
 	}
-	resp, err := e.client.Do(req)
+	resp, err := ClientFrom(ctx, e.client).Do(req)
 	if err != nil {
 		return 0, nil, err
 	}

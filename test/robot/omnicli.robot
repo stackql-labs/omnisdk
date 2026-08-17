@@ -33,6 +33,8 @@ ${OMNI_ORG_MERGED_OUT}    ${OUTDIR}/omnicli-omni-merged-org.jsonl
 # publishes the union of its legs' five. So equivalence is asserted on the provider data with these
 # dropped — the echo differing is the signatures differing, not the query.
 ${OMNI_EXPECTED}      ${MOCKDIR}/expected/omni-blob-org.jsonl
+${IAM_EXPECTED}       ${MOCKDIR}/expected/omni-iam-principals.jsonl
+${IAM_OUT}            ${OUTDIR}/omnicli-omni-iam-principals.jsonl
 ${EP_UNIFORM_OUT}     ${OUTDIR}/omnicli-ep-uniform.jsonl
 ${EP_FRAGMENT_OUT}    ${OUTDIR}/omnicli-ep-fragment.jsonl
 ${EP_WHOLE_OUT}       ${OUTDIR}/omnicli-ep-whole.jsonl
@@ -568,6 +570,42 @@ Endpoint Overrides Retarget Every Service
     Should Not Be Equal As Integers    ${bad.rc}    0    an unknown service must fail loudly
     Should Contain    ${bad.stderr}    unknown service "aws.s4"
 
+
+Omni Iam Principals Jsonl Row Set Matches Expectation
+    [Documentation]    The cross-cloud access review, order-insensitive. Every identity source the
+    ...    fan-out touches is retargeted at the mock: AWS IAM, the Entra login exchange and Graph,
+    ...    and the GCP oauth exchange and CRM policy read. The deep method fans out PER PRINCIPAL —
+    ...    attached policies and MFA per AWS user, directory roles per Entra user, IAM bindings per
+    ...    project under the org — so this also pins that the joins bind, not merely that rows arrive.
+    Write Gcp Service Account    ${GCP_SA}
+    ${mock}=    Set Variable    {"scheme":"http","host":"127.0.0.1","port":"${PORT}"}
+    ${endpoint}=    Catenate    SEPARATOR=
+    ...    {"aws.iam":${mock},"azure.login":${mock},"azure.graph":${mock},
+    ...    "gcp.oauth":${mock},"gcp.crm":${mock}}
+    ${args}=    Catenate    SEPARATOR=
+    ...    {"params":{"region":"us-east-1","google_org":"123456789"},"endpoint":${endpoint}}
+    ${result}=    Run Process    ${BINARY}    run    omni.iam.principals.access    ${args}
+    ...    --out    ${IAM_OUT}
+    ...    env:AWS_ACCESS_KEY_ID=AK    env:AWS_SECRET_ACCESS_KEY=SK
+    ...    env:AZURE_TENANT_ID=mock-tenant    env:AZURE_CLIENT_ID=mock-client    env:AZURE_CLIENT_SECRET=mock-secret
+    ...    env:GOOGLE_APPLICATION_CREDENTIALS=${GCP_SA}
+    ...    stdout=${OUTDIR}/omni-iam.out    stderr=${OUTDIR}/omni-iam.err
+    Should Be Equal As Integers    ${result.rc}    0    omnicli failed: ${result.stderr}
+    Assert Jsonl Semantically Equal    ${IAM_OUT}    ${IAM_EXPECTED}
+    ${rows}=    Get File    ${IAM_OUT}
+    # every identity source contributed, so an empty leg cannot pass as a match
+    Should Contain    ${rows}    "provider":"aws"
+    Should Contain    ${rows}    "provider":"entra"
+    Should Contain    ${rows}    "provider":"gcp"
+    # the per-principal fan-out really bound: a grant is attached to the principal it belongs to
+    Should Contain    ${rows}    "grant":"AdministratorAccess"
+    Should Contain    ${rows}    "grant":"Global Administrator"
+    Should Contain    ${rows}    "grant":"roles/owner"
+    # MFA is only claimed where the plan asked: true for the enrolled AWS user, false for the other,
+    # null for sources that were never asked
+    Should Contain    ${rows}    "mfa":true
+    Should Contain    ${rows}    "mfa":false
+    Should Contain    ${rows}    "mfa":null
 
 *** Keywords ***
 Start Mock

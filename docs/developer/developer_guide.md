@@ -45,6 +45,11 @@ _now="$(date +%s)" &&
   ./build/omnicli gcp-provision --project "${_GOOGLE_PROJECT_ID}" --region us-central1 \
     --out "./cicd/out/gcp-${_now}.jsonl" --log "./cicd/out/gcp-${_now}.log"
 
+# Access review: principals across AWS IAM + Entra ID + GCP IAM bindings (see use_cases.md)
+_now="$(date +%s)" && ./build/omnicli run omni.iam.principals.list \
+  '{"params":{"region":"'"${_AWS_REGION}"'","google_project":"'"${_GOOGLE_PROJECT_ID}"'"}}' \
+  --out "./cicd/out/principals-${_now}.jsonl"
+
 _now="$(date +%s)" && ./build/omnicli azure-vnets --out "./cicd/out/azure-${_now}.jsonl" --log "./cicd/out/azure-${_now}.log"
 
 # Blob-store encryption audit across all three (AWS_*/AZURE_*/GOOGLE_CREDENTIALS from the secrets file).
@@ -151,6 +156,13 @@ M=http://127.0.0.1:8085
 #   {"gcp.crm":{"path":"/v4"}}   → https://cloudresourcemanager.googleapis.com/v4
 ```
 
+Mocks serving a self-signed certificate need `--tls-skip-verify` (`Args.InsecureSkipTLSVerify`).
+Applies to every exchange in the run, hand-authored or document-compiled:
+
+```bash
+./build/omnicli run omni.iam.principals.access '{...}' --endpoint https://127.0.0.1:8443 --tls-skip-verify
+```
+
 A typo fails up front rather than silently leaving the run on the real cloud:
 
 ```
@@ -176,6 +188,119 @@ facade, the catalog, or the plan knowing a test is running.
 `Endpoint Overrides Retarget Every Service` runs the composite through all three forms and asserts
 each against captured collateral (`test/mock/expected/omni-blob-org.jsonl`) — the release gate for
 mockability.
+
+## Document-driven: browsing and running a provider bundle
+
+A **bundle** is a directory holding `provider.yaml` and its `services/`. Nothing is hand-authored —
+the services, resources, methods, the call itself and its auth all come out of the documents.
+
+### Browse
+
+`doc-catalog` takes either a single bundle or a REGISTRY ROOT of many providers — whichever the
+directory is. It drills down by how many arguments you give it; `-q` prints bare names, one per line.
+
+```bash
+R=~/.stackql/src                              # a registry root: <provider>/<version>/provider.yaml
+
+./build/omnicli doc-catalog $R                             # providers + the version resolved for each
+./build/omnicli doc-catalog $R stackql_unstable_github     # that provider's services + addresses
+./build/omnicli doc-catalog $R stackql_unstable_github -q  # just the addresses, pipeable
+./build/omnicli doc-catalog $R stackql_unstable_github repos           # that service's resources
+./build/omnicli doc-catalog $R stackql_unstable_github repos releases  # its methods + SQL verbs
+```
+
+```json
+{"stackql_unstable_github": "v26.05.00393", "stackql_unstable_vercel": "v23.12.00183"}
+```
+
+Providers and versions are discovered, not configured: the newest version directory holding a
+`provider.yaml` wins. A single bundle works the same way, minus the provider argument:
+
+```bash
+D=pkg/docparse/stackqldoc/testdata
+
+./build/omnicli doc-catalog $D                # services present + every addressable exchange
+./build/omnicli doc-catalog $D ec2            # that service's resources
+./build/omnicli doc-catalog $D ec2 instances  # that resource's methods + the SQL verb each is bound to
+```
+
+```json
+[
+  {"name": "describe",  "sql_verb": "select", "operation_id": "GET_DescribeInstances"},
+  {"name": "run",       "sql_verb": "insert", "operation_id": "GET_RunInstances"},
+  {"name": "terminate", "sql_verb": "delete", "operation_id": "GET_TerminateInstances"},
+  {"name": "stop",      "sql_verb": "exec",   "operation_id": "GET_StopInstances"}
+]
+```
+
+An address is `<prefix><provider>.<service>.<resource>`. Document-derived providers are namespaced
+`stackql_unstable_` by default, so they cannot collide with hand-authored catalog entries — the
+curated `aws.iam.principals` and the document-derived `stackql_unstable_aws.iam_native.users` are
+different things with different guarantees. Configurable via `stackqldoc.WithProviderPrefix`.
+
+The AWS bundle has 232 services and 400 addressable
+exchanges — a resource is addressable only if its SELECT is backed by an **operation**. Many
+`cloud_control` resources define SELECT as a SQL **view** instead, and those say so rather than
+appearing and then failing:
+
+```
+stackqldoc: resource "buckets" declares no select verb
+```
+
+### Run
+
+`doc-run <dir> <address> [args-json]`. The args JSON is the same `omnisdk.Args` the `run` command
+takes; `--aws-region` fills in `region` when the JSON omits it.
+
+```bash
+source cicd/vol/vendor-secrets/secrets.sh
+R=test/corpus/registry            # or ~/.stackql/src
+
+# AWS — signed with SigV4, per the provider document
+_now="$(date +%s)" && ./build/omnicli doc-run $R stackql_unstable_aws.ec2.instances \
+  --aws-region "${_AWS_REGION}" \
+  --out "./cicd/out/doc-instances-${_now}.jsonl" --log "./cicd/out/doc-instances-${_now}.log"
+
+# Google — service-account key exchanged for an access token, per the provider document
+_now="$(date +%s)" && ./build/omnicli doc-run $R stackql_unstable_google.storage.buckets \
+  '{"params":{"project":"'"${_GOOGLE_PROJECT_ID}"'"}}' \
+  --out "./cicd/out/doc-buckets-${_now}.jsonl" --log "./cicd/out/doc-buckets-${_now}.log"
+```
+
+Auth is whatever the provider document declares — `aws_signing_v4` signs the request,
+`service_account` adds a token exchange to the plan and binds its bearer into the call. Credentials
+are never optional: a document that declares a scheme and finds no credentials fails at plan time.
+
+Implemented so far: `aws_signing_v4`, `service_account`. Not yet: `oauth2` (entra_id),
+`azure_default`, `custom` (api key).
+
+Signing is **implicit**: `provider.yaml` declares `config.auth.type: aws_signing_v4`, so SigV4 is
+applied to every call in the bundle — region from `--aws-region`, service from the document's own
+host. Credentials are never optional, and an unsigned request is not a fallback:
+
+```
+omnicli: docx: exchange "instances" declares aws.sigv4 ("hmac") but no credentials were supplied
+```
+
+`--endpoint` retargets the document's server (keeping each operation's path), so a bundle runs against
+a mock unedited.
+
+### Memory
+
+Documents never outlive planning. A document is parsed, its exchange resolved, and the document
+dropped; a resolved exchange is self-contained (~7 KB of templates and programs). So a query spanning
+several services and providers costs one exchange each, not one document each — 20 methods ≈ 140 KB,
+whatever the documents weighed. Execution holds no documents at all.
+
+### Known gaps
+
+- **Rows only where `objectKey` is declared** (244 of the methods). Where it is absent the row path
+  lives in the response schema at `openAPIDocKey`, which is not walked yet — those return one row of
+  the whole response envelope.
+- **One page only.** The document reads its next-page token from the *transformed* body
+  (`$.next_page_token`) while the HTTP layer's continuation reads the decoded wire response.
+- **Listing parses documents.** Browsing is correct but re-parses to enumerate; the metadata is a few
+  hundred KB and wants an index.
 
 ## Generic DTO command
 
