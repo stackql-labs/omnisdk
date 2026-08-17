@@ -22,9 +22,11 @@ func catalog(t *testing.T) aot.Catalog {
 // — the provider lists hundreds, and claiming those would be claiming something untrue.
 func TestBundleResolvesToAddresses(t *testing.T) {
 	c := catalog(t)
+	// The committed fixture is a SUBSET of the real bundle: the full corpus is hundreds of megabytes
+	// and a module zip carries testdata, so only the services these tests exercise are kept.
 	svcs := c.Services()
-	if len(svcs) < 200 {
-		t.Fatalf("Services() = %d, want the documents present in the bundle", len(svcs))
+	if len(svcs) == 0 {
+		t.Fatal("Services() = none")
 	}
 	if len(svcs) > len(c.Provider().Services()) {
 		t.Fatal("a bundle cannot make more services addressable than the provider lists")
@@ -33,8 +35,8 @@ func TestBundleResolvesToAddresses(t *testing.T) {
 	// One address per resource with an operation-backed SELECT. Pinning an exact count would pin the
 	// bundle's contents rather than the resolution, and bundles are refreshed.
 	paths := c.Paths()
-	if len(paths) < 1000 {
-		t.Fatalf("addresses = %d, far fewer than this bundle declares", len(paths))
+	if len(paths) < 50 {
+		t.Fatalf("addresses = %d, far fewer than this fixture declares", len(paths))
 	}
 	for i := 1; i < len(paths); i++ {
 		if paths[i-1] > paths[i] {

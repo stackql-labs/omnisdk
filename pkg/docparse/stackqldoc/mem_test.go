@@ -20,7 +20,7 @@ func TestWorkingSetIsExchangesNotDocuments(t *testing.T) {
 	}
 	addrs := []string{
 		"stackql_unstable_aws.ec2.instances", "stackql_unstable_aws.ec2.security_groups",
-		"stackql_unstable_aws.ec2.volumes", "stackql_unstable_aws.sqs.queues",
+		"stackql_unstable_aws.ec2.volumes", "stackql_unstable_aws.s3.buckets",
 	}
 
 	var m0, m1 runtime.MemStats
