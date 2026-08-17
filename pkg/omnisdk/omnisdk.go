@@ -201,6 +201,10 @@ var blobSchema = jsonSchema(sdk.BlobSchema)
 // (single source of truth → the contract can't drift). str is the string-column shorthand.
 func str(name string) sdk.BlobColumn { return sdk.BlobColumn{Name: name, Type: "string"} }
 
+// principalSchema is the uniform access-review row, DERIVED from sdk.PrincipalSchema so the published
+// contract cannot drift from what the egress actually emits.
+var principalSchema = jsonSchema(sdk.PrincipalSchema)
+
 var (
 	s3ListSchema    = jsonSchema([]sdk.BlobColumn{str("name"), str("created"), str("arn")})
 	awsNetSchema    = jsonSchema([]sdk.BlobColumn{str("vpc_id"), str("vpc_description"), str("subnet_id"), str("subnet_description")})
@@ -362,6 +366,24 @@ var resources = map[string]Resource{
 		Summary: "Azure blob containers (the bucket analogue: subscription → account → container)",
 		Schema:  blobSchema,
 	},
+	"aws.iam.principals": {
+		Path:    "aws.iam.principals",
+		Summary: "AWS IAM principals (users)",
+		Schema:  principalSchema,
+	},
+	"entra.identities": {
+		Path:    "entra.identities",
+		Summary: "Entra ID directory identities",
+		Schema:  principalSchema,
+	},
+	// The access-review population: every principal, every cloud, one comparable shape. The legs are
+	// hand-authored today and doc-compiled later — the address, schema and composite do not change
+	// when they are, which is the point of resolving them behind a catalog entry.
+	"omni.iam.principals": {
+		Path:    "omni.iam.principals",
+		Summary: "Principals across every identity source (AWS IAM + Entra ID)",
+		Schema:  principalSchema,
+	},
 	// The cross-cloud composite as a FIRST-CLASS thing: blob stores wherever they live. Every provider
 	// leg already normalizes to the one blob schema, so the union is a single coherent resource — not a
 	// client-side stitch-up — and it carries that same canonical schema.
@@ -415,7 +437,7 @@ var methods = map[string]methodDef{
 			Schema:   blobSchema,
 		},
 		build: func(args Args) (plan.Plan, error) {
-			a, err := azureAuth(args)
+			a, err := azureAuth(args, endpoint.AzureMgmt)
 			if err != nil {
 				return nil, err
 			}
@@ -484,6 +506,52 @@ var methods = map[string]methodDef{
 			"azure.storage.containers.list",
 			"google.storage.buckets.list",
 		},
+	},
+	"aws.iam.principals.list": {
+		Method: Method{
+			Path:     "aws.iam.principals.list",
+			Resource: "aws.iam.principals",
+			Summary:  "List IAM users in the credentials' account",
+			Params:   []Param{{Name: "region", Required: true, Description: "AWS region to sign with (IAM is global; SigV4 still scopes to a region)"}},
+			Schema:   principalSchema,
+		},
+		build: func(args Args) (plan.Plan, error) {
+			creds, err := awsCreds(args)
+			if err != nil {
+				return nil, err
+			}
+			return sdk.AWSIAMPrincipalsPlan(args.param("region"), creds, args.Endpoint), nil
+		},
+	},
+	"entra.identities.list": {
+		Method: Method{
+			Path:     "entra.identities.list",
+			Resource: "entra.identities",
+			Summary:  "List Entra ID users (Microsoft Graph); scope is the tenant the credentials belong to",
+			Params:   nil, // the tenant is the credentials' own; nothing to choose
+			Schema:   principalSchema,
+		},
+		build: func(args Args) (plan.Plan, error) {
+			// Same client-credentials exchange as the ARM audit — only the SCOPE differs, and that is
+			// derived from the service rather than configured.
+			a, err := azureAuth(args, endpoint.AzureGraph)
+			if err != nil {
+				return nil, err
+			}
+			return sdk.EntraPrincipalsPlan(args.Endpoint, a)
+		},
+	},
+	"omni.iam.principals.list": {
+		Method: Method{
+			Path:     "omni.iam.principals.list",
+			Resource: "omni.iam.principals",
+			Summary:  "Every principal across every identity source, as one comparable population",
+			Params: []Param{
+				{Name: "region", Required: true, Description: "AWS region to sign with (AWS leg)"},
+			},
+			Schema: principalSchema,
+		},
+		members: []string{"aws.iam.principals.list", "entra.identities.list"},
 	},
 	"aws.s3.buckets.enumerate": {
 		Method: Method{
@@ -909,7 +977,7 @@ func awsCreds(args Args) (sdk.Credentials, error) {
 // env, the token URL taken as-is or built from the tenant (endpoint-aware, so a mock's
 // /<tenant>/oauth2/v2.0/token is reachable). Everything defaults to canonical AZURE_* vars, so a nil
 // Auth still audits with the standard environment.
-func azureAuth(args Args) (auth.AuthStruct, error) {
+func azureAuth(args Args, service string) (auth.AuthStruct, error) {
 	a := authOf(args)
 	if a.Type == "bearer" {
 		return a.internal(), nil
@@ -934,7 +1002,7 @@ func azureAuth(args Args) (auth.AuthStruct, error) {
 	}
 	cfg.ClientID, cfg.ClientSecret = id, sec
 	if len(cfg.Scopes) == 0 {
-		cfg.Scopes = []string{"https://management.azure.com/.default"}
+		cfg.Scopes = []string{azureScope(service)}
 	}
 	if cfg.TokenURL == "" {
 		tenant, err := secret.Require("Azure tenant id",
@@ -945,6 +1013,22 @@ func azureAuth(args Args) (auth.AuthStruct, error) {
 		cfg.TokenURL = azureTokenURL(args.Endpoint, tenant)
 	}
 	return cfg, nil
+}
+
+// azureScope is the OAuth resource scope for an Azure service. It is DERIVED, not configured: an
+// Azure scope IS the service's own base URL plus "/.default", so the registry already knows it. That
+// matters because one run legitimately needs several — ARM for role assignments, Graph for the
+// directory behind them — and a single constant cannot express two.
+//
+// Deliberately the REGISTERED default, not the resolved endpoint: a mock changes where the request
+// goes, never which resource the token is for. Signing a token for http://127.0.0.1 would be asking
+// Entra for an audience that does not exist.
+func azureScope(service string) string {
+	base := endpoint.Default(service)
+	if base == "" {
+		base = endpoint.Default(endpoint.AzureMgmt)
+	}
+	return strings.TrimRight(base, "/") + "/.default"
 }
 
 // azureTokenURL is the OAuth2 token endpoint for a tenant, targeting an endpoint override when set.

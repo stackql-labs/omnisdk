@@ -33,8 +33,10 @@ import (
 const (
 	AWSS3      = "aws.s3"
 	AWSEC2     = "aws.ec2"
+	AWSIAM     = "aws.iam"
 	AzureLogin = "azure.login"
 	AzureMgmt  = "azure.mgmt"
+	AzureGraph = "azure.graph"
 	GCPOAuth   = "gcp.oauth"
 	GCPStorage = "gcp.storage"
 	GCPCRM     = "gcp.crm"
@@ -102,7 +104,9 @@ func Fragment(scheme, host, port, path string) Override {
 }
 
 // Override is one service's redirect: a whole URL or a set of fragments. Impls are unexported.
-type Override interface{ apply(defaultURL string) string }
+type Override interface {
+	apply(defaultURL string) string
+}
 
 // Uniform sends EVERY registered service to one host, replacing scheme/host/port and KEEPING each
 // service's registered path. This is what a bare --endpoint means: the mock mirrors the providers'

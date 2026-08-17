@@ -103,12 +103,18 @@ func Spec(ex aot.AOTExchange, reg dsl.Registry, opts ...Option) (plan.ExchangeSp
 		opt(&o)
 	}
 	req, resp := ex.Request(), ex.Response()
+	// A response transform is OPTIONAL, and most methods declare none: the body is then used as it
+	// arrives, decoded by its own media type. Only a declared program needs an evaluator.
 	tr := resp.Transform()
-	if tr.Type() == "" {
-		return nil, fmt.Errorf("docx: exchange %q declares no response transform", ex.Name())
+	if tr.Type() != "" {
+		if _, ok := reg.Get(tr.Type()); !ok {
+			return nil, fmt.Errorf("docx: exchange %q needs evaluator %q (have: %v)", ex.Name(), tr.Type(), reg.Types())
+		}
 	}
-	if _, ok := reg.Get(tr.Type()); !ok {
-		return nil, fmt.Errorf("docx: exchange %q needs evaluator %q (have: %v)", ex.Name(), tr.Type(), reg.Types())
+	decode := decoderFor(resp)
+	if decode == nil {
+		return nil, fmt.Errorf("docx: exchange %q has response media type %q, which is not decodable",
+			ex.Name(), resp.MediaType())
 	}
 	// The document states where the rows are, in one of two syntaxes it uses interchangeably.
 	rowPath := parseObjectKey(resp.ObjectKey())
@@ -133,7 +139,15 @@ func Spec(ex aot.AOTExchange, reg dsl.Registry, opts ...Option) (plan.ExchangeSp
 			ex.Name(), sec.Scheme(), sec.Name())
 	}
 
-	return plan.NewExchangeSpec(ex.Name(), ex.Inputs(), nil, func(bound map[string]any) facade.Operator {
+	// SigV4 always signs into a region, but a GLOBAL service (iam.amazonaws.com) declares no {region}
+	// server variable — so nothing would bind one and the signature would be scoped to "". Signing
+	// needs it whether or not the URL does, so it joins the inputs explicitly.
+	inputs := ex.Inputs()
+	if sec.Scheme() == aot.SchemeAWSSigV4 && !o.noSign && o.signer == nil {
+		inputs = withInput(inputs, "region")
+	}
+
+	return plan.NewExchangeSpec(ex.Name(), inputs, nil, func(bound map[string]any) facade.Operator {
 		var reqT []facade.Transform
 		switch {
 		case o.noSign:
@@ -147,9 +161,12 @@ func Spec(ex aot.AOTExchange, reg dsl.Registry, opts ...Option) (plan.ExchangeSp
 		send := httpx.Make(hreq, nil, reqT...)(bound)
 		// non-2xx fails loudly rather than looking like an empty result
 		checked := exchange.NewTransformExchange(0, send, httpx.NewRequireOK(), 1)
-		// the document's own program, moved from source to here
-		shaped := exchange.NewTransformExchange(0, checked, program(reg, tr.Type(), tr.Body()), 1)
-		decoded := exchange.NewTransformExchange(0, shaped, transform.NewJSONToAgnostic(), 1)
+		// the document's own program, moved from source to here — when it declares one
+		body := checked
+		if tr.Type() != "" {
+			body = exchange.NewTransformExchange(0, checked, program(reg, tr.Type(), tr.Body()), 1)
+		}
+		decoded := exchange.NewTransformExchange(0, body, decode, 1)
 		listed := exchange.NewTransformExchange(0, decoded, itemsAt(rowPath), 1)
 		return exchange.NewExplodeRows(listed, 1)
 		// INNER, not left-outer: this is a SELECT, and an empty result set is zero rows. A left-outer
@@ -256,6 +273,23 @@ func docRecord(list []any) facade.Record {
 	return record.NewRecord(map[string]facade.Value{facade.AnonymousPayload: value.NewDocValue(list)})
 }
 
+// decoderFor picks the body decoder. A declared transform states what it turns the body INTO
+// (overrideMediaType); without one, the body arrives as the wire media type says.
+func decoderFor(resp aot.Response) facade.Transform {
+	mt := resp.MediaType()
+	if resp.Transform().Type() != "" && resp.OverrideMediaType() != "" {
+		mt = resp.OverrideMediaType()
+	}
+	switch {
+	case strings.Contains(mt, "xml"):
+		return transform.NewXMLToAgnostic()
+	case strings.Contains(mt, "json"):
+		return transform.NewJSONToAgnostic()
+	default:
+		return nil
+	}
+}
+
 // serviceOf is the AWS service a host names (ec2.{region}.amazonaws.com → "ec2"), which SigV4 signs
 // into the credential scope. Taken from the document's server rather than configured, so it cannot
 // disagree with the host being called.
@@ -270,6 +304,16 @@ func serviceOf(rawURL string) string {
 	}
 	label, _, _ := strings.Cut(host, ".")
 	return label
+}
+
+// withInput adds name to inputs if absent, preserving order.
+func withInput(inputs []string, name string) []string {
+	for _, in := range inputs {
+		if in == name {
+			return inputs
+		}
+	}
+	return append(append([]string{}, inputs...), name)
 }
 
 func str(v any) string {
