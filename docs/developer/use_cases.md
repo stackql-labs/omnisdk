@@ -20,3 +20,11 @@ _now="$(date +%s)" && ./build/omnicli run omni.storage.buckets.list \
   --out "./cicd/out/dto-omni-${_now}.jsonl" --log "./cicd/out/dto-omni-${_now}.log"
 
 ```
+
+## Access Reviews
+
+Access reviews — SOC 2 CC6.2/6.3, ISO A.5.18. The quarterly IAM spreadsheet everyone hates. Biggest saving.
+
+```bash
+# TBA
+```
