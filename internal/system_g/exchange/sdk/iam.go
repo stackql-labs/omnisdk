@@ -28,6 +28,7 @@ var PrincipalSchema = []BlobColumn{
 	{Name: "scope", Type: "string", Nullable: true},    // account / tenant / org it lives in
 	{Name: "enabled", Type: "boolean", Nullable: true}, // null where the provider does not say
 	{Name: "grant", Type: "string", Nullable: true},    // the role/policy held, where the source states one
+	{Name: "mfa", Type: "boolean", Nullable: true},     // null where the source does not report it
 	{Name: "created", Type: "string", Nullable: true},  // age is the finding for stale identities
 }
 
@@ -71,6 +72,22 @@ func (principalNormalize) Apply(in facade.Page) (facade.Record, error) {
 	}
 	if v, ok := row["enabled"].(string); ok {
 		row["enabled"] = v == "true"
+	}
+	// MFA: presence of a device IS the answer, but only for a source that was asked. A plan that never
+	// looks reports null, never false — "not enrolled" and "not checked" are different findings.
+	if truthy(row["mfa_checked"]) {
+		row["mfa"] = str(row["mfa_serial"]) != ""
+	}
+	// scope attributes a row to the account/tenant/project it came from, without which a merged
+	// population cannot be audited. AWS states it inside the ARN and nowhere else.
+	if row["scope"] == nil {
+		if arn := str(row["arn"]); arn != "" {
+			if parts := strings.Split(arn, ":"); len(parts) > 4 {
+				row["scope"] = parts[4]
+			}
+		} else if proj := str(row["project"]); proj != "" {
+			row["scope"] = proj
+		}
 	}
 	return record.NewRecord(map[string]facade.Value{facade.AnonymousPayload: value.NewDocValue(row)}), nil
 }
@@ -262,4 +279,138 @@ func GCPIAMPrincipalsPlan(endpoint string, creds GCPCredentials, project, org st
 	betas := []plan.BetaEdge{plan.NewBetaEdge("OAuth", "IAMPolicy", "token", "token")}
 	return plan.NewPlan(specs, betas, nil,
 		map[string]any{"assertion": jwt, "project": project}, principalEgress("gcp"), encoder.NewJSONLEncoder())
+}
+
+// ---- deep access review -----------------------------------------------------
+//
+// The light population answers "who exists". A review has to answer "who can do WHAT, and is it still
+// needed" — so the deep plans fan out per principal to its grants and its MFA state. That is a bind
+// join per principal, which is why it is a separate entry point: it costs one request per identity
+// and a reviewer often wants the cheap pass first.
+
+// awsUsersSpec is the shared AWS principal source: ListUsers, one row per user.
+func awsUsersSpec(region string, creds Credentials, endpoint string) plan.ExchangeSpec {
+	req := httpx.Request{
+		Method: "POST",
+		URL:    resolve(endpoint, ep.AWSIAM, nil) + "/",
+		Body: httpx.Body{Encoding: httpx.EncodingForm, Params: map[string]any{
+			"Action": "ListUsers", "Version": "2010-05-08",
+		}},
+		Continuation: httpx.Continuation{
+			Kind: httpx.ContPaginate, NextTokenPath: "ListUsersResponse.ListUsersResult.Marker", TokenParam: "Marker",
+		},
+	}
+	return plan.NewExchangeSpec("Users", nil, []string{"principal"},
+		func(bound map[string]any) facade.Operator {
+			return awsIAMList(req, bound, region, creds, "ListUsersResponse.ListUsersResult.Users.member",
+				[]transform.Column{
+					{Out: "principal", Path: "UserName"},
+					{Out: "principal_id", Path: "UserId"},
+					{Out: "created", Path: "CreateDate"},
+					{Out: "arn", Path: "Arn"},
+				})
+		}, nil)
+}
+
+// awsIAMList is the shared shape for an IAM query-API list: signed POST, fail loudly on non-2xx,
+// decode XML, project the repeating element, explode to rows.
+func awsIAMList(req httpx.Request, bound map[string]any, region string, creds Credentials, rowPath string, cols []transform.Column) facade.Operator {
+	// bound MUST reach Make: a per-principal lookup templates {principal} into the body, and dropping
+	// the bindings would send the same unparameterised request for every user.
+	send := httpx.Make(req, nil, NewSigV4Transform(NewSigV4Signer(region, "iam", creds, false)))(bound)
+	checked := exchange.NewTransformExchange(0, send, httpx.NewRequireOK(), 1)
+	decoded := exchange.NewTransformExchange(0, checked, transform.NewXMLToAgnostic(), 1)
+	projected := exchange.NewTransformExchange(0, decoded, transform.NewProjection(rowPath, cols), 1)
+	return exchange.NewExplodeRows(projected, 1)
+}
+
+// awsPerUserSpec is a per-principal IAM lookup — the fan-out that turns a list of identities into a
+// review. LEFT-OUTER throughout: a user with no attached policy, or no MFA device, is exactly the
+// finding a reviewer is looking for, so those users must not vanish.
+func awsPerUserSpec(name, action string, region string, creds Credentials, endpoint, rowPath string, cols []transform.Column) plan.ExchangeSpec {
+	req := httpx.Request{
+		Method: "POST",
+		URL:    resolve(endpoint, ep.AWSIAM, nil) + "/",
+		Body: httpx.Body{Encoding: httpx.EncodingForm, Params: map[string]any{
+			"Action": action, "Version": "2010-05-08", "UserName": "{principal}",
+		}},
+	}
+	outs := make([]string, 0, len(cols))
+	for _, c := range cols {
+		outs = append(outs, c.Out)
+	}
+	return plan.NewExchangeSpec(name, []string{"principal"}, outs,
+		func(bound map[string]any) facade.Operator {
+			return awsIAMList(req, bound, region, creds, rowPath, cols)
+		}, bind.NewTupleFlatten())
+}
+
+// AWSIAMAccessPlan is the deep AWS review: every user,each attached policy, and whether MFA is enrolled.
+func AWSIAMAccessPlan(region string, creds Credentials, endpoint string) plan.Plan {
+	specs := []plan.ExchangeSpec{
+		awsUsersSpec(region, creds, endpoint),
+		awsPerUserSpec("AttachedPolicies", "ListAttachedUserPolicies", region, creds, endpoint,
+			"ListAttachedUserPoliciesResponse.ListAttachedUserPoliciesResult.AttachedPolicies.member",
+			[]transform.Column{{Out: "grant", Path: "PolicyName"}}),
+		awsPerUserSpec("MFA", "ListMFADevices", region, creds, endpoint,
+			"ListMFADevicesResponse.ListMFADevicesResult.MFADevices.member",
+			[]transform.Column{{Out: "mfa_serial", Path: "SerialNumber"}}),
+	}
+	betas := []plan.BetaEdge{
+		plan.NewBetaEdge("Users", "AttachedPolicies", "principal", "principal"),
+		plan.NewBetaEdge("Users", "MFA", "principal", "principal"),
+	}
+	// mfa_checked says this plan LOOKED. Without it a left-outer miss (no device enrolled) is
+	// indistinguishable from a plan that never asked, and "not enrolled" is the finding.
+	return plan.NewPlan(specs, betas, nil,
+		map[string]any{"principal_type": "user", "mfa_checked": true},
+		principalEgress("aws"), encoder.NewJSONLEncoder())
+}
+
+// EntraAccessPlan is the deep Entra review: every user and the directory roles it holds.
+func EntraAccessPlan(endpoint string, cfg auth.AuthStruct, tenant string) (plan.Plan, error) {
+	p, err := EntraPrincipalsPlan(endpoint, cfg)
+	if err != nil {
+		return nil, err
+	}
+	memberOf := httpx.Request{
+		Method:       "GET",
+		URL:          resolve(endpoint, ep.AzureGraph, nil) + "/v1.0/users/{principal_id}/memberOf",
+		Headers:      map[string]string{"Authorization": "Bearer {token}"},
+		Continuation: httpx.Continuation{Kind: httpx.ContFollow, NextTokenPath: "@odata.nextLink"},
+	}
+	roles := plan.NewExchangeSpec("Roles", []string{"token", "principal_id"}, []string{"grant"},
+		func(bound map[string]any) facade.Operator {
+			send := httpx.Make(memberOf, nil)(bound)
+			checked := exchange.NewTransformExchange(0, send, httpx.NewRequireOK(), 1)
+			decoded := exchange.NewTransformExchange(0, checked, transform.NewJSONToAgnostic(), 1)
+			projected := exchange.NewTransformExchange(0, decoded,
+				transform.NewProjection("value", []transform.Column{
+					{Out: "grant", Path: "displayName"},
+					{Out: "grant_type", Path: "@odata.type"},
+				}), 1)
+			return exchange.NewExplodeRows(projected, 1)
+		}, bind.NewTupleFlatten()) // a user with no roles is still a row
+
+	specs := append(append([]plan.ExchangeSpec{}, p.Exchanges()...), roles)
+	betas := append(append([]plan.BetaEdge{}, p.Betas()...),
+		plan.NewBetaEdge("Users", "Roles", "principal_id", "principal_id"))
+	if hasExchange(p, "Auth") {
+		betas = append(betas, plan.NewBetaEdge("Auth", "Roles", "token", "token"))
+	}
+	inputs := map[string]any{}
+	for k, v := range p.Inputs() {
+		inputs[k] = v
+	}
+	inputs["scope"] = tenant
+	return plan.NewPlan(specs, betas, nil, inputs, principalEgress("entra"), encoder.NewJSONLEncoder()), nil
+}
+
+func hasExchange(p plan.Plan, name string) bool {
+	for _, x := range p.Exchanges() {
+		if x.Name() == name {
+			return true
+		}
+	}
+	return false
 }

@@ -566,6 +566,55 @@ var methods = map[string]methodDef{
 			return sdk.GCPIAMPrincipalsPlan(args.Endpoint, creds, args.param("google_project"), args.param("google_org")), nil
 		},
 	},
+	"aws.iam.principals.access": {
+		Method: Method{
+			Path:     "aws.iam.principals.access",
+			Resource: "aws.iam.principals",
+			Summary:  "DEEP:each IAM user with its attached policies and MFA enrolment",
+			Params:   []Param{{Name: "region", Required: true, Description: "AWS region to sign with"}},
+			Schema:   principalSchema,
+		},
+		build: func(args Args) (plan.Plan, error) {
+			creds, err := awsCreds(args)
+			if err != nil {
+				return nil, err
+			}
+			return sdk.AWSIAMAccessPlan(args.param("region"), creds, args.Endpoint), nil
+		},
+	},
+	"entra.identities.access": {
+		Method: Method{
+			Path:     "entra.identities.access",
+			Resource: "entra.identities",
+			Summary:  "DEEP: each Entra user with the directory roles it holds",
+			Params:   nil,
+			Schema:   principalSchema,
+		},
+		build: func(args Args) (plan.Plan, error) {
+			a, err := azureAuth(args, endpoint.AzureGraph)
+			if err != nil {
+				return nil, err
+			}
+			tenant, _ := secret.Optional(secret.Literal(authOf(args).Tenant),
+				secret.Env(orStr(authOf(args).TenantEnvVar, "AZURE_TENANT_ID"))), error(nil)
+			return sdk.EntraAccessPlan(args.Endpoint, a, tenant)
+		},
+	},
+	"omni.iam.principals.access": {
+		Method: Method{
+			Path:     "omni.iam.principals.access",
+			Resource: "omni.iam.principals",
+			Summary:  "DEEP access review: every principal with its grants, MFA and owning scope",
+			Params: []Param{
+				{Name: "region", Required: true, Description: "AWS region to sign with (AWS leg)"},
+				{Name: "google_project", Required: false, Description: "single GCP project (mutually exclusive with google_org)"},
+				{Name: "google_org", Required: false, Description: "every project under the GCP org (mutually exclusive with google_project)"},
+			},
+			ExactlyOne: [][]string{{"google_project", "google_org"}},
+			Schema:     principalSchema,
+		},
+		members: []string{"aws.iam.principals.access", "entra.identities.access", "gcp.iam.principals.list"},
+	},
 	"omni.iam.principals.list": {
 		Method: Method{
 			Path:     "omni.iam.principals.list",
