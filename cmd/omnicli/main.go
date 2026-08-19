@@ -24,6 +24,7 @@ import (
 
 func main() {
 	var outPath, logPath, endpoint string
+	var insecureTLS bool
 	var awsRegion string
 	var t tune
 
@@ -37,6 +38,7 @@ func main() {
 	pf.StringVarP(&outPath, "out", "o", "", "output file (default stdout)")
 	pf.StringVar(&logPath, "log", "", "log raw responses to this file (default off)")
 	pf.StringVar(&endpoint, "endpoint", "", "endpoint override, path-style (e.g. http://localhost:8085); default real cloud")
+	pf.BoolVar(&insecureTLS, "tls-skip-verify", false, "accept a self-signed certificate; only applies with --endpoint")
 	pf.IntVar(&t.parallelism, "parallelism", 16, "max concurrent fan-out units (bind-join inners)")
 	pf.IntVar(&t.perHost, "max-per-host", 8, "max concurrent requests per backend host")
 	pf.IntVar(&t.retryTries, "retry-tries", 4, "total attempts per request incl. the first (ephemeral failures)")
@@ -94,6 +96,7 @@ func main() {
 				return e
 			}
 			a.Endpoint, a.Log, a.Tuning = endpoint, logw, t.facade()
+			a.InsecureSkipTLSVerify = insecureTLS
 			pl, e := plan(a)
 			if e != nil {
 				return e
@@ -224,6 +227,150 @@ func main() {
 	requireGcpOrg(allBlobOrg)
 	root.AddCommand(allBlobOrg)
 
+	// ---- document-driven: no catalog entry, the provider doc IS the metadata ---
+	docCmd := &cobra.Command{
+		Use:   "doc-select <doc.yaml> <resource>",
+		Short: "Run a resource's SELECT straight from a stackql provider document (e.g. doc-select ec2.yaml instances)",
+		Args:  cobra.ExactArgs(2),
+		RunE: withSinks(func(cmd *cobra.Command, w, logw io.Writer) error {
+			pos := cmd.Flags().Args()
+			doc, err := os.ReadFile(pos[0])
+			if err != nil {
+				return err
+			}
+			a := omnisdk.Args{
+				Params:   map[string]string{"region": awsRegion},
+				Endpoint: endpoint,
+				Log:      logw,
+				Tuning:   t.facade(),
+			}
+			pl, err := omnisdk.NewFromDoc(doc, pos[1], a)
+			if err != nil {
+				return err
+			}
+			return streamRows(pl, w)
+		}),
+	}
+	root.AddCommand(docCmd)
+
+	// doc-catalog: what a provider BUNDLE makes addressable.
+	// doc-catalog drills DOWN by how many arguments you give it: bundle → services, +service →
+	// resources, +resource → methods. Documents are parsed on demand and not retained by a listing,
+	// so walking a 232-service bundle costs one document at a time.
+	catCmd := &cobra.Command{
+		Use:   "doc-catalog <dir> [provider] [service] [resource]",
+		Short: "Browse a provider bundle OR a registry root: providers → services → resources → methods",
+		Args:  cobra.RangeArgs(1, 4),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			quiet, _ := cmd.Flags().GetBool("quiet")
+			switch len(args) {
+			case 4:
+				ms, err := omnisdk.DocMethods(args[0], args[1], args[2], args[3])
+				if err != nil {
+					return err
+				}
+				if quiet {
+					for _, m := range ms {
+						fmt.Println(m.Name)
+					}
+					return nil
+				}
+				return printJSON(ms)
+			case 3:
+				rs, err := omnisdk.DocResources(args[0], args[1], args[2])
+				if err != nil {
+					return err
+				}
+				if quiet {
+					for _, r := range rs {
+						fmt.Println(r)
+					}
+					return nil
+				}
+				return printJSON(rs)
+			case 2:
+				services, addresses, err := omnisdk.DocCatalog(args[0], args[1])
+				if err != nil {
+					return err
+				}
+				if quiet {
+					for _, a := range addresses {
+						fmt.Println(a)
+					}
+					return nil
+				}
+				return printJSON(map[string]any{
+					"services": services, "service_count": len(services),
+					"addresses": addresses, "address_count": len(addresses),
+				})
+			default:
+				// A registry root has no single catalogue to list, so listing it lists the providers.
+				if provs, err := omnisdk.DocProviders(args[0]); err == nil {
+					if quiet {
+						for p := range provs {
+							fmt.Println(p)
+						}
+						return nil
+					}
+					return printJSON(provs)
+				}
+				services, addresses, err := omnisdk.DocCatalog(args[0])
+				if err != nil {
+					return err
+				}
+				if quiet {
+					for _, a := range addresses {
+						fmt.Println(a)
+					}
+					return nil
+				}
+				return printJSON(map[string]any{
+					"services": services, "service_count": len(services),
+					"addresses": addresses, "address_count": len(addresses),
+				})
+			}
+		},
+	}
+	catCmd.Flags().BoolP("quiet", "q", false, "print bare addresses, one per line")
+	root.AddCommand(catCmd)
+
+	// doc-run: run one address out of a bundle.
+	root.AddCommand(&cobra.Command{
+		Use:   "doc-run <dir> <address> [args-json]",
+		Short: `Run an addressed exchange, e.g. doc-run ~/.stackql/src stackql_unstable_google.storage.buckets '{"params":{"project":"p"}}'`,
+		Args:  cobra.RangeArgs(2, 3),
+		RunE: withSinks(func(cmd *cobra.Command, w, logw io.Writer) error {
+			pos := cmd.Flags().Args()
+			var a omnisdk.Args
+			if len(pos) == 3 {
+				if err := json.Unmarshal([]byte(pos[2]), &a); err != nil {
+					return fmt.Errorf("args: parse: %w", err)
+				}
+			}
+			if a.Params == nil {
+				a.Params = map[string]string{}
+			}
+			if _, ok := a.Params["region"]; !ok && awsRegion != "" {
+				a.Params["region"] = awsRegion
+			}
+			a.Log = logw
+			if a.Endpoint == "" {
+				a.Endpoint = endpoint
+			}
+			if !a.InsecureSkipTLSVerify {
+				a.InsecureSkipTLSVerify = insecureTLS
+			}
+			if (a.Tuning == omnisdk.Tuning{}) {
+				a.Tuning = t.facade()
+			}
+			pl, err := omnisdk.NewFromCatalog(pos[0], pos[1], a)
+			if err != nil {
+				return err
+			}
+			return streamRows(pl, w)
+		}),
+	})
+
 	// ---- discovery (straight off the facade catalog) --------------------------
 	resCmd := &cobra.Command{
 		Use:   "resources [resource-path]",
@@ -304,6 +451,9 @@ func main() {
 			a.Log = logw
 			if a.Endpoint == "" {
 				a.Endpoint = endpoint
+			}
+			if !a.InsecureSkipTLSVerify {
+				a.InsecureSkipTLSVerify = insecureTLS
 			}
 			if (a.Tuning == omnisdk.Tuning{}) {
 				a.Tuning = t.facade()

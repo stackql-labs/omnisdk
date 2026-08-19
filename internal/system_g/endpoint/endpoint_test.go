@@ -29,7 +29,7 @@ func TestRealResolvesRegisteredDefaults(t *testing.T) {
 // malformed request, so the enumerable set is the guard.
 func TestEveryServiceIsRegistered(t *testing.T) {
 	want := []string{
-		endpoint.AWSS3, endpoint.AWSEC2, endpoint.AzureLogin, endpoint.AzureMgmt,
+		endpoint.AWSS3, endpoint.AWSEC2, endpoint.AWSIAM, endpoint.AzureLogin, endpoint.AzureMgmt, endpoint.AzureGraph,
 		endpoint.GCPOAuth, endpoint.GCPStorage, endpoint.GCPCRM, endpoint.GCPCompute,
 	}
 	for _, svc := range want {

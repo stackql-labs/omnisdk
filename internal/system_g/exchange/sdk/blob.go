@@ -447,6 +447,13 @@ func AzureBlobAuthPlan(endpoint string, cfg auth.AuthStruct) (plan.Plan, error) 
 	return plan.NewPlan(specs, betas, nil, inputs, blobEgress("azure"), encoder.NewJSONLEncoder()), nil
 }
 
+// GCPOAuthSpec is the service-account JWT → OAuth token exchange, exported for the document-compiled
+// path: a document that declares service_account auth needs exactly this exchange, and rebuilding it
+// there would be a second implementation of one flow.
+func GCPOAuthSpec(endpoint string, creds GCPCredentials, scope string) (plan.ExchangeSpec, string) {
+	return gcpOAuth(endpoint, creds, scope)
+}
+
 // gcpOAuth is the service-account JWT → OAuth token exchange (scope varies by caller).
 func gcpOAuth(endpoint string, creds GCPCredentials, scope string) (plan.ExchangeSpec, string) {
 	tokenURL := gcpTokenURL(endpoint, creds)

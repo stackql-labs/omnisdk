@@ -12,8 +12,11 @@ import (
 func init() {
 	ep.Register(ep.AWSS3, "https://s3.{region}.amazonaws.com")
 	ep.Register(ep.AWSEC2, "https://ec2.{region}.amazonaws.com")
+	// IAM is global: one endpoint, no region in the URL (SigV4 still signs into one).
+	ep.Register(ep.AWSIAM, "https://iam.amazonaws.com")
 	ep.Register(ep.AzureLogin, azureLoginDefault)
 	ep.Register(ep.AzureMgmt, azureMgmtDefault)
+	ep.Register(ep.AzureGraph, "https://graph.microsoft.com")
 	ep.Register(ep.GCPOAuth, "https://oauth2.googleapis.com/token")
 	ep.Register(ep.GCPStorage, "https://storage.googleapis.com/storage/v1")
 	ep.Register(ep.GCPCRM, "https://cloudresourcemanager.googleapis.com/v3")

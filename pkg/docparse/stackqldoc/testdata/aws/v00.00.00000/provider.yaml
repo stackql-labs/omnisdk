@@ -1,0 +1,37 @@
+id: aws
+name: aws
+version: v00.00.00000
+providerServices:
+  ec2:
+    id: ec2:v00.00.00000
+    name: ec2
+    preferred: true
+    service:
+      $ref: aws/v00.00.00000/services/ec2.yaml
+    title: ec2 API
+    version: v00.00.00000
+    description: Amazon Elastic Compute Cloud
+  s3:
+    id: s3:v00.00.00000
+    name: s3
+    preferred: true
+    service:
+      $ref: aws/v00.00.00000/services/s3.yaml
+    title: s3 API
+    version: v00.00.00000
+    description: Amazon Simple Storage Service
+  sqs:
+    id: sqs:v00.00.00000
+    name: sqs
+    preferred: true
+    service:
+      $ref: aws/v00.00.00000/services/sqs.yaml
+    title: sqs API
+    version: v00.00.00000
+    description: Amazon Simple Queue Service
+config:
+  auth:
+    type: aws_signing_v4
+    credentialsenvvar: AWS_SECRET_ACCESS_KEY
+    keyIDenvvar: AWS_ACCESS_KEY_ID
+  snake_case_aliases: true

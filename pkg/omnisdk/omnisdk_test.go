@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/stackql-labs/omnisdk/internal/system_g/endpoint"
 	"github.com/stackql-labs/omnisdk/pkg/omnisdk"
 )
 
@@ -151,6 +152,24 @@ func TestFacadeCrossCloudComposite(t *testing.T) {
 	})
 	if err == nil || !strings.Contains(err.Error(), "exactly one") {
 		t.Fatalf("composite should reject both alternatives at once, got %v", err)
+	}
+}
+
+// An Azure scope is DERIVED from the service, so a run that spans several Azure resources asks for
+// the right token for each. A single constant could only ever be right for one of them.
+func TestAzureScopeFollowsTheService(t *testing.T) {
+	for _, tc := range []struct{ service, want string }{
+		{endpoint.AzureMgmt, "https://management.azure.com/.default"},
+		{endpoint.AzureGraph, "https://graph.microsoft.com/.default"},
+	} {
+		if got := omnisdk.AzureScopeForTest(tc.service); got != tc.want {
+			t.Fatalf("scope(%s) = %q, want %q", tc.service, got, tc.want)
+		}
+	}
+	// an endpoint override retargets the REQUEST, never the resource the token is for: asking Entra
+	// for an audience of http://127.0.0.1 would be asking for something that does not exist
+	if got := omnisdk.AzureScopeForTest(endpoint.AzureMgmt); !strings.HasPrefix(got, "https://management.azure.com") {
+		t.Fatalf("scope must stay the real resource, got %q", got)
 	}
 }
 
