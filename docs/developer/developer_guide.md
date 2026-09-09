@@ -1,3 +1,8 @@
+# Developer guide
+
+Repository invariants — the rules that hold across the codebase — are in
+[invariants.md](invariants.md). Read those before changing code.
+
 # Manual testing
 
 You will need a file `cicd/vol/vendor-secrets/secrets.sh` of the form
