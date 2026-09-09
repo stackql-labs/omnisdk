@@ -141,6 +141,55 @@ func main() {
 	provCmd.Flags().String("subnet-cidr", "", "subnet CIDR block, e.g. 10.0.1.0/24 (required)")
 	root.AddCommand(provCmd)
 
+	// Same two resources as `provision`, run as a converging apply: intent is logged before each
+	// call, a failed run compensates what it created, a re-run against unchanged intent issues no
+	// calls, and an object missing from the ledger is rediscovered by its correlation tag rather
+	// than duplicated.
+	iacCmd := &cobra.Command{
+		Use:   "iac-provision",
+		Short: "Converge a VPC and a subnet, with a durable ledger; CREATES REAL AWS RESOURCES",
+		RunE: withSinks(func(cmd *cobra.Command, w, logw io.Writer) error {
+			vpcTags, err := jsonTags(mustFlag(cmd, "vpc-tags"))
+			if err != nil {
+				return fmt.Errorf("--vpc-tags: %w", err)
+			}
+			subnetTags, err := jsonTags(mustFlag(cmd, "subnet-tags"))
+			if err != nil {
+				return fmt.Errorf("--subnet-tags: %w", err)
+			}
+			a := omnisdk.Args{Params: map[string]string{"region": awsRegion}}
+			a.Endpoint, a.Log, a.Tuning = endpoint, logw, t.facade()
+			a.InsecureSkipTLSVerify = insecureTLS
+			pl, err := omnisdk.NewNetworkProvision(omnisdk.NetworkProvision{
+				Region:     awsRegion,
+				Name:       mustFlag(cmd, "name"),
+				VPCCidr:    mustFlag(cmd, "vpc-cidr"),
+				SubnetCidr: mustFlag(cmd, "subnet-cidr"),
+				VPCTags:    vpcTags,
+				SubnetTags: subnetTags,
+				StateDir:   mustFlag(cmd, "state"),
+				RunID:      mustFlag(cmd, "run-id"),
+			}, a)
+			if err != nil {
+				return err
+			}
+			return streamRows(pl, w)
+		}),
+	}
+	iacCmd.Flags().String("name", "", "collection name; the ledger key prefix and the correlation tag (required)")
+	iacCmd.Flags().String("vpc-cidr", "", "VPC CIDR block, e.g. 10.0.0.0/16 (required)")
+	iacCmd.Flags().String("subnet-cidr", "", "subnet CIDR block, e.g. 10.0.1.0/24 (required)")
+	iacCmd.Flags().String("vpc-tags", "", `tags for the VPC as a JSON object, e.g. {"Name":"demo","env":"dev"}`)
+	iacCmd.Flags().String("subnet-tags", "", `tags for the subnet as a JSON object`)
+	iacCmd.Flags().String("state", "", "directory holding the ledger and run journals; local disk only (required)")
+	iacCmd.Flags().String("run-id", "", "journal name for this run (default: a UTC timestamp)")
+	// Scope is explicit input, never inferred: which collection, and which ledger it is recorded in,
+	// are the two things a wrong guess would silently apply to the wrong resources.
+	for _, f := range []string{"name", "state", "vpc-cidr", "subnet-cidr"} {
+		_ = iacCmd.MarkFlagRequired(f)
+	}
+	root.AddCommand(iacCmd)
+
 	// ---- GCP ------------------------------------------------------------------
 	gcpCmd := &cobra.Command{
 		Use:   "gcp-provision",
@@ -470,6 +519,19 @@ func main() {
 		fmt.Fprintln(os.Stderr, "omnicli:", err)
 		os.Exit(1)
 	}
+}
+
+// jsonTags parses a tag flag: a JSON object of string keys to string values, empty meaning none.
+// Primitive on purpose — this is a testing entry point, not a configuration language.
+func jsonTags(s string) (map[string]string, error) {
+	if strings.TrimSpace(s) == "" {
+		return nil, nil
+	}
+	var tags map[string]string
+	if err := json.Unmarshal([]byte(s), &tags); err != nil {
+		return nil, fmt.Errorf("expected a JSON object of string tags: %w", err)
+	}
+	return tags, nil
 }
 
 // requireProject / requireGcpOrg add the REQUIRED scope flag. Scope (which project / which org) is

@@ -2,6 +2,7 @@ package facade
 
 import (
 	"context"
+	"errors"
 	"io"
 	"time"
 )
@@ -281,3 +282,227 @@ func (f FormClass) Inverse() (inv FormClass, ok bool) {
 		return f, false
 	}
 }
+
+// LedgerKey names one managed resource. Keyed by *name*, never by content: key-by-content makes
+// every edit a new resource, and key-by-name without stored content makes every edit invisible.
+// Prefixed by scope, so a run lists and reads only its own subtree.
+type LedgerKey string
+
+// LedgerPhase is where an entry sits between intent and committed fact.
+type LedgerPhase int
+
+const (
+	// LedgerPending — intent recorded, outcome unknown. Proposed is valid, Identity is not.
+	LedgerPending LedgerPhase = iota
+	// LedgerLive — applied. Plan and Identity are valid, Proposed is not.
+	LedgerLive
+)
+
+// LedgerVersion is an opaque compare-and-swap token: an ETag on object storage, a filename
+// version on local disk. Held from a read and presented on the matching write, so a concurrent
+// writer is detected rather than silently overwritten.
+type LedgerVersion string
+
+// LedgerVersionNone asserts the entry does not exist. Presented to Begin it means create-only,
+// the analogue of If-None-Match:* and O_EXCL.
+const LedgerVersionNone LedgerVersion = ""
+
+// LedgerEntry is the durable record for one key. Two content slots, not one: Begin must never
+// overwrite Plan, or a failed call loses n-1 and with it the ability to unset a dropped field.
+// Proposed is promoted to Plan at Resolve. A read-only value.
+type LedgerEntry interface {
+	Key() LedgerKey
+	Phase() LedgerPhase
+	// Plan is n-1: the last resolved intent, and the basis for a three-way merge.
+	Plan() []byte
+	// Proposed is n: the intent of the run in flight. Valid only while LedgerPending.
+	Proposed() []byte
+	// Identity is everything the inverse call needs to address the object — not merely an id,
+	// since a compensation is derived from Plan and Identity alone.
+	Identity() []byte
+}
+
+// Ledger is the durable, per-key write-ahead log of resolved intent. Redo-only: a pending entry
+// says what to go and ask about, never what to blindly re-execute. It records intent, never API
+// responses — actual state is read live, and only identity is persisted from it.
+//
+// Every mutation is compare-and-swap against the version from a prior Get, so there is no lock on
+// the entry path and readers never block. Safe for concurrent use.
+type Ledger interface {
+	// Get returns the entry and the version to present on a subsequent write.
+	Get(ctx context.Context, k LedgerKey) (LedgerEntry, LedgerVersion, bool, error)
+	// List returns every entry whose key falls under scope. Pruning depends on it.
+	List(ctx context.Context, scope string) ([]LedgerEntry, error)
+	// Begin records intent before the wire effect: phase becomes LedgerPending and proposed is
+	// stored, leaving Plan untouched. Pass LedgerVersionNone to require the key be absent.
+	// Repeating Begin with an identical proposal is a no-op, so a retried run does not conflict
+	// with itself.
+	Begin(ctx context.Context, k LedgerKey, proposed []byte, v LedgerVersion) error
+	// Resolve commits: Proposed is promoted to Plan, identity is stored, phase becomes LedgerLive.
+	Resolve(ctx context.Context, k LedgerKey, identity []byte, v LedgerVersion) error
+	// Forget removes the entry after a successful delete.
+	Forget(ctx context.Context, k LedgerKey, v LedgerVersion) error
+}
+
+// Ledger failures a caller must distinguish. A conflict is expected under concurrency and means
+// re-read and retry; the others are programming or recovery errors.
+var (
+	// ErrLedgerConflict — the presented version is stale, or a create found the key present.
+	ErrLedgerConflict = errors.New("ledger: version conflict")
+	// ErrLedgerNotFound — no entry at the key.
+	ErrLedgerNotFound = errors.New("ledger: entry not found")
+	// ErrLedgerPhase — the transition is not legal from the entry's current phase.
+	ErrLedgerPhase = errors.New("ledger: wrong phase")
+)
+
+// Merge decides, per field, what to send to the target. Three inputs from three sources: desired
+// is the current resolved intent, prior is the last resolved intent (n-1), actual is a live read.
+// Prior decides *ownership* — whether a silent field was dropped by us or belongs to someone else
+// — and nothing else; actual decides drift.
+//
+// The returned mutation is a JSON merge document: a present value enforces that value, and an
+// explicit null unsets the field.
+type Merge interface {
+	Apply(prior, desired, actual []byte) (mutation []byte, err error)
+}
+
+// KeySet names the keys a lease covers. Conflict is set intersection over a single object, so
+// leases are never acquired one key at a time and acquisition order never arises — which is the
+// only place a genuine deadlock could appear.
+type KeySet interface {
+	Contains(k LedgerKey) bool
+	Intersects(other KeySet) bool
+	// Keys enumerates the set, or reports false when the set is unbounded (v1 covers everything).
+	Keys() ([]LedgerKey, bool)
+	String() string
+}
+
+// Lease is the cross-run lock over a key set. It expires rather than requiring a manual unlock, so
+// a dead holder frees the collection on its own.
+//
+// Expiry without fencing makes exclusivity advisory: a lease can lapse under a holder whose call
+// is still in flight. Soundness would need the target to reject the stale holder, which cloud APIs
+// generally cannot do, so the standing rule substitutes — read the target before acting on a
+// broken lease.
+type Lease interface {
+	Holder() string
+	Keys() KeySet
+	Expiry() time.Time
+	Renew(ctx context.Context, ttl time.Duration) error
+	Release(ctx context.Context) error
+}
+
+// Leaser hands out leases within a scope.
+type Leaser interface {
+	Acquire(ctx context.Context, scope string, keys KeySet, holder string, ttl time.Duration) (Lease, error)
+}
+
+// ErrLeaseHeld — a live lease already covers part of the requested set.
+var ErrLeaseHeld = errors.New("lease: held")
+
+// JournalRecord is one appended step of a run, in the order the run reached it.
+type JournalRecord interface {
+	Seq() int
+	Key() LedgerKey
+	Exchange() string
+	// Form is what the step did to the object. It decides the shape of the compensation, which the
+	// exchange alone cannot: undoing a create is a delete, but undoing an update is a restore, and
+	// deleting an object an earlier run created would be destruction rather than compensation.
+	Form() FormClass
+	// Prior is the object's resolved intent before this step, captured here because Resolve
+	// promotes the new intent over it and the entry no longer carries it afterwards. Nil for a
+	// create, which has nothing to restore.
+	Prior() []byte
+}
+
+// Journal is the ordered, append-only forward log of a run. Unwind reverses it, which is why the
+// order must be durable rather than reconstructed: a crashed run is torn down by a different
+// process, with no plan graph in memory.
+//
+// It sits alongside the per-key Ledger rather than replacing it: keys hold state, the journal
+// holds sequence.
+type Journal interface {
+	// Append records intent ahead of the wire effect and returns the assigned sequence.
+	Append(ctx context.Context, k LedgerKey, exchange string, form FormClass, prior []byte) (int, error)
+	// Records returns every entry in append order.
+	Records(ctx context.Context) ([]JournalRecord, error)
+}
+
+// Journals opens the journal for a run.
+type Journals interface {
+	For(ctx context.Context, runID string) (Journal, error)
+}
+
+// Fidelity says how faithfully a compensation reverses its forward action. Lossy is the
+// interesting case: it is what justifies preferring forward recovery, and what a policy gates on.
+type Fidelity string
+
+const (
+	// FidelityExact — the inverse restores the prior state.
+	FidelityExact Fidelity = "exact"
+	// FidelityLossy — the inverse runs, but something does not come back: billing events, sent
+	// notifications, consumed ids, deleted data.
+	FidelityLossy Fidelity = "lossy"
+	// FidelityNone — no inverse exists.
+	FidelityNone Fidelity = "none"
+)
+
+// InverseExchange is the compensating exchange for a forward one, with how faithfully it
+// reverses it.
+type InverseExchange interface {
+	Exchange() string
+	Fidelity() Fidelity
+}
+
+// Semantics is the per-provider metadata that cannot be derived by differencing schemas. An
+// exchange declares its inverse; the absence of one is the declaration of non-invertibility,
+// which is constructive rather than a negative flag and also covers inverses that are not the
+// obvious form — a disable undoing an enable.
+type Semantics interface {
+	Form(exchange string) (FormClass, bool)
+	// Inverse reports the compensating exchange, or false where none is declared. This is
+	// per-exchange, superseding FormClass.Inverse: create is generically invertible by delete, but
+	// a particular create may not be — deletion protection, scheduled destruction, object-lock,
+	// anything billable.
+	Inverse(exchange string) (InverseExchange, bool)
+	// Update reports the exchange that converges an object that already exists, or false where
+	// none is declared. This is the verb-to-lifecycle role: without it there is no way to tell an
+	// upsert, where re-issuing the create is correct, from a mint, where re-issuing produces a
+	// duplicate. Absence means drift needs a replace, which is refused rather than guessed.
+	Update(exchange string) (string, bool)
+}
+
+// EffectInput is everything one wire effect needs beyond the exchange itself.
+type EffectInput struct {
+	// Params address the object: the path or query parameters that name it. Some are supplied by
+	// the caller and some bound from another key's recorded identity, which is what carries a
+	// dependency that a β edge would carry inside a single plan.
+	Params map[string]string
+	// Mutation is what to send, as produced by a Merge. Nil for a read or a delete.
+	Mutation []byte
+	// Identity is the recorded identity of an object that already exists — set for an update or a
+	// compensation, nil for a create.
+	Identity []byte
+}
+
+// Effector performs one wire effect and returns the identity of the affected object: everything
+// the inverse call needs to address it, not merely an id. It is the seam between the durable
+// machinery and System-G's exchanges.
+type Effector interface {
+	Effect(ctx context.Context, exchange string, k LedgerKey, in EffectInput) (identity []byte, err error)
+	// Read returns actual live state for a key, or readable=false where the target exposes no
+	// usable read. Where it is false the log degrades from fact to belief — a property of the
+	// target, not of the design.
+	//
+	// identity is the object's address as found on the target. When the caller supplied none, a
+	// non-empty identity here means the object was rediscovered by its correlation key: the caller
+	// may adopt it rather than create a duplicate, which is what keeps the ledger a cache instead
+	// of the sole link to reality.
+	Read(ctx context.Context, exchange string, k LedgerKey, in EffectInput) (actual, identity []byte, readable bool, err error)
+}
+
+// ErrCompensationBlocked marks a compensation that failed for a reason another compensation may
+// clear — the provider refusing to delete a parent while children exist. Unwind retries these on a
+// later pass rather than giving up, which is how provider referential integrity substitutes for
+// dependency information we do not have.
+var ErrCompensationBlocked = errors.New("compensation: blocked")
