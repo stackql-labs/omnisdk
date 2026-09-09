@@ -160,16 +160,12 @@ func main() {
 			a := omnisdk.Args{Params: map[string]string{"region": awsRegion}}
 			a.Endpoint, a.Log, a.Tuning = endpoint, logw, t.facade()
 			a.InsecureSkipTLSVerify = insecureTLS
-			pl, err := omnisdk.NewNetworkProvision(omnisdk.NetworkProvision{
-				Region:     awsRegion,
-				Name:       mustFlag(cmd, "name"),
-				VPCCidr:    mustFlag(cmd, "vpc-cidr"),
-				SubnetCidr: mustFlag(cmd, "subnet-cidr"),
-				VPCTags:    vpcTags,
-				SubnetTags: subnetTags,
-				StateDir:   mustFlag(cmd, "state"),
-				RunID:      mustFlag(cmd, "run-id"),
-			}, a)
+			dep, err := omnisdk.AWSNetwork(mustFlag(cmd, "name"), awsRegion,
+				mustFlag(cmd, "vpc-cidr"), mustFlag(cmd, "subnet-cidr"), vpcTags, subnetTags)
+			if err != nil {
+				return err
+			}
+			pl, err := omnisdk.Converge(dep, mustFlag(cmd, "state"), mustFlag(cmd, "run-id"), a)
 			if err != nil {
 				return err
 			}

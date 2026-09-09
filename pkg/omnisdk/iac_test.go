@@ -87,16 +87,13 @@ func TestNetworkProvisionAppliesBothStepsAndStampsTags(t *testing.T) {
 	srv := fakeEC2(t, &seen, &stamped)
 	defer srv.Close()
 
-	pl, err := omnisdk.NewNetworkProvision(omnisdk.NetworkProvision{
-		Region:     "us-east-1",
-		Name:       "demo",
-		VPCCidr:    "10.0.0.0/16",
-		SubnetCidr: "10.0.1.0/24",
-		VPCTags:    map[string]string{"Name": "demo-vpc", "env": "dev"},
-		SubnetTags: map[string]string{"Name": "demo-subnet"},
-		StateDir:   t.TempDir(),
-		RunID:      "run-1",
-	}, omnisdk.Args{Endpoint: srv.URL + "/"})
+	dep, err := omnisdk.AWSNetwork("demo", "us-east-1", "10.0.0.0/16", "10.0.1.0/24",
+		map[string]string{"Name": "demo-vpc", "env": "dev"},
+		map[string]string{"Name": "demo-subnet"})
+	if err != nil {
+		t.Fatalf("deployment: %v", err)
+	}
+	pl, err := omnisdk.Converge(dep, t.TempDir(), "run-1", omnisdk.Args{Endpoint: srv.URL + "/"})
 	if err != nil {
 		t.Fatalf("plan: %v", err)
 	}
@@ -148,11 +145,11 @@ func TestNetworkProvisionRerunIssuesNoCreates(t *testing.T) {
 	state := t.TempDir()
 	run := func(id string) {
 		t.Helper()
-		pl, err := omnisdk.NewNetworkProvision(omnisdk.NetworkProvision{
-			Region: "us-east-1", Name: "demo",
-			VPCCidr: "10.0.0.0/16", SubnetCidr: "10.0.1.0/24",
-			StateDir: state, RunID: id,
-		}, omnisdk.Args{Endpoint: srv.URL + "/"})
+		dep, err := omnisdk.AWSNetwork("demo", "us-east-1", "10.0.0.0/16", "10.0.1.0/24", nil, nil)
+		if err != nil {
+			t.Fatalf("deployment: %v", err)
+		}
+		pl, err := omnisdk.Converge(dep, state, id, omnisdk.Args{Endpoint: srv.URL + "/"})
 		if err != nil {
 			t.Fatalf("plan: %v", err)
 		}

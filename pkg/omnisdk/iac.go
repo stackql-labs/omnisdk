@@ -13,43 +13,100 @@ import (
 	"github.com/stackql-labs/omnisdk/internal/ledger"
 	"github.com/stackql-labs/omnisdk/internal/merge"
 	"github.com/stackql-labs/omnisdk/internal/semantics"
-	"github.com/stackql-labs/omnisdk/internal/system_g/exchange/sdk"
 	"github.com/stackql-labs/omnisdk/internal/system_g/facade"
 	"github.com/stackql-labs/omnisdk/internal/unwind"
 )
 
-// NetworkProvision is a two-step AWS network: a VPC, then a subnet inside it. The subnet's VpcId is
-// not known until the VPC exists, so the dependency is implicit — inside a single query graph that
-// is a β edge, and here it travels through the ledger, because each effect is wrapped in its own
-// durable writes.
-//
-// Unlike the provision METHOD, which issues both creates and remembers nothing, this converges: a
-// re-run against unchanged intent issues no calls, a run that fails part-way compensates what it
-// created, and an object whose ledger entry is missing is rediscovered by its correlation tag
-// rather than duplicated.
-type NetworkProvision struct {
-	// Region is the AWS region. Scope, never inferred.
-	Region string
-	// VPCCidr and SubnetCidr are the CIDR blocks to converge on. Both are immutable in EC2, so a
-	// change to either is refused rather than silently re-created.
-	VPCCidr    string
-	SubnetCidr string
-	// VPCTags and SubnetTags are stamped at create alongside the correlation key. They are not
-	// converged in this version: the read does not extract the tag set, so a tag that drifts is
-	// not corrected.
-	VPCTags    map[string]string
-	SubnetTags map[string]string
-	// StateDir holds the ledger and the run journals. Local disk: O_EXCL and link are unreliable on
-	// NFSv3, so a network share is not a supported backing store.
-	StateDir string
-	// Name is the collection: the ledger key prefix, the lease scope, and part of the correlation
-	// tag stamped on the objects. Several collections share one StateDir.
-	Name string
-	// RunID names this run's journal. Defaults to a timestamp.
-	RunID string
-	// LeaseTTL bounds how long a dead run can hold the collection. Defaults to five minutes.
-	LeaseTTL time.Duration
+// ManagedResource is one key a deployment converges: what it is, what it should look like, and what
+// it needs from its neighbours. Desired is opaque — nothing between here and the wire parses it.
+type ManagedResource interface {
+	// Key addresses the resource within the collection, e.g. "aws/ec2/vpc".
+	Key() string
+	// Exchange is the exchange that creates it.
+	Exchange() string
+	// Desired is the resolved intent to converge on.
+	Desired() []byte
+	// Params address the object on the wire.
+	Params() map[string]string
+	// Bindings resolve a parameter from another resource's recorded identity — the dependency that
+	// a β edge carries inside a single query graph, carried through the ledger instead because each
+	// effect is wrapped in its own durable writes.
+	Bindings() map[string]string
 }
+
+// Deployment is a collection of resources to converge together. Implementations are provided by
+// this package: the interface is sealed, so a caller composes a deployment from a constructor
+// rather than supplying provider wiring of their own.
+type Deployment interface {
+	// Name is the collection: the ledger key prefix, the lease scope, and part of the correlation
+	// tag stamped on each object.
+	Name() string
+	Resources() []ManagedResource
+	// wiring supplies the provider seam. Unexported, which seals the interface.
+	wiring(Args) (facade.Effector, facade.Semantics, error)
+}
+
+// resource is the ordinary implementation behind ManagedResource.
+type resource struct {
+	key      string
+	exchange string
+	desired  []byte
+	params   map[string]string
+	bindings map[string]string
+}
+
+func (r resource) Key() string                 { return r.key }
+func (r resource) Exchange() string            { return r.exchange }
+func (r resource) Desired() []byte             { return r.desired }
+func (r resource) Params() map[string]string   { return r.params }
+func (r resource) Bindings() map[string]string { return r.bindings }
+
+// awsNetwork is a VPC and a subnet inside it. The subnet's VpcId is not known until the VPC exists,
+// so the dependency is implicit rather than declared.
+type awsNetwork struct {
+	name      string
+	region    string
+	resources []ManagedResource
+}
+
+// AWSNetwork describes a VPC and a subnet in it, as a collection named by name.
+//
+// Both CIDRs are immutable in EC2, so a change to either is refused rather than silently
+// re-created. Tags are stamped at create alongside the correlation key and are not converged: the
+// read does not extract the tag set, so a tag edited elsewhere is not corrected.
+func AWSNetwork(name, region, vpcCidr, subnetCidr string, vpcTags, subnetTags map[string]string) (Deployment, error) {
+	switch {
+	case name == "":
+		return nil, fmt.Errorf("omnisdk: collection name is required")
+	case region == "":
+		return nil, fmt.Errorf("omnisdk: region is required")
+	case vpcCidr == "" || subnetCidr == "":
+		return nil, fmt.Errorf("omnisdk: vpc and subnet CIDR blocks are required")
+	}
+	const vpc, subnet = "aws/ec2/vpc", "aws/ec2/subnet"
+	return &awsNetwork{
+		name:   name,
+		region: region,
+		resources: []ManagedResource{
+			resource{
+				key:      vpc,
+				exchange: "CreateVpc",
+				desired:  cidrDoc(vpcCidr),
+				params:   tagParams(vpcTags),
+			},
+			resource{
+				key:      subnet,
+				exchange: "CreateSubnet",
+				desired:  cidrDoc(subnetCidr),
+				params:   tagParams(subnetTags),
+				bindings: map[string]string{"VpcId": name + "/" + vpc},
+			},
+		},
+	}, nil
+}
+
+func (d *awsNetwork) Name() string                 { return d.name }
+func (d *awsNetwork) Resources() []ManagedResource { return d.resources }
 
 // awsNetworkDecls declares the per-provider semantics. Each create names its inverse, which makes
 // the plan reversible ahead of time; neither declares an update, because an EC2 create mints a new
@@ -59,81 +116,84 @@ var awsNetworkDecls = []semantics.Declaration{
 	{Exchange: "CreateSubnet", Form: "insert", Inverse: "DeleteSubnet", Fidelity: facade.FidelityExact},
 }
 
-// NewNetworkProvision plans the run. Opening it applies; the rows report what each step did.
-func NewNetworkProvision(spec NetworkProvision, args Args) (Plan, error) {
-	switch {
-	case spec.Region == "":
-		return nil, fmt.Errorf("omnisdk: region is required")
-	case spec.VPCCidr == "" || spec.SubnetCidr == "":
-		return nil, fmt.Errorf("omnisdk: vpc and subnet CIDR blocks are required")
-	case spec.StateDir == "":
-		return nil, fmt.Errorf("omnisdk: state directory is required")
-	case spec.Name == "":
-		return nil, fmt.Errorf("omnisdk: network name is required")
-	}
+func (d *awsNetwork) wiring(args Args) (facade.Effector, facade.Semantics, error) {
 	creds, err := awsCreds(args)
 	if err != nil {
-		return nil, err
-	}
-	if spec.RunID == "" {
-		spec.RunID = time.Now().UTC().Format("20060102T150405Z")
-	}
-	if spec.LeaseTTL == 0 {
-		spec.LeaseTTL = 5 * time.Minute
-	}
-	return &networkProvision{spec: spec, creds: creds, args: args}, nil
-}
-
-type networkProvision struct {
-	spec  NetworkProvision
-	creds sdk.Credentials
-	args  Args
-}
-
-func (p *networkProvision) Open(ctx context.Context) (Rows, error) {
-	log, err := ledger.NewFile(filepath.Join(p.spec.StateDir, "ledger"))
-	if err != nil {
-		return nil, err
-	}
-	journals, err := journal.NewFiles(filepath.Join(p.spec.StateDir, "journal"))
-	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	sem, err := semantics.New(awsNetworkDecls)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
-	eff := awsec2.New(p.spec.Region, p.creds, p.args.Endpoint)
-	runner := apply.New(log, journals, lease.NewLeaser(log, time.Now), merge.ThreeWay(), eff, sem,
-		unwind.New(log, journals, sem, eff), lease.All(), p.spec.LeaseTTL)
+	return awsec2.New(d.region, creds, args.Endpoint), sem, nil
+}
 
-	// The collection is the scope; the provider and service belong to each key's address, not above
-	// it. A collection is a set of keys a run manages together and spans providers in general — a
-	// DNS record at another provider joins this one as <name>/cloudflare/dns/record.
-	scope := p.spec.Name
-	vpcKey := facade.LedgerKey(scope + "/aws/ec2/vpc")
-	subnetKey := facade.LedgerKey(scope + "/aws/ec2/subnet")
-
-	res, err := runner.Apply(ctx, p.spec.RunID, scope, []apply.Step{
-		{
-			Key:      vpcKey,
-			Exchange: "CreateVpc",
-			Desired:  cidrDoc(p.spec.VPCCidr),
-			Params:   tagParams(p.spec.VPCTags),
-		},
-		{
-			Key:      subnetKey,
-			Exchange: "CreateSubnet",
-			Desired:  cidrDoc(p.spec.SubnetCidr),
-			Params:   tagParams(p.spec.SubnetTags),
-			// The subnet cannot be addressed until the VPC's id exists.
-			Bindings: map[string]facade.LedgerKey{"VpcId": vpcKey},
-		},
-	})
+// Converge plans a run over a deployment. Opening it applies; the rows report what each step did.
+//
+// state is where the ledger and run journals live — local disk only, since O_EXCL and link are
+// unreliable on a network share. One state directory holds many collections, separated by name.
+// runID names this run's journal and defaults to a UTC timestamp.
+func Converge(d Deployment, state, runID string, args Args) (Plan, error) {
+	if d == nil {
+		return nil, fmt.Errorf("omnisdk: deployment is required")
+	}
+	if state == "" {
+		return nil, fmt.Errorf("omnisdk: state directory is required")
+	}
+	effector, sem, err := d.wiring(args)
 	if err != nil {
 		return nil, err
 	}
-	return provisionRows(ctx, log, res), nil
+	if runID == "" {
+		runID = time.Now().UTC().Format("20060102T150405Z")
+	}
+	return &convergePlan{dep: d, state: state, runID: runID, effector: effector, semantics: sem}, nil
+}
+
+type convergePlan struct {
+	dep       Deployment
+	state     string
+	runID     string
+	effector  facade.Effector
+	semantics facade.Semantics
+}
+
+// leaseTTL bounds how long a dead run can hold the collection before another may break it.
+const leaseTTL = 5 * time.Minute
+
+func (p *convergePlan) Open(ctx context.Context) (Rows, error) {
+	log, err := ledger.NewFile(filepath.Join(p.state, "ledger"))
+	if err != nil {
+		return nil, err
+	}
+	journals, err := journal.NewFiles(filepath.Join(p.state, "journal"))
+	if err != nil {
+		return nil, err
+	}
+	runner := apply.New(log, journals, lease.NewLeaser(log, time.Now), merge.ThreeWay(),
+		p.effector, p.semantics, unwind.New(log, journals, p.semantics, p.effector), lease.All(), leaseTTL)
+
+	scope := p.dep.Name()
+	steps := make([]apply.Step, 0, len(p.dep.Resources()))
+	for _, r := range p.dep.Resources() {
+		bindings := make(map[string]facade.LedgerKey, len(r.Bindings()))
+		for param, key := range r.Bindings() {
+			bindings[param] = facade.LedgerKey(key)
+		}
+		steps = append(steps, apply.Step{
+			Key:      facade.LedgerKey(scope + "/" + r.Key()),
+			Exchange: r.Exchange(),
+			Desired:  r.Desired(),
+			Params:   r.Params(),
+			Bindings: bindings,
+		})
+	}
+
+	res, err := runner.Apply(ctx, p.runID, scope, steps)
+	if err != nil {
+		return nil, err
+	}
+	return convergeRows(ctx, log, res), nil
 }
 
 func cidrDoc(cidr string) []byte { return fmt.Appendf(nil, `{"CidrBlock":%q}`, cidr) }
@@ -150,9 +210,9 @@ func tagParams(tags map[string]string) map[string]string {
 	return out
 }
 
-// provisionRows reports one row per key the run touched, and a final row when the run failed, so a
+// convergeRows reports one row per key the run touched, and a final row when the run failed, so a
 // partial compensation is visible rather than implied by an absence.
-func provisionRows(ctx context.Context, log facade.Ledger, res apply.Result) Rows {
+func convergeRows(ctx context.Context, log facade.Ledger, res apply.Result) Rows {
 	// A key that was applied and then compensated must not read as "applied": the run left nothing
 	// behind, and reporting otherwise would send someone looking for a resource that is gone.
 	undone := map[facade.LedgerKey]bool{}
