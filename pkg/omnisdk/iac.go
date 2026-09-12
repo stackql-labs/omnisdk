@@ -4,10 +4,12 @@ import (
 	"context"
 	"fmt"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/stackql-labs/omnisdk/internal/apply"
 	"github.com/stackql-labs/omnisdk/internal/effect/awsec2"
+	"github.com/stackql-labs/omnisdk/internal/effect/dispatch"
 	"github.com/stackql-labs/omnisdk/internal/journal"
 	"github.com/stackql-labs/omnisdk/internal/lease"
 	"github.com/stackql-labs/omnisdk/internal/ledger"
@@ -17,36 +19,32 @@ import (
 	"github.com/stackql-labs/omnisdk/internal/unwind"
 )
 
-// ManagedResource is one key a deployment converges: what it is, what it should look like, and what
-// it needs from its neighbours. Desired is opaque — nothing between here and the wire parses it.
+// ManagedResource is one key a run converges: what it is, what it should look like, and what it
+// needs from its neighbours. Desired is opaque — nothing between here and the wire parses it.
 type ManagedResource interface {
-	// Key addresses the resource within the collection, e.g. "aws/ec2/vpc".
+	// Key addresses the resource beneath the collection, e.g. "aws/ec2/vpc". Its leading segments
+	// name the provider and service, which is how an effect is routed.
 	Key() string
-	// Exchange is the exchange that creates it.
+	// Exchange creates it.
 	Exchange() string
 	// Desired is the resolved intent to converge on.
 	Desired() []byte
 	// Params address the object on the wire.
 	Params() map[string]string
-	// Bindings resolve a parameter from another resource's recorded identity — the dependency that
-	// a β edge carries inside a single query graph, carried through the ledger instead because each
-	// effect is wrapped in its own durable writes.
+	// Bindings resolve a parameter from another key's recorded identity — the dependency a β edge
+	// carries inside a single query graph, carried through the ledger instead because each effect is
+	// wrapped in its own durable writes. The key named is a sibling in the same collection, written
+	// the same way as Key; the collection name is applied by Converge, which is what lets a
+	// blueprint be written once and applied under any name.
 	Bindings() map[string]string
 }
 
-// Deployment is a collection of resources to converge together. Implementations are provided by
-// this package: the interface is sealed, so a caller composes a deployment from a constructor
-// rather than supplying provider wiring of their own.
-type Deployment interface {
-	// Name is the collection: the ledger key prefix, the lease scope, and part of the correlation
-	// tag stamped on each object.
-	Name() string
-	Resources() []ManagedResource
-	// wiring supplies the provider seam. Unexported, which seals the interface.
-	wiring(Args) (facade.Effector, facade.Semantics, error)
+// NewResource builds a ManagedResource. A client that assembles its own deployment — rather than
+// naming a blueprint — uses this.
+func NewResource(key, exchange string, desired []byte, params, bindings map[string]string) ManagedResource {
+	return resource{key: key, exchange: exchange, desired: desired, params: params, bindings: bindings}
 }
 
-// resource is the ordinary implementation behind ManagedResource.
 type resource struct {
 	key      string
 	exchange string
@@ -61,123 +59,96 @@ func (r resource) Desired() []byte             { return r.desired }
 func (r resource) Params() map[string]string   { return r.params }
 func (r resource) Bindings() map[string]string { return r.bindings }
 
-// awsNetwork is a VPC and a subnet inside it. The subnet's VpcId is not known until the VPC exists,
-// so the dependency is implicit rather than declared.
-type awsNetwork struct {
-	name      string
-	region    string
-	resources []ManagedResource
-}
-
-// AWSNetwork describes a VPC and a subnet in it, as a collection named by name.
+// Converge applies a set of resources as one collection, and is the whole IaC entry point: a client
+// issues the imperative and the system works out idempotence, ordering, locking and compensation.
 //
-// Both CIDRs are immutable in EC2, so a change to either is refused rather than silently
-// re-created. Tags are stamped at create alongside the correlation key and are not converged: the
-// read does not extract the tag set, so a tag edited elsewhere is not corrected.
-func AWSNetwork(name, region, vpcCidr, subnetCidr string, vpcTags, subnetTags map[string]string) (Deployment, error) {
+//   - name is the collection: the ledger key prefix, the lease scope, and the correlation tag
+//     stamped on each object. It is the handle a later run uses to address the same resources.
+//   - state holds the ledger and run journals. Local disk only — O_EXCL and link are unreliable on a
+//     network share. One state directory holds many collections, separated by name.
+//   - runID names this run's journal; empty means a UTC timestamp.
+//   - resources are what to converge. Order is irrelevant: dependencies travel through bindings.
+//   - args carries credentials, an endpoint override and tuning, exactly as a query does.
+//
+// Opening the returned Plan performs the run; the rows report what each key did.
+func Converge(name, state, runID string, resources []ManagedResource, args Args) (Plan, error) {
 	switch {
 	case name == "":
 		return nil, fmt.Errorf("omnisdk: collection name is required")
-	case region == "":
-		return nil, fmt.Errorf("omnisdk: region is required")
-	case vpcCidr == "" || subnetCidr == "":
-		return nil, fmt.Errorf("omnisdk: vpc and subnet CIDR blocks are required")
-	}
-	const vpc, subnet = "aws/ec2/vpc", "aws/ec2/subnet"
-	return &awsNetwork{
-		name:   name,
-		region: region,
-		resources: []ManagedResource{
-			resource{
-				key:      vpc,
-				exchange: "CreateVpc",
-				desired:  cidrDoc(vpcCidr),
-				params:   tagParams(vpcTags),
-			},
-			resource{
-				key:      subnet,
-				exchange: "CreateSubnet",
-				desired:  cidrDoc(subnetCidr),
-				params:   tagParams(subnetTags),
-				bindings: map[string]string{"VpcId": name + "/" + vpc},
-			},
-		},
-	}, nil
-}
-
-// AWSSecuredNetwork is AWSNetwork plus a security group in the VPC: a second binding hop, where the
-// group depends on the VPC exactly as the subnet does.
-//
-// groupName and groupDescription are both required by EC2 and neither is converged — a group's name
-// is immutable, so a change is refused rather than replaced.
-func AWSSecuredNetwork(name, region, vpcCidr, subnetCidr, groupName, groupDescription string, vpcTags, subnetTags, groupTags map[string]string) (Deployment, error) {
-	base, err := AWSNetwork(name, region, vpcCidr, subnetCidr, vpcTags, subnetTags)
-	if err != nil {
-		return nil, err
-	}
-	if groupName == "" || groupDescription == "" {
-		return nil, fmt.Errorf("omnisdk: security group name and description are required")
-	}
-	d := base.(*awsNetwork)
-	d.resources = append(d.resources, resource{
-		key:      "aws/ec2/security-group",
-		exchange: "CreateSecurityGroup",
-		desired:  fmt.Appendf(nil, `{"GroupName":%q,"GroupDescription":%q}`, groupName, groupDescription),
-		params:   tagParams(groupTags),
-		bindings: map[string]string{"VpcId": name + "/aws/ec2/vpc"},
-	})
-	return d, nil
-}
-
-func (d *awsNetwork) Name() string                 { return d.name }
-func (d *awsNetwork) Resources() []ManagedResource { return d.resources }
-
-// awsNetworkDecls declares the per-provider semantics. Each create names its inverse, which makes
-// the plan reversible ahead of time; neither declares an update, because an EC2 create mints a new
-// object rather than converging an existing one.
-var awsNetworkDecls = []semantics.Declaration{
-	{Exchange: "CreateVpc", Form: "insert", Inverse: "DeleteVpc", Fidelity: facade.FidelityExact},
-	{Exchange: "CreateSubnet", Form: "insert", Inverse: "DeleteSubnet", Fidelity: facade.FidelityExact},
-}
-
-func (d *awsNetwork) wiring(args Args) (facade.Effector, facade.Semantics, error) {
-	creds, err := awsCreds(args)
-	if err != nil {
-		return nil, nil, err
-	}
-	sem, err := semantics.New(awsNetworkDecls)
-	if err != nil {
-		return nil, nil, err
-	}
-	return awsec2.New(d.region, creds, args.Endpoint), sem, nil
-}
-
-// Converge plans a run over a deployment. Opening it applies; the rows report what each step did.
-//
-// state is where the ledger and run journals live — local disk only, since O_EXCL and link are
-// unreliable on a network share. One state directory holds many collections, separated by name.
-// runID names this run's journal and defaults to a UTC timestamp.
-func Converge(d Deployment, state, runID string, args Args) (Plan, error) {
-	if d == nil {
-		return nil, fmt.Errorf("omnisdk: deployment is required")
-	}
-	if state == "" {
+	case state == "":
 		return nil, fmt.Errorf("omnisdk: state directory is required")
+	case len(resources) == 0:
+		return nil, fmt.Errorf("omnisdk: no resources to converge")
 	}
-	effector, sem, err := d.wiring(args)
+	effector, sem, err := wiring(resources, args)
 	if err != nil {
 		return nil, err
 	}
 	if runID == "" {
 		runID = time.Now().UTC().Format("20060102T150405Z")
 	}
-	return &convergePlan{dep: d, state: state, runID: runID, effector: effector, semantics: sem}, nil
+	return &convergePlan{name: name, state: state, runID: runID, resources: resources, effector: effector, semantics: sem}, nil
+}
+
+// providers maps a key-address prefix to the provider that services it. Adding a provider is an
+// entry here; nothing above changes.
+var providers = map[string]func(Args) (facade.Effector, []semantics.Declaration, error){
+	"aws/ec2": func(args Args) (facade.Effector, []semantics.Declaration, error) {
+		creds, err := awsCreds(args)
+		if err != nil {
+			return nil, nil, err
+		}
+		region := args.param("region")
+		if region == "" {
+			return nil, nil, fmt.Errorf("omnisdk: region is required for aws/ec2 resources")
+		}
+		return awsec2.New(region, creds, args.Endpoint), awsec2.Declarations(), nil
+	},
+}
+
+// wiring resolves an effector per provider the resources touch, and routes between them. Only the
+// providers actually addressed are constructed, so a deployment that never mentions one needs no
+// credentials for it.
+func wiring(resources []ManagedResource, args Args) (facade.Effector, facade.Semantics, error) {
+	routes := map[string]facade.Effector{}
+	var decls []semantics.Declaration
+	for _, r := range resources {
+		prefix, ok := providerFor(r.Key())
+		if !ok {
+			return nil, nil, fmt.Errorf("omnisdk: no provider for resource key %q", r.Key())
+		}
+		if _, built := routes[prefix]; built {
+			continue
+		}
+		eff, d, err := providers[prefix](args)
+		if err != nil {
+			return nil, nil, err
+		}
+		routes[prefix], decls = eff, append(decls, d...)
+	}
+	sem, err := semantics.New(decls)
+	if err != nil {
+		return nil, nil, err
+	}
+	return dispatch.New(routes), sem, nil
+}
+
+// providerFor finds the longest registered prefix matching a resource key.
+func providerFor(key string) (string, bool) {
+	best := ""
+	for prefix := range providers {
+		if strings.HasPrefix(key, prefix) && len(prefix) > len(best) {
+			best = prefix
+		}
+	}
+	return best, best != ""
 }
 
 type convergePlan struct {
-	dep       Deployment
+	name      string
 	state     string
 	runID     string
+	resources []ManagedResource
 	effector  facade.Effector
 	semantics facade.Semantics
 }
@@ -197,15 +168,14 @@ func (p *convergePlan) Open(ctx context.Context) (Rows, error) {
 	runner := apply.New(log, journals, lease.NewLeaser(log, time.Now), merge.ThreeWay(),
 		p.effector, p.semantics, unwind.New(log, journals, p.semantics, p.effector), lease.All(), leaseTTL)
 
-	scope := p.dep.Name()
-	steps := make([]apply.Step, 0, len(p.dep.Resources()))
-	for _, r := range p.dep.Resources() {
+	steps := make([]apply.Step, 0, len(p.resources))
+	for _, r := range p.resources {
 		bindings := make(map[string]facade.LedgerKey, len(r.Bindings()))
 		for param, key := range r.Bindings() {
-			bindings[param] = facade.LedgerKey(key)
+			bindings[param] = facade.LedgerKey(p.name + "/" + key)
 		}
 		steps = append(steps, apply.Step{
-			Key:      facade.LedgerKey(scope + "/" + r.Key()),
+			Key:      facade.LedgerKey(p.name + "/" + r.Key()),
 			Exchange: r.Exchange(),
 			Desired:  r.Desired(),
 			Params:   r.Params(),
@@ -213,32 +183,18 @@ func (p *convergePlan) Open(ctx context.Context) (Rows, error) {
 		})
 	}
 
-	res, err := runner.Apply(ctx, p.runID, scope, steps)
+	res, err := runner.Apply(ctx, p.runID, p.name, steps)
 	if err != nil {
 		return nil, err
 	}
 	return convergeRows(ctx, log, res), nil
 }
 
-func cidrDoc(cidr string) []byte { return fmt.Appendf(nil, `{"CidrBlock":%q}`, cidr) }
-
-// tagParams marks each tag so the effector stamps it rather than sending it as a form parameter.
-func tagParams(tags map[string]string) map[string]string {
-	if len(tags) == 0 {
-		return nil
-	}
-	out := make(map[string]string, len(tags))
-	for k, v := range tags {
-		out[awsec2.TagParamPrefix+k] = v
-	}
-	return out
-}
-
 // convergeRows reports one row per key the run touched, and a final row when the run failed, so a
 // partial compensation is visible rather than implied by an absence.
 func convergeRows(ctx context.Context, log facade.Ledger, res apply.Result) Rows {
-	// A key that was applied and then compensated must not read as "applied": the run left nothing
-	// behind, and reporting otherwise would send someone looking for a resource that is gone.
+	// A key applied and then compensated must not read as "applied": the run left nothing behind,
+	// and reporting otherwise sends someone looking for a resource that is gone.
 	undone := map[facade.LedgerKey]bool{}
 	if res.Unwound != nil {
 		for _, k := range res.Unwound.Compensated {

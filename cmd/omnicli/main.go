@@ -141,61 +141,65 @@ func main() {
 	provCmd.Flags().String("subnet-cidr", "", "subnet CIDR block, e.g. 10.0.1.0/24 (required)")
 	root.AddCommand(provCmd)
 
-	// Same two resources as `provision`, run as a converging apply: intent is logged before each
-	// call, a failed run compensates what it created, a re-run against unchanged intent issues no
-	// calls, and an object missing from the ledger is rediscovered by its correlation tag rather
-	// than duplicated.
+	// IaC: a client names a blueprint handle and supplies its inputs. Idempotence, ordering, locking
+	// and compensation are the system's problem, not the caller's.
+	root.AddCommand(&cobra.Command{
+		Use:   "iac-handles",
+		Short: "List the precanned deployments addressable by handle",
+		RunE: func(*cobra.Command, []string) error {
+			type published struct {
+				Handle  string          `json:"handle"`
+				Summary string          `json:"summary"`
+				Params  []omnisdk.Param `json:"params"`
+			}
+			var out []published
+			for _, b := range omnisdk.Blueprints() {
+				out = append(out, published{Handle: b.Handle(), Summary: b.Summary(), Params: b.Params()})
+			}
+			return printJSON(out)
+		},
+	})
+
 	iacCmd := &cobra.Command{
-		Use:   "iac-provision",
-		Short: "Converge a VPC and a subnet, with a durable ledger; CREATES REAL AWS RESOURCES",
+		Use:   "iac",
+		Short: "Converge a deployment by handle, with a durable ledger; CREATES REAL RESOURCES",
 		RunE: withSinks(func(cmd *cobra.Command, w, logw io.Writer) error {
-			vpcTags, err := jsonTags(mustFlag(cmd, "vpc-tags"))
+			handle := mustFlag(cmd, "handle")
+			bp, ok := omnisdk.BlueprintFor(handle)
+			if !ok {
+				return fmt.Errorf("unknown handle %q; see `omnicli iac-handles`", handle)
+			}
+			inputs, err := jsonInputs(mustFlag(cmd, "input"))
 			if err != nil {
-				return fmt.Errorf("--vpc-tags: %w", err)
+				return fmt.Errorf("--input: %w", err)
 			}
-			subnetTags, err := jsonTags(mustFlag(cmd, "subnet-tags"))
-			if err != nil {
-				return fmt.Errorf("--subnet-tags: %w", err)
+			// Region is a global flag rather than an input, so it reads the same way as every other
+			// AWS command; an explicit input still wins.
+			if _, given := inputs["region"]; !given && awsRegion != "" {
+				inputs["region"] = awsRegion
 			}
-			a := omnisdk.Args{Params: map[string]string{"region": awsRegion}}
-			a.Endpoint, a.Log, a.Tuning = endpoint, logw, t.facade()
-			a.InsecureSkipTLSVerify = insecureTLS
-			groupTags, err := jsonTags(mustFlag(cmd, "sg-tags"))
-			if err != nil {
-				return fmt.Errorf("--sg-tags: %w", err)
-			}
-			var dep omnisdk.Deployment
-			if sg := mustFlag(cmd, "sg-name"); sg != "" {
-				dep, err = omnisdk.AWSSecuredNetwork(mustFlag(cmd, "name"), awsRegion,
-					mustFlag(cmd, "vpc-cidr"), mustFlag(cmd, "subnet-cidr"),
-					sg, mustFlag(cmd, "sg-description"), vpcTags, subnetTags, groupTags)
-			} else {
-				dep, err = omnisdk.AWSNetwork(mustFlag(cmd, "name"), awsRegion,
-					mustFlag(cmd, "vpc-cidr"), mustFlag(cmd, "subnet-cidr"), vpcTags, subnetTags)
-			}
+			resources, err := bp.Resources(inputs)
 			if err != nil {
 				return err
 			}
-			pl, err := omnisdk.Converge(dep, mustFlag(cmd, "state"), mustFlag(cmd, "run-id"), a)
+			a := omnisdk.Args{Params: map[string]string{"region": inputs["region"]}}
+			a.Endpoint, a.Log, a.Tuning = endpoint, logw, t.facade()
+			a.InsecureSkipTLSVerify = insecureTLS
+			pl, err := omnisdk.Converge(mustFlag(cmd, "name"), mustFlag(cmd, "state"), mustFlag(cmd, "run-id"), resources, a)
 			if err != nil {
 				return err
 			}
 			return streamRows(pl, w)
 		}),
 	}
+	iacCmd.Flags().String("handle", "", "blueprint to converge, e.g. aws-vpc-subnet (required)")
 	iacCmd.Flags().String("name", "", "collection name; the ledger key prefix and the correlation tag (required)")
-	iacCmd.Flags().String("vpc-cidr", "", "VPC CIDR block, e.g. 10.0.0.0/16 (required)")
-	iacCmd.Flags().String("subnet-cidr", "", "subnet CIDR block, e.g. 10.0.1.0/24 (required)")
-	iacCmd.Flags().String("vpc-tags", "", `tags for the VPC as a JSON object, e.g. {"Name":"demo","env":"dev"}`)
-	iacCmd.Flags().String("subnet-tags", "", `tags for the subnet as a JSON object`)
 	iacCmd.Flags().String("state", "", "directory holding the ledger and run journals; local disk only (required)")
-	iacCmd.Flags().String("sg-name", "", "also converge a security group in the VPC, with this name")
-	iacCmd.Flags().String("sg-description", "managed by omnisdk", "security group description (EC2 requires one)")
-	iacCmd.Flags().String("sg-tags", "", "tags for the security group as a JSON object")
+	iacCmd.Flags().String("input", "", `blueprint inputs as a JSON object, e.g. {"vpc_cidr":"10.0.0.0/16"} (required)`)
 	iacCmd.Flags().String("run-id", "", "journal name for this run (default: a UTC timestamp)")
-	// Scope is explicit input, never inferred: which collection, and which ledger it is recorded in,
-	// are the two things a wrong guess would silently apply to the wrong resources.
-	for _, f := range []string{"name", "state", "vpc-cidr", "subnet-cidr"} {
+	// Scope is explicit input, never inferred: which deployment, under which name, recorded in which
+	// ledger are the three things a wrong guess would silently apply to the wrong resources.
+	for _, f := range []string{"handle", "name", "state", "input"} {
 		_ = iacCmd.MarkFlagRequired(f)
 	}
 	root.AddCommand(iacCmd)
@@ -531,17 +535,27 @@ func main() {
 	}
 }
 
-// jsonTags parses a tag flag: a JSON object of string keys to string values, empty meaning none.
-// Primitive on purpose — this is a testing entry point, not a configuration language.
-func jsonTags(s string) (map[string]string, error) {
+// jsonInputs parses a blueprint's inputs: a JSON object of string keys to string values. Nested
+// values (tags) are themselves JSON strings, which keeps one flag rather than one per parameter.
+func jsonInputs(s string) (map[string]string, error) {
 	if strings.TrimSpace(s) == "" {
-		return nil, nil
+		return map[string]string{}, nil
 	}
-	var tags map[string]string
-	if err := json.Unmarshal([]byte(s), &tags); err != nil {
-		return nil, fmt.Errorf("expected a JSON object of string tags: %w", err)
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(s), &raw); err != nil {
+		return nil, fmt.Errorf("expected a JSON object: %w", err)
 	}
-	return tags, nil
+	out := make(map[string]string, len(raw))
+	for k, v := range raw {
+		var str string
+		if err := json.Unmarshal(v, &str); err == nil {
+			out[k] = str
+			continue
+		}
+		// A nested object (tags) is kept verbatim, so the blueprint parses it in its own terms.
+		out[k] = string(v)
+	}
+	return out, nil
 }
 
 // requireProject / requireGcpOrg add the REQUIRED scope flag. Scope (which project / which org) is

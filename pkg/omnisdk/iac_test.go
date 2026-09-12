@@ -87,6 +87,25 @@ func fakeEC2(t *testing.T, seen *[]string, tags *map[string]string) *httptest.Se
 	}))
 }
 
+// render resolves the published blueprint, which is how a client reaches a deployment: name the
+// handle, supply inputs, converge under a collection name.
+func render(t *testing.T, inputs map[string]string) []omnisdk.ManagedResource {
+	t.Helper()
+	bp, ok := omnisdk.BlueprintFor("aws-vpc-subnet")
+	if !ok {
+		t.Fatal("aws-vpc-subnet not published")
+	}
+	resources, err := bp.Resources(inputs)
+	if err != nil {
+		t.Fatalf("resources: %v", err)
+	}
+	return resources
+}
+
+func awsArgs(srv *httptest.Server) omnisdk.Args {
+	return omnisdk.Args{Endpoint: srv.URL + "/", Params: map[string]string{"region": "us-east-1"}}
+}
+
 func TestNetworkProvisionAppliesBothStepsAndStampsTags(t *testing.T) {
 	t.Setenv("AWS_ACCESS_KEY_ID", "AKIATEST")
 	t.Setenv("AWS_SECRET_ACCESS_KEY", "secret")
@@ -95,13 +114,12 @@ func TestNetworkProvisionAppliesBothStepsAndStampsTags(t *testing.T) {
 	srv := fakeEC2(t, &seen, &stamped)
 	defer srv.Close()
 
-	dep, err := omnisdk.AWSNetwork("demo", "us-east-1", "10.0.0.0/16", "10.0.1.0/24",
-		map[string]string{"Name": "demo-vpc", "env": "dev"},
-		map[string]string{"Name": "demo-subnet"})
-	if err != nil {
-		t.Fatalf("deployment: %v", err)
-	}
-	pl, err := omnisdk.Converge(dep, t.TempDir(), "run-1", omnisdk.Args{Endpoint: srv.URL + "/"})
+	resources := render(t, map[string]string{
+		"region": "us-east-1", "vpc_cidr": "10.0.0.0/16", "subnet_cidr": "10.0.1.0/24",
+		"vpc_tags":    `{"Name":"demo-vpc","env":"dev"}`,
+		"subnet_tags": `{"Name":"demo-subnet"}`,
+	})
+	pl, err := omnisdk.Converge("demo", t.TempDir(), "run-1", resources, awsArgs(srv))
 	if err != nil {
 		t.Fatalf("plan: %v", err)
 	}
@@ -153,11 +171,10 @@ func TestNetworkProvisionRerunIssuesNoCreates(t *testing.T) {
 	state := t.TempDir()
 	run := func(id string) {
 		t.Helper()
-		dep, err := omnisdk.AWSNetwork("demo", "us-east-1", "10.0.0.0/16", "10.0.1.0/24", nil, nil)
-		if err != nil {
-			t.Fatalf("deployment: %v", err)
-		}
-		pl, err := omnisdk.Converge(dep, state, id, omnisdk.Args{Endpoint: srv.URL + "/"})
+		resources := render(t, map[string]string{
+			"region": "us-east-1", "vpc_cidr": "10.0.0.0/16", "subnet_cidr": "10.0.1.0/24",
+		})
+		pl, err := omnisdk.Converge("demo", state, id, resources, awsArgs(srv))
 		if err != nil {
 			t.Fatalf("plan: %v", err)
 		}
@@ -178,9 +195,33 @@ func TestNetworkProvisionRerunIssuesNoCreates(t *testing.T) {
 	}
 }
 
-// A second binding hop: the security group depends on the VPC exactly as the subnet does, so a
-// three-resource deployment exercises the same mechanism twice.
-func TestSecuredNetworkBindsGroupToVpc(t *testing.T) {
+// Unknown or missing inputs fail at the blueprint rather than silently doing nothing: a mistyped
+// parameter that has no effect is worse than one that errors.
+func TestBlueprintRejectsBadInputs(t *testing.T) {
+	bp, _ := omnisdk.BlueprintFor("aws-vpc-subnet")
+
+	if _, err := bp.Resources(map[string]string{
+		"region": "us-east-1", "vpc_cidr": "10.0.0.0/16", "subnet_cidr": "10.0.1.0/24",
+		"vpc_tagz": `{"Name":"typo"}`,
+	}); err == nil {
+		t.Error("unknown input accepted, want an error")
+	}
+
+	if _, err := bp.Resources(map[string]string{"region": "us-east-1"}); err == nil {
+		t.Error("missing required input accepted, want an error")
+	}
+
+	if _, err := bp.Resources(map[string]string{
+		"region": "us-east-1", "vpc_cidr": "10.0.0.0/16", "subnet_cidr": "10.0.1.0/24",
+		"vpc_tags": `not json`,
+	}); err == nil {
+		t.Error("malformed tags accepted, want an error")
+	}
+}
+
+// A blueprint is written once and applied under any collection name: the name qualifies both the
+// keys and the bindings between them.
+func TestSameBlueprintUnderTwoNames(t *testing.T) {
 	t.Setenv("AWS_ACCESS_KEY_ID", "AKIATEST")
 	t.Setenv("AWS_SECRET_ACCESS_KEY", "secret")
 	var seen []string
@@ -188,32 +229,29 @@ func TestSecuredNetworkBindsGroupToVpc(t *testing.T) {
 	srv := fakeEC2(t, &seen, &stamped)
 	defer srv.Close()
 
-	dep, err := omnisdk.AWSSecuredNetwork("demo", "us-east-1", "10.0.0.0/16", "10.0.1.0/24",
-		"demo-sg", "managed by omnisdk", nil, nil, map[string]string{"Name": "demo-sg"})
-	if err != nil {
-		t.Fatalf("deployment: %v", err)
+	state := t.TempDir()
+	inputs := map[string]string{"region": "us-east-1", "vpc_cidr": "10.0.0.0/16", "subnet_cidr": "10.0.1.0/24"}
+	for _, name := range []string{"alpha", "beta"} {
+		pl, err := omnisdk.Converge(name, state, "run-"+name, render(t, inputs), awsArgs(srv))
+		if err != nil {
+			t.Fatalf("%s plan: %v", name, err)
+		}
+		rows, err := pl.Open(context.Background())
+		if err != nil {
+			t.Fatalf("%s open: %v", name, err)
+		}
+		var keys []string
+		for rows.Next() {
+			keys = append(keys, rows.Row()["key"].(string))
+		}
+		rows.Close()
+		if len(keys) != 2 || keys[0] != name+"/aws/ec2/vpc" {
+			t.Errorf("%s keys = %v, want them qualified by the collection name", name, keys)
+		}
 	}
-	pl, err := omnisdk.Converge(dep, t.TempDir(), "run-1", omnisdk.Args{Endpoint: srv.URL + "/"})
-	if err != nil {
-		t.Fatalf("plan: %v", err)
-	}
-	rows, err := pl.Open(context.Background())
-	if err != nil {
-		t.Fatalf("open: %v", err)
-	}
-	defer rows.Close()
 
-	var got []omnisdk.Row
-	for rows.Next() {
-		got = append(got, rows.Row())
-	}
-	if len(got) != 3 {
-		t.Fatalf("rows = %v, want three applied keys", got)
-	}
-	if got[2]["key"] != "demo/aws/ec2/security-group" {
-		t.Errorf("third key = %v, want the security group", got[2]["key"])
-	}
-	if stamped["CreateSecurityGroup:Name"] != "demo-sg" {
-		t.Errorf("group tags = %v, want the caller's tag stamped", stamped)
+	// Two collections, two independent sets of resources — the second did not adopt the first's.
+	if n := strings.Count(strings.Join(seen, " "), "CreateVpc"); n != 2 {
+		t.Errorf("CreateVpc issued %d times, want one per collection", n)
 	}
 }

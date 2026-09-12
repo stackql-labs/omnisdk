@@ -16,6 +16,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/stackql-labs/omnisdk/internal/semantics"
 	"github.com/stackql-labs/omnisdk/internal/system_g/bind"
 	"github.com/stackql-labs/omnisdk/internal/system_g/exchange/sdk"
 	"github.com/stackql-labs/omnisdk/internal/system_g/facade"
@@ -134,6 +135,20 @@ var reads = map[string]string{
 	"CreateVpc":           "DescribeVpcs",
 	"CreateSubnet":        "DescribeSubnets",
 	"CreateSecurityGroup": "DescribeSecurityGroups",
+}
+
+// Declarations are the semantics for the exchanges this package implements. They live beside the
+// action table so the two cannot drift: an action with no declared inverse is one an unwind cannot
+// reverse, and that must be visible in one place.
+//
+// No update is declared: an EC2 create mints a new object rather than converging an existing one, so
+// drift on an immutable field is refused rather than silently re-created.
+func Declarations() []semantics.Declaration {
+	return []semantics.Declaration{
+		{Exchange: "CreateVpc", Form: "insert", Inverse: "DeleteVpc", Fidelity: facade.FidelityExact},
+		{Exchange: "CreateSubnet", Form: "insert", Inverse: "DeleteSubnet", Fidelity: facade.FidelityExact},
+		{Exchange: "CreateSecurityGroup", Form: "insert", Inverse: "DeleteSecurityGroup", Fidelity: facade.FidelityExact},
+	}
 }
 
 type effector struct {
