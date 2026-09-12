@@ -188,7 +188,16 @@ type Attribute interface {
 
 type Type interface {
 	Component
+	// Name is what the document calls it — "string", "integer", a provider's own name. Open-ended,
+	// provider-specific, and carries no behaviour.
 	Name() string
+	// Format is the document's refinement of Name: int64, double, date-time, cidr. Also data, also
+	// open-ended; two formats sharing a Kind behave identically and differ only in what they mean.
+	Format() string
+	// Kind is what can be done with values of this type: parse, compare, encode. Many types share
+	// one kind — int32, int64 and unsignedLong are all integers — which is why behaviour hangs here
+	// and not on Name.
+	Kind() Kind
 	Equals(other Type) bool
 }
 
@@ -506,3 +515,45 @@ type Effector interface {
 // later pass rather than giving up, which is how provider referential integrity substitutes for
 // dependency information we do not have.
 var ErrCompensationBlocked = errors.New("compensation: blocked")
+
+// Kind is what a type can DO with its values: parse one from its written form, compare two, and
+// render one for the wire. It is a collection of functions, not a label — so dispatch is method
+// lookup and adding a kind adds no switch anywhere.
+//
+// This is the seam that stops a numeric model being invented in the middle. A value crosses the
+// system as the lexeme the provider wrote; whether that lexeme means an int64, a decimal or a
+// timestamp is the document's statement, and only the kind acts on it.
+type Kind interface {
+	// Name identifies the kind for diagnostics.
+	Name() string
+	// Parse reads a value from its written form, rejecting a lexeme the kind cannot represent.
+	// Bytes, not string: the wire and the ledger both deal in bytes, and a kind may hold something
+	// that is not text at all.
+	Parse(lexeme []byte) (Typed, error)
+	// Compare orders two values of this kind: negative, zero or positive. It is an error where the
+	// kind admits no order, which is not the same as the values being unequal.
+	//
+	// Comparable is false for a kind whose values are unbounded: answering "are these equal?" would
+	// mean materialising a stream, so such values never participate in a merge and converge against
+	// a digest the provider supplies instead.
+	Comparable() bool
+	Compare(a, b Typed) (int, error)
+	// Encode renders a value in the form the wire expects.
+	Encode(v Typed) ([]byte, error)
+}
+
+// Typed is a value that knows its own kind and keeps the form it was written in. That form is
+// authoritative: converting to a machine number happens at the edge that needs one, never in
+// transit, because that conversion is where 10000000000000001 becomes 10000000000000000.
+//
+// Reader is the primitive, not Lexeme. A value may be a stream from a firehose that never fits in
+// memory, and a contract that can only hand back a slice would force materialising it.
+type Typed interface {
+	Kind() Kind
+	// Reader pulls the value's bytes. Consumers set the pace; a fresh Reader starts from the
+	// beginning where the kind is bounded, and an unbounded value may be read only once.
+	Reader() io.Reader
+	// Lexeme is the value exactly as written. Valid only where the kind is Comparable — an
+	// unbounded value has no lexeme to hand back, and asking for one returns nil.
+	Lexeme() []byte
+}

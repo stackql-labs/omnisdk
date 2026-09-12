@@ -98,9 +98,20 @@ func (a Auth) internal() auth.AuthStruct {
 // Param describes one input a resource accepts (scope: project, org, region, …). Required params are
 // enforced by New — never inferred.
 type Param struct {
-	Name        string `json:"name"`
-	Required    bool   `json:"required"`
-	Description string `json:"description"`
+	Name     string `json:"name"`
+	Required bool   `json:"required"`
+	// Type is what the document says the value is: a name, a format refinement, and the kind that
+	// decides how it parses, compares and encodes. Empty on a method param, which has none yet.
+	Type        ParamType `json:"type,omitzero"`
+	Description string    `json:"description"`
+}
+
+// ParamType is a param's declared type, published for discovery. Name and Format are the document's
+// own words; Kind is the behaviour they map to, and is what a caller's value is parsed with.
+type ParamType struct {
+	Name   string `json:"name,omitempty"`
+	Format string `json:"format,omitempty"`
+	Kind   string `json:"kind,omitempty"`
 }
 
 // Resource is a "thing" (e.g. buckets), addressed by a dot-path like "google.storage.buckets". It is

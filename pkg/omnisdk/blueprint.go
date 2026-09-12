@@ -8,6 +8,8 @@ import (
 	"sort"
 
 	"github.com/stackql-labs/omnisdk/internal/effect/awsec2"
+	"github.com/stackql-labs/omnisdk/internal/kind"
+	"github.com/stackql-labs/omnisdk/internal/system_g/facade"
 )
 
 // Blueprint is a precanned deployment addressable by handle. A client names the handle and supplies
@@ -48,20 +50,45 @@ var blueprints = map[string]Blueprint{
 // renders resources and nothing else.
 type blueprintBase struct{}
 
-// check rejects unknown inputs and reports missing required ones.
+// kinds maps a published kind name to its behaviour. A param declares the name; this resolves it,
+// so discovery and validation cannot disagree about what a param accepts.
+var kinds = map[string]facade.Kind{
+	"string":  kind.String(),
+	"int":     kind.Int(),
+	"decimal": kind.Decimal(),
+	"bool":    kind.Bool(),
+	"object":  kind.Object(),
+}
+
+// check rejects unknown inputs, reports missing required ones, and parses each supplied value with
+// its param's kind — so a malformed value fails here, naming the param, rather than somewhere
+// downstream as a wire error or, worse, silently.
 func check(params []Param, inputs map[string]string) error {
-	known := make(map[string]bool, len(params))
+	known := make(map[string]Param, len(params))
 	for _, p := range params {
-		known[p.Name] = true
+		known[p.Name] = p
 	}
 	for name := range inputs {
-		if !known[name] {
+		if _, ok := known[name]; !ok {
 			return fmt.Errorf("omnisdk: unknown input %q", name)
 		}
 	}
 	for _, p := range params {
-		if p.Required && inputs[p.Name] == "" {
-			return fmt.Errorf("omnisdk: %s is required", p.Name)
+		v, given := inputs[p.Name]
+		if !given || v == "" {
+			if p.Required {
+				return fmt.Errorf("omnisdk: %s is required", p.Name)
+			}
+			continue
+		}
+		k, ok := kinds[p.Type.Kind]
+		if !ok {
+			// An undeclared kind is not a licence to accept anything: guessing is what puts a
+			// value nobody wrote onto the wire.
+			return fmt.Errorf("omnisdk: %s declares no usable kind %q", p.Name, p.Type.Kind)
+		}
+		if _, err := k.Parse([]byte(v)); err != nil {
+			return fmt.Errorf("omnisdk: %s: %w", p.Name, err)
 		}
 	}
 	return nil
@@ -91,12 +118,15 @@ func (awsVpcSubnet) Summary() string {
 }
 
 func (awsVpcSubnet) Params() []Param {
+	text := ParamType{Name: "string", Kind: "string"}
+	cidr := ParamType{Name: "string", Format: "cidr", Kind: "string"}
+	tags := ParamType{Name: "object", Kind: "object"}
 	return []Param{
-		{Name: "region", Required: true, Description: "AWS region"},
-		{Name: "vpc_cidr", Required: true, Description: "VPC CIDR block, e.g. 10.0.0.0/16"},
-		{Name: "subnet_cidr", Required: true, Description: "subnet CIDR block, e.g. 10.0.1.0/24"},
-		{Name: "vpc_tags", Description: `tags for the VPC, a JSON object e.g. {"Name":"demo"}`},
-		{Name: "subnet_tags", Description: "tags for the subnet, a JSON object"},
+		{Name: "region", Type: text, Required: true, Description: "AWS region"},
+		{Name: "vpc_cidr", Type: cidr, Required: true, Description: "VPC CIDR block, e.g. 10.0.0.0/16"},
+		{Name: "subnet_cidr", Type: cidr, Required: true, Description: "subnet CIDR block, e.g. 10.0.1.0/24"},
+		{Name: "vpc_tags", Type: tags, Description: `tags for the VPC, e.g. {"Name":"demo"}`},
+		{Name: "subnet_tags", Type: tags, Description: "tags for the subnet"},
 	}
 }
 
