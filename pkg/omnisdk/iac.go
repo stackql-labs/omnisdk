@@ -105,6 +105,30 @@ func AWSNetwork(name, region, vpcCidr, subnetCidr string, vpcTags, subnetTags ma
 	}, nil
 }
 
+// AWSSecuredNetwork is AWSNetwork plus a security group in the VPC: a second binding hop, where the
+// group depends on the VPC exactly as the subnet does.
+//
+// groupName and groupDescription are both required by EC2 and neither is converged — a group's name
+// is immutable, so a change is refused rather than replaced.
+func AWSSecuredNetwork(name, region, vpcCidr, subnetCidr, groupName, groupDescription string, vpcTags, subnetTags, groupTags map[string]string) (Deployment, error) {
+	base, err := AWSNetwork(name, region, vpcCidr, subnetCidr, vpcTags, subnetTags)
+	if err != nil {
+		return nil, err
+	}
+	if groupName == "" || groupDescription == "" {
+		return nil, fmt.Errorf("omnisdk: security group name and description are required")
+	}
+	d := base.(*awsNetwork)
+	d.resources = append(d.resources, resource{
+		key:      "aws/ec2/security-group",
+		exchange: "CreateSecurityGroup",
+		desired:  fmt.Appendf(nil, `{"GroupName":%q,"GroupDescription":%q}`, groupName, groupDescription),
+		params:   tagParams(groupTags),
+		bindings: map[string]string{"VpcId": name + "/aws/ec2/vpc"},
+	})
+	return d, nil
+}
+
 func (d *awsNetwork) Name() string                 { return d.name }
 func (d *awsNetwork) Resources() []ManagedResource { return d.resources }
 

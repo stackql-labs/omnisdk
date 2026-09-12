@@ -160,8 +160,19 @@ func main() {
 			a := omnisdk.Args{Params: map[string]string{"region": awsRegion}}
 			a.Endpoint, a.Log, a.Tuning = endpoint, logw, t.facade()
 			a.InsecureSkipTLSVerify = insecureTLS
-			dep, err := omnisdk.AWSNetwork(mustFlag(cmd, "name"), awsRegion,
-				mustFlag(cmd, "vpc-cidr"), mustFlag(cmd, "subnet-cidr"), vpcTags, subnetTags)
+			groupTags, err := jsonTags(mustFlag(cmd, "sg-tags"))
+			if err != nil {
+				return fmt.Errorf("--sg-tags: %w", err)
+			}
+			var dep omnisdk.Deployment
+			if sg := mustFlag(cmd, "sg-name"); sg != "" {
+				dep, err = omnisdk.AWSSecuredNetwork(mustFlag(cmd, "name"), awsRegion,
+					mustFlag(cmd, "vpc-cidr"), mustFlag(cmd, "subnet-cidr"),
+					sg, mustFlag(cmd, "sg-description"), vpcTags, subnetTags, groupTags)
+			} else {
+				dep, err = omnisdk.AWSNetwork(mustFlag(cmd, "name"), awsRegion,
+					mustFlag(cmd, "vpc-cidr"), mustFlag(cmd, "subnet-cidr"), vpcTags, subnetTags)
+			}
 			if err != nil {
 				return err
 			}
@@ -178,6 +189,9 @@ func main() {
 	iacCmd.Flags().String("vpc-tags", "", `tags for the VPC as a JSON object, e.g. {"Name":"demo","env":"dev"}`)
 	iacCmd.Flags().String("subnet-tags", "", `tags for the subnet as a JSON object`)
 	iacCmd.Flags().String("state", "", "directory holding the ledger and run journals; local disk only (required)")
+	iacCmd.Flags().String("sg-name", "", "also converge a security group in the VPC, with this name")
+	iacCmd.Flags().String("sg-description", "managed by omnisdk", "security group description (EC2 requires one)")
+	iacCmd.Flags().String("sg-tags", "", "tags for the security group as a JSON object")
 	iacCmd.Flags().String("run-id", "", "journal name for this run (default: a UTC timestamp)")
 	// Scope is explicit input, never inferred: which collection, and which ledger it is recorded in,
 	// are the two things a wrong guess would silently apply to the wrong resources.

@@ -73,6 +73,29 @@ var actions = map[string]action{
 		tagged:       true,
 		resourceType: "subnet",
 	},
+	"CreateSecurityGroup": {
+		name:         "CreateSecurityGroup",
+		extract:      map[string]string{"group_id": "CreateSecurityGroupResponse.groupId"},
+		identity:     "group_id",
+		tagged:       true,
+		resourceType: "security-group",
+	},
+	"DeleteSecurityGroup": {
+		name:        "DeleteSecurityGroup",
+		extract:     map[string]string{"deleted": "DeleteSecurityGroupResponse.return"},
+		addressedBy: "GroupId",
+	},
+	"DescribeSecurityGroups": {
+		name: "DescribeSecurityGroups",
+		extract: map[string]string{
+			"GroupName":        "DescribeSecurityGroupsResponse.securityGroupInfo.item.groupName",
+			"GroupDescription": "DescribeSecurityGroupsResponse.securityGroupInfo.item.groupDescription",
+			"id":               "DescribeSecurityGroupsResponse.securityGroupInfo.item.groupId",
+		},
+		addressedBy: "GroupId.1",
+		tagged:      true,
+		idField:     "id",
+	},
 	"DeleteVpc": {
 		name:        "DeleteVpc",
 		extract:     map[string]string{"deleted": "DeleteVpcResponse.return"},
@@ -108,8 +131,9 @@ var actions = map[string]action{
 // reads maps a mutating exchange to the exchange that reads the same object. Convergence needs
 // live reads; without one the log degrades from fact to belief.
 var reads = map[string]string{
-	"CreateVpc":    "DescribeVpcs",
-	"CreateSubnet": "DescribeSubnets",
+	"CreateVpc":           "DescribeVpcs",
+	"CreateSubnet":        "DescribeSubnets",
+	"CreateSecurityGroup": "DescribeSecurityGroups",
 }
 
 type effector struct {

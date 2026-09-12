@@ -123,6 +123,117 @@ Tuning (any subcommand): `--parallelism` (fan-out concurrency), `--max-per-host`
 Credentials resolve direct flag → env var → file; env vars are never required. Scope (e.g. `--project`) is **required and never inferred** — no env or key-embedded fallback.
 
 
+## Smoke test
+
+A short pass that exercises each shape the engine supports: a single exchange, a β bowtie, a
+multi-provider merge, and a converging IaC run. Everything writes to `cicd/out/` (gitignored) so a
+failed run leaves its evidence behind.
+
+```bash
+go build -o build/omnicli ./cmd/omnicli
+source cicd/vol/vendor-secrets/secrets.sh
+_s="$(date +%s)"
+```
+
+**1. Catalog — no network.** Fails instantly if the facade cannot plan.
+
+```bash
+./build/omnicli resources -q | head
+./build/omnicli method google.storage.buckets.list
+```
+
+**2. Single exchange.** One call, one extraction — the simplest thing that can be wrong.
+
+```bash
+./build/omnicli list --aws-region "${_AWS_REGION}" --limit 5 --out "cicd/out/smoke-list-${_s}.jsonl"
+```
+
+**3. β bowtie.** A second exchange bound to the first's output, per bucket.
+
+```bash
+./build/omnicli encryption --aws-region "${_AWS_REGION}" --limit 5 \
+  --out "cicd/out/smoke-encryption-${_s}.jsonl" --log "cicd/out/smoke-encryption-${_s}.log"
+```
+
+**4. Merged cursor.** Three disjoint DAGs under one output node; `--limit` caps the union.
+
+```bash
+./build/omnicli blob-audit-shallow --aws-region "${_AWS_REGION}" --project "${_GOOGLE_PROJECT_ID}" \
+  --limit 20 --out "cicd/out/smoke-blob-${_s}.jsonl"
+```
+
+Expect rows from more than one provider. If one provider is missing entirely that is the `--limit`
+budget, not a failure — see the note above.
+
+**5. Access review.** Cross-provider identity, run through the generic `run` verb.
+
+```bash
+./build/omnicli run omni.iam.principals.list \
+  '{"params":{"region":"'"${_AWS_REGION}"'","google_project":"'"${_GOOGLE_PROJECT_ID}"'"}}' \
+  --limit 20 --out "cicd/out/smoke-principals-${_s}.jsonl"
+```
+
+**6. IaC — creates real resources.** Converges a VPC and a subnet, then proves the second run is a
+no-op. Use a state directory you can throw away.
+
+```bash
+_st=cicd/work/smoke-${_s}
+
+# First run: two rows, each with an identity.
+./build/omnicli iac-provision --aws-region "${_AWS_REGION}" --state "${_st}" --name smoke \
+  --vpc-cidr 10.99.0.0/16 --subnet-cidr 10.99.1.0/24 \
+  --vpc-tags '{"Name":"smoke"}' --subnet-tags '{"Name":"smoke"}'
+
+# Second run, identical: same identities, and no CreateVpc/CreateSubnet on the wire.
+./build/omnicli iac-provision --aws-region "${_AWS_REGION}" --state "${_st}" --name smoke \
+  --vpc-cidr 10.99.0.0/16 --subnet-cidr 10.99.1.0/24 \
+  --vpc-tags '{"Name":"smoke"}' --subnet-tags '{"Name":"smoke"}' \
+  --log "cicd/out/smoke-iac-rerun-${_s}.log"
+```
+
+A converged run writes **no journal file** — that is what the no-op looks like on disk:
+
+```bash
+ls "${_st}/journal"        # one file from the first run only
+```
+
+**7. Rediscovery.** Throw the ledger away and re-run: the objects are found by their correlation tag
+and adopted, rather than created a second time.
+
+```bash
+rm -rf "${_st}"
+./build/omnicli iac-provision --aws-region "${_AWS_REGION}" --state "${_st}" --name smoke \
+  --vpc-cidr 10.99.0.0/16 --subnet-cidr 10.99.1.0/24
+
+aws ec2 describe-vpcs --region "${_AWS_REGION}" \
+  --filters Name=tag:omnisdk:key,Values=smoke/aws/ec2/vpc --query 'Vpcs[].VpcId'
+```
+
+One id, unchanged from the first run.
+
+**8. Compensation.** A subnet CIDR outside the VPC range fails the second step, and the VPC it
+already created is removed.
+
+```bash
+./build/omnicli iac-provision --aws-region "${_AWS_REGION}" --state "cicd/work/smoke-fail-${_s}" \
+  --name smokefail --vpc-cidr 10.98.0.0/16 --subnet-cidr 192.168.1.0/24
+```
+
+Expect `"status":"applied, then compensated"` on the VPC and `"outstanding":[]` on the failure row. A
+non-empty `outstanding` means something was left behind and needs removing by hand.
+
+**Cleanup.** There is no destroy command:
+
+```bash
+aws ec2 delete-subnet --region "${_AWS_REGION}" --subnet-id subnet-…
+aws ec2 delete-vpc    --region "${_AWS_REGION}" --vpc-id vpc-…
+rm -rf "${_st}" "cicd/work/smoke-fail-${_s}"
+```
+
+Leaving a VPC behind matters: the default limit is 5 per region, and a failed smoke run that did not
+compensate will eventually exhaust it.
+
+
 ## Endpoints (mocking)
 
 Every provider host is registered once, at exchange init, with `{vars}` expanded per request — so

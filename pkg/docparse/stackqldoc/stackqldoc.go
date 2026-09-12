@@ -31,6 +31,10 @@ type Doc interface {
 	Methods(resource string) ([]aot.Method, error)
 	// Selects are every exchange the resource's SELECT verb names, in declaration order.
 	Selects(resource string) ([]aot.AOTExchange, error)
+	// Verb are every exchange the resource binds to one SQL verb, in declaration order. Selects is
+	// this with "select"; a mutating verb is reached the same way, since nothing about resolving an
+	// operation depends on which verb named it.
+	Verb(resource, verb string) ([]aot.AOTExchange, error)
 }
 
 // Parse reads a stackql provider document.
@@ -151,13 +155,21 @@ func (d *document) Select(name string) (aot.AOTExchange, error) {
 // — a get by identifier and a list by scope — and picking the first would silently answer a different
 // question from the one asked.
 func (d *document) Selects(name string) ([]aot.AOTExchange, error) {
+	return d.Verb(name, "select")
+}
+
+// Verb resolves every method a resource binds to one SQL verb, in the order the document lists them.
+// That order is the selection rule: a verb fans out — a resource declares both CreateSubnet and
+// CreateDefaultSubnet under insert — and the caller's inputs decide which applies, so the choice is
+// made by matching signatures down this list rather than here.
+func (d *document) Verb(name, verb string) ([]aot.AOTExchange, error) {
 	res, ok := d.Components.Resources[name]
 	if !ok {
 		return nil, fmt.Errorf("stackqldoc: no resource %q", name)
 	}
-	sel := res.SQLVerbs["select"]
+	sel := res.SQLVerbs[verb]
 	if len(sel) == 0 {
-		return nil, fmt.Errorf("stackqldoc: resource %q declares no select verb", name)
+		return nil, fmt.Errorf("stackqldoc: resource %q declares no %s verb", name, verb)
 	}
 	if len(d.Servers) == 0 {
 		return nil, fmt.Errorf("stackqldoc: document declares no servers")
@@ -173,28 +185,28 @@ func (d *document) Selects(name string) ([]aot.AOTExchange, error) {
 			firstErr = orErr(firstErr, fmt.Errorf("stackqldoc: resource %q select references unknown method %q", name, mName))
 			continue
 		}
-		path, verb, err := splitOperationRef(m.Operation.Ref)
+		path, httpVerb, err := splitOperationRef(m.Operation.Ref)
 		if err != nil {
 			firstErr = orErr(firstErr, fmt.Errorf("stackqldoc: resource %q method %q: %w", name, mName, err))
 			continue
 		}
-		node, ok := d.Paths[path][verb]
+		node, ok := d.Paths[path][httpVerb]
 		if !ok {
-			firstErr = orErr(firstErr, fmt.Errorf("stackqldoc: resource %q method %q: path %q has no %q", name, mName, path, verb))
+			firstErr = orErr(firstErr, fmt.Errorf("stackqldoc: resource %q method %q: path %q has no %q", name, mName, path, httpVerb))
 			continue
 		}
 		var op pathOp
 		if err := node.Decode(&op); err != nil {
-			firstErr = orErr(firstErr, fmt.Errorf("stackqldoc: resource %q method %q: decode %s %s: %w", name, mName, verb, path, err))
+			firstErr = orErr(firstErr, fmt.Errorf("stackqldoc: resource %q method %q: decode %s %s: %w", name, mName, httpVerb, path, err))
 			continue
 		}
-		out = append(out, d.build(mName, verb, path, op, m))
+		out = append(out, d.build(mName, httpVerb, path, op, m))
 	}
 	if len(out) == 0 {
 		if firstErr != nil {
 			return nil, firstErr
 		}
-		return nil, fmt.Errorf("stackqldoc: resource %q select resolves to nothing", name)
+		return nil, fmt.Errorf("stackqldoc: resource %q %s resolves to nothing", name, verb)
 	}
 	return out, nil
 }

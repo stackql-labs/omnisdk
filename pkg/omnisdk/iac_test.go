@@ -52,7 +52,7 @@ func fakeEC2(t *testing.T, seen *[]string, tags *map[string]string) *httptest.Se
 		*seen = append(*seen, act)
 		w.Header().Set("Content-Type", "text/xml")
 		switch act {
-		case "CreateVpc", "CreateSubnet":
+		case "CreateVpc", "CreateSubnet", "CreateSecurityGroup":
 			for i := 1; ; i++ {
 				k := r.PostForm.Get(fmt.Sprintf("TagSpecification.1.Tag.%d.Key", i))
 				if k == "" {
@@ -68,11 +68,19 @@ func fakeEC2(t *testing.T, seen *[]string, tags *map[string]string) *httptest.Se
 				fmt.Fprintf(w, `<CreateVpcResponse><vpc><vpcId>%s</vpcId><cidrBlock>%s</cidrBlock></vpc></CreateVpcResponse>`, id, r.PostForm.Get("CidrBlock"))
 				return
 			}
+			if act == "CreateSecurityGroup" {
+				id := fmt.Sprintf("sg-%03d", n)
+				live[id] = corr
+				fmt.Fprintf(w, `<CreateSecurityGroupResponse><groupId>%s</groupId></CreateSecurityGroupResponse>`, id)
+				return
+			}
 			id := fmt.Sprintf("subnet-%03d", n)
 			live[id], cidrs[id] = corr, r.PostForm.Get("CidrBlock")
 			fmt.Fprintf(w, `<CreateSubnetResponse><subnet><subnetId>%s</subnetId><cidrBlock>%s</cidrBlock></subnet></CreateSubnetResponse>`, id, r.PostForm.Get("CidrBlock"))
 		case "DescribeVpcs", "DescribeSubnets":
 			describe(w, r, act, live, cidrs)
+		case "DescribeSecurityGroups":
+			fmt.Fprint(w, `<DescribeSecurityGroupsResponse><securityGroupInfo></securityGroupInfo></DescribeSecurityGroupsResponse>`)
 		default:
 			http.Error(w, "unexpected "+act, http.StatusBadRequest)
 		}
@@ -167,5 +175,45 @@ func TestNetworkProvisionRerunIssuesNoCreates(t *testing.T) {
 
 	if after := strings.Count(strings.Join(seen, " "), "Create"); after != before {
 		t.Errorf("creates went from %d to %d on re-run, want no new calls", before, after)
+	}
+}
+
+// A second binding hop: the security group depends on the VPC exactly as the subnet does, so a
+// three-resource deployment exercises the same mechanism twice.
+func TestSecuredNetworkBindsGroupToVpc(t *testing.T) {
+	t.Setenv("AWS_ACCESS_KEY_ID", "AKIATEST")
+	t.Setenv("AWS_SECRET_ACCESS_KEY", "secret")
+	var seen []string
+	stamped := map[string]string{}
+	srv := fakeEC2(t, &seen, &stamped)
+	defer srv.Close()
+
+	dep, err := omnisdk.AWSSecuredNetwork("demo", "us-east-1", "10.0.0.0/16", "10.0.1.0/24",
+		"demo-sg", "managed by omnisdk", nil, nil, map[string]string{"Name": "demo-sg"})
+	if err != nil {
+		t.Fatalf("deployment: %v", err)
+	}
+	pl, err := omnisdk.Converge(dep, t.TempDir(), "run-1", omnisdk.Args{Endpoint: srv.URL + "/"})
+	if err != nil {
+		t.Fatalf("plan: %v", err)
+	}
+	rows, err := pl.Open(context.Background())
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	defer rows.Close()
+
+	var got []omnisdk.Row
+	for rows.Next() {
+		got = append(got, rows.Row())
+	}
+	if len(got) != 3 {
+		t.Fatalf("rows = %v, want three applied keys", got)
+	}
+	if got[2]["key"] != "demo/aws/ec2/security-group" {
+		t.Errorf("third key = %v, want the security group", got[2]["key"])
+	}
+	if stamped["CreateSecurityGroup:Name"] != "demo-sg" {
+		t.Errorf("group tags = %v, want the caller's tag stamped", stamped)
 	}
 }
