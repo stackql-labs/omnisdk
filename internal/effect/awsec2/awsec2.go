@@ -9,6 +9,7 @@
 package awsec2
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -238,8 +239,12 @@ func (e *effector) Read(ctx context.Context, exchange string, k facade.LedgerKey
 func (e *effector) params(a action, k facade.LedgerKey, in facade.EffectInput) (map[string]string, error) {
 	params := map[string]string{}
 	if len(in.Mutation) > 0 && a.identity != "" {
+		// Decoded keeping numbers as their source text: through float64 an int64 beyond 2^53 is
+		// rewritten on its way to the wire, so the call would carry a value nobody asked for.
+		dec := json.NewDecoder(bytes.NewReader(in.Mutation))
+		dec.UseNumber()
 		var fields map[string]any
-		if err := json.Unmarshal(in.Mutation, &fields); err != nil {
+		if err := dec.Decode(&fields); err != nil {
 			return nil, fmt.Errorf("awsec2: mutation is not a JSON object: %w", err)
 		}
 		for f, v := range fields {
