@@ -1,9 +1,11 @@
 package apply_test
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"slices"
 	"sync"
 	"testing"
@@ -61,8 +63,12 @@ func (t *target) Effect(ctx context.Context, exchange string, k facade.LedgerKey
 	if k == t.failOn {
 		return nil, errors.New("target refused")
 	}
+	// Decoded the way a provider would read the wire bytes, not through float64: a stand-in that
+	// rounds what it receives would hide exactly the corruption this exists to catch.
+	dec := json.NewDecoder(bytes.NewReader(mutation))
+	dec.UseNumber()
 	var patch map[string]any
-	if err := json.Unmarshal(mutation, &patch); err != nil {
+	if err := dec.Decode(&patch); err != nil {
 		return nil, err
 	}
 	cur := t.state[k]
@@ -302,5 +308,22 @@ func TestFailedUpdateRestoresRatherThanDeletes(t *testing.T) {
 	}
 	if string(e.Plan()) != `{"cidr":"10.0.0.0/8","dns":"first"}` {
 		t.Errorf("plan = %s, want the entry walked back to the prior intent", e.Plan())
+	}
+}
+
+// Convergence compares numbers as written, so a value beyond float64's exact range is not reported
+// as converged when it differs in the last digit.
+func TestConvergenceComparesNumbersExactly(t *testing.T) {
+	ctx := context.Background()
+	tgt := newTarget()
+	r, _ := fixture(t, tgt)
+
+	if _, err := r.Apply(ctx, "run-1", "scope", []apply.Step{
+		{Key: "vpc", Exchange: "CreateVpc", Desired: []byte(`{"n":10000000000000001}`)},
+	}); err != nil {
+		t.Fatalf("first apply: %v", err)
+	}
+	if got := tgt.state["vpc"]["n"]; fmt.Sprint(got) != "10000000000000001" {
+		t.Errorf("target holds %v, want the exact value sent", got)
 	}
 }

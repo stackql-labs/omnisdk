@@ -8,6 +8,7 @@
 package merge
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 
@@ -96,12 +97,20 @@ func childOf(o object, k string) object {
 	return nil
 }
 
+// decode reads an intent document, keeping every number as the text it was written as.
+//
+// Plain unmarshalling makes every number a float64, which silently rewrites 10000000000000001 as
+// 10000000000000000 — the mutation sent to the provider is then not what was asked for, and the
+// convergence check compares the corrupted value. UseNumber avoids inventing a numeric model here:
+// a number passes through as its own digits, and what it MEANS is the provider document's business.
 func decode(what string, b []byte) (object, error) {
 	if len(b) == 0 {
 		return nil, nil
 	}
+	dec := json.NewDecoder(bytes.NewReader(b))
+	dec.UseNumber()
 	var o object
-	if err := json.Unmarshal(b, &o); err != nil {
+	if err := dec.Decode(&o); err != nil {
 		return nil, fmt.Errorf("merge: %s is not a JSON object: %w", what, err)
 	}
 	return o, nil

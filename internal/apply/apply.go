@@ -10,6 +10,7 @@
 package apply
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -135,16 +136,29 @@ func (r *runner) adopt(ctx context.Context, s Step, v facade.LedgerVersion, iden
 // every unset field is absent. It is the test for "nothing to do", and it is why a re-run costs no
 // wire calls.
 func converged(mutation, actual []byte) (bool, error) {
-	var want, have map[string]any
-	if err := json.Unmarshal(mutation, &want); err != nil {
+	want, err := decodeDoc(mutation)
+	if err != nil {
 		return false, fmt.Errorf("apply: mutation is not a JSON object: %w", err)
 	}
-	if err := json.Unmarshal(actual, &have); err != nil {
+	have, err := decodeDoc(actual)
+	if err != nil {
 		// An unreadable actual is not a match; converging on a target we cannot read is the case
 		// the design already calls belief rather than fact.
 		return false, nil
 	}
 	return satisfied(want, have), nil
+}
+
+// decodeDoc reads a document keeping numbers as their source text, so comparison is between what
+// was written and what came back rather than between two float64 approximations of them.
+func decodeDoc(b []byte) (map[string]any, error) {
+	dec := json.NewDecoder(bytes.NewReader(b))
+	dec.UseNumber()
+	var o map[string]any
+	if err := dec.Decode(&o); err != nil {
+		return nil, err
+	}
+	return o, nil
 }
 
 func satisfied(want, have map[string]any) bool {

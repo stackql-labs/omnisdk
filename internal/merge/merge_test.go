@@ -130,3 +130,24 @@ func TestMalformedInputIsRejected(t *testing.T) {
 		t.Error("apply on a JSON array = nil, want rejection")
 	}
 }
+
+// A number passes through as the digits it was written as. Decoding into float64 rewrites
+// 10000000000000001 as 10000000000000000, so the mutation sent to the provider is not what was
+// asked for — and the convergence check then compares the corrupted value against the real one.
+func TestNumbersKeepTheirPrecision(t *testing.T) {
+	for _, tc := range []struct{ name, desired, want string }{
+		{"int64 beyond float64", `{"n":10000000000000001}`, `{"n":10000000000000001}`},
+		{"trailing zero is not normalised", `{"n":1.10}`, `{"n":1.10}`},
+		{"exponent kept", `{"n":1e3}`, `{"n":1e3}`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := merge.ThreeWay().Apply(nil, []byte(tc.desired), nil)
+			if err != nil {
+				t.Fatalf("apply: %v", err)
+			}
+			if string(got) != tc.want {
+				t.Errorf("mutation = %s, want %s", got, tc.want)
+			}
+		})
+	}
+}
