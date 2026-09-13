@@ -80,7 +80,7 @@ func Converge(name, state, runID string, resources []ManagedResource, args Args)
 	case len(resources) == 0:
 		return nil, fmt.Errorf("omnisdk: no resources to converge")
 	}
-	effector, sem, err := wiring(resources, args)
+	effector, sem, err := providerWiring(resources, args)
 	if err != nil {
 		return nil, err
 	}
@@ -106,10 +106,10 @@ var providers = map[string]func(Args) (facade.Effector, []semantics.Declaration,
 	},
 }
 
-// wiring resolves an effector per provider the resources touch, and routes between them. Only the
+// providerWiring resolves an effector per provider the resources touch, and routes between them. Only the
 // providers actually addressed are constructed, so a deployment that never mentions one needs no
 // credentials for it.
-func wiring(resources []ManagedResource, args Args) (facade.Effector, facade.Semantics, error) {
+func providerWiring(resources []ManagedResource, args Args) (facade.Effector, facade.Semantics, error) {
 	routes := map[string]facade.Effector{}
 	var decls []semantics.Declaration
 	for _, r := range resources {

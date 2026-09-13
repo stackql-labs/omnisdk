@@ -12,6 +12,11 @@ type ExchangeSpec interface {
 	Out() []string
 	Make(bound map[string]any) facade.Operator
 	Flatten() facade.Transform
+	// Inbound is T_in (§T): the assembled inbox becomes this exchange's inputs. It runs once every
+	// β binding has landed, which is why it belongs to the CONSUMER and not to an edge — one input
+	// may be built from values several producers supplied, and a per-edge transform cannot express
+	// that. nil is identity: the inbox IS the input, bound by name.
+	Inbound() facade.Transform
 }
 
 // BetaEdge is a β binding Src→Tgt from exchange From to To (From "" = a κ input).
@@ -44,18 +49,33 @@ type exchangeSpec struct {
 	in, out []string
 	make    func(map[string]any) facade.Operator
 	flatten facade.Transform
+	inbound facade.Transform
 }
 
-// NewExchangeSpec builds an exchange declaration (flatten may be nil).
+// NewExchangeSpec builds an exchange declaration (flatten may be nil). Its inbox is bound by name.
 func NewExchangeSpec(name string, in, out []string, make func(map[string]any) facade.Operator, flatten facade.Transform) ExchangeSpec {
 	return exchangeSpec{name: name, in: in, out: out, make: make, flatten: flatten}
 }
+
+// WithInbound returns the spec with T_in attached: the assembled inbox is reshaped into the
+// exchange's inputs before it is built.
+func WithInbound(spec ExchangeSpec, inbound facade.Transform) ExchangeSpec {
+	return inboundSpec{ExchangeSpec: spec, inbound: inbound}
+}
+
+type inboundSpec struct {
+	ExchangeSpec
+	inbound facade.Transform
+}
+
+func (s inboundSpec) Inbound() facade.Transform { return s.inbound }
 
 func (e exchangeSpec) Name() string                              { return e.name }
 func (e exchangeSpec) In() []string                              { return e.in }
 func (e exchangeSpec) Out() []string                             { return e.out }
 func (e exchangeSpec) Make(bound map[string]any) facade.Operator { return e.make(bound) }
 func (e exchangeSpec) Flatten() facade.Transform                 { return e.flatten }
+func (e exchangeSpec) Inbound() facade.Transform                 { return e.inbound }
 
 type betaEdge struct{ from, to, src, tgt string }
 

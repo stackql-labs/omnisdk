@@ -331,7 +331,10 @@ func buildBody(b Body, bound map[string]any) (body []byte, contentType string) {
 	}
 }
 
-var reParam = regexp.MustCompile(`\{([a-zA-Z0-9_]+)\}`)
+// A parameter name may carry dots and hyphens: AWS's Query API indexes list parameters as
+// Filter.1.Name, and a pattern of word characters alone leaves those placeholders unsubstituted and
+// sends the template text as the value.
+var reParam = regexp.MustCompile(`\{([a-zA-Z0-9_.-]+)\}`)
 
 // subst replaces every {name} in s with the bound value (empty if absent).
 func subst(s string, bound map[string]any) string {

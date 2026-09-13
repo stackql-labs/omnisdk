@@ -398,6 +398,75 @@ func main() {
 	root.AddCommand(catCmd)
 
 	// doc-run: run one address out of a bundle.
+	// A document describes one provider and cannot state a relationship spanning two, or one its
+	// author simply left out. doc-graph lets the query say what the documents do not.
+	docGraph := &cobra.Command{
+		Use:   "doc-graph <dir> <graph-json>",
+		Short: "Run several document exchanges joined by β edges the caller declares",
+		Args:  cobra.ExactArgs(2),
+		RunE: withSinks(func(cmd *cobra.Command, w, logw io.Writer) error {
+			var spec struct {
+				Addresses []string `json:"addresses"`
+				Wirings   []struct {
+					To      string `json:"to"`
+					Inbound []struct {
+						From string `json:"from"`
+						Src  string `json:"src"`
+						As   string `json:"as,omitempty"`
+					} `json:"inbound"`
+					ViaType  string   `json:"via_type,omitempty"`
+					Via      string   `json:"via,omitempty"`
+					Provides []string `json:"provides,omitempty"`
+				} `json:"wirings"`
+				Overrides []struct {
+					Address     string `json:"address"`
+					ObjectKey   string `json:"object_key,omitempty"`
+					MediaType   string `json:"media_type,omitempty"`
+					ProgramType string `json:"program_type,omitempty"`
+					Program     string `json:"program,omitempty"`
+				} `json:"overrides,omitempty"`
+				Args *omnisdk.Args `json:"args,omitempty"`
+			}
+			if err := json.Unmarshal([]byte(cmdArgs(cmd)[1]), &spec); err != nil {
+				return fmt.Errorf("graph json: %w", err)
+			}
+			wirings := make([]omnisdk.Wiring, 0, len(spec.Wirings))
+			for _, wr := range spec.Wirings {
+				in := make([]omnisdk.Inbound, 0, len(wr.Inbound))
+				for _, i := range wr.Inbound {
+					in = append(in, omnisdk.NewInbound(i.From, i.Src, i.As))
+				}
+				wirings = append(wirings, omnisdk.NewWiring(wr.To, in, wr.ViaType, wr.Via, wr.Provides...))
+			}
+			overrides := make([]omnisdk.Override, 0, len(spec.Overrides))
+			for _, o := range spec.Overrides {
+				overrides = append(overrides, omnisdk.NewOverride(o.Address, o.ObjectKey, o.MediaType, o.ProgramType, o.Program))
+			}
+			g, err := omnisdk.NewGraph(spec.Addresses, wirings, overrides...)
+			if err != nil {
+				return err
+			}
+			a := omnisdk.Args{}
+			if spec.Args != nil {
+				a = *spec.Args
+			}
+			if a.Params == nil {
+				a.Params = map[string]string{}
+			}
+			if _, given := a.Params["region"]; !given && awsRegion != "" {
+				a.Params["region"] = awsRegion
+			}
+			a.Endpoint, a.Log, a.Tuning = endpoint, logw, t.facade()
+			a.InsecureSkipTLSVerify = insecureTLS
+			pl, err := omnisdk.NewGraphQuery(cmdArgs(cmd)[0], g, a)
+			if err != nil {
+				return err
+			}
+			return streamRows(pl, w)
+		}),
+	}
+	root.AddCommand(docGraph)
+
 	root.AddCommand(&cobra.Command{
 		Use:   "doc-run <dir> <address> [args-json]",
 		Short: `Run an addressed exchange, e.g. doc-run ~/.stackql/src stackql_unstable_google.storage.buckets '{"params":{"project":"p"}}'`,
@@ -534,6 +603,10 @@ func main() {
 		os.Exit(1)
 	}
 }
+
+// cmdArgs returns the positional arguments cobra parsed for a command whose RunE was wrapped by
+// withSinks, which hides them behind its own signature.
+func cmdArgs(cmd *cobra.Command) []string { return cmd.Flags().Args() }
 
 // jsonInputs parses a blueprint's inputs: a JSON object of string keys to string values. Nested
 // values (tags) are themselves JSON strings, which keeps one flag rather than one per parameter.

@@ -100,7 +100,7 @@ func composePipeline(id int64, p Plan) (facade.Operator, error) {
 			}
 		}
 		nid++
-		op = bind.NewBindJoin(nid, op, bindings, bind.InnerFactory(node.Make), alphaInto(p.Alphas(), name), 1)
+		op = bind.NewBindJoinIn(nid, op, bindings, bind.InnerFactory(node.Make), alphaInto(p.Alphas(), name), 1, node.Inbound())
 
 		flat := node.Flatten()
 		if flat == nil {

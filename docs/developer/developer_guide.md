@@ -401,6 +401,106 @@ omnicli: docx: exchange "instances" declares aws.sigv4 ("hmac") but no credentia
 `--endpoint` retargets the document's server (keeping each operation's path), so a bundle runs against
 a mock unedited.
 
+### Caller-declared edges (`doc-graph`)
+
+A document describes one provider and cannot state a relationship spanning two — or one its author
+simply left out. `doc-graph` runs several document exchanges in one plan and lets the query supply
+what the documents do not:
+
+- **`wirings`** — β edges stated from the consuming side: `inbound` names what arrives, `via` is
+  `T_in`, the transform turning the inbox into that consumer's inputs. It belongs to the consumer
+  rather than to an edge because one input may be built from several producers' values.
+- **`provides`** — the inputs `via` builds. Required whenever `via` is set: placement happens when
+  the plan is built and the program does not run until a row arrives, so an optional parameter
+  nobody supplied would be dropped before the program could fill it.
+- **`overrides`** — corrections to what a document says about its response. A document can be wrong
+  *for this engine* rather than wrong in itself, and editing the bundle is not the remedy.
+
+```bash
+R=test/corpus/registry
+```
+
+**1. AWS — VPCs joined to their subnets.** `DescribeSubnets` declares no `VpcId` at all; its
+parameters are `Filter`, `SubnetId`, `NextToken`, `MaxResults`, `DryRun`. So the id has to become a
+filter on the way in, which is what `via` is for — and the wire wants the Query API's indexed form,
+`Filter.1.Name` / `Filter.1.Value.1`, which the document models as a single `Filter` of a list type
+it never says how to serialise. A `provides` name the document does not declare is sent anyway: the
+caller is asserting the wire shape, as an override asserts the response shape. No overrides: the document's
+`$.line_items` row path works because the engine implements the `schema_driven_xml_v0.1.0` transform
+that produces it. Row fields carry the schema's names (`VpcId`), not the wire's (`vpcId`).
+
+```bash
+./build/omnicli doc-graph $R '{
+  "addresses": ["stackql_unstable_aws.ec2.vpcs", "stackql_unstable_aws.ec2.subnets"],
+  "wirings": [{
+    "to": "stackql_unstable_aws.ec2.subnets",
+    "inbound": [{"from": "stackql_unstable_aws.ec2.vpcs", "src": "VpcId", "as": "vpc_id"}],
+    "via_type": "golang_template_json_v0.1.0",
+    "via": "{\"Filter.1.Name\":\"vpc-id\",\"Filter.1.Value.1\":\"{{ .vpc_id }}\"}",
+    "provides": ["Filter.1.Name", "Filter.1.Value.1"]
+  }]
+}' --aws-region "${_AWS_REGION}"
+```
+
+**2. Google — networks and their subnetworks.** `compute.networks.list` and
+`compute.subnetworks.list` declare **no** `objectKey`, so both need one supplied or they return the
+whole response envelope as a single row. Subnetworks are listed per region, and the network is
+matched by its `selfLink`.
+
+```bash
+./build/omnicli doc-graph $R '{
+  "addresses": ["stackql_unstable_google.compute.networks", "stackql_unstable_google.compute.subnetworks"],
+  "overrides": [
+    {"address": "stackql_unstable_google.compute.networks", "object_key": "$.items"},
+    {"address": "stackql_unstable_google.compute.subnetworks", "object_key": "$.items"}
+  ],
+  "wirings": [{
+    "to": "stackql_unstable_google.compute.subnetworks",
+    "inbound": [{"from": "stackql_unstable_google.compute.networks", "src": "selfLink", "as": "network"}],
+    "via_type": "golang_template_json_v0.1.0",
+    "via": "{\"filter\":\"network=\\\"{{ .network }}\\\"\"}",
+    "provides": ["filter"]
+  }],
+  "args": {"params": {"project": "stackql-demo", "region": "us-central1"}}
+}'
+```
+
+**3. Azure — virtual networks and their subnets.** `VirtualNetworks_list_all` needs only the
+subscription and declares `$.value`, so no override. `Subnets_list` needs the resource group and
+VNet name, and the resource group appears only inside the ARM resource id — so `T_in` parses it out.
+
+```bash
+
+# you will need to set AZURE_SUBSCRIPTION_ID
+## eg: source ./cicd/vol/vendor-secrets/secrets.sh
+## or export AZURE_SUBSCRIPTION_ID='<your subscription id>'
+
+./build/omnicli doc-graph $R '{
+  "addresses": ["stackql_unstable_azure.network.virtual_networks", "stackql_unstable_azure.network.subnets"],
+  "wirings": [{
+    "to": "stackql_unstable_azure.network.subnets",
+    "inbound": [
+      {"from": "stackql_unstable_azure.network.virtual_networks", "src": "name", "as": "vnet"},
+      {"from": "stackql_unstable_azure.network.virtual_networks", "src": "id", "as": "arm_id"}
+    ],
+    "via_type": "golang_template_json_v0.1.0",
+    "via": "{\"virtual_network_name\":\"{{ .vnet }}\",\"resource_group_name\":\"{{ index (splitn \"/\" 6 .arm_id) \"_4\" }}\"}",
+    "provides": ["virtual_network_name", "resource_group_name"]
+  }],
+  "args": {"params": {"subscription_id": "'${AZURE_SUBSCRIPTION_ID}'"}}
+}'
+```
+
+That third one is the clearest case for `T_in` living on the consumer: `Subnets_list` needs two
+inputs, one of which is derived from a different field of the same producer. A per-edge transform
+could not express it.
+
+> **Verified:** only the AWS case, against a stand-in EC2 (`TestGraphJoinsTwoExchangesTheDocumentDoesNotRelate`).
+> Google and Azure are written from their documents' declared signatures and row paths and have not
+> been run against a live provider; Azure's `oauth2` auth is not implemented yet, so that one cannot
+> run today.
+
+
 ### Memory
 
 Documents never outlive planning. A document is parsed, its exchange resolved, and the document

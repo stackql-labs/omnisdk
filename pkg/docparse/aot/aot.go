@@ -80,6 +80,25 @@ const (
 	InCookie = "cookie"
 )
 
+// Schema is the shape a document declares, as much of it as a consumer needs to project a response
+// onto it. A document format supplies its own implementation, so nothing consuming this learns how
+// the document was written.
+//
+// It exists because some transforms are schema-driven rather than program-driven: the document names
+// one and ships no body, because its instructions ARE the declared shape — the row type and, per
+// property, the element name the wire uses.
+type Schema interface {
+	// Property returns a named property of an object schema.
+	Property(name string) (Schema, bool)
+	// Properties are the declared property names, sorted.
+	Properties() []string
+	// Items is the element schema of an array; false where this is not an array.
+	Items() (Schema, bool)
+	// WireName is the element name the wire uses for this property, empty where the document states
+	// none — in which case the property name itself is the element name.
+	WireName() string
+}
+
 // Response is how the document says to read the reply. MediaType is what the wire carries;
 // OverrideMediaType is what the declared Transform turns it into.
 type Response interface {
@@ -91,6 +110,10 @@ type Response interface {
 	// Transform is the document's response transform, attached here at the SOURCE. A compile step
 	// decides where it actually runs.
 	Transform() Transform
+	// Schema is the declared shape of the response, nil where the document states none. A
+	// schema-driven transform has no other instructions, so dropping this at the parse boundary is
+	// what makes such a transform impossible to run.
+	Schema() Schema
 	Pagination() Pagination
 }
 

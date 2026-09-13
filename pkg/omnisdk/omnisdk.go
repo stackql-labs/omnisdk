@@ -45,6 +45,7 @@ import (
 	"github.com/stackql-labs/omnisdk/pkg/docparse/aot"
 	"github.com/stackql-labs/omnisdk/pkg/docparse/dsl"
 	"github.com/stackql-labs/omnisdk/pkg/docparse/dsl/gotemplate"
+	"github.com/stackql-labs/omnisdk/pkg/docparse/dsl/schemaxml"
 	"github.com/stackql-labs/omnisdk/pkg/docparse/stackqldoc"
 )
 
@@ -928,7 +929,7 @@ func NewFromDoc(doc []byte, resource string, args Args) (Plan, error) {
 	if err := checkEndpoint(args); err != nil {
 		return nil, err
 	}
-	reg, err := dsl.NewRegistry(gotemplate.Evaluators()...)
+	reg, err := dsl.NewRegistry(append(gotemplate.Evaluators(), schemaxml.New())...)
 	if err != nil {
 		return nil, err
 	}
@@ -1051,7 +1052,7 @@ func NewFromCatalog(dir, address string, args Args) (Plan, error) {
 	if err != nil {
 		return nil, fmt.Errorf("omnisdk: %s: %w", address, err)
 	}
-	reg, err := dsl.NewRegistry(gotemplate.Evaluators()...)
+	reg, err := dsl.NewRegistry(append(gotemplate.Evaluators(), schemaxml.New())...)
 	if err != nil {
 		return nil, err
 	}

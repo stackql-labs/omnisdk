@@ -60,6 +60,10 @@ type document struct {
 	Components struct {
 		Resources       map[string]resource       `yaml:"x-stackQL-resources"`
 		SecuritySchemes map[string]securityScheme `yaml:"securitySchemes"`
+		// Schemas are retained as raw nodes. A service document's schema section is the bulk of its
+		// bytes — EC2's runs to tens of thousands of lines — and an exchange needs the handful of
+		// shapes its own response names, so they are read on demand rather than decoded up front.
+		Schemas map[string]yaml.Node `yaml:"schemas"`
 	} `yaml:"components"`
 }
 
@@ -123,6 +127,14 @@ type tokenSpec struct {
 type pathOp struct {
 	OperationID string      `yaml:"operationId"`
 	Parameters  []pathParam `yaml:"parameters"`
+	// Responses carry the declared response shape. Only the success response is read: an error
+	// response describes a failure, and projecting rows out of one would be reporting a fault as
+	// data.
+	Responses map[string]struct {
+		Content map[string]struct {
+			Schema yaml.Node `yaml:"schema"`
+		} `yaml:"content"`
+	} `yaml:"responses"`
 }
 
 // pathParam is an operation parameter as the document declares it.
@@ -292,8 +304,36 @@ func (d *document) build(name, verb, path string, op pathOp, m method) aot.AOTEx
 			objectKey:  m.Response.ObjectKey,
 			transform:  transformDecl(m.Response.Transform),
 			pagination: pagination{req: m.Config.Pagination.RequestToken, resp: m.Config.Pagination.ResponseToken},
+			schema:     d.responseSchema(op),
 		},
 	}
+}
+
+// responseSchema resolves an operation's declared success shape. A schema-driven transform has no
+// other instructions, so this is what makes one runnable — and its absence is why a document naming
+// such a transform silently yields nothing.
+func (d *document) responseSchema(op pathOp) aot.Schema {
+	components := map[string]*yaml.Node{}
+	for name := range d.Components.Schemas {
+		node := d.Components.Schemas[name]
+		components[name] = &node
+	}
+	for _, code := range []string{"200", "201", "202", "204", "default"} {
+		resp, ok := op.Responses[code]
+		if !ok {
+			continue
+		}
+		// Media type is not matched here: a document states one success shape, and the response's
+		// declared media type already says how the body arrives.
+		for _, content := range resp.Content {
+			node := content.Schema
+			if node.Kind == 0 {
+				continue
+			}
+			return newSchema(&node, components)
+		}
+	}
+	return nil
 }
 
 // security resolves the document-level requirement to a normalized scheme. Document-level is the only
@@ -451,6 +491,7 @@ type response struct {
 	objectKey  string
 	transform  transformDeclType
 	pagination pagination
+	schema     aot.Schema
 }
 
 func (r response) MediaType() string          { return r.mediaType }
@@ -458,6 +499,7 @@ func (r response) OverrideMediaType() string  { return r.override }
 func (r response) ObjectKey() string          { return r.objectKey }
 func (r response) Transform() aot.Transform   { return r.transform }
 func (r response) Pagination() aot.Pagination { return r.pagination }
+func (r response) Schema() aot.Schema         { return r.schema }
 
 type transformDeclType struct{ typ, body string }
 

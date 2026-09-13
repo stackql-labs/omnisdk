@@ -52,7 +52,7 @@ func TestDocumentsOwnResponseProgram(t *testing.T) {
   </reservationSet>
 </DescribeInstancesResponse>`
 
-	out, err := registry(t).Eval(tr.Type(), tr.Body(), []byte(xml))
+	out, err := registry(t).Eval(tr.Type(), dsl.Context{}, tr.Body(), []byte(xml))
 	if err != nil {
 		t.Fatalf("eval: %v", err)
 	}
@@ -89,7 +89,7 @@ func TestSingleItemIsNotASlice(t *testing.T) {
   </instancesSet></item></reservationSet>
 </DescribeInstancesResponse>`
 
-	out, err := registry(t).Eval(tr.Type(), tr.Body(), []byte(xml))
+	out, err := registry(t).Eval(tr.Type(), dsl.Context{}, tr.Body(), []byte(xml))
 	if err != nil {
 		t.Fatalf("eval: %v", err)
 	}
@@ -121,7 +121,7 @@ func TestRequestProgramBuildsFormQuery(t *testing.T) {
 {{- end -}}
 {{- $query -}}`
 
-	out, err := registry(t).Eval(gotemplate.TypeText, prog, []byte(`{"InstanceId":["i-a","i-b"],"MaxResults":"5"}`))
+	out, err := registry(t).Eval(gotemplate.TypeText, dsl.Context{}, prog, []byte(`{"InstanceId":["i-a","i-b"],"MaxResults":"5"}`))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -136,7 +136,7 @@ func TestRequestProgramBuildsFormQuery(t *testing.T) {
 // An unknown language must fail loudly and say what IS supported — a document naming an evaluator
 // nothing implements is a gap to fix, never something to skip past.
 func TestUnknownLanguageFailsLoudly(t *testing.T) {
-	_, err := registry(t).Eval("jsonnet_v1", "{}", nil)
+	_, err := registry(t).Eval("jsonnet_v1", dsl.Context{}, "{}", nil)
 	if err == nil || !strings.Contains(err.Error(), "no evaluator") {
 		t.Fatalf("err = %v", err)
 	}

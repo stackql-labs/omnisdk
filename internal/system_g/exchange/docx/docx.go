@@ -14,6 +14,8 @@
 package docx
 
 import (
+	"bytes"
+	"encoding/json"
 	"fmt"
 	"strings"
 
@@ -30,6 +32,7 @@ import (
 	"github.com/stackql-labs/omnisdk/internal/system_g/value"
 	"github.com/stackql-labs/omnisdk/pkg/docparse/aot"
 	"github.com/stackql-labs/omnisdk/pkg/docparse/dsl"
+	"github.com/stackql-labs/omnisdk/pkg/docparse/dsl/schemaxml"
 	"github.com/stackql-labs/omnisdk/pkg/docparse/stackqldoc"
 )
 
@@ -47,6 +50,23 @@ type options struct {
 	ignoreResponse bool
 	// wholeResponse emits the decoded body as one record rather than exploding a list out of it.
 	wholeResponse bool
+	// bound names parameters that arrive over a β edge rather than from the caller.
+	bound map[string]bool
+	// provided names parameters T_in builds. They are PLACED on the wire but not bound: no producer
+	// emits them, so declaring them as inputs would leave the plan looking for a β source that by
+	// definition does not exist.
+	provided map[string]bool
+	// inbox names values T_in CONSUMES. They are bound — a producer emits each one — but never
+	// placed: they are raw material for the transform, not parameters the service has heard of.
+	inbox map[string]bool
+	// Response overrides: a document can be wrong for this engine — declaring a row path that only
+	// exists after a reshape nobody implements, or a media type the service does not actually send —
+	// and editing the bundle is not the remedy. A caller states what the document should have said.
+	objectKey        string
+	mediaType        string
+	programType      string
+	programBody      string
+	overrideResponse bool
 }
 
 // MetadataKey is where a response's own report about itself sits within the response document:
@@ -126,6 +146,69 @@ func WithoutSigning() Option {
 // of that is a plan that cannot undo anything.
 func WithoutResponseDecode() Option {
 	return func(o *options) { o.ignoreResponse = true }
+}
+
+// WithProvided declares parameters the consumer's inbound transform builds. They are placed on the
+// request so the value has somewhere to go, and deliberately not bound: T_in makes them out of the
+// inbox, so there is no producer emitting them by name.
+func WithProvided(names ...string) Option {
+	return func(o *options) {
+		if o.provided == nil {
+			o.provided = map[string]bool{}
+		}
+		for _, n := range names {
+			o.provided[n] = true
+		}
+	}
+}
+
+// WithInbox declares values the consumer's inbound transform consumes. They are bound so a producer
+// can deliver them, and deliberately not placed: the service knows nothing about them, and sending
+// one would be an unrecognised parameter.
+func WithInbox(names ...string) Option {
+	return func(o *options) {
+		if o.inbox == nil {
+			o.inbox = map[string]bool{}
+		}
+		for _, n := range names {
+			o.inbox[n] = true
+		}
+	}
+}
+
+// WithObjectKey overrides the document's declared row path: where in the decoded body the item list
+// lives. A document that names a path only produced by a transform nobody implements yields no rows
+// and says nothing about why, and this is how a caller corrects it without editing the bundle.
+func WithObjectKey(key string) Option {
+	return func(o *options) { o.objectKey, o.overrideResponse = key, true }
+}
+
+// WithMediaType overrides what the document says the response is, for a service that sends
+// something else.
+func WithMediaType(mt string) Option {
+	return func(o *options) { o.mediaType, o.overrideResponse = mt, true }
+}
+
+// WithResponseProgram overrides the document's response transform with one the caller supplies.
+func WithResponseProgram(typ, body string) Option {
+	return func(o *options) { o.programType, o.programBody, o.overrideResponse = typ, body, true }
+}
+
+// WithBound declares parameters that will arrive over a β edge rather than being supplied up front.
+//
+// Placement otherwise depends on what the caller gave: an optional parameter nobody supplied is
+// absent rather than empty, which is right for a lone call and wrong for a joined one. A value
+// bound from another exchange is not known when the plan is built, and without this the parameter
+// is dropped and the edge has nothing to bind to.
+func WithBound(names ...string) Option {
+	return func(o *options) {
+		if o.bound == nil {
+			o.bound = map[string]bool{}
+		}
+		for _, n := range names {
+			o.bound[n] = true
+		}
+	}
 }
 
 // WithWholeResponse emits the decoded body as a single record instead of exploding the item list
@@ -208,8 +291,12 @@ func Spec(ex aot.AOTExchange, inputs map[string]any, reg dsl.Registry, opts ...O
 	// supplying code — and for those the body is used as it arrives, decoded by its media type.
 	// Requiring an evaluator for a type that carries no program would reject the majority of documents
 	// over a program that does not exist.
+	resp = overridden(resp, o)
 	tr := resp.Transform()
-	hasProgram := tr.Type() != "" && tr.Body() != ""
+	// A transform with a type and no body is not "no transform": it names an evaluator whose
+	// instructions are the document's own schema. Treating it as absent is what made a
+	// schema-driven document resolve its rows at a path only that transform produces.
+	hasProgram := tr.Type() != "" && (tr.Body() != "" || schemaDriven(reg, tr.Type()))
 	if hasProgram {
 		if _, ok := reg.Get(tr.Type()); !ok {
 			return nil, fmt.Errorf("docx: exchange %q needs evaluator %q (have: %v)", ex.Name(), tr.Type(), reg.Types())
@@ -248,9 +335,10 @@ func Spec(ex aot.AOTExchange, inputs map[string]any, reg dsl.Registry, opts ...O
 	// httpx.Request is a {name} template resolved from the bound row, so placing a parameter is
 	// declaring where its template goes — and binding its name so a value reaches it.
 	bindings := ex.Inputs()
+	placed := map[string]bool{}
 	for _, p := range req.Parameters() {
 		_, supplied := inputs[p.Name()]
-		if !supplied && !p.Required() {
+		if !supplied && !p.Required() && !o.bound[p.Name()] && !o.provided[p.Name()] {
 			continue // an optional parameter nobody supplied is absent, not empty
 		}
 		tmpl := "{" + p.Name() + "}"
@@ -270,7 +358,30 @@ func Spec(ex aot.AOTExchange, inputs map[string]any, reg dsl.Registry, opts ...O
 		default:
 			continue // a location we do not place must not be bound as if we had
 		}
+		placed[p.Name()] = true
+		if o.provided[p.Name()] {
+			// Placed, not bound: T_in builds it from the inbox, so no producer emits it.
+			continue
+		}
 		bindings = withInput(bindings, p.Name())
+	}
+	// A provided name the document does not declare is placed anyway. The caller is asserting the
+	// wire shape, exactly as an override asserts the response shape: AWS's Query API takes a filter
+	// as Filter.1.Name / Filter.1.Value.1, while the document models it as one "Filter" parameter of
+	// a list type it never says how to serialise. Refusing to send what the document did not name
+	// would make the call unreachable over a modelling gap.
+	for name := range o.provided {
+		if _, declared := placed[name]; declared {
+			continue
+		}
+		if hreq.Query == nil {
+			hreq.Query = map[string]string{}
+		}
+		hreq.Query[name] = "{" + name + "}"
+	}
+	// Raw material for T_in: bound so a producer delivers it, never placed on the wire.
+	for name := range o.inbox {
+		bindings = withInput(bindings, name)
 	}
 	// A {placeholder} in the URL that no parameter declared still has to be bound, or it resolves to
 	// nothing and the request goes out with an empty path segment.
@@ -338,7 +449,7 @@ func Spec(ex aot.AOTExchange, inputs map[string]any, reg dsl.Registry, opts ...O
 		// the document's own program, moved from source to here — when it declares one
 		body := checked
 		if hasProgram {
-			body = exchange.NewTransformExchange(0, checked, program(reg, tr.Type(), tr.Body()), 1)
+			body = exchange.NewTransformExchange(0, checked, program(reg, tr.Type(), tr.Body(), dslContext(resp, rowPath)), 1)
 		}
 		decoded := exchange.NewTransformExchange(0, body, decode, 1)
 		if o.wholeResponse {
@@ -371,6 +482,7 @@ func (c compiled) In() []string                              { return c.spec.In(
 func (c compiled) Out() []string                             { return c.spec.Out() }
 func (c compiled) Make(bound map[string]any) facade.Operator { return c.spec.Make(bound) }
 func (c compiled) Flatten() facade.Transform                 { return c.spec.Flatten() }
+func (c compiled) Inbound() facade.Transform                 { return c.spec.Inbound() }
 
 // dropKeys removes named attributes on the way out.
 type dropKeys []string
@@ -400,18 +512,36 @@ const googleScope = "https://www.googleapis.com/auth/cloud-platform.read-only"
 
 // program runs a declared body program over the raw response, replacing the payload with its output.
 // It is the only place a document's embedded language touches the engine.
-func program(reg dsl.Registry, typ, body string) facade.Transform {
-	return programTransform{reg: reg, typ: typ, body: body}
+func program(reg dsl.Registry, typ, body string, ctx dsl.Context) facade.Transform {
+	return programTransform{reg: reg, typ: typ, body: body, ctx: ctx}
+}
+
+// schemaDriven reports whether a registered evaluator takes its instructions from the schema rather
+// than from a program body. A document naming one ships no text, so the usual "type and body" test
+// reads it as absent.
+func schemaDriven(reg dsl.Registry, typ string) bool {
+	return typ == schemaxml.Type && func() bool { _, ok := reg.Get(typ); return ok }()
+}
+
+// dslContext is what a schema-driven transform needs and a program-driven one ignores: the declared
+// response shape, and the envelope key the document's row path then points at.
+func dslContext(resp aot.Response, rowPath []string) dsl.Context {
+	ctx := dsl.Context{Schema: resp.Schema()}
+	if len(rowPath) == 1 {
+		ctx.ListProperty = rowPath[0]
+	}
+	return ctx
 }
 
 type programTransform struct {
 	reg  dsl.Registry
 	typ  string
 	body string
+	ctx  dsl.Context
 }
 
 func (t programTransform) Apply(in facade.Page) (facade.Record, error) {
-	out, err := t.reg.Eval(t.typ, t.body, in.Bytes(facade.AnonymousPayload))
+	out, err := t.reg.Eval(t.typ, t.ctx, t.body, in.Bytes(facade.AnonymousPayload))
 	if err != nil {
 		return nil, err
 	}
@@ -499,6 +629,49 @@ func docRecord(list []any) facade.Record {
 
 // decoderFor picks the body decoder. A declared transform states what it turns the body INTO
 // (overrideMediaType); without one, the body arrives as the wire media type says.
+// overridden applies the caller's corrections to what the document said about the response.
+func overridden(resp aot.Response, o options) aot.Response {
+	if !o.overrideResponse {
+		return resp
+	}
+	out := responseOverride{
+		Response:  resp,
+		objectKey: resp.ObjectKey(),
+		mediaType: resp.MediaType(),
+		transform: resp.Transform(),
+	}
+	if o.objectKey != "" {
+		out.objectKey = o.objectKey
+	}
+	if o.mediaType != "" {
+		out.mediaType = o.mediaType
+	}
+	if o.programType != "" {
+		out.transform = programOverride{typ: o.programType, body: o.programBody}
+	}
+	return out
+}
+
+type responseOverride struct {
+	aot.Response
+	objectKey string
+	mediaType string
+	transform aot.Transform
+}
+
+func (r responseOverride) ObjectKey() string        { return r.objectKey }
+func (r responseOverride) MediaType() string        { return r.mediaType }
+func (r responseOverride) Transform() aot.Transform { return r.transform }
+
+// OverrideMediaType is cleared: the document's override describes what ITS transform produced, and a
+// caller who has replaced that has said what the body actually is.
+func (r responseOverride) OverrideMediaType() string { return "" }
+
+type programOverride struct{ typ, body string }
+
+func (p programOverride) Type() string { return p.typ }
+func (p programOverride) Body() string { return p.body }
+
 func decoderFor(resp aot.Response, hasProgram bool) facade.Transform {
 	// Without a program the body arrives as the wire says; with one, overrideMediaType states what the
 	// program turned it into.
@@ -603,4 +776,44 @@ func encodingOf(mediaType string) httpx.Encoding {
 	default:
 		return httpx.EncodingNone
 	}
+}
+
+// InboundProgram compiles a DSL program as T_in: the assembled inbox goes in, the consumer's inputs
+// come out.
+//
+// It is the same language a document's response transforms are written in, pointed the other way.
+// The inbox is handed to the program as a JSON object and its output is read back as one, so a
+// caller shapes inbound values exactly as a document shapes outbound ones.
+func InboundProgram(reg dsl.Registry, typ, body string) facade.Transform {
+	return inboundProgram{reg: reg, typ: typ, body: body}
+}
+
+type inboundProgram struct {
+	reg  dsl.Registry
+	typ  string
+	body string
+}
+
+func (p inboundProgram) Apply(in facade.Page) (facade.Record, error) {
+	inbox, ok := bind.DocMap(in)
+	if !ok {
+		return nil, fmt.Errorf("docx: inbound transform received no inbox")
+	}
+	raw, err := json.Marshal(inbox)
+	if err != nil {
+		return nil, fmt.Errorf("docx: encode inbox: %w", err)
+	}
+	out, err := p.reg.Eval(p.typ, dsl.Context{}, p.body, raw)
+	if err != nil {
+		return nil, fmt.Errorf("docx: inbound program: %w", err)
+	}
+	// Numbers keep their written form: an identifier that survives the wire as digits must not be
+	// rewritten by a float64 on its way into the next call.
+	dec := json.NewDecoder(bytes.NewReader(out))
+	dec.UseNumber()
+	var shaped map[string]any
+	if err := dec.Decode(&shaped); err != nil {
+		return nil, fmt.Errorf("docx: inbound program produced %q, which is not a JSON object: %w", out, err)
+	}
+	return bind.NewDocRecord(shaped), nil
 }
