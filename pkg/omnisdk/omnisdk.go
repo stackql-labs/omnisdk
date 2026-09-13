@@ -933,7 +933,11 @@ func NewFromDoc(doc []byte, resource string, args Args) (Plan, error) {
 	if err != nil {
 		return nil, err
 	}
-	pl, err := docx.SelectPlan(doc, resource, docInputs(args), reg, docOptions(args)...)
+	opts, err := docOptions(args, nil)
+	if err != nil {
+		return nil, err
+	}
+	pl, err := docx.SelectPlan(doc, resource, docInputs(args), reg, opts...)
 	if err != nil {
 		return nil, err
 	}
@@ -1056,7 +1060,14 @@ func NewFromCatalog(dir, address string, args Args) (Plan, error) {
 	if err != nil {
 		return nil, err
 	}
-	opts := docOptions(args)
+	var sec aot.Security
+	if p := c.Provider(); p != nil {
+		sec = p.Security()
+	}
+	opts, err := docOptions(args, sec)
+	if err != nil {
+		return nil, err
+	}
 	if p := c.Provider(); p != nil {
 		opts = append(opts, docx.WithProviderSecurity(p.Security()))
 	}
@@ -1120,7 +1131,14 @@ func docInputs(args Args) map[string]any {
 
 // docOptions carry the endpoint override and AWS credentials, resolved exactly as for a catalog
 // method — a document that declares signing but finds no credentials fails at plan time.
-func docOptions(args Args) []docx.Option {
+// docOptions assembles what a document's compile step needs from the caller.
+//
+// sec is the scheme the document declares, and it decides which credential is REQUIRED. Requiring
+// every credential the environment happens to hold would fail an AWS-only query because a Google key
+// elsewhere is stale; ignoring failures entirely reports a key that is present but unusable as "no
+// credentials were supplied", which sends the reader hunting for an unset variable that is set. The
+// document's own declaration is what distinguishes the two.
+func docOptions(args Args, sec aot.Security) ([]docx.Option, error) {
 	var opts []docx.Option
 	if args.Endpoint != "" {
 		opts = append(opts, docx.WithBaseURL(args.Endpoint))
@@ -1128,10 +1146,15 @@ func docOptions(args Args) []docx.Option {
 	if creds, err := awsCreds(args); err == nil {
 		opts = append(opts, docx.WithAWSCredentials(creds))
 	}
-	if creds, err := gcpCreds(args); err == nil {
+	switch creds, err := gcpCreds(args); {
+	case err == nil:
 		opts = append(opts, docx.WithGoogleCredentials(creds))
+	case sec != nil && sec.Scheme() == aot.SchemeServiceAccount:
+		// The document says this call is authenticated with a service account, so a credential that
+		// cannot be used is fatal — and says why, rather than surfacing later as "none supplied".
+		return nil, fmt.Errorf("omnisdk: Google credentials cannot be used: %w", err)
 	}
-	return opts
+	return opts, nil
 }
 
 // authOf returns args.Auth, or a zero Auth when none was supplied — so resolution always reads from a

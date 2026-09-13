@@ -2,9 +2,11 @@ package omnisdk
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/stackql-labs/omnisdk/internal/system_g/exchange/docx"
 	"github.com/stackql-labs/omnisdk/internal/system_g/plan"
+	"github.com/stackql-labs/omnisdk/pkg/docparse/aot"
 	"github.com/stackql-labs/omnisdk/pkg/docparse/dsl"
 	"github.com/stackql-labs/omnisdk/pkg/docparse/dsl/gotemplate"
 	"github.com/stackql-labs/omnisdk/pkg/docparse/dsl/schemaxml"
@@ -211,6 +213,7 @@ func NewGraphQuery(dir string, g Graph, args Args) (Plan, error) {
 	}
 
 	var specs []plan.ExchangeSpec
+	var betas []plan.BetaEdge
 	byAddress := make(map[string]resolved, len(g.Addresses()))
 	for _, addr := range g.Addresses() {
 		c, err := openDocs(dir, addr)
@@ -221,13 +224,24 @@ func NewGraphQuery(dir string, g Graph, args Args) (Plan, error) {
 		if err != nil {
 			return nil, err
 		}
-		ex, err := chooseExchange(candidates, inputs)
+		// Selection must count what ARRIVES, not only what the caller supplied. Azure's Subnets_list
+		// needs a resource group and a VNet name, both of which come over the edge — judged on
+		// supplied inputs alone, no select is satisfiable and the query fails before its wiring is
+		// ever considered.
+		ex, err := chooseExchange(candidates, withArrivals(inputs, g, addr))
 		if err != nil {
 			return nil, fmt.Errorf("omnisdk: %s: %w", addr, err)
 		}
-		opts := docOptions(args)
+		var sec aot.Security
 		if p := c.Provider(); p != nil {
-			opts = append(opts, docx.WithProviderSecurity(p.Security()))
+			sec = p.Security()
+		}
+		opts, err := docOptions(args, sec)
+		if err != nil {
+			return nil, err
+		}
+		if sec != nil {
+			opts = append(opts, docx.WithProviderSecurity(sec))
 		}
 		if names := bound[addr]; len(names) > 0 {
 			opts = append(opts, docx.WithBound(names...))
@@ -256,6 +270,24 @@ func NewGraphQuery(dir string, g Graph, args Args) (Plan, error) {
 		if err != nil {
 			return nil, fmt.Errorf("omnisdk: %s: %w", addr, err)
 		}
+		// Two documents routinely name a method the same thing — "list" above all — and a plan names
+		// its exchanges. The address is what tells them apart. Renaming happens BEFORE the auth edge
+		// is built, or the edge points at a name the plan no longer has.
+		name := planName(addr)
+		// A document that declares service-account auth compiles to two exchanges — a token exchange
+		// and the call, joined by a β edge carrying the bearer. A single-address run gets that wiring
+		// for free; composing several means doing it per exchange, or the plan cannot build because
+		// nothing supplies the token.
+		if auth, assertion, needs := docx.Expand(spec); needs {
+			auth = docx.Rename(auth, name+"_auth")
+			specs = append(specs, auth)
+			betas = append(betas, plan.NewBetaEdge(auth.Name(), name, docx.TokenAttr, docx.TokenAttr))
+			inputs["assertion"] = assertion
+		}
+		spec = docx.Rename(spec, name)
+		// T_in is attached LAST. Wrapping the spec hides the compiled form Expand reads, so a
+		// consumer with an inbound transform would silently lose its auth exchange — and the plan
+		// would refuse to build for want of a token.
 		if w, ok := wiringFor(g, addr); ok {
 			if typ, body := w.Via(); typ != "" {
 				spec = plan.WithInbound(spec, docx.InboundProgram(reg, typ, body))
@@ -265,7 +297,6 @@ func NewGraphQuery(dir string, g Graph, args Args) (Plan, error) {
 		specs = append(specs, spec)
 	}
 
-	var betas []plan.BetaEdge
 	for _, w := range g.Wirings() {
 		for _, in := range w.Inbound() {
 			betas = append(betas, plan.NewBetaEdge(byAddress[in.From()].planned, byAddress[w.To()].planned, in.Src(), in.As()))
@@ -273,6 +304,39 @@ func NewGraphQuery(dir string, g Graph, args Args) (Plan, error) {
 	}
 
 	return &cannedPlan{plan: plan.NewPlan(specs, betas, nil, inputs, nil, nil), args: args}, nil
+}
+
+// withArrivals adds the inputs a consumer's wiring will deliver, for the purpose of choosing which
+// operation to run. The values are placeholders: only the NAMES matter here, and the real values are
+// bound per row. They are deliberately kept out of what the exchange is compiled with, where a
+// placeholder would be sent as if it were data.
+func withArrivals(inputs map[string]any, g Graph, addr string) map[string]any {
+	w, ok := wiringFor(g, addr)
+	if !ok {
+		return inputs
+	}
+	out := make(map[string]any, len(inputs)+len(w.Provides()))
+	for k, v := range inputs {
+		out[k] = v
+	}
+	names := w.Provides()
+	if typ, _ := w.Via(); typ == "" {
+		// Identity wiring: the inbox names are the inputs.
+		names = nil
+		for _, in := range w.Inbound() {
+			names = append(names, in.As())
+		}
+	}
+	for _, n := range names {
+		out[n] = "<bound>"
+	}
+	return out
+}
+
+// planName is the name an address takes inside the plan: distinct per address, and readable in a
+// trace.
+func planName(addr string) string {
+	return strings.NewReplacer(".", "_", "-", "_").Replace(addr)
 }
 
 // wiringFor finds a consumer's declared inbox.

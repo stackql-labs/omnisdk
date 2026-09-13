@@ -508,7 +508,13 @@ func (d dropKeys) Apply(in facade.Page) (facade.Record, error) {
 
 // googleScope is the read scope a document-compiled Google call requests. The documents do not state
 // one, and cloud-platform.read-only is the least that serves a SELECT.
-const googleScope = "https://www.googleapis.com/auth/cloud-platform.read-only"
+// googleScope is what the token exchange asks for. cloud-platform.read-only reads most APIs but
+// Compute rejects it outright — ACCESS_TOKEN_SCOPE_INSUFFICIENT, whatever roles the identity holds —
+// so the broad scope is requested and the identity's own roles remain the limit on what it can do.
+//
+// The right answer is the scopes the operation declares; every Compute method names its own. Until
+// those are carried through the parse boundary, this is the one that works everywhere.
+const googleScope = "https://www.googleapis.com/auth/cloud-platform"
 
 // program runs a declared body program over the raw response, replacing the payload with its output.
 // It is the only place a document's embedded language touches the engine.
@@ -817,3 +823,41 @@ func (p inboundProgram) Apply(in facade.Page) (facade.Record, error) {
 	}
 	return bind.NewDocRecord(shaped), nil
 }
+
+// Expand unpacks what a compiled spec needs beside itself.
+//
+// A document that declares service-account auth compiles to TWO exchanges: a token exchange and the
+// call, joined by a β edge carrying the bearer. PlanFor does that wiring for a single-exchange plan;
+// a caller composing several exchanges into one plan has to do it per exchange, or every call goes
+// out unauthenticated — or, as happens here, the plan refuses to build because nothing supplies the
+// token.
+//
+// ok is false for a spec that needs nothing extra, which is the common case.
+// The caller builds the edge itself, because it may rename either side first: a plan names its
+// exchanges, and composing several documents means giving each a distinct name.
+func Expand(spec plan.ExchangeSpec) (auth plan.ExchangeSpec, assertion string, ok bool) {
+	c, is := spec.(compiled)
+	if !is || c.auth == nil {
+		return nil, "", false
+	}
+	return c.auth, c.assertion, true
+}
+
+// TokenAttr is the attribute an auth exchange emits and the call it feeds binds.
+const TokenAttr = "token"
+
+// Rename returns the spec under a different name.
+//
+// A plan names its exchanges, and two documents routinely name a method the same thing — "list" is
+// the obvious one. Composing them into one plan needs the names distinct, and the address is what
+// distinguishes them.
+func Rename(spec plan.ExchangeSpec, name string) plan.ExchangeSpec {
+	return renamed{ExchangeSpec: spec, name: name}
+}
+
+type renamed struct {
+	plan.ExchangeSpec
+	name string
+}
+
+func (r renamed) Name() string { return r.name }
