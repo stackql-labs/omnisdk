@@ -40,6 +40,10 @@ const (
 	SchemeAWSSigV4 Scheme = "aws.sigv4"
 	// SchemeServiceAccount is a Google service-account key exchanged for an OAuth access token.
 	SchemeServiceAccount Scheme = "google.service_account"
+	// SchemeOAuthClientCredentials is an OAuth2 client-credentials grant: an id and secret exchanged
+	// for a bearer token. Azure declares it, and so does any provider whose documents say oauth2
+	// without naming a dialect.
+	SchemeOAuthClientCredentials Scheme = "oauth2.client_credentials"
 )
 
 // Security is the declared authentication for a call.

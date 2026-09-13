@@ -52,6 +52,9 @@ func TestGuideGraphsCompose(t *testing.T) {
 	t.Setenv("AWS_ACCESS_KEY_ID", "AKIATEST")
 	t.Setenv("AWS_SECRET_ACCESS_KEY", "secret")
 	t.Setenv("GOOGLE_CREDENTIALS", serviceAccountKey(t))
+	t.Setenv("AZURE_TENANT_ID", "tenant")
+	t.Setenv("AZURE_CLIENT_ID", "client")
+	t.Setenv("AZURE_CLIENT_SECRET", "secret")
 
 	cases := []struct {
 		name      string
@@ -93,6 +96,24 @@ func TestGuideGraphsCompose(t *testing.T) {
 				"filter",
 			)},
 			params: map[string]string{"project": "PROJECT", "region": "us-central1"},
+		},
+		{
+			name: "azure virtual networks and subnets",
+			addresses: []string{
+				"stackql_unstable_azure.network.virtual_networks",
+				"stackql_unstable_azure.network.subnets",
+			},
+			wirings: []omnisdk.Wiring{omnisdk.NewWiring(
+				"stackql_unstable_azure.network.subnets",
+				[]omnisdk.Inbound{
+					omnisdk.NewInbound("stackql_unstable_azure.network.virtual_networks", "name", "vnet"),
+					omnisdk.NewInbound("stackql_unstable_azure.network.virtual_networks", "id", "arm_id"),
+				},
+				"golang_template_json_v0.1.0",
+				`{"virtual_network_name":"{{ .vnet }}","resource_group_name":"{{ index (split "/" .arm_id) 4 }}"}`,
+				"virtual_network_name", "resource_group_name",
+			)},
+			params: map[string]string{"subscription_id": "sub"},
 		},
 	}
 

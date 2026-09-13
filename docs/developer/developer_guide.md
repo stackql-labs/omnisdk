@@ -484,7 +484,7 @@ VNet name, and the resource group appears only inside the ARM resource id — so
       {"from": "stackql_unstable_azure.network.virtual_networks", "src": "id", "as": "arm_id"}
     ],
     "via_type": "golang_template_json_v0.1.0",
-    "via": "{\"virtual_network_name\":\"{{ .vnet }}\",\"resource_group_name\":\"{{ index (splitn \"/\" 6 .arm_id) \"_4\" }}\"}",
+    "via": "{\"virtual_network_name\":\"{{ .vnet }}\",\"resource_group_name\":\"{{ index (split \"/\" .arm_id) 4 }}\"}",
     "provides": ["virtual_network_name", "resource_group_name"]
   }],
   "args": {"params": {"subscription_id": "'${AZURE_SUBSCRIPTION_ID}'"}}
@@ -495,10 +495,13 @@ That third one is the clearest case for `T_in` living on the consumer: `Subnets_
 inputs, one of which is derived from a different field of the same producer. A per-edge transform
 could not express it.
 
-> **Verified:** only the AWS case, against a stand-in EC2 (`TestGraphJoinsTwoExchangesTheDocumentDoesNotRelate`).
-> Google and Azure are written from their documents' declared signatures and row paths and have not
-> been run against a live provider; Azure's `oauth2` auth is not implemented yet, so that one cannot
-> run today.
+> **Verified:** all three compose — `TestGuideGraphsCompose` builds each graph published here and
+> fails on the errors that used to reach a reader instead: an input nothing supplies, two documents
+> whose methods share a name, an auth exchange never wired in. The AWS case is additionally executed
+> against a stand-in EC2 (`TestGraphJoinsTwoExchangesTheDocumentDoesNotRelate`).
+>
+> Google and Azure have not been run against a live provider, so their row paths and field names come
+> from the documents rather than from observed responses.
 
 
 ### Memory

@@ -1146,6 +1146,12 @@ func docOptions(args Args, sec aot.Security) ([]docx.Option, error) {
 	if creds, err := awsCreds(args); err == nil {
 		opts = append(opts, docx.WithAWSCredentials(creds))
 	}
+	switch tenant, clientID, clientSecret, err := azureNativeCreds(args); {
+	case err == nil:
+		opts = append(opts, docx.WithAzureCredentials(tenant, clientID, clientSecret))
+	case sec != nil && sec.Scheme() == aot.SchemeOAuthClientCredentials:
+		return nil, fmt.Errorf("omnisdk: Azure credentials cannot be used: %w", err)
+	}
 	switch creds, err := gcpCreds(args); {
 	case err == nil:
 		opts = append(opts, docx.WithGoogleCredentials(creds))

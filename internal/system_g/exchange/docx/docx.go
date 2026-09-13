@@ -46,6 +46,8 @@ type options struct {
 	noSign   bool
 	security aot.Security
 	gcpCreds *sdk.GCPCredentials
+	// azureCreds is the client-credentials triple for a document declaring OAuth2.
+	azureCreds *azureCredentials
 	// ignoreResponse compiles an operation whose response the document does not type.
 	ignoreResponse bool
 	// wholeResponse emits the decoded body as one record rather than exploding a list out of it.
@@ -139,6 +141,20 @@ func WithRequestTransform(t facade.Transform) Option {
 // WithoutSigning drops the implied signing entirely.
 func WithoutSigning() Option {
 	return func(o *options) { o.noSign = true }
+}
+
+// azureCredentials is the client-credentials triple. Kept here rather than reaching into the sdk's
+// hand-authored plans, so the document path resolves credentials the same way every other option
+// does.
+type azureCredentials struct{ tenant, clientID, clientSecret string }
+
+// WithAzureCredentials supplies the client-credentials triple for documents that declare OAuth2. As
+// with SigV4 and service accounts, the document says a call is authenticated; whose identity it uses
+// stays an explicit caller decision.
+func WithAzureCredentials(tenant, clientID, clientSecret string) Option {
+	return func(o *options) {
+		o.azureCreds = &azureCredentials{tenant: tenant, clientID: clientID, clientSecret: clientSecret}
+	}
 }
 
 // WithoutResponseDecode tolerates a response the document does not type. It exists for mutating
@@ -253,8 +269,13 @@ func PlanFor(ex aot.AOTExchange, inputs map[string]any, reg dsl.Registry, opts .
 		// The token exchange runs FIRST and its {token} flows to the call, exactly as a hand-authored
 		// plan wires it.
 		specs = []plan.ExchangeSpec{c.auth, c.spec}
-		betas = append(betas, plan.NewBetaEdge(c.auth.Name(), c.spec.Name(), "token", "token"))
-		inputs["assertion"] = c.assertion
+		betas = append(betas, plan.NewBetaEdge(c.auth.Name(), c.spec.Name(), TokenAttr, TokenAttr))
+		if c.assertion != "" {
+			inputs["assertion"] = c.assertion
+		}
+		for k, v := range c.authInputs {
+			inputs[k] = v
+		}
 	}
 	for _, in := range ex.Inputs() {
 		if v, ok := inputs[in]; !ok || v == "" {
@@ -408,6 +429,11 @@ func Spec(ex aot.AOTExchange, inputs map[string]any, reg dsl.Registry, opts ...O
 				return nil, fmt.Errorf("docx: exchange %q declares %s (%q) but no credentials were supplied",
 					ex.Name(), sec.Scheme(), sec.Name())
 			}
+		case aot.SchemeOAuthClientCredentials:
+			if o.azureCreds == nil {
+				return nil, fmt.Errorf("docx: exchange %q declares %s (%q) but no credentials were supplied",
+					ex.Name(), sec.Scheme(), sec.Name())
+			}
 		}
 	}
 
@@ -416,8 +442,17 @@ func Spec(ex aot.AOTExchange, inputs map[string]any, reg dsl.Registry, opts ...O
 	// request transform, which is why it is built here and not alongside the signer.
 	var authSpec plan.ExchangeSpec
 	var assertion string
-	if sec.Scheme() == aot.SchemeServiceAccount && o.gcpCreds != nil && !o.noSign {
+	var authInputs map[string]any
+	switch {
+	case sec.Scheme() == aot.SchemeServiceAccount && o.gcpCreds != nil && !o.noSign:
 		authSpec, assertion = sdk.GCPOAuthSpec(o.baseURL, *o.gcpCreds, googleScope)
+	case sec.Scheme() == aot.SchemeOAuthClientCredentials && o.azureCreds != nil && !o.noSign:
+		// The same shape as a service account: the credential buys a token and every call carries
+		// it, so it is an exchange in the plan rather than a request transform. Only the grant
+		// differs.
+		authSpec, authInputs = sdk.AzureOAuthSpec(o.baseURL, o.azureCreds.tenant, o.azureCreds.clientID, o.azureCreds.clientSecret)
+	}
+	if authSpec != nil {
 		if hreq.Headers == nil {
 			hreq.Headers = map[string]string{}
 		}
@@ -464,7 +499,7 @@ func Spec(ex aot.AOTExchange, inputs map[string]any, reg dsl.Registry, opts ...O
 		// would emit one row of bare inputs, which reads as "one instance with no fields".
 	}, bind.NewInnerFlatten())
 	if authSpec != nil {
-		return compiled{spec: spec, auth: authSpec, assertion: assertion}, nil
+		return compiled{spec: spec, auth: authSpec, assertion: assertion, authInputs: authInputs}, nil
 	}
 	return compiled{spec: spec}, nil
 }
@@ -475,6 +510,9 @@ type compiled struct {
 	spec      plan.ExchangeSpec
 	auth      plan.ExchangeSpec
 	assertion string
+	// authInputs are κ values the token exchange needs, for a grant that carries credentials on the
+	// row rather than in a signed assertion.
+	authInputs map[string]any
 }
 
 func (c compiled) Name() string                              { return c.spec.Name() }
@@ -835,12 +873,19 @@ func (p inboundProgram) Apply(in facade.Page) (facade.Record, error) {
 // ok is false for a spec that needs nothing extra, which is the common case.
 // The caller builds the edge itself, because it may rename either side first: a plan names its
 // exchanges, and composing several documents means giving each a distinct name.
-func Expand(spec plan.ExchangeSpec) (auth plan.ExchangeSpec, assertion string, ok bool) {
+func Expand(spec plan.ExchangeSpec) (auth plan.ExchangeSpec, inputs map[string]any, ok bool) {
 	c, is := spec.(compiled)
 	if !is || c.auth == nil {
-		return nil, "", false
+		return nil, nil, false
 	}
-	return c.auth, c.assertion, true
+	needed := map[string]any{}
+	if c.assertion != "" {
+		needed["assertion"] = c.assertion
+	}
+	for k, v := range c.authInputs {
+		needed[k] = v
+	}
+	return c.auth, needed, true
 }
 
 // TokenAttr is the attribute an auth exchange emits and the call it feeds binds.

@@ -57,7 +57,9 @@ path matched nothing and every query returned zero rows and said nothing about w
 Implemented in `pkg/docparse/dsl/schemaxml`. `docsem.Outliers` reports documents whose responses are
 described too thinly to read, so the next instance is visible rather than silent.
 
-## Azure `oauth2` auth is not implemented
+## Resolved: Azure `oauth2` in the document path
 
-`aws_signing_v4` and `service_account` are. A document declaring `oauth2` (Entra) fails at plan time
-rather than silently, so the Azure graph in the developer guide cannot run yet.
+Was a wiring gap rather than a missing capability: `client_credentials` auth already worked in
+hand-authored plans, and `docx` simply did not map a document's `oauth2` declaration onto it. A
+document declaring it now compiles to a token exchange plus the call, joined by a β edge carrying the
+bearer — the same shape `service_account` takes, differing only in the grant.

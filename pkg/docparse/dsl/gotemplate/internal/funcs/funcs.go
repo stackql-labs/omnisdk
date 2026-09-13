@@ -11,6 +11,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"reflect"
+	"strings"
 	"text/template"
 )
 
@@ -29,6 +30,10 @@ func Map() template.FuncMap {
 		// safeIndex is the same tolerant walk under the name newer documents use for it.
 		"safeIndex": Index,
 		"separator": Separator,
+		// split decomposes a compound identifier. A provider routinely returns one value that
+		// contains several — an ARM resource id carries the subscription and the resource group in
+		// its path — and a caller joining on one of those parts has no way to reach it otherwise.
+		"split": Split,
 	}
 }
 
@@ -40,6 +45,10 @@ func Names() []string {
 	}
 	return out
 }
+
+// Split cuts s on sep. The separator comes first so the call reads as the operation applied to the
+// value, matching the other helpers here and Go template's own pipeline order.
+func Split(sep, s string) []string { return strings.Split(s, sep) }
 
 // ToJSON renders a value as JSON. Templates use it to emit a fragment verbatim, so HTML escaping
 // would corrupt the output — encoding/json's default escaping of <, > and & is disabled.

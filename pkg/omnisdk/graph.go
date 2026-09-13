@@ -278,11 +278,13 @@ func NewGraphQuery(dir string, g Graph, args Args) (Plan, error) {
 		// and the call, joined by a β edge carrying the bearer. A single-address run gets that wiring
 		// for free; composing several means doing it per exchange, or the plan cannot build because
 		// nothing supplies the token.
-		if auth, assertion, needs := docx.Expand(spec); needs {
+		if auth, authInputs, needs := docx.Expand(spec); needs {
 			auth = docx.Rename(auth, name+"_auth")
 			specs = append(specs, auth)
 			betas = append(betas, plan.NewBetaEdge(auth.Name(), name, docx.TokenAttr, docx.TokenAttr))
-			inputs["assertion"] = assertion
+			for k, v := range authInputs {
+				inputs[k] = v
+			}
 		}
 		spec = docx.Rename(spec, name)
 		// T_in is attached LAST. Wrapping the spec hides the compiled form Expand reads, so a
