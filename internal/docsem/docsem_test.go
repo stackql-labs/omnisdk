@@ -2,6 +2,7 @@ package docsem_test
 
 import (
 	"os"
+	"strings"
 	"testing"
 
 	"github.com/stackql-labs/omnisdk/internal/docsem"
@@ -53,5 +54,44 @@ func TestDeriveEC2FromDocuments(t *testing.T) {
 		if d.Update != "" {
 			t.Errorf("%s derived an update path %q; updates are not derivable", d.Exchange, d.Update)
 		}
+	}
+}
+
+// An operation the document describes incompletely is reported, not tolerated silently. The engine
+// can still run it — an undocumented response is assumed empty and answered with the status — but a
+// caller weighing whether a resource is safely manageable needs to see which operations are thin.
+func TestOutliersReportsThinlyDescribedOperations(t *testing.T) {
+	reg, err := stackqldoc.OpenRegistry(os.DirFS("../../pkg/docparse/stackqldoc/testdata"))
+	if err != nil {
+		t.Fatalf("registry: %v", err)
+	}
+	cat, err := reg.Catalog("aws")
+	if err != nil {
+		t.Fatalf("catalog: %v", err)
+	}
+	var addr string
+	for _, p := range cat.Paths() {
+		if strings.HasSuffix(p, ".ec2.vpcs") {
+			addr = p
+		}
+	}
+
+	found, err := docsem.Outliers(cat, addr)
+	if err != nil {
+		t.Fatalf("outliers: %v", err)
+	}
+	for _, o := range found {
+		t.Logf("%s %s %s: %s", o.Path(), o.Verb(), o.Operation(), o.Reason())
+	}
+	// The delete is the known case: its reply is undocumented, which is why compiling it needs the
+	// response-decode tolerance.
+	var sawDelete bool
+	for _, o := range found {
+		if o.Verb() == "delete" {
+			sawDelete = true
+		}
+	}
+	if !sawDelete {
+		t.Error("delete not reported as an outlier; its response is undocumented")
 	}
 }

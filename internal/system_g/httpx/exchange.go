@@ -155,7 +155,14 @@ func (o *op) do(ctx context.Context, token, overrideURL string) (int, []byte, st
 			q.Set(o.req.Continuation.TokenParam, token)
 		}
 		if len(q) > 0 {
-			u += "?" + q.Encode()
+			// A URL that already carries a query gets its parameters appended, not a second "?".
+			// Every AWS Query-API operation is declared as "/?Action=…&Version=…", so joining with
+			// "?" unconditionally produced a path the service reads as one long parameter.
+			sep := "?"
+			if strings.Contains(u, "?") {
+				sep = "&"
+			}
+			u += sep + q.Encode()
 		}
 	}
 

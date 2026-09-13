@@ -43,6 +43,51 @@ type options struct {
 	noSign   bool
 	security aot.Security
 	gcpCreds *sdk.GCPCredentials
+	// ignoreResponse compiles an operation whose response the document does not type.
+	ignoreResponse bool
+	// wholeResponse emits the decoded body as one record rather than exploding a list out of it.
+	wholeResponse bool
+}
+
+// MetadataKey is where a response's own report about itself sits within the response document:
+// the status it returned, and whatever else the call said about itself rather than about the object.
+//
+// It is placed at the RESPONSE level, above any item list. A SELECT's rows are items exploded out
+// of the body, and stamping the status onto each one would attach a property of the reply to things
+// inside it. So metadata is reachable on the whole response and elided from the rows — never
+// discarded, which is the difference between a flow choosing not to show something and it being
+// unavailable.
+const MetadataKey = "_response"
+
+// withMetadata is the response as one value: what the call reported about itself, beside what it
+// returned. A body the document does not type is the degenerate case — metadata and nothing else —
+// rather than a different shape.
+type withMetadata struct{ body facade.Transform }
+
+func (m withMetadata) Apply(in facade.Page) (facade.Record, error) {
+	meta := map[string]any{httpx.KeyStatus: string(in.Bytes(httpx.KeyStatus))}
+	doc := map[string]any{MetadataKey: meta}
+
+	if m.body != nil {
+		decoded, err := m.body.Apply(in)
+		if err != nil {
+			return nil, err
+		}
+		if payload, ok := decoded.Doc(facade.AnonymousPayload); ok {
+			if fields, ok := payload.(map[string]any); ok {
+				for k, v := range fields {
+					// The body wins a name clash: a provider that genuinely returns a field called
+					// _response means its own, and shadowing it would be inventing data.
+					doc[k] = v
+				}
+			} else {
+				doc[facade.AnonymousPayload] = payload
+			}
+		}
+	}
+	return record.NewRecord(map[string]facade.Value{
+		facade.AnonymousPayload: value.NewDocValue(doc),
+	}), nil
 }
 
 // WithGoogleCredentials supplies the service-account key for documents that declare service_account
@@ -74,6 +119,20 @@ func WithRequestTransform(t facade.Transform) Option {
 // WithoutSigning drops the implied signing entirely.
 func WithoutSigning() Option {
 	return func(o *options) { o.noSign = true }
+}
+
+// WithoutResponseDecode tolerates a response the document does not type. It exists for mutating
+// operations: a delete's reply is frequently undocumented, and a plan that cannot be built because
+// of that is a plan that cannot undo anything.
+func WithoutResponseDecode() Option {
+	return func(o *options) { o.ignoreResponse = true }
+}
+
+// WithWholeResponse emits the decoded body as a single record instead of exploding the item list
+// the document's objectKey names. It is for mutating operations, which answer about one object: the
+// objectKey describes where a SELECT finds its items, and a create's reply has no such list.
+func WithWholeResponse() Option {
+	return func(o *options) { o.wholeResponse = true }
 }
 
 // WithBaseURL retargets the document's server, keeping each operation's own path — so a document can
@@ -157,6 +216,17 @@ func Spec(ex aot.AOTExchange, inputs map[string]any, reg dsl.Registry, opts ...O
 		}
 	}
 	decode := decoderFor(resp, hasProgram)
+	if o.wholeResponse {
+		// The whole response is the value: metadata beside the body, with no item list exploded out
+		// of it, so nothing the call reported is left unreachable.
+		decode = withMetadata{body: decode}
+	} else if decode == nil && o.ignoreResponse {
+		// A mutating call whose response the document does not type: the effect is the point and the
+		// body carries nothing the caller reads. Refusing to compile it would make a delete
+		// unreachable because of how its reply was documented. The response still arrives — as
+		// metadata with an empty body.
+		decode = withMetadata{}
+	}
 	if decode == nil {
 		return nil, fmt.Errorf("docx: exchange %q has response media type %q, which is not decodable",
 			ex.Name(), resp.MediaType())
@@ -271,6 +341,12 @@ func Spec(ex aot.AOTExchange, inputs map[string]any, reg dsl.Registry, opts ...O
 			body = exchange.NewTransformExchange(0, checked, program(reg, tr.Type(), tr.Body()), 1)
 		}
 		decoded := exchange.NewTransformExchange(0, body, decode, 1)
+		if o.wholeResponse {
+			// A mutating call answers about ONE object, not a list. The document's objectKey
+			// describes where a SELECT finds its items, and applying it here explodes a reply that
+			// has no list — yielding zero rows for a call that plainly succeeded.
+			return decoded
+		}
 		listed := exchange.NewTransformExchange(0, decoded, itemsAt(rowPath), 1)
 		return exchange.NewExplodeRows(listed, 1)
 		// INNER, not left-outer: this is a SELECT, and an empty result set is zero rows. A left-outer

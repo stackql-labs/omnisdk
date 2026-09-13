@@ -137,11 +137,17 @@ func Select(cat aot.Catalog, path, verb string, inputs []string) (aot.AOTExchang
 	return nil, fmt.Errorf("docsem: %s %s: no operation accepts %v", path, verb, inputs)
 }
 
-// accepts reports whether an operation declares a parameter for every supplied input. An input the
-// operation does not know is what rules it out — sending it would either be dropped silently or
+// accepts reports whether an operation declares somewhere for every supplied input to go. An input
+// the operation does not know is what rules it out — sending it would either be dropped silently or
 // rejected, and both are worse than choosing the operation that declares it.
+//
+// Inputs count alongside parameters: a server variable such as a region is supplied by the caller
+// exactly as a parameter is, and it is not in the parameter list.
 func accepts(op aot.AOTExchange, supplied map[string]bool) bool {
 	declared := map[string]bool{}
+	for _, in := range op.Inputs() {
+		declared[in] = true
+	}
 	for _, p := range op.Request().Parameters() {
 		declared[p.Name()] = true
 	}
@@ -151,4 +157,55 @@ func accepts(op aot.AOTExchange, supplied map[string]bool) bool {
 		}
 	}
 	return true
+}
+
+// Outlier is an operation a document describes incompletely. It is reported rather than tolerated
+// silently: the engine can run such an operation — an undocumented response is assumed empty and
+// answered with the status code — but a caller deciding whether a resource is safely manageable
+// needs to know which of its operations the document does not fully describe.
+type Outlier interface {
+	// Path is the resource address.
+	Path() string
+	// Verb is the SQL verb the operation is bound to.
+	Verb() string
+	// Operation is the document's own id for it.
+	Operation() string
+	// Reason says what the document leaves unstated.
+	Reason() string
+}
+
+type outlier struct{ path, verb, op, reason string }
+
+func (o outlier) Path() string      { return o.path }
+func (o outlier) Verb() string      { return o.verb }
+func (o outlier) Operation() string { return o.op }
+func (o outlier) Reason() string    { return o.reason }
+
+// Outliers reports every operation of a resource whose response the document does not describe well
+// enough to read. Verbs are examined in turn; a verb the resource does not declare is not an
+// outlier, it is simply absent.
+func Outliers(cat aot.Catalog, path string, verbs ...string) ([]Outlier, error) {
+	if len(verbs) == 0 {
+		verbs = []string{"select", "insert", "update", "delete"}
+	}
+	var out []Outlier
+	for _, verb := range verbs {
+		ops, err := cat.Operations(path, verb)
+		if err != nil {
+			// A verb the resource does not bind is not a finding.
+			continue
+		}
+		for _, op := range ops {
+			resp := op.Response()
+			switch {
+			case resp == nil:
+				out = append(out, outlier{path, verb, op.OperationID(), "declares no response"})
+			case resp.MediaType() == "" && resp.OverrideMediaType() == "":
+				out = append(out, outlier{path, verb, op.OperationID(), "declares no response media type, so the body cannot be decoded"})
+			case resp.ObjectKey() == "" && verb == "select":
+				out = append(out, outlier{path, verb, op.OperationID(), "declares no objectKey, so the item list cannot be located"})
+			}
+		}
+	}
+	return out, nil
 }
