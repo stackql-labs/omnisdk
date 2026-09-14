@@ -127,6 +127,11 @@ type tokenSpec struct {
 type pathOp struct {
 	OperationID string      `yaml:"operationId"`
 	Parameters  []pathParam `yaml:"parameters"`
+	// RequestBody says the operation takes one, and how it is written. The fields are the caller's
+	// to supply, so only the media type is read.
+	RequestBody struct {
+		Content map[string]struct{} `yaml:"content"`
+	} `yaml:"requestBody"`
 	// Responses carry the declared response shape. Only the success response is read: an error
 	// response describes a failure, and projecting rows out of one would be reporting a fault as
 	// data.
@@ -292,11 +297,12 @@ func (d *document) build(name, verb, path string, op pathOp, m method) aot.AOTEx
 		inputs: serverVars(srv),
 		opID:   op.OperationID,
 		req: request{
-			method:     strings.ToUpper(verb),
-			url:        strings.TrimRight(srv.URL, "/") + route,
-			mediaType:  m.Request.MediaType,
-			params:     params,
-			parameters: operationParams(op),
+			method:        strings.ToUpper(verb),
+			url:           strings.TrimRight(srv.URL, "/") + route,
+			mediaType:     m.Request.MediaType,
+			params:        params,
+			parameters:    operationParams(op),
+			bodyMediaType: bodyMediaType(op),
 		},
 		resp: response{
 			mediaType:  m.Response.MediaType,
@@ -307,6 +313,21 @@ func (d *document) build(name, verb, path string, op pathOp, m method) aot.AOTEx
 			schema:     d.responseSchema(op),
 		},
 	}
+}
+
+// bodyMediaType is how the operation writes its request body, empty where it declares none. A
+// document states one content type per body; where it somehow states several, the first in sorted
+// order is taken so the same document always compiles the same way.
+func bodyMediaType(op pathOp) string {
+	types := make([]string, 0, len(op.RequestBody.Content))
+	for mt := range op.RequestBody.Content {
+		types = append(types, mt)
+	}
+	if len(types) == 0 {
+		return ""
+	}
+	sort.Strings(types)
+	return types[0]
 }
 
 // responseSchema resolves an operation's declared success shape. A schema-driven transform has no
@@ -464,14 +485,16 @@ func (p parameter) In() string     { return p.p.In }
 func (p parameter) Required() bool { return p.p.Required }
 
 type request struct {
-	method     string
-	url        string
-	mediaType  string
-	params     map[string]string
-	parameters []aot.Parameter
+	method        string
+	url           string
+	mediaType     string
+	params        map[string]string
+	parameters    []aot.Parameter
+	bodyMediaType string
 }
 
 func (r request) Parameters() []aot.Parameter { return r.parameters }
+func (r request) BodyMediaType() string       { return r.bodyMediaType }
 
 func (r request) Method() string    { return r.method }
 func (r request) URL() string       { return r.url }

@@ -176,20 +176,22 @@ budget, not a failure — see the note above.
 ```
 
 **6. IaC — creates real resources.** Converges a VPC and a subnet, then proves the second run is a
-no-op. Use a state directory you can throw away.
+no-op. Use a state directory you can throw away. `$R` is the registry root, since every effect is
+compiled from the document that declares it.
 
 ```bash
 _st=cicd/work/smoke-${_s}
+R=test/corpus/registry
 
 # First run: two rows, each with an identity.
-./build/omnicli iac-provision --aws-region "${_AWS_REGION}" --state "${_st}" --name smoke \
-  --vpc-cidr 10.99.0.0/16 --subnet-cidr 10.99.1.0/24 \
-  --vpc-tags '{"Name":"smoke"}' --subnet-tags '{"Name":"smoke"}'
+./build/omnicli iac --registry $R --handle aws-vpc-subnet \
+  --aws-region "${_AWS_REGION}" --state "${_st}" --name smoke \
+  --input '{"vpc_cidr":"10.99.0.0/16","subnet_cidr":"10.99.1.0/24","vpc_tags":{"Name":"smoke"}}'
 
 # Second run, identical: same identities, and no CreateVpc/CreateSubnet on the wire.
-./build/omnicli iac-provision --aws-region "${_AWS_REGION}" --state "${_st}" --name smoke \
-  --vpc-cidr 10.99.0.0/16 --subnet-cidr 10.99.1.0/24 \
-  --vpc-tags '{"Name":"smoke"}' --subnet-tags '{"Name":"smoke"}' \
+./build/omnicli iac --registry $R --handle aws-vpc-subnet \
+  --aws-region "${_AWS_REGION}" --state "${_st}" --name smoke \
+  --input '{"vpc_cidr":"10.99.0.0/16","subnet_cidr":"10.99.1.0/24","vpc_tags":{"Name":"smoke"}}' \
   --log "cicd/out/smoke-iac-rerun-${_s}.log"
 ```
 
@@ -204,8 +206,9 @@ and adopted, rather than created a second time.
 
 ```bash
 rm -rf "${_st}"
-./build/omnicli iac-provision --aws-region "${_AWS_REGION}" --state "${_st}" --name smoke \
-  --vpc-cidr 10.99.0.0/16 --subnet-cidr 10.99.1.0/24
+./build/omnicli iac --registry $R --handle aws-vpc-subnet \
+  --aws-region "${_AWS_REGION}" --state "${_st}" --name smoke \
+  --input '{"vpc_cidr":"10.99.0.0/16","subnet_cidr":"10.99.1.0/24"}' 
 
 aws ec2 describe-vpcs --region "${_AWS_REGION}" \
   --filters Name=tag:omnisdk:key,Values=smoke/aws/ec2/vpc --query 'Vpcs[].VpcId'
@@ -217,8 +220,9 @@ One id, unchanged from the first run.
 already created is removed.
 
 ```bash
-./build/omnicli iac-provision --aws-region "${_AWS_REGION}" --state "cicd/work/smoke-fail-${_s}" \
-  --name smokefail --vpc-cidr 10.98.0.0/16 --subnet-cidr 192.168.1.0/24
+./build/omnicli iac --registry $R --handle aws-vpc-subnet \
+  --aws-region "${_AWS_REGION}" --state "cicd/work/smoke-fail-${_s}" --name smokefail \
+  --input '{"vpc_cidr":"10.98.0.0/16","subnet_cidr":"192.168.1.0/24"}' 
 ```
 
 Expect `"status":"applied, then compensated"` on the VPC and `"outstanding":[]` on the failure row. A

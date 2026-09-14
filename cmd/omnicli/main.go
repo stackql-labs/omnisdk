@@ -160,6 +160,70 @@ func main() {
 		},
 	})
 
+	// Declared IaC: a resource states its provider, its document address and the residue its document
+	// leaves unsaid. No Go entry is added for a new service — the same relationship doc-graph has to
+	// a query.
+	iacApply := &cobra.Command{
+		Use:   "iac-apply <registry> <spec-json>",
+		Short: "Converge resources declared inline against provider documents; CREATES REAL RESOURCES",
+		Args:  cobra.ExactArgs(2),
+		RunE: withSinks(func(cmd *cobra.Command, w, logw io.Writer) error {
+			var spec struct {
+				Name      string `json:"name"`
+				State     string `json:"state"`
+				RunID     string `json:"run_id,omitempty"`
+				Resources []struct {
+					Key      string            `json:"key"`
+					Provider string            `json:"provider"`
+					Address  string            `json:"address"`
+					Desired  json.RawMessage   `json:"desired,omitempty"`
+					Params   map[string]string `json:"params,omitempty"`
+					Inbound  []struct {
+						From string `json:"from"`
+						As   string `json:"as,omitempty"`
+					} `json:"inbound,omitempty"`
+					ViaType          string `json:"via_type,omitempty"`
+					Via              string `json:"via,omitempty"`
+					Identity         string `json:"identity,omitempty"`
+					AddressedBy      string `json:"addressed_by,omitempty"`
+					CorrelationParam string `json:"correlation_param,omitempty"`
+				} `json:"resources"`
+				Args *omnisdk.Args `json:"args,omitempty"`
+			}
+			if err := json.Unmarshal([]byte(cmdArgs(cmd)[1]), &spec); err != nil {
+				return fmt.Errorf("spec json: %w", err)
+			}
+			resources := make([]omnisdk.ManagedResource, 0, len(spec.Resources))
+			for _, r := range spec.Resources {
+				inbound := make([]omnisdk.Arrival, 0, len(r.Inbound))
+				for _, in := range r.Inbound {
+					inbound = append(inbound, omnisdk.Arrival{From: in.From, As: in.As})
+				}
+				resources = append(resources, omnisdk.NewResource(r.Key, r.Provider, r.Address,
+					[]byte(r.Desired), r.Params, inbound, r.ViaType, r.Via,
+					r.Identity, r.AddressedBy, r.CorrelationParam))
+			}
+			a := omnisdk.Args{}
+			if spec.Args != nil {
+				a = *spec.Args
+			}
+			if a.Params == nil {
+				a.Params = map[string]string{}
+			}
+			if _, given := a.Params["region"]; !given && awsRegion != "" {
+				a.Params["region"] = awsRegion
+			}
+			a.Endpoint, a.Log, a.Tuning = endpoint, logw, t.facade()
+			a.InsecureSkipTLSVerify = insecureTLS
+			pl, err := omnisdk.Converge(cmdArgs(cmd)[0], spec.Name, spec.State, spec.RunID, resources, a)
+			if err != nil {
+				return err
+			}
+			return streamRows(pl, w)
+		}),
+	}
+	root.AddCommand(iacApply)
+
 	iacCmd := &cobra.Command{
 		Use:   "iac",
 		Short: "Converge a deployment by handle, with a durable ledger; CREATES REAL RESOURCES",

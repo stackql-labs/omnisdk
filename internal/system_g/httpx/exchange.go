@@ -308,6 +308,16 @@ func retryAfter(h http.Header) time.Duration {
 }
 
 func buildBody(b Body, bound map[string]any) (body []byte, contentType string) {
+	// A body supplied whole is sent as it stands, placeholders resolved. The caller has stated the
+	// entire content, so composing one from named parameters would be second-guessing it.
+	if len(b.Raw) > 0 {
+		switch b.Encoding {
+		case EncodingForm:
+			return []byte(subst(string(b.Raw), bound)), "application/x-www-form-urlencoded"
+		default:
+			return []byte(subst(string(b.Raw), bound)), "application/json"
+		}
+	}
 	switch b.Encoding {
 	case EncodingForm:
 		vals := url.Values{}

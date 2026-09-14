@@ -144,12 +144,18 @@ func (b awsVpcSubnet) Resources(inputs map[string]string) ([]ManagedResource, er
 		return nil, err
 	}
 	const vpc, subnet = "aws/ec2/vpc", "aws/ec2/subnet"
+	// The correlation stamp lands in the tag specification's first slot, which is why caller tags
+	// start at the second. Identity is read from the PROJECTED response: the document's schema-driven
+	// transform normalises every reply into line_items, so a minted id is a field of the row rather
+	// than a path through the provider's own envelope.
+	const stamp = "TagSpecification.1.Tag.1.Value"
 	return []ManagedResource{
-		NewResource(vpc, insertOf(vpc), cidrDoc(inputs["vpc_cidr"]), tagParams("vpc", vpcTags), nil, "", ""),
-		NewResource(subnet, insertOf(subnet), cidrDoc(inputs["subnet_cidr"]), tagParams("subnet", subnetTags),
+		NewResource(vpc, "aws", "ec2.vpcs", cidrDoc(inputs["vpc_cidr"]), tagParams("vpc", vpcTags),
+			nil, "", "", "line_items.VpcId", "VpcId", stamp),
+		NewResource(subnet, "aws", "ec2.subnets", cidrDoc(inputs["subnet_cidr"]), tagParams("subnet", subnetTags),
 			// The subnet cannot be addressed until the VPC exists; its id arrives as VpcId, which is
 			// the name CreateSubnet takes, so no reshaping is needed here.
-			[]Arrival{{From: vpc, As: "VpcId"}}, "", ""),
+			[]Arrival{{From: vpc, As: "VpcId"}}, "", "", "line_items.SubnetId", "SubnetId", stamp),
 	}, nil
 }
 

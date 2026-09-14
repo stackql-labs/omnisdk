@@ -65,16 +65,20 @@ Converges a VPC and a subnet in it, recording intent in a durable ledger before 
 `provision`, which issues both creates and remembers nothing, this is re-runnable: a second run
 against unchanged intent issues no API calls at all.
 
+Every effect is compiled from the provider document that declares it, so `--registry` names the
+document root and a new service is a document rather than code.
+
 `--name` is the collection — the ledger key prefix, the lease scope, and the correlation tag stamped
 on each object. `--state` is where that ledger lives; one state directory holds many collections.
 Neither is defaulted: both decide which resources a run applies to.
 
 ```bash
-./build/omnicli iac-provision --aws-region us-east-1 \
-  --state cicd/work/iac-state --name scratch \
-  --vpc-cidr 10.42.0.0/16 --subnet-cidr 10.42.1.0/24 \
-  --vpc-tags '{"Name":"scratch"}' --subnet-tags '{"Name":"scratch"}'
+./build/omnicli iac --registry test/corpus/registry --handle aws-vpc-subnet \
+  --aws-region us-east-1 --state cicd/work/iac-state --name scratch \
+  --input '{"vpc_cidr":"10.42.0.0/16","subnet_cidr":"10.42.1.0/24","vpc_tags":{"Name":"scratch"}}'
 ```
+
+`./build/omnicli iac-handles` lists the precanned deployments and the inputs each takes.
 
 ```json
 {"identity":"vpc-08e599d96e6bbe5fd","key":"scratch/aws/ec2/vpc","status":"applied"}
@@ -104,9 +108,9 @@ whatever the provider refuses until a pass makes no progress. A subnet CIDR outs
 the easy way to see it:
 
 ```bash
-./build/omnicli iac-provision --aws-region us-east-1 \
-  --state cicd/work/iac-state --name failtest \
-  --vpc-cidr 10.43.0.0/16 --subnet-cidr 192.168.1.0/24
+./build/omnicli iac --registry test/corpus/registry --handle aws-vpc-subnet \
+  --aws-region us-east-1 --state cicd/work/iac-state --name failtest \
+  --input '{"vpc_cidr":"10.43.0.0/16","subnet_cidr":"192.168.1.0/24"}' 
 ```
 
 ```json
@@ -116,6 +120,130 @@ the easy way to see it:
 
 A non-empty `outstanding` means the run is *partially* compensated — something it created is still
 there and could not be removed.
+
+### Declared IaC, any provider
+
+A blueprint is a convenience, not the mechanism. `iac-apply` takes the resources inline, so a service
+with no blueprint needs no code: state the provider, the document address, and the residue the
+document leaves unsaid.
+
+```bash
+./build/omnicli iac-apply test/corpus/registry '{
+  "name": "scratch", "state": "cicd/work/iac-state",
+  "resources": [
+    {"key": "aws/ec2/vpc", "provider": "aws", "address": "ec2.vpcs",
+     "desired": {"CidrBlock": "10.42.0.0/16"},
+     "params": {"TagSpecification.1.ResourceType": "vpc",
+                "TagSpecification.1.Tag.1.Key": "omnisdk:key"},
+     "identity": "line_items.VpcId", "addressed_by": "VpcId",
+     "correlation_param": "TagSpecification.1.Tag.1.Value"},
+    {"key": "aws/ec2/subnet", "provider": "aws", "address": "ec2.subnets",
+     "desired": {"CidrBlock": "10.42.1.0/24"},
+     "inbound": [{"from": "aws/ec2/vpc", "as": "VpcId"}],
+     "identity": "line_items.SubnetId", "addressed_by": "SubnetId"}
+  ],
+  "args": {"params": {"region": "us-east-1"}}
+}' --aws-region us-east-1
+```
+
+`inbound` is the β edge: the VPC's recorded identity arrives as `VpcId`. Where the shape differs
+from what the next call accepts, `via_type`/`via` reshape the inbox — the same `T_in` a query uses.
+
+The three fields a document does not state:
+
+| field | why the document cannot say it |
+|---|---|
+| `identity` | where the minted id sits in the **projected** response — `line_items.VpcId` after the schema-driven transform has run |
+| `addressed_by` | which parameter carries an existing object's id, so a read or a delete is buildable from the ledger entry alone |
+| `correlation_param` | which parameter takes the stamp linking the object back to its ledger key. Absent means losing the ledger orphans the resource |
+
+**Google.** Client-named, so `identity` is empty — the caller chose the name and nothing has to be
+read back out of the async Operation to know what was made. The intent goes in the request **body**,
+which the document declares, so no field is scattered into the query:
+
+```bash
+./build/omnicli iac-apply test/corpus/registry '{
+  "name": "scratch", "state": "cicd/work/iac-state",
+  "resources": [
+    {"key": "google/compute/network", "provider": "google", "address": "compute.networks",
+     "desired": {"name": "demo-net", "autoCreateSubnetworks": false},
+     "addressed_by": "network"}
+  ],
+  "args": {"params": {"project": "PROJECT"}}
+}'
+```
+
+**Azure.** Also client-named, addressed by the resource name in the path:
+
+```bash
+./build/omnicli iac-apply test/corpus/registry '{
+  "name": "scratch", "state": "cicd/work/iac-state",
+  "resources": [
+    {"key": "azure/network/vnet", "provider": "azure", "address": "network.virtual_networks",
+     "desired": {"location": "eastus",
+                 "properties": {"addressSpace": {"addressPrefixes": ["10.42.0.0/16"]}}},
+     "params": {"resource_group_name": "RG", "virtual_network_name": "demo-vnet"},
+     "addressed_by": "virtual_network_name"}
+  ],
+  "args": {"params": {"subscription_id": "SUBSCRIPTION"}}
+}'
+```
+
+> **Verified:** the AWS case end to end against real EC2, and the Google body shape against a
+> stand-in (`TestGoogleCreateSendsTheIntentAsABody`). Azure's declaration follows its document's
+> signature and has not been run. GCP creates return an async Operation, so a run reports success
+> once the call is accepted — waiting for completion needs an α edge and is not built.
+
+### Calling it from Go
+
+The CLI is a thin consumer; a client such as stackql uses the same facade:
+
+```go
+res := []omnisdk.ManagedResource{
+    omnisdk.NewResource(
+        "aws/ec2/vpc",              // key within the collection
+        "aws", "ec2.vpcs",          // registry provider, document address
+        []byte(`{"CidrBlock":"10.42.0.0/16"}`),
+        map[string]string{"TagSpecification.1.ResourceType": "vpc"},
+        nil, "", "",                // inbound, via type, via program
+        "line_items.VpcId", "VpcId", "TagSpecification.1.Tag.1.Value",
+    ),
+}
+
+pl, err := omnisdk.Converge(registry, "scratch", state, runID, res, omnisdk.Args{
+    Params: map[string]string{"region": "us-east-1"},
+})
+rows, err := pl.Open(ctx)          // same Plan/Rows a query returns
+for rows.Next() { rows.Row() }     // {"key":…, "identity":…, "status":…}
+```
+
+`Converge` returns the same `Plan`/`Rows` a query does, so a consumer iterates one cursor shape
+whether it is reading or provisioning.
+
+**Auth is identical to every other call.** `Args` carries it, resolved exactly as a query resolves
+it: the provider document declares the scheme — `aws_signing_v4`, `service_account`, `oauth2` — and
+the credential comes from `Args.Auth`, falling back to the canonical environment variables. A
+provisioning run signs, or exchanges a token, by the same code path a read does, so a consumer that
+can already query a provider can already provision against it.
+
+```go
+omnisdk.Converge(registry, name, state, runID, res, omnisdk.Args{
+    // Auth is optional: nil falls back to the canonical AWS_*, AZURE_* and GOOGLE_* variables.
+    Auth:   &omnisdk.Auth{AccessKeyID: "...", SecretAccessKey: "..."},
+    Params: map[string]string{"region": "us-east-1"},   // scope: required, never inferred
+})
+```
+
+Only the credential a document actually declares is required: a run touching AWS alone does not fail
+because a Google key elsewhere is stale, and a credential that IS present but unusable says so rather
+than reporting as absent.
+
+Blueprints are reachable the same way:
+
+```go
+bp, ok := omnisdk.BlueprintFor("aws-vpc-subnet")
+res, err := bp.Resources(map[string]string{"region": "us-east-1", "vpc_cidr": "10.42.0.0/16", ...})
+```
 
 ### Limits
 

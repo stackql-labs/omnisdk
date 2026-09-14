@@ -84,11 +84,21 @@ func (e *effector) Effect(ctx context.Context, exchange string, k facade.LedgerK
 		return nil, err
 	}
 	res := e.residue[addr]
-	inputs, err := e.inputs(addr, k, in, res, verb)
+	// Whether the operation takes a body decides where the intent goes: into the body whole, or
+	// scattered across parameters. The document states it, so the decision is not a guess.
+	bodied, err := e.takesBody(addr, verb)
 	if err != nil {
 		return nil, err
 	}
-	row, err := e.run(ctx, addr, verb, inputs)
+	inputs, err := e.inputs(addr, k, in, res, verb, bodied)
+	if err != nil {
+		return nil, err
+	}
+	var body []byte
+	if bodied {
+		body = in.Mutation
+	}
+	row, err := e.run(ctx, addr, verb, inputs, body)
 	if err != nil {
 		return nil, fmt.Errorf("docrun: %s %s %s: %w", addr, verb, k, err)
 	}
@@ -137,7 +147,7 @@ func (e *effector) Read(ctx context.Context, exchange string, k facade.LedgerKey
 	}
 	// A read takes the whole response too: the caller is asking about one object, and the metadata
 	// travels with it rather than being dropped on the way to a row.
-	row, err := e.run(ctx, addr, "select", inputs)
+	row, err := e.run(ctx, addr, "select", inputs, nil)
 	if err != nil {
 		return nil, nil, false, fmt.Errorf("docrun: read %s: %w", k, err)
 	}
@@ -158,9 +168,12 @@ func (e *effector) Read(ctx context.Context, exchange string, k facade.LedgerKey
 // inputs assembles what the operation needs: the mutation's fields, the caller's parameters, an
 // existing object's identity, and the correlation stamp where the resource declares somewhere to
 // put it.
-func (e *effector) inputs(addr string, k facade.LedgerKey, in facade.EffectInput, res Residue, verb string) (map[string]any, error) {
+func (e *effector) inputs(addr string, k facade.LedgerKey, in facade.EffectInput, res Residue, verb string, bodied bool) (map[string]any, error) {
 	inputs := map[string]any{}
-	if len(in.Mutation) > 0 && verb != "delete" {
+	if len(in.Mutation) > 0 && verb != "delete" && !bodied {
+		// Only where the operation takes no body: then the intent's fields ARE the parameters. An
+		// operation that declares a body receives the document whole instead, because scattering its
+		// fields into the query is how a create meant for a JSON API goes out as a query string.
 		fields, err := decodeFields(in.Mutation)
 		if err != nil {
 			return nil, err
@@ -238,7 +251,19 @@ func at(doc map[string]any, path string) (string, bool) {
 	return fmt.Sprint(cur), true
 }
 
-func (e *effector) run(ctx context.Context, addr, verb string, inputs map[string]any) (map[string]any, error) {
+// takesBody reports whether the first operation matching an address and verb declares a request
+// body. Resolving without inputs is enough: every operation for one verb on one resource agrees
+// about whether it takes a body, since that is a property of the API's style rather than of the
+// arguments.
+func (e *effector) takesBody(addr, verb string) (bool, error) {
+	ops, err := e.catalog.Operations(addr, verb)
+	if err != nil || len(ops) == 0 {
+		return false, nil
+	}
+	return ops[0].Request().BodyMediaType() != "", nil
+}
+
+func (e *effector) run(ctx context.Context, addr, verb string, inputs map[string]any, body []byte) (map[string]any, error) {
 	names := make([]string, 0, len(inputs))
 	for n := range inputs {
 		names = append(names, n)
@@ -263,6 +288,9 @@ func (e *effector) run(ctx context.Context, addr, verb string, inputs map[string
 		if strings.Contains(name, ".") {
 			indexed = append(indexed, name)
 		}
+	}
+	if len(body) > 0 {
+		opts = append(opts, docx.WithBody(body))
 	}
 	if len(indexed) > 0 {
 		// Bound, not merely placed: these values come from the caller, so they travel on the row and

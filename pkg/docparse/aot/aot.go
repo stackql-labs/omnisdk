@@ -66,6 +66,12 @@ type Request interface {
 	// alone is not enough: the same parameter is a path segment for one operation and a query string
 	// for another, and a caller's value cannot be placed without knowing which.
 	Parameters() []Parameter
+	// BodyMediaType is what the operation's request body is written as, empty where it takes none.
+	//
+	// The body's CONTENT is the caller's — an intent document, the object to create — so the
+	// document does not need to enumerate its fields for one to be sent. Saying the operation takes
+	// a body, and in what encoding, is the whole of what a compiler needs.
+	BodyMediaType() string
 }
 
 // Parameter is one declared input and its location on the wire.
@@ -82,6 +88,10 @@ const (
 	InPath   = "path"
 	InHeader = "header"
 	InCookie = "cookie"
+	// InBody is not an OpenAPI parameter location: a request body is declared as requestBody, not in
+	// the parameter list. It is named here because a parser that flattens a body schema into
+	// parameters has to say where they go, and a compiler places them by this name like any other.
+	InBody = "body"
 )
 
 // Schema is the shape a document declares, as much of it as a consumer needs to project a response

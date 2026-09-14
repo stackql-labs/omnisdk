@@ -58,6 +58,8 @@ type options struct {
 	// emits them, so declaring them as inputs would leave the plan looking for a β source that by
 	// definition does not exist.
 	provided map[string]bool
+	// body is a document sent whole, for an operation that declares a request body.
+	body []byte
 	// inbox names values T_in CONSUMES. They are bound — a producer emits each one — but never
 	// placed: they are raw material for the transform, not parameters the service has heard of.
 	inbox map[string]bool
@@ -176,6 +178,15 @@ func WithProvided(names ...string) Option {
 			o.provided[n] = true
 		}
 	}
+}
+
+// WithBody sends a document as the request body, for an operation that declares one.
+//
+// The body's content is the caller's — an intent document, the object to create — so a document does
+// not enumerate its fields and nothing here parses them. The operation says it takes a body and in
+// what encoding; what goes in it is supplied whole.
+func WithBody(doc []byte) Option {
+	return func(o *options) { o.body = doc }
 }
 
 // WithInbox declares values the consumer's inbound transform consumes. They are bound so a producer
@@ -376,6 +387,14 @@ func Spec(ex aot.AOTExchange, inputs map[string]any, reg dsl.Registry, opts ...O
 			hreq.Headers[p.Name()] = tmpl
 		case aot.InPath:
 			// already templated into the URL by the document; it only needs binding
+		case aot.InBody:
+			// A create that sends a document rather than query parameters. The encoding is the
+			// document's own statement about the request; a parameter is placed into the body the
+			// same way it would be placed into the query.
+			if hreq.Body.Params == nil {
+				hreq.Body = httpx.Body{Encoding: bodyEncoding(req.MediaType()), Params: map[string]any{}}
+			}
+			hreq.Body.Params[p.Name()] = tmpl
 		default:
 			continue // a location we do not place must not be bound as if we had
 		}
@@ -412,6 +431,11 @@ func Spec(ex aot.AOTExchange, inputs map[string]any, reg dsl.Registry, opts ...O
 				bindings = withInput(bindings, name)
 			}
 		}
+	}
+	// An operation that declares a request body is sent one, whole. Scattering an intent document's
+	// fields into the query is how a create meant for a JSON API goes out as a query string.
+	if len(o.body) > 0 && req.BodyMediaType() != "" {
+		hreq.Body = httpx.Body{Encoding: bodyEncoding(req.BodyMediaType()), Raw: o.body}
 	}
 	// Raw material for T_in: bound so a producer delivers it, never placed on the wire.
 	for name := range o.inbox {
@@ -919,3 +943,13 @@ type renamed struct {
 }
 
 func (r renamed) Name() string { return r.name }
+
+// bodyEncoding maps the document's declared request media type onto how the body is written. JSON is
+// the default: a document that states nothing about its request, yet declares body parameters, is
+// describing a JSON API — form encoding is always stated outright.
+func bodyEncoding(mediaType string) httpx.Encoding {
+	if strings.Contains(mediaType, "x-www-form-urlencoded") {
+		return httpx.EncodingForm
+	}
+	return httpx.EncodingJSON
+}

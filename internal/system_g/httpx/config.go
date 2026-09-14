@@ -30,6 +30,10 @@ const (
 type Body struct {
 	Encoding Encoding
 	Params   map[string]any
+	// Raw is a body supplied whole, for a call whose content is the caller's document rather than a
+	// set of named parameters. It wins over Params: a caller that has stated the whole body has said
+	// everything about it.
+	Raw []byte
 }
 
 // Continuation drives multi-response calls. Paths are dotted paths into the decoded response.

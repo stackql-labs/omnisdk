@@ -33,8 +33,20 @@ type ManagedResource interface {
 	// Key addresses the resource beneath the collection, e.g. "aws/ec2/vpc". Its leading segments
 	// name the provider and service, which is how an effect is routed.
 	Key() string
-	// Exchange creates it.
-	Exchange() string
+	// Provider is the registry provider serving it, e.g. "aws".
+	Provider() string
+	// Address is the resource's document address relative to the provider, e.g. "ec2.vpcs". The
+	// operation run against it is chosen by verb and signature, so a resource names WHAT it is and
+	// the document says which call that means.
+	Address() string
+	// Identity is the path to the minted id in the projected response, e.g. "line_items.VpcId".
+	Identity() string
+	// AddressedBy is the parameter carrying an existing object's identity, so a read or a delete can
+	// be built from the ledger entry alone.
+	AddressedBy() string
+	// CorrelationParam is the parameter taking the correlation stamp, empty where the provider
+	// offers no writable searchable field — in which case losing the ledger orphans the resource.
+	CorrelationParam() string
 	// Desired is the resolved intent to converge on.
 	Desired() []byte
 	// Params address the object on the wire.
@@ -54,9 +66,11 @@ type ManagedResource interface {
 
 // NewResource builds a ManagedResource. A client that assembles its own deployment — rather than
 // naming a blueprint — uses this.
-func NewResource(key, exchange string, desired []byte, params map[string]string, inbound []Arrival, viaType, viaProgram string) ManagedResource {
-	return resource{key: key, exchange: exchange, desired: desired, params: params,
-		inbound: inbound, viaType: viaType, viaProgram: viaProgram}
+func NewResource(key, provider, address string, desired []byte, params map[string]string,
+	inbound []Arrival, viaType, viaProgram, identity, addressedBy, correlationParam string) ManagedResource {
+	return resource{key: key, provider: provider, address: address, desired: desired, params: params,
+		inbound: inbound, viaType: viaType, viaProgram: viaProgram,
+		identity: identity, addressedBy: addressedBy, correlation: correlationParam}
 }
 
 // Arrival is one value reaching a resource from a sibling in the same collection.
@@ -69,15 +83,23 @@ type Arrival struct {
 
 type resource struct {
 	key                 string
-	exchange            string
+	provider            string
+	address             string
 	desired             []byte
 	params              map[string]string
 	inbound             []Arrival
 	viaType, viaProgram string
+	identity            string
+	addressedBy         string
+	correlation         string
 }
 
 func (r resource) Key() string               { return r.key }
-func (r resource) Exchange() string          { return r.exchange }
+func (r resource) Provider() string          { return r.provider }
+func (r resource) Address() string           { return r.address }
+func (r resource) Identity() string          { return r.identity }
+func (r resource) AddressedBy() string       { return r.addressedBy }
+func (r resource) CorrelationParam() string  { return r.correlation }
 func (r resource) Desired() []byte           { return r.desired }
 func (r resource) Params() map[string]string { return r.params }
 func (r resource) Inbound() []Arrival        { return r.inbound }
@@ -117,46 +139,12 @@ func Converge(registry, name, state, runID string, resources []ManagedResource, 
 		effector: effector, semantics: sem, exchanges: exchanges, scope: args.Params}, nil
 }
 
-// providers maps a key-address prefix to the provider that services it. Adding a provider is an
-// entry here; nothing above changes.
-// providers maps a key-address prefix to the provider that services it. Adding a provider is an
-// entry here; nothing above changes.
+// providerWiring builds an effector per provider the resources name, and the semantics derived from
+// their documents.
 //
-// Every entry is document-driven: the effector compiles the operation the document declares, so a
-// new service is a document plus its residue, not Go code. The prefix is what a resource key begins
-// with, and the address is what the registry knows the same resource as.
-var providers = map[string]provider{
-	"aws/ec2": {
-		registryProvider: "aws",
-		// What a document does not state, per resource: where the identity is in the response, which
-		// parameter addresses an existing object, and which parameter takes the correlation stamp.
-		residue: map[string]docrun.Residue{
-			// The identity path is against the PROJECTED response: the document's schema-driven
-			// transform normalises every reply into line_items, so a create's minted id is a field
-			// of the row rather than a path through the provider's own envelope.
-			"aws/ec2/vpc": docrun.NewResidue(
-				"line_items.VpcId", "VpcId", "TagSpecification.1.Tag.1.Value"),
-			"aws/ec2/subnet": docrun.NewResidue(
-				"line_items.SubnetId", "SubnetId", "TagSpecification.1.Tag.1.Value"),
-		},
-		// The registry address each resource key names.
-		addresses: map[string]string{
-			"aws/ec2/vpc":    "ec2.vpcs",
-			"aws/ec2/subnet": "ec2.subnets",
-		},
-	},
-}
-
-// provider is one registry-backed provider and the residue its documents leave unstated.
-type provider struct {
-	registryProvider string
-	residue          map[string]docrun.Residue
-	addresses        map[string]string
-}
-
-// providerWiring resolves an effector per provider the resources touch, and routes between them. Only the
-// providers actually addressed are constructed, so a deployment that never mentions one needs no
-// credentials for it.
+// Nothing here is a table of known services: a resource states its provider, its document address
+// and the residue its document leaves unsaid, so a new service is data a caller supplies rather than
+// an entry someone adds to this package.
 func providerWiring(registry string, resources []ManagedResource, args Args) (facade.Effector, facade.Semantics, map[string]string, error) {
 	reg, err := openRegistry(registry)
 	if err != nil {
@@ -167,25 +155,49 @@ func providerWiring(registry string, resources []ManagedResource, args Args) (fa
 		return nil, nil, nil, err
 	}
 
-	// A blueprint names a resource KEY; the effector resolves a registry ADDRESS. Translating here
-	// is what keeps a blueprint free of the provider's own naming, so the same blueprint survives a
-	// document that renames its resources.
+	// A resource names a KEY; the effector resolves a published ADDRESS. Translating here keeps a
+	// resource free of the registry's namespacing, so the same declaration survives a registry that
+	// renames its providers.
 	exchanges := map[string]string{}
-	routes := map[string]facade.Effector{}
+	residues := map[string]map[string]docrun.Residue{}
+	catalogs := map[string]aot.Catalog{}
 	var decls []semantics.Declaration
+
 	for _, r := range resources {
-		prefix, ok := providerFor(r.Key())
+		if r.Provider() == "" || r.Address() == "" {
+			return nil, nil, nil, fmt.Errorf("omnisdk: resource %q names no provider or address", r.Key())
+		}
+		cat, ok := catalogs[r.Provider()]
 		if !ok {
-			return nil, nil, nil, fmt.Errorf("omnisdk: no provider for resource key %q", r.Key())
+			cat, err = reg.Catalog(r.Provider())
+			if err != nil {
+				return nil, nil, nil, fmt.Errorf("omnisdk: provider %q: %w", r.Provider(), err)
+			}
+			catalogs[r.Provider()] = cat
+			residues[r.Provider()] = map[string]docrun.Residue{}
 		}
-		if _, built := routes[prefix]; built {
-			continue
-		}
-		p := providers[prefix]
-		cat, err := reg.Catalog(p.registryProvider)
+		qualified, err := qualify(cat, r.Address())
 		if err != nil {
-			return nil, nil, nil, fmt.Errorf("omnisdk: provider %q: %w", p.registryProvider, err)
+			return nil, nil, nil, err
 		}
+		residues[r.Provider()][qualified] = docrun.NewResidue(r.Identity(), r.AddressedBy(), r.CorrelationParam())
+		for _, verb := range []string{"insert", "update", "delete", "select"} {
+			exchanges[exchangeOf(r.Key(), verb)] = exchangeOf(qualified, verb)
+		}
+		decls = append(decls, semantics.Declaration{
+			Exchange: exchangeOf(qualified, "insert"),
+			Form:     "insert",
+			// The inverse of a create is the same resource's delete, chosen by signature when it
+			// runs. Its absence in the document is what declares the create non-invertible.
+			Inverse: exchangeOf(qualified, "delete"),
+			// A document does not say whether a delete loses anything, so a derived inverse is lossy
+			// until something states otherwise — which errs toward asking.
+			Fidelity: facade.FidelityLossy,
+		})
+	}
+
+	routes := map[string]facade.Effector{}
+	for prov, cat := range catalogs {
 		var sec aot.Security
 		if pr := cat.Provider(); pr != nil {
 			sec = pr.Security()
@@ -197,55 +209,31 @@ func providerWiring(registry string, resources []ManagedResource, args Args) (fa
 		if sec != nil {
 			opts = append(opts, docx.WithProviderSecurity(sec))
 		}
-		// Residue is keyed by the registry address, which is what the effector resolves against.
-		byAddress := map[string]docrun.Residue{}
-		for key, res := range p.residue {
-			qualified, err := qualify(cat, p.addresses[key])
-			if err != nil {
-				return nil, nil, nil, err
-			}
-			byAddress[qualified] = res
-		}
-		routes[prefix] = docrun.New(cat, dslReg, byAddress, opts...)
-
-		// Semantics come from the documents: the inverse of a create is the same resource's delete,
-		// and its absence is what declares the create non-invertible. No hand-authored table.
-		for key, addr := range p.addresses {
-			qualified, err := qualify(cat, addr)
-			if err != nil {
-				return nil, nil, nil, err
-			}
-			for _, verb := range []string{"insert", "update", "delete", "select"} {
-				exchanges[exchangeOf(key, verb)] = exchangeOf(qualified, verb)
-			}
-			decls = append(decls, semantics.Declaration{
-				Exchange: exchangeOf(qualified, "insert"),
-				Form:     "insert",
-				Inverse:  exchangeOf(qualified, "delete"),
-				// A document does not say whether a delete loses anything, so a derived inverse is
-				// lossy until something states otherwise — which errs toward asking.
-				Fidelity: facade.FidelityLossy,
-			})
-		}
+		routes[prov] = docrun.New(cat, dslReg, residues[prov], opts...)
 	}
+
 	sem, err := semantics.New(decls)
 	if err != nil {
 		return nil, nil, nil, err
 	}
-	return dispatch.New(routes), sem, exchanges, nil
+	return byProvider(resources, routes), sem, exchanges, nil
 }
 
-// insertOf names the create for a resource key: the registry address and the verb, which is how a
-// document-driven effector addresses an operation. A blueprint names WHAT to converge; which
-// operation that is remains the document's statement.
-func insertOf(key string) string { return exchangeOf(key, "insert") }
+// byProvider routes each key to the provider that declared it, so a collection spanning providers
+// reaches each one.
+func byProvider(resources []ManagedResource, routes map[string]facade.Effector) facade.Effector {
+	prefixes := map[string]facade.Effector{}
+	for _, r := range resources {
+		if eff, ok := routes[r.Provider()]; ok {
+			prefixes[r.Key()] = eff
+		}
+	}
+	return dispatch.New(prefixes)
+}
 
-// deleteOf names the compensating operation for a resource key.
-func deleteOf(key string) string { return exchangeOf(key, "delete") }
-
-// exchangeOf builds an exchange name from a resource key and a verb. The provider prefix is applied
-// at wiring time, where the catalog is known, so a blueprint stays free of it.
-func exchangeOf(key, verb string) string { return key + ":" + verb }
+// exchangeOf names an operation: an address and the verb to run against it. Which concrete call that
+// means is the document's statement, chosen by signature when it runs.
+func exchangeOf(addr, verb string) string { return addr + ":" + verb }
 
 // qualify resolves a service-relative address to the one the catalog actually publishes.
 //
@@ -269,17 +257,6 @@ func openRegistry(root string) (aot.Registry, error) {
 		return nil, fmt.Errorf("omnisdk: a document registry is required")
 	}
 	return stackqldoc.OpenRegistry(os.DirFS(root))
-}
-
-// providerFor finds the longest registered prefix matching a resource key.
-func providerFor(key string) (string, bool) {
-	best := ""
-	for prefix := range providers {
-		if strings.HasPrefix(key, prefix) && len(prefix) > len(best) {
-			best = prefix
-		}
-	}
-	return best, best != ""
 }
 
 type convergePlan struct {
@@ -325,9 +302,9 @@ func (p *convergePlan) Open(ctx context.Context) (Rows, error) {
 			}
 			inbound = append(inbound, apply.Arrival{From: facade.LedgerKey(p.name + "/" + in.From), As: name})
 		}
-		exchange, ok := p.exchanges[r.Exchange()]
+		exchange, ok := p.exchanges[exchangeOf(r.Key(), "insert")]
 		if !ok {
-			return nil, fmt.Errorf("omnisdk: no document operation for %q", r.Exchange())
+			return nil, fmt.Errorf("omnisdk: no document operation for %q", r.Key())
 		}
 		// Scope travels with every step: a region or a project is stated once for the run, and the
 		// document declares it as a server variable each call needs. A resource's own parameters win,
