@@ -256,6 +256,11 @@ func openRegistry(root string) (aot.Registry, error) {
 	if root == "" {
 		return nil, fmt.Errorf("omnisdk: a document registry is required")
 	}
+	// Checked before opening: os.DirFS defers the error to the first read, which surfaces as
+	// "open .: no such file or directory" and names nothing the caller can act on.
+	if _, err := os.Stat(root); err != nil {
+		return nil, fmt.Errorf("omnisdk: document registry %q: %w", root, err)
+	}
 	return stackqldoc.OpenRegistry(os.DirFS(root))
 }
 

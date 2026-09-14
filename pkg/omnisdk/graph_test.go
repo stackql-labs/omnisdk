@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"testing"
 
@@ -14,9 +15,22 @@ import (
 
 const corpus = "../../test/corpus/registry"
 
+// requireCorpus skips a test that needs the provider-document corpus.
+//
+// The corpus is a vendored copy of an external registry and is not tracked, so a clean clone does
+// not have it. Failing there reports a missing fixture as a broken build; skipping says what is
+// absent and why, and the test still runs everywhere the corpus is present.
+func requireCorpus(t *testing.T) {
+	t.Helper()
+	if _, err := os.Stat(corpus); err != nil {
+		t.Skipf("provider-document corpus absent at %s; see the developer guide for how to populate it", corpus)
+	}
+}
+
 // A document describes one provider's calls and does not state that a subnet belongs to a VPC. The
 // query says so: the VPC's id is bound into the subnet describe, which is a β edge nobody wrote down.
 func TestGraphJoinsTwoExchangesTheDocumentDoesNotRelate(t *testing.T) {
+	requireCorpus(t)
 	t.Setenv("AWS_ACCESS_KEY_ID", "AKIATEST")
 	t.Setenv("AWS_SECRET_ACCESS_KEY", "secret")
 
