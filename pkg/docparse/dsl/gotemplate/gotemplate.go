@@ -60,7 +60,9 @@ type evaluator struct {
 
 func (e evaluator) Type() string { return e.typ }
 
-func (e evaluator) Eval(program string, in []byte) ([]byte, error) {
+// Eval ignores the context: a template carries its own instructions, so the document's schema is
+// nothing it has an opinion about.
+func (e evaluator) Eval(_ dsl.Context, program string, in []byte) ([]byte, error) {
 	dot, err := e.bind(in)
 	if err != nil {
 		return nil, err

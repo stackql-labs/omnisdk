@@ -55,10 +55,45 @@ type bindJoinExchange struct {
 	bindings []Binding
 	inner    InnerFactory
 	alpha    facade.Alpha // behavioural (E_α) annotation on the outer→inner edge; nil = none
+	inbound  facade.Transform
+}
+
+// applyInbound runs T_in over the assembled inbox and returns the consumer's inputs. The transform
+// sees the whole inbox, so it can build one input from several — an identifier from one producer
+// wrapped into a filter expression the consumer's API actually accepts.
+func applyInbound(t facade.Transform, bound map[string]any) (map[string]any, error) {
+	rec, err := t.Apply(NewDocRecord(bound))
+	if err != nil {
+		return nil, err
+	}
+	shaped, ok := DocMap(rec)
+	if !ok {
+		return nil, fmt.Errorf("bind: inbound transform did not yield a document")
+	}
+	// The transform OVERRIDES the inbox rather than replacing it. A program states the inputs it
+	// builds, not every input the exchange needs: a scope value such as a region arrives in the same
+	// inbox and is nothing the program has an opinion about. Replacing wholesale would drop it, and
+	// the request would go somewhere else entirely.
+	out := make(map[string]any, len(bound)+len(shaped))
+	for k, v := range bound {
+		out[k] = v
+	}
+	for k, v := range shaped {
+		out[k] = v
+	}
+	return out, nil
 }
 
 // NewBindJoin wires outer ⋈ inner over the given β bindings. alpha is the behavioural (E_α)
 // annotation on the outer→inner edge (e.g. a traversal delay); nil for none.
+// NewBindJoinIn is NewBindJoin with T_in attached: the assembled inbox is reshaped into the
+// consumer's inputs before the inner is built.
+func NewBindJoinIn(id int64, outer facade.Operator, bindings []Binding, inner InnerFactory, alpha facade.Alpha, readers int, inbound facade.Transform) facade.Exchange {
+	e := NewBindJoin(id, outer, bindings, inner, alpha, readers).(*bindJoinExchange)
+	e.inbound = inbound
+	return e
+}
+
 func NewBindJoin(id int64, outer facade.Operator, bindings []Binding, inner InnerFactory, alpha facade.Alpha, readers int) facade.Exchange {
 	recv := make([]facade.Beta, len(bindings))
 	for i, b := range bindings {
@@ -164,6 +199,17 @@ func (e *bindJoinExchange) Open(ctx context.Context) facade.Records {
 			bound := make(map[string]any, len(e.bindings))
 			for _, b := range e.bindings {
 				bound[b.Tgt()] = row[b.Src()]
+			}
+			// T_in (§T): the assembled inbox becomes the consumer's inputs. It runs once every
+			// binding has landed, because an input may be built from values several producers
+			// supplied — which is why it belongs to the consumer rather than to any one edge.
+			if e.inbound != nil {
+				shaped, err := applyInbound(e.inbound, bound)
+				if err != nil {
+					fail(err)
+					continue
+				}
+				bound = shaped
 			}
 			n := &rowNode{omap: row, bound: bound, e: e, emit: emit}
 			wg.Add(1)

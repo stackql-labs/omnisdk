@@ -31,6 +31,10 @@ type Doc interface {
 	Methods(resource string) ([]aot.Method, error)
 	// Selects are every exchange the resource's SELECT verb names, in declaration order.
 	Selects(resource string) ([]aot.AOTExchange, error)
+	// Verb are every exchange the resource binds to one SQL verb, in declaration order. Selects is
+	// this with "select"; a mutating verb is reached the same way, since nothing about resolving an
+	// operation depends on which verb named it.
+	Verb(resource, verb string) ([]aot.AOTExchange, error)
 }
 
 // Parse reads a stackql provider document.
@@ -56,6 +60,10 @@ type document struct {
 	Components struct {
 		Resources       map[string]resource       `yaml:"x-stackQL-resources"`
 		SecuritySchemes map[string]securityScheme `yaml:"securitySchemes"`
+		// Schemas are retained as raw nodes. A service document's schema section is the bulk of its
+		// bytes — EC2's runs to tens of thousands of lines — and an exchange needs the handful of
+		// shapes its own response names, so they are read on demand rather than decoded up front.
+		Schemas map[string]yaml.Node `yaml:"schemas"`
 	} `yaml:"components"`
 }
 
@@ -119,6 +127,19 @@ type tokenSpec struct {
 type pathOp struct {
 	OperationID string      `yaml:"operationId"`
 	Parameters  []pathParam `yaml:"parameters"`
+	// RequestBody says the operation takes one, and how it is written. The fields are the caller's
+	// to supply, so only the media type is read.
+	RequestBody struct {
+		Content map[string]struct{} `yaml:"content"`
+	} `yaml:"requestBody"`
+	// Responses carry the declared response shape. Only the success response is read: an error
+	// response describes a failure, and projecting rows out of one would be reporting a fault as
+	// data.
+	Responses map[string]struct {
+		Content map[string]struct {
+			Schema yaml.Node `yaml:"schema"`
+		} `yaml:"content"`
+	} `yaml:"responses"`
 }
 
 // pathParam is an operation parameter as the document declares it.
@@ -151,13 +172,21 @@ func (d *document) Select(name string) (aot.AOTExchange, error) {
 // — a get by identifier and a list by scope — and picking the first would silently answer a different
 // question from the one asked.
 func (d *document) Selects(name string) ([]aot.AOTExchange, error) {
+	return d.Verb(name, "select")
+}
+
+// Verb resolves every method a resource binds to one SQL verb, in the order the document lists them.
+// That order is the selection rule: a verb fans out — a resource declares both CreateSubnet and
+// CreateDefaultSubnet under insert — and the caller's inputs decide which applies, so the choice is
+// made by matching signatures down this list rather than here.
+func (d *document) Verb(name, verb string) ([]aot.AOTExchange, error) {
 	res, ok := d.Components.Resources[name]
 	if !ok {
 		return nil, fmt.Errorf("stackqldoc: no resource %q", name)
 	}
-	sel := res.SQLVerbs["select"]
+	sel := res.SQLVerbs[verb]
 	if len(sel) == 0 {
-		return nil, fmt.Errorf("stackqldoc: resource %q declares no select verb", name)
+		return nil, fmt.Errorf("stackqldoc: resource %q declares no %s verb", name, verb)
 	}
 	if len(d.Servers) == 0 {
 		return nil, fmt.Errorf("stackqldoc: document declares no servers")
@@ -173,28 +202,28 @@ func (d *document) Selects(name string) ([]aot.AOTExchange, error) {
 			firstErr = orErr(firstErr, fmt.Errorf("stackqldoc: resource %q select references unknown method %q", name, mName))
 			continue
 		}
-		path, verb, err := splitOperationRef(m.Operation.Ref)
+		path, httpVerb, err := splitOperationRef(m.Operation.Ref)
 		if err != nil {
 			firstErr = orErr(firstErr, fmt.Errorf("stackqldoc: resource %q method %q: %w", name, mName, err))
 			continue
 		}
-		node, ok := d.Paths[path][verb]
+		node, ok := d.Paths[path][httpVerb]
 		if !ok {
-			firstErr = orErr(firstErr, fmt.Errorf("stackqldoc: resource %q method %q: path %q has no %q", name, mName, path, verb))
+			firstErr = orErr(firstErr, fmt.Errorf("stackqldoc: resource %q method %q: path %q has no %q", name, mName, path, httpVerb))
 			continue
 		}
 		var op pathOp
 		if err := node.Decode(&op); err != nil {
-			firstErr = orErr(firstErr, fmt.Errorf("stackqldoc: resource %q method %q: decode %s %s: %w", name, mName, verb, path, err))
+			firstErr = orErr(firstErr, fmt.Errorf("stackqldoc: resource %q method %q: decode %s %s: %w", name, mName, httpVerb, path, err))
 			continue
 		}
-		out = append(out, d.build(mName, verb, path, op, m))
+		out = append(out, d.build(mName, httpVerb, path, op, m))
 	}
 	if len(out) == 0 {
 		if firstErr != nil {
 			return nil, firstErr
 		}
-		return nil, fmt.Errorf("stackqldoc: resource %q select resolves to nothing", name)
+		return nil, fmt.Errorf("stackqldoc: resource %q %s resolves to nothing", name, verb)
 	}
 	return out, nil
 }
@@ -268,11 +297,12 @@ func (d *document) build(name, verb, path string, op pathOp, m method) aot.AOTEx
 		inputs: serverVars(srv),
 		opID:   op.OperationID,
 		req: request{
-			method:     strings.ToUpper(verb),
-			url:        strings.TrimRight(srv.URL, "/") + route,
-			mediaType:  m.Request.MediaType,
-			params:     params,
-			parameters: operationParams(op),
+			method:        strings.ToUpper(verb),
+			url:           strings.TrimRight(srv.URL, "/") + route,
+			mediaType:     m.Request.MediaType,
+			params:        params,
+			parameters:    operationParams(op),
+			bodyMediaType: bodyMediaType(op),
 		},
 		resp: response{
 			mediaType:  m.Response.MediaType,
@@ -280,8 +310,51 @@ func (d *document) build(name, verb, path string, op pathOp, m method) aot.AOTEx
 			objectKey:  m.Response.ObjectKey,
 			transform:  transformDecl(m.Response.Transform),
 			pagination: pagination{req: m.Config.Pagination.RequestToken, resp: m.Config.Pagination.ResponseToken},
+			schema:     d.responseSchema(op),
 		},
 	}
+}
+
+// bodyMediaType is how the operation writes its request body, empty where it declares none. A
+// document states one content type per body; where it somehow states several, the first in sorted
+// order is taken so the same document always compiles the same way.
+func bodyMediaType(op pathOp) string {
+	types := make([]string, 0, len(op.RequestBody.Content))
+	for mt := range op.RequestBody.Content {
+		types = append(types, mt)
+	}
+	if len(types) == 0 {
+		return ""
+	}
+	sort.Strings(types)
+	return types[0]
+}
+
+// responseSchema resolves an operation's declared success shape. A schema-driven transform has no
+// other instructions, so this is what makes one runnable — and its absence is why a document naming
+// such a transform silently yields nothing.
+func (d *document) responseSchema(op pathOp) aot.Schema {
+	components := map[string]*yaml.Node{}
+	for name := range d.Components.Schemas {
+		node := d.Components.Schemas[name]
+		components[name] = &node
+	}
+	for _, code := range []string{"200", "201", "202", "204", "default"} {
+		resp, ok := op.Responses[code]
+		if !ok {
+			continue
+		}
+		// Media type is not matched here: a document states one success shape, and the response's
+		// declared media type already says how the body arrives.
+		for _, content := range resp.Content {
+			node := content.Schema
+			if node.Kind == 0 {
+				continue
+			}
+			return newSchema(&node, components)
+		}
+	}
+	return nil
 }
 
 // security resolves the document-level requirement to a normalized scheme. Document-level is the only
@@ -412,14 +485,16 @@ func (p parameter) In() string     { return p.p.In }
 func (p parameter) Required() bool { return p.p.Required }
 
 type request struct {
-	method     string
-	url        string
-	mediaType  string
-	params     map[string]string
-	parameters []aot.Parameter
+	method        string
+	url           string
+	mediaType     string
+	params        map[string]string
+	parameters    []aot.Parameter
+	bodyMediaType string
 }
 
 func (r request) Parameters() []aot.Parameter { return r.parameters }
+func (r request) BodyMediaType() string       { return r.bodyMediaType }
 
 func (r request) Method() string    { return r.method }
 func (r request) URL() string       { return r.url }
@@ -439,6 +514,7 @@ type response struct {
 	objectKey  string
 	transform  transformDeclType
 	pagination pagination
+	schema     aot.Schema
 }
 
 func (r response) MediaType() string          { return r.mediaType }
@@ -446,6 +522,7 @@ func (r response) OverrideMediaType() string  { return r.override }
 func (r response) ObjectKey() string          { return r.objectKey }
 func (r response) Transform() aot.Transform   { return r.transform }
 func (r response) Pagination() aot.Pagination { return r.pagination }
+func (r response) Schema() aot.Schema         { return r.schema }
 
 type transformDeclType struct{ typ, body string }
 

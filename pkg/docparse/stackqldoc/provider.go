@@ -87,6 +87,8 @@ func (p *provider) Security() aot.Security {
 		return security{scheme: aot.SchemeAWSSigV4, name: t}
 	case "service_account":
 		return security{scheme: aot.SchemeServiceAccount, name: t}
+	case "azure_default", "oauth2", "client_credentials":
+		return security{scheme: aot.SchemeOAuthClientCredentials, name: t}
 	default:
 		return security{name: t}
 	}

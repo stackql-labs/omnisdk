@@ -15,13 +15,34 @@ import (
 	"sort"
 )
 
+// Context is what a program may need beyond its own text and its input.
+//
+// Not every embedded language is program-driven. Some are named with no body at all and take their
+// instructions from the document's own schema — the response shape, the element names it declares —
+// so the evaluator IS the program and the schema is its argument. Passing that here keeps one
+// contract rather than two kinds of transform.
+//
+// Every field is optional: a template evaluator ignores all of them.
+type Context struct {
+	// Schema is the document's declared shape for what the program is transforming, as the parsed
+	// document holds it. nil where the document states none, which a schema-driven evaluator must
+	// treat as a failure rather than an empty shape.
+	Schema any
+	// ListProperty is the envelope key a schema-driven transform wraps its rows in — the same key
+	// the document's row path then points at.
+	ListProperty string
+	// Protocol names the wire dialect where unwrapping depends on it (query, ec2, rest-xml).
+	Protocol string
+}
+
 // Evaluator runs one embedded language.
 type Evaluator interface {
 	// Type is the identifier a document uses to name this language, version included.
 	Type() string
 	// Eval runs program over in and returns the transformed document. Both sides are bytes: what a
-	// program consumes and produces is the language's business, not the caller's.
-	Eval(program string, in []byte) ([]byte, error)
+	// program consumes and produces is the language's business, not the caller's. ctx carries what a
+	// program cannot state for itself; a program-driven language ignores it.
+	Eval(ctx Context, program string, in []byte) ([]byte, error)
 }
 
 // Registry resolves a declared type to its evaluator.
@@ -31,7 +52,7 @@ type Registry interface {
 	// Types are the languages this registry supports, sorted — so an error can say what IS supported.
 	Types() []string
 	// Eval resolves and runs in one step, failing with a message naming the unsupported type.
-	Eval(typ, program string, in []byte) ([]byte, error)
+	Eval(typ string, ctx Context, program string, in []byte) ([]byte, error)
 }
 
 // NewRegistry builds a registry over the given evaluators. A duplicate type is a programming error:
@@ -63,12 +84,12 @@ func (r registry) Types() []string {
 	return out
 }
 
-func (r registry) Eval(typ, program string, in []byte) ([]byte, error) {
+func (r registry) Eval(typ string, ctx Context, program string, in []byte) ([]byte, error) {
 	e, ok := r[typ]
 	if !ok {
 		return nil, fmt.Errorf("dsl: no evaluator for %q (have: %v)", typ, r.Types())
 	}
-	out, err := e.Eval(program, in)
+	out, err := e.Eval(ctx, program, in)
 	if err != nil {
 		return nil, fmt.Errorf("dsl: %s: %w", typ, err)
 	}
