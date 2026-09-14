@@ -1,3 +1,8 @@
+# Developer guide
+
+Repository invariants — the rules that hold across the codebase — are in
+[invariants.md](invariants.md). Read those before changing code.
+
 # Manual testing
 
 You will need a file `cicd/vol/vendor-secrets/secrets.sh` of the form
@@ -20,6 +25,8 @@ export _GOOGLE_PROJECT_ID='<your project short name>'
 export _AWS_REGION='us-east-1'
 
 ```
+
+For testing (registry) doc based resources, download any relevant contents of [the `src` directory of registry commit `a99a816`](https://github.com/stackql/stackql-provider-registry/tree/a99a8162cef862a41c97cd34aa4ca87356fdeb2e/providers/src) to `test/corpus/registry`.
 
 ```bash
 go build -o build/omnicli ./cmd/omnicli
@@ -116,6 +123,121 @@ Tuning (any subcommand): `--parallelism` (fan-out concurrency), `--max-per-host`
 
 > `--limit` is a budget, **not a sample**: it has no fairness across legs, so any value below the full result set biases toward whichever provider emits first. On a real org-wide run, `"tuning":{"Limit":25}` returned 24 GCP + 1 Azure rows and **zero** AWS — the AWS leg fans out three detail calls per bucket before its first row, and the budget was gone. To bound a multi-cloud look, run the legs separately with their own limits.
 Credentials resolve direct flag → env var → file; env vars are never required. Scope (e.g. `--project`) is **required and never inferred** — no env or key-embedded fallback.
+
+
+## Smoke test
+
+A short pass that exercises each shape the engine supports: a single exchange, a β bowtie, a
+multi-provider merge, and a converging IaC run. Everything writes to `cicd/out/` (gitignored) so a
+failed run leaves its evidence behind.
+
+```bash
+go build -o build/omnicli ./cmd/omnicli
+source cicd/vol/vendor-secrets/secrets.sh
+_s="$(date +%s)"
+```
+
+**1. Catalog — no network.** Fails instantly if the facade cannot plan.
+
+```bash
+./build/omnicli resources -q | head
+./build/omnicli method google.storage.buckets.list
+```
+
+**2. Single exchange.** One call, one extraction — the simplest thing that can be wrong.
+
+```bash
+./build/omnicli list --aws-region "${_AWS_REGION}" --limit 5 --out "cicd/out/smoke-list-${_s}.jsonl"
+```
+
+**3. β bowtie.** A second exchange bound to the first's output, per bucket.
+
+```bash
+./build/omnicli encryption --aws-region "${_AWS_REGION}" --limit 5 \
+  --out "cicd/out/smoke-encryption-${_s}.jsonl" --log "cicd/out/smoke-encryption-${_s}.log"
+```
+
+**4. Merged cursor.** Three disjoint DAGs under one output node; `--limit` caps the union.
+
+```bash
+./build/omnicli blob-audit-shallow --aws-region "${_AWS_REGION}" --project "${_GOOGLE_PROJECT_ID}" \
+  --limit 20 --out "cicd/out/smoke-blob-${_s}.jsonl"
+```
+
+Expect rows from more than one provider. If one provider is missing entirely that is the `--limit`
+budget, not a failure — see the note above.
+
+**5. Access review.** Cross-provider identity, run through the generic `run` verb.
+
+```bash
+./build/omnicli run omni.iam.principals.list \
+  '{"params":{"region":"'"${_AWS_REGION}"'","google_project":"'"${_GOOGLE_PROJECT_ID}"'"}}' \
+  --limit 20 --out "cicd/out/smoke-principals-${_s}.jsonl"
+```
+
+**6. IaC — creates real resources.** Converges a VPC and a subnet, then proves the second run is a
+no-op. Use a state directory you can throw away. `$R` is the registry root, since every effect is
+compiled from the document that declares it.
+
+```bash
+_st=cicd/work/smoke-${_s}
+R=test/corpus/registry
+
+# First run: two rows, each with an identity.
+./build/omnicli iac --registry $R --handle aws-vpc-subnet \
+  --aws-region "${_AWS_REGION}" --state "${_st}" --name smoke \
+  --input '{"vpc_cidr":"10.99.0.0/16","subnet_cidr":"10.99.1.0/24","vpc_tags":{"Name":"smoke"}}'
+
+# Second run, identical: same identities, and no CreateVpc/CreateSubnet on the wire.
+./build/omnicli iac --registry $R --handle aws-vpc-subnet \
+  --aws-region "${_AWS_REGION}" --state "${_st}" --name smoke \
+  --input '{"vpc_cidr":"10.99.0.0/16","subnet_cidr":"10.99.1.0/24","vpc_tags":{"Name":"smoke"}}' \
+  --log "cicd/out/smoke-iac-rerun-${_s}.log"
+```
+
+A converged run writes **no journal file** — that is what the no-op looks like on disk:
+
+```bash
+ls "${_st}/journal"        # one file from the first run only
+```
+
+**7. Rediscovery.** Throw the ledger away and re-run: the objects are found by their correlation tag
+and adopted, rather than created a second time.
+
+```bash
+rm -rf "${_st}"
+./build/omnicli iac --registry $R --handle aws-vpc-subnet \
+  --aws-region "${_AWS_REGION}" --state "${_st}" --name smoke \
+  --input '{"vpc_cidr":"10.99.0.0/16","subnet_cidr":"10.99.1.0/24"}' 
+
+aws ec2 describe-vpcs --region "${_AWS_REGION}" \
+  --filters Name=tag:omnisdk:key,Values=smoke/aws/ec2/vpc --query 'Vpcs[].VpcId'
+```
+
+One id, unchanged from the first run.
+
+**8. Compensation.** A subnet CIDR outside the VPC range fails the second step, and the VPC it
+already created is removed.
+
+```bash
+./build/omnicli iac --registry $R --handle aws-vpc-subnet \
+  --aws-region "${_AWS_REGION}" --state "cicd/work/smoke-fail-${_s}" --name smokefail \
+  --input '{"vpc_cidr":"10.98.0.0/16","subnet_cidr":"192.168.1.0/24"}' 
+```
+
+Expect `"status":"applied, then compensated"` on the VPC and `"outstanding":[]` on the failure row. A
+non-empty `outstanding` means something was left behind and needs removing by hand.
+
+**Cleanup.** There is no destroy command:
+
+```bash
+aws ec2 delete-subnet --region "${_AWS_REGION}" --subnet-id subnet-…
+aws ec2 delete-vpc    --region "${_AWS_REGION}" --vpc-id vpc-…
+rm -rf "${_st}" "cicd/work/smoke-fail-${_s}"
+```
+
+Leaving a VPC behind matters: the default limit is 5 per region, and a failed smoke run that did not
+compensate will eventually exhaust it.
 
 
 ## Endpoints (mocking)
@@ -284,6 +406,109 @@ omnicli: docx: exchange "instances" declares aws.sigv4 ("hmac") but no credentia
 
 `--endpoint` retargets the document's server (keeping each operation's path), so a bundle runs against
 a mock unedited.
+
+### Caller-declared edges (`doc-graph`)
+
+A document describes one provider and cannot state a relationship spanning two — or one its author
+simply left out. `doc-graph` runs several document exchanges in one plan and lets the query supply
+what the documents do not:
+
+- **`wirings`** — β edges stated from the consuming side: `inbound` names what arrives, `via` is
+  `T_in`, the transform turning the inbox into that consumer's inputs. It belongs to the consumer
+  rather than to an edge because one input may be built from several producers' values.
+- **`provides`** — the inputs `via` builds. Required whenever `via` is set: placement happens when
+  the plan is built and the program does not run until a row arrives, so an optional parameter
+  nobody supplied would be dropped before the program could fill it.
+- **`overrides`** — corrections to what a document says about its response. A document can be wrong
+  *for this engine* rather than wrong in itself, and editing the bundle is not the remedy.
+
+```bash
+R=test/corpus/registry
+```
+
+**1. AWS — VPCs joined to their subnets.** `DescribeSubnets` declares no `VpcId` at all; its
+parameters are `Filter`, `SubnetId`, `NextToken`, `MaxResults`, `DryRun`. So the id has to become a
+filter on the way in, which is what `via` is for — and the wire wants the Query API's indexed form,
+`Filter.1.Name` / `Filter.1.Value.1`, which the document models as a single `Filter` of a list type
+it never says how to serialise. A `provides` name the document does not declare is sent anyway: the
+caller is asserting the wire shape, as an override asserts the response shape. No overrides: the document's
+`$.line_items` row path works because the engine implements the `schema_driven_xml_v0.1.0` transform
+that produces it. Row fields carry the schema's names (`VpcId`), not the wire's (`vpcId`).
+
+```bash
+./build/omnicli doc-graph $R '{
+  "addresses": ["stackql_unstable_aws.ec2.vpcs", "stackql_unstable_aws.ec2.subnets"],
+  "wirings": [{
+    "to": "stackql_unstable_aws.ec2.subnets",
+    "inbound": [{"from": "stackql_unstable_aws.ec2.vpcs", "src": "VpcId", "as": "vpc_id"}],
+    "via_type": "golang_template_json_v0.1.0",
+    "via": "{\"Filter.1.Name\":\"vpc-id\",\"Filter.1.Value.1\":\"{{ .vpc_id }}\"}",
+    "provides": ["Filter.1.Name", "Filter.1.Value.1"]
+  }]
+}' --aws-region "${_AWS_REGION}"
+```
+
+**2. Google — networks and their subnetworks.** `compute.networks.list` and
+`compute.subnetworks.list` declare **no** `objectKey`, so both need one supplied or they return the
+whole response envelope as a single row. Subnetworks are listed per region, and the network is
+matched by its `selfLink`.
+
+```bash
+./build/omnicli doc-graph $R '{
+  "addresses": ["stackql_unstable_google.compute.networks", "stackql_unstable_google.compute.subnetworks"],
+  "overrides": [
+    {"address": "stackql_unstable_google.compute.networks", "object_key": "$.items"},
+    {"address": "stackql_unstable_google.compute.subnetworks", "object_key": "$.items"}
+  ],
+  "wirings": [{
+    "to": "stackql_unstable_google.compute.subnetworks",
+    "inbound": [{"from": "stackql_unstable_google.compute.networks", "src": "selfLink", "as": "network"}],
+    "via_type": "golang_template_json_v0.1.0",
+    "via": "{\"filter\":\"network=\\\"{{ .network }}\\\"\"}",
+    "provides": ["filter"]
+  }],
+  "args": {"params": {"project": "stackql-demo", "region": "us-central1"}}
+}'
+```
+
+**3. Azure — virtual networks and their subnets.** `VirtualNetworks_list_all` needs only the
+subscription and declares `$.value`, so no override. `Subnets_list` needs the resource group and
+VNet name, and the resource group appears only inside the ARM resource id — so `T_in` parses it out.
+
+```bash
+
+# you will need to set AZURE_SUBSCRIPTION_ID
+## eg: source ./cicd/vol/vendor-secrets/secrets.sh
+## or export AZURE_SUBSCRIPTION_ID='<your subscription id>'
+
+./build/omnicli doc-graph $R '{
+  "addresses": ["stackql_unstable_azure.network.virtual_networks", "stackql_unstable_azure.network.subnets"],
+  "wirings": [{
+    "to": "stackql_unstable_azure.network.subnets",
+    "inbound": [
+      {"from": "stackql_unstable_azure.network.virtual_networks", "src": "name", "as": "vnet"},
+      {"from": "stackql_unstable_azure.network.virtual_networks", "src": "id", "as": "arm_id"}
+    ],
+    "via_type": "golang_template_json_v0.1.0",
+    "via": "{\"virtual_network_name\":\"{{ .vnet }}\",\"resource_group_name\":\"{{ index (split \"/\" .arm_id) 4 }}\"}",
+    "provides": ["virtual_network_name", "resource_group_name"]
+  }],
+  "args": {"params": {"subscription_id": "'${AZURE_SUBSCRIPTION_ID}'"}}
+}'
+```
+
+That third one is the clearest case for `T_in` living on the consumer: `Subnets_list` needs two
+inputs, one of which is derived from a different field of the same producer. A per-edge transform
+could not express it.
+
+> **Verified:** all three compose — `TestGuideGraphsCompose` builds each graph published here and
+> fails on the errors that used to reach a reader instead: an input nothing supplies, two documents
+> whose methods share a name, an auth exchange never wired in. The AWS case is additionally executed
+> against a stand-in EC2 (`TestGraphJoinsTwoExchangesTheDocumentDoesNotRelate`).
+>
+> Google and Azure have not been run against a live provider, so their row paths and field names come
+> from the documents rather than from observed responses.
+
 
 ### Memory
 

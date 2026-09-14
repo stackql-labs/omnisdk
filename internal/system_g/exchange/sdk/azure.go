@@ -113,3 +113,21 @@ func AzureVNetSubnetsPlan(endpoint, tenant, clientID, clientSecret string) plan.
 	})}
 	return plan.NewPlan(specs, betas, nil, inputs, egress, encoder.NewJSONLEncoder())
 }
+
+// AzureOAuthSpec is the client-credentials token exchange as a plan exchange, for a document that
+// declares OAuth2 rather than a hand-authored plan that wires its own.
+//
+// It mirrors GCPOAuthSpec: the credential buys a token, every call carries it, and that is an extra
+// exchange in the plan rather than a request transform. tenant, clientID and clientSecret are bound
+// as κ inputs, so they travel on the seed row exactly as a hand-authored Azure plan's do.
+func AzureOAuthSpec(endpoint, tenant, clientID, clientSecret string) (plan.ExchangeSpec, map[string]any) {
+	spec := plan.NewExchangeSpec("Token",
+		[]string{"tenant", "client_id", "client_secret"}, []string{"token"},
+		httpx.MakeAgnostic(azureTokenReq(azureLoginBase(endpoint))),
+		httpx.NewJSONExtract(map[string]string{"token": "access_token"}))
+	return spec, map[string]any{
+		"tenant":        tenant,
+		"client_id":     clientID,
+		"client_secret": clientSecret,
+	}
+}

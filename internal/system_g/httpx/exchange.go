@@ -155,7 +155,14 @@ func (o *op) do(ctx context.Context, token, overrideURL string) (int, []byte, st
 			q.Set(o.req.Continuation.TokenParam, token)
 		}
 		if len(q) > 0 {
-			u += "?" + q.Encode()
+			// A URL that already carries a query gets its parameters appended, not a second "?".
+			// Every AWS Query-API operation is declared as "/?Action=…&Version=…", so joining with
+			// "?" unconditionally produced a path the service reads as one long parameter.
+			sep := "?"
+			if strings.Contains(u, "?") {
+				sep = "&"
+			}
+			u += sep + q.Encode()
 		}
 	}
 
@@ -301,6 +308,16 @@ func retryAfter(h http.Header) time.Duration {
 }
 
 func buildBody(b Body, bound map[string]any) (body []byte, contentType string) {
+	// A body supplied whole is sent as it stands, placeholders resolved. The caller has stated the
+	// entire content, so composing one from named parameters would be second-guessing it.
+	if len(b.Raw) > 0 {
+		switch b.Encoding {
+		case EncodingForm:
+			return []byte(subst(string(b.Raw), bound)), "application/x-www-form-urlencoded"
+		default:
+			return []byte(subst(string(b.Raw), bound)), "application/json"
+		}
+	}
 	switch b.Encoding {
 	case EncodingForm:
 		vals := url.Values{}
@@ -324,7 +341,10 @@ func buildBody(b Body, bound map[string]any) (body []byte, contentType string) {
 	}
 }
 
-var reParam = regexp.MustCompile(`\{([a-zA-Z0-9_]+)\}`)
+// A parameter name may carry dots and hyphens: AWS's Query API indexes list parameters as
+// Filter.1.Name, and a pattern of word characters alone leaves those placeholders unsubstituted and
+// sends the template text as the value.
+var reParam = regexp.MustCompile(`\{([a-zA-Z0-9_.-]+)\}`)
 
 // subst replaces every {name} in s with the bound value (empty if absent).
 func subst(s string, bound map[string]any) string {

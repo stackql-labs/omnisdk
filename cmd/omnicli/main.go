@@ -141,6 +141,135 @@ func main() {
 	provCmd.Flags().String("subnet-cidr", "", "subnet CIDR block, e.g. 10.0.1.0/24 (required)")
 	root.AddCommand(provCmd)
 
+	// IaC: a client names a blueprint handle and supplies its inputs. Idempotence, ordering, locking
+	// and compensation are the system's problem, not the caller's.
+	root.AddCommand(&cobra.Command{
+		Use:   "iac-handles",
+		Short: "List the precanned deployments addressable by handle",
+		RunE: func(*cobra.Command, []string) error {
+			type published struct {
+				Handle  string          `json:"handle"`
+				Summary string          `json:"summary"`
+				Params  []omnisdk.Param `json:"params"`
+			}
+			var out []published
+			for _, b := range omnisdk.Blueprints() {
+				out = append(out, published{Handle: b.Handle(), Summary: b.Summary(), Params: b.Params()})
+			}
+			return printJSON(out)
+		},
+	})
+
+	// Declared IaC: a resource states its provider, its document address and the residue its document
+	// leaves unsaid. No Go entry is added for a new service — the same relationship doc-graph has to
+	// a query.
+	iacApply := &cobra.Command{
+		Use:   "iac-apply <registry> <spec-json>",
+		Short: "Converge resources declared inline against provider documents; CREATES REAL RESOURCES",
+		Args:  cobra.ExactArgs(2),
+		RunE: withSinks(func(cmd *cobra.Command, w, logw io.Writer) error {
+			var spec struct {
+				Name      string `json:"name"`
+				State     string `json:"state"`
+				RunID     string `json:"run_id,omitempty"`
+				Resources []struct {
+					Key      string            `json:"key"`
+					Provider string            `json:"provider"`
+					Address  string            `json:"address"`
+					Desired  json.RawMessage   `json:"desired,omitempty"`
+					Params   map[string]string `json:"params,omitempty"`
+					Inbound  []struct {
+						From string `json:"from"`
+						As   string `json:"as,omitempty"`
+					} `json:"inbound,omitempty"`
+					ViaType          string `json:"via_type,omitempty"`
+					Via              string `json:"via,omitempty"`
+					Identity         string `json:"identity,omitempty"`
+					AddressedBy      string `json:"addressed_by,omitempty"`
+					CorrelationParam string `json:"correlation_param,omitempty"`
+				} `json:"resources"`
+				Args *omnisdk.Args `json:"args,omitempty"`
+			}
+			if err := json.Unmarshal([]byte(cmdArgs(cmd)[1]), &spec); err != nil {
+				return fmt.Errorf("spec json: %w", err)
+			}
+			resources := make([]omnisdk.ManagedResource, 0, len(spec.Resources))
+			for _, r := range spec.Resources {
+				inbound := make([]omnisdk.Arrival, 0, len(r.Inbound))
+				for _, in := range r.Inbound {
+					inbound = append(inbound, omnisdk.Arrival{From: in.From, As: in.As})
+				}
+				resources = append(resources, omnisdk.NewResource(r.Key, r.Provider, r.Address,
+					[]byte(r.Desired), r.Params, inbound, r.ViaType, r.Via,
+					r.Identity, r.AddressedBy, r.CorrelationParam))
+			}
+			a := omnisdk.Args{}
+			if spec.Args != nil {
+				a = *spec.Args
+			}
+			if a.Params == nil {
+				a.Params = map[string]string{}
+			}
+			if _, given := a.Params["region"]; !given && awsRegion != "" {
+				a.Params["region"] = awsRegion
+			}
+			a.Endpoint, a.Log, a.Tuning = endpoint, logw, t.facade()
+			a.InsecureSkipTLSVerify = insecureTLS
+			pl, err := omnisdk.Converge(cmdArgs(cmd)[0], spec.Name, spec.State, spec.RunID, resources, a)
+			if err != nil {
+				return err
+			}
+			return streamRows(pl, w)
+		}),
+	}
+	root.AddCommand(iacApply)
+
+	iacCmd := &cobra.Command{
+		Use:   "iac",
+		Short: "Converge a deployment by handle, with a durable ledger; CREATES REAL RESOURCES",
+		RunE: withSinks(func(cmd *cobra.Command, w, logw io.Writer) error {
+			handle := mustFlag(cmd, "handle")
+			bp, ok := omnisdk.BlueprintFor(handle)
+			if !ok {
+				return fmt.Errorf("unknown handle %q; see `omnicli iac-handles`", handle)
+			}
+			inputs, err := jsonInputs(mustFlag(cmd, "input"))
+			if err != nil {
+				return fmt.Errorf("--input: %w", err)
+			}
+			// Region is a global flag rather than an input, so it reads the same way as every other
+			// AWS command; an explicit input still wins.
+			if _, given := inputs["region"]; !given && awsRegion != "" {
+				inputs["region"] = awsRegion
+			}
+			resources, err := bp.Resources(inputs)
+			if err != nil {
+				return err
+			}
+			a := omnisdk.Args{Params: map[string]string{"region": inputs["region"]}}
+			a.Endpoint, a.Log, a.Tuning = endpoint, logw, t.facade()
+			a.InsecureSkipTLSVerify = insecureTLS
+			pl, err := omnisdk.Converge(mustFlag(cmd, "registry"), mustFlag(cmd, "name"),
+				mustFlag(cmd, "state"), mustFlag(cmd, "run-id"), resources, a)
+			if err != nil {
+				return err
+			}
+			return streamRows(pl, w)
+		}),
+	}
+	iacCmd.Flags().String("registry", "", "provider-document registry root; every effect is compiled from the document that declares it (required)")
+	iacCmd.Flags().String("handle", "", "blueprint to converge, e.g. aws-vpc-subnet (required)")
+	iacCmd.Flags().String("name", "", "collection name; the ledger key prefix and the correlation tag (required)")
+	iacCmd.Flags().String("state", "", "directory holding the ledger and run journals; local disk only (required)")
+	iacCmd.Flags().String("input", "", `blueprint inputs as a JSON object, e.g. {"vpc_cidr":"10.0.0.0/16"} (required)`)
+	iacCmd.Flags().String("run-id", "", "journal name for this run (default: a UTC timestamp)")
+	// Scope is explicit input, never inferred: which deployment, under which name, recorded in which
+	// ledger are the three things a wrong guess would silently apply to the wrong resources.
+	for _, f := range []string{"registry", "handle", "name", "state", "input"} {
+		_ = iacCmd.MarkFlagRequired(f)
+	}
+	root.AddCommand(iacCmd)
+
 	// ---- GCP ------------------------------------------------------------------
 	gcpCmd := &cobra.Command{
 		Use:   "gcp-provision",
@@ -335,6 +464,75 @@ func main() {
 	root.AddCommand(catCmd)
 
 	// doc-run: run one address out of a bundle.
+	// A document describes one provider and cannot state a relationship spanning two, or one its
+	// author simply left out. doc-graph lets the query say what the documents do not.
+	docGraph := &cobra.Command{
+		Use:   "doc-graph <dir> <graph-json>",
+		Short: "Run several document exchanges joined by β edges the caller declares",
+		Args:  cobra.ExactArgs(2),
+		RunE: withSinks(func(cmd *cobra.Command, w, logw io.Writer) error {
+			var spec struct {
+				Addresses []string `json:"addresses"`
+				Wirings   []struct {
+					To      string `json:"to"`
+					Inbound []struct {
+						From string `json:"from"`
+						Src  string `json:"src"`
+						As   string `json:"as,omitempty"`
+					} `json:"inbound"`
+					ViaType  string   `json:"via_type,omitempty"`
+					Via      string   `json:"via,omitempty"`
+					Provides []string `json:"provides,omitempty"`
+				} `json:"wirings"`
+				Overrides []struct {
+					Address     string `json:"address"`
+					ObjectKey   string `json:"object_key,omitempty"`
+					MediaType   string `json:"media_type,omitempty"`
+					ProgramType string `json:"program_type,omitempty"`
+					Program     string `json:"program,omitempty"`
+				} `json:"overrides,omitempty"`
+				Args *omnisdk.Args `json:"args,omitempty"`
+			}
+			if err := json.Unmarshal([]byte(cmdArgs(cmd)[1]), &spec); err != nil {
+				return fmt.Errorf("graph json: %w", err)
+			}
+			wirings := make([]omnisdk.Wiring, 0, len(spec.Wirings))
+			for _, wr := range spec.Wirings {
+				in := make([]omnisdk.Inbound, 0, len(wr.Inbound))
+				for _, i := range wr.Inbound {
+					in = append(in, omnisdk.NewInbound(i.From, i.Src, i.As))
+				}
+				wirings = append(wirings, omnisdk.NewWiring(wr.To, in, wr.ViaType, wr.Via, wr.Provides...))
+			}
+			overrides := make([]omnisdk.Override, 0, len(spec.Overrides))
+			for _, o := range spec.Overrides {
+				overrides = append(overrides, omnisdk.NewOverride(o.Address, o.ObjectKey, o.MediaType, o.ProgramType, o.Program))
+			}
+			g, err := omnisdk.NewGraph(spec.Addresses, wirings, overrides...)
+			if err != nil {
+				return err
+			}
+			a := omnisdk.Args{}
+			if spec.Args != nil {
+				a = *spec.Args
+			}
+			if a.Params == nil {
+				a.Params = map[string]string{}
+			}
+			if _, given := a.Params["region"]; !given && awsRegion != "" {
+				a.Params["region"] = awsRegion
+			}
+			a.Endpoint, a.Log, a.Tuning = endpoint, logw, t.facade()
+			a.InsecureSkipTLSVerify = insecureTLS
+			pl, err := omnisdk.NewGraphQuery(cmdArgs(cmd)[0], g, a)
+			if err != nil {
+				return err
+			}
+			return streamRows(pl, w)
+		}),
+	}
+	root.AddCommand(docGraph)
+
 	root.AddCommand(&cobra.Command{
 		Use:   "doc-run <dir> <address> [args-json]",
 		Short: `Run an addressed exchange, e.g. doc-run ~/.stackql/src stackql_unstable_google.storage.buckets '{"params":{"project":"p"}}'`,
@@ -470,6 +668,33 @@ func main() {
 		fmt.Fprintln(os.Stderr, "omnicli:", err)
 		os.Exit(1)
 	}
+}
+
+// cmdArgs returns the positional arguments cobra parsed for a command whose RunE was wrapped by
+// withSinks, which hides them behind its own signature.
+func cmdArgs(cmd *cobra.Command) []string { return cmd.Flags().Args() }
+
+// jsonInputs parses a blueprint's inputs: a JSON object of string keys to string values. Nested
+// values (tags) are themselves JSON strings, which keeps one flag rather than one per parameter.
+func jsonInputs(s string) (map[string]string, error) {
+	if strings.TrimSpace(s) == "" {
+		return map[string]string{}, nil
+	}
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(s), &raw); err != nil {
+		return nil, fmt.Errorf("expected a JSON object: %w", err)
+	}
+	out := make(map[string]string, len(raw))
+	for k, v := range raw {
+		var str string
+		if err := json.Unmarshal(v, &str); err == nil {
+			out[k] = str
+			continue
+		}
+		// A nested object (tags) is kept verbatim, so the blueprint parses it in its own terms.
+		out[k] = string(v)
+	}
+	return out, nil
 }
 
 // requireProject / requireGcpOrg add the REQUIRED scope flag. Scope (which project / which org) is

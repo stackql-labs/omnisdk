@@ -120,6 +120,18 @@ func (c *catalog) Paths() []string {
 	return out
 }
 
+func (c *catalog) Operations(addr, verb string) ([]aot.AOTExchange, error) {
+	_, svc, res, err := c.split(addr)
+	if err != nil {
+		return nil, err
+	}
+	doc, err := c.doc(svc)
+	if err != nil {
+		return nil, err
+	}
+	return doc.Verb(res, verb)
+}
+
 func (c *catalog) Exchanges(addr string) ([]aot.AOTExchange, error) {
 	prov, svc, res, err := c.split(addr)
 	if err != nil {
