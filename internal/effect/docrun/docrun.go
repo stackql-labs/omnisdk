@@ -158,7 +158,7 @@ func (e *effector) Read(ctx context.Context, exchange string, k facade.LedgerKey
 	if v, ok := at(row, res.Identity()); ok && v != "" {
 		identity = []byte(v)
 	}
-	b, err := encodeRow(row)
+	b, err := encodeRow(actualOf(row))
 	if err != nil {
 		return nil, nil, false, err
 	}
@@ -340,6 +340,35 @@ func decodeFields(b []byte) (map[string]any, error) {
 		return nil, fmt.Errorf("docrun: mutation is not a JSON object: %w", err)
 	}
 	return fields, nil
+}
+
+// actualOf reduces a response to the object's OWN state.
+//
+// A read answers about one object, but the projected response wraps it in the row list every reply
+// shares. Handing that envelope back as "actual" puts the object's fields a level below where the
+// desired document holds them, so convergence compares a field against nothing and reports drift on
+// a resource that has never changed. The metadata travels alongside, since it belongs to the
+// response rather than to the object.
+func actualOf(row map[string]any) map[string]any {
+	for _, v := range row {
+		list, ok := v.([]any)
+		if !ok || len(list) != 1 {
+			continue
+		}
+		fields, ok := list[0].(map[string]any)
+		if !ok {
+			continue
+		}
+		out := make(map[string]any, len(fields)+1)
+		for k, fv := range fields {
+			out[k] = fv
+		}
+		if meta, has := row[docx.MetadataKey]; has {
+			out[docx.MetadataKey] = meta
+		}
+		return out
+	}
+	return row
 }
 
 func encodeRow(row map[string]any) ([]byte, error) {
