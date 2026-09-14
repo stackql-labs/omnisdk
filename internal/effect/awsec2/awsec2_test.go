@@ -185,7 +185,7 @@ func steps() []apply.Step {
 			Key:      "aws/ec2/subnet/demo",
 			Exchange: "CreateSubnet",
 			Desired:  []byte(`{"CidrBlock":"10.0.1.0/24"}`),
-			Bindings: map[string]facade.LedgerKey{"VpcId": "aws/ec2/vpc/demo"},
+			Inbound:  []apply.Arrival{{From: "aws/ec2/vpc/demo", As: "VpcId"}},
 		},
 	}
 }

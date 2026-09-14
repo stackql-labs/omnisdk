@@ -214,6 +214,12 @@ func at(doc map[string]any, path string) (string, bool) {
 	}
 	var cur any = doc
 	for _, step := range strings.Split(path, ".") {
+		// A projected response wraps its rows in a list even when the call concerns one object, so a
+		// single-element list is stepped through transparently. More than one is ambiguous: the
+		// caller asked about one object and the path cannot say which.
+		if list, isList := cur.([]any); isList && len(list) == 1 {
+			cur = list[0]
+		}
 		m, ok := cur.(map[string]any)
 		if !ok {
 			return "", false
@@ -222,6 +228,9 @@ func at(doc map[string]any, path string) (string, bool) {
 		if !ok {
 			return "", false
 		}
+	}
+	if list, isList := cur.([]any); isList && len(list) == 1 {
+		cur = list[0]
 	}
 	if cur == nil {
 		return "", false
@@ -246,6 +255,21 @@ func (e *effector) run(ctx context.Context, addr, verb string, inputs map[string
 	// and refusing to compile it would make a resource impossible to undo because of how its
 	// response was written down.
 	opts := append(append([]docx.Option{}, e.opts...), docx.WithWholeResponse(), docx.WithoutResponseDecode())
+	// A list parameter is sent indexed — TagSpecification.1.Tag.2.Key, Filter.1.Name — and a document
+	// declares the parameter, never its members. Placement matches declared names, so without this
+	// every indexed member is dropped and the call goes out missing its tags or its filter.
+	var indexed []string
+	for name := range inputs {
+		if strings.Contains(name, ".") {
+			indexed = append(indexed, name)
+		}
+	}
+	if len(indexed) > 0 {
+		// Bound, not merely placed: these values come from the caller, so they travel on the row and
+		// the placeholder resolves. Placing without binding leaves the parameter on the wire with an
+		// empty value, which a provider reads as a tag with no name.
+		opts = append(opts, docx.WithBound(indexed...))
+	}
 	p, err := docx.PlanFor(ex, inputs, e.dsl, opts...)
 	if err != nil {
 		return nil, err

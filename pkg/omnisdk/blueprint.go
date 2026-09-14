@@ -6,6 +6,7 @@ import (
 	"maps"
 	"slices"
 	"sort"
+	"strconv"
 
 	"github.com/stackql-labs/omnisdk/internal/effect/awsec2"
 	"github.com/stackql-labs/omnisdk/internal/kind"
@@ -142,25 +143,37 @@ func (b awsVpcSubnet) Resources(inputs map[string]string) ([]ManagedResource, er
 	if err != nil {
 		return nil, err
 	}
-	const vpc = "aws/ec2/vpc"
+	const vpc, subnet = "aws/ec2/vpc", "aws/ec2/subnet"
 	return []ManagedResource{
-		NewResource(vpc, "CreateVpc", cidrDoc(inputs["vpc_cidr"]), tagParams(vpcTags), nil),
-		NewResource("aws/ec2/subnet", "CreateSubnet", cidrDoc(inputs["subnet_cidr"]), tagParams(subnetTags),
-			map[string]string{"VpcId": vpc}),
+		NewResource(vpc, insertOf(vpc), cidrDoc(inputs["vpc_cidr"]), tagParams("vpc", vpcTags), nil, "", ""),
+		NewResource(subnet, insertOf(subnet), cidrDoc(inputs["subnet_cidr"]), tagParams("subnet", subnetTags),
+			// The subnet cannot be addressed until the VPC exists; its id arrives as VpcId, which is
+			// the name CreateSubnet takes, so no reshaping is needed here.
+			[]Arrival{{From: vpc, As: "VpcId"}}, "", ""),
 	}, nil
 }
 
 func cidrDoc(cidr string) []byte { return fmt.Appendf(nil, `{"CidrBlock":%q}`, cidr) }
 
-// tagParams marks each tag so the provider stamps it on the object rather than sending it as an
-// ordinary request parameter.
-func tagParams(tags map[string]string) map[string]string {
-	if len(tags) == 0 {
-		return nil
+// tagParams renders caller tags as the EC2 Query API's indexed tag specification.
+//
+// Index 1 is reserved for the correlation stamp, which the provider's residue supplies: that is the
+// link back to the ledger key, and it must not be displaced by a caller's tag. Caller tags follow it
+// in sorted order, so the same inputs always produce the same request.
+func tagParams(resourceType string, tags map[string]string) map[string]string {
+	out := map[string]string{
+		"TagSpecification.1.ResourceType": resourceType,
+		"TagSpecification.1.Tag.1.Key":    awsec2.CorrelationTag,
 	}
-	out := make(map[string]string, len(tags))
-	for k, v := range tags {
-		out[awsec2.TagParamPrefix+k] = v
+	names := make([]string, 0, len(tags))
+	for k := range tags {
+		names = append(names, k)
+	}
+	sort.Strings(names)
+	for i, name := range names {
+		n := strconv.Itoa(i + 2)
+		out["TagSpecification.1.Tag."+n+".Key"] = name
+		out["TagSpecification.1.Tag."+n+".Value"] = tags[name]
 	}
 	return out
 }

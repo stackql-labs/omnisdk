@@ -18,6 +18,7 @@ import (
 	"maps"
 	"time"
 
+	"github.com/stackql-labs/omnisdk/internal/system_g/bind"
 	"github.com/stackql-labs/omnisdk/internal/system_g/facade"
 	"github.com/stackql-labs/omnisdk/internal/unwind"
 )
@@ -30,10 +31,25 @@ type Step struct {
 	Desired  []byte
 	// Params address the object: the parameters that name it on the wire.
 	Params map[string]string
-	// Bindings resolve a parameter from another key's recorded identity — the dependency a β edge
-	// carries inside a single plan, carried through the ledger instead because each effect is
-	// wrapped in its own durable writes. The bound key must already be live.
-	Bindings map[string]facade.LedgerKey
+	// Inbound is what arrives from other keys: each names a sibling whose recorded identity lands in
+	// this step's inbox under a chosen name. It is the dependency a β edge carries inside a single
+	// plan, carried through the ledger instead because each effect is wrapped in its own durable
+	// writes. A key named here must already be live.
+	Inbound []Arrival
+	// Via reshapes the inbox into this step's parameters — T_in, the same contract a query uses.
+	//
+	// It exists for the same reason: a value in the shape one provider emits is frequently not the
+	// shape the next call accepts, and an inbox holding several arrivals may yield one parameter
+	// built from all of them. Nil is identity, which is the common case.
+	Via facade.Transform
+}
+
+// Arrival is one value reaching a step from a sibling key.
+type Arrival struct {
+	// From is the sibling key whose identity is delivered.
+	From facade.LedgerKey
+	// As is the name it takes in the inbox; empty means the sibling's key.
+	As string
 }
 
 // Result reports what a run did. A run that failed and could not fully compensate is partially
@@ -188,21 +204,49 @@ func satisfied(want, have map[string]any) bool {
 	return true
 }
 
-// bind resolves a step's parameters, taking bound ones from the recorded identity of another key.
-// A binding onto a key that is not live is an error rather than a silent empty string: it means the
+// bind assembles a step's parameters: what the caller supplied, plus what arrives from sibling keys,
+// reshaped by T_in where one is declared.
+//
+// An arrival from a key that is not live is an error rather than a silent empty string: it means the
 // dependency was ordered wrongly, and sending an unbound parameter would create an orphan.
 func (r *runner) bind(ctx context.Context, s Step) (map[string]string, error) {
-	params := make(map[string]string, len(s.Params)+len(s.Bindings))
-	maps.Copy(params, s.Params)
-	for param, src := range s.Bindings {
-		e, _, found, err := r.log.Get(ctx, src)
+	inbox := make(map[string]any, len(s.Inbound))
+	for _, in := range s.Inbound {
+		e, _, found, err := r.log.Get(ctx, in.From)
 		if err != nil {
 			return nil, err
 		}
 		if !found || e.Phase() != facade.LedgerLive {
-			return nil, fmt.Errorf("apply: %s binds %s from %s, which is not live", s.Key, param, src)
+			return nil, fmt.Errorf("apply: %s expects a value from %s, which is not live", s.Key, in.From)
 		}
-		params[param] = string(e.Identity())
+		name := in.As
+		if name == "" {
+			name = string(in.From)
+		}
+		inbox[name] = string(e.Identity())
+	}
+
+	params := make(map[string]string, len(s.Params)+len(inbox))
+	maps.Copy(params, s.Params)
+	if s.Via == nil {
+		// Identity: the inbox IS the parameters, by name.
+		for k, v := range inbox {
+			params[k] = fmt.Sprint(v)
+		}
+		return params, nil
+	}
+	shaped, err := s.Via.Apply(bind.NewDocRecord(inbox))
+	if err != nil {
+		return nil, fmt.Errorf("apply: %s inbound transform: %w", s.Key, err)
+	}
+	out, ok := bind.DocMap(shaped)
+	if !ok {
+		return nil, fmt.Errorf("apply: %s inbound transform did not yield a document", s.Key)
+	}
+	// The transform's output overrides what the caller supplied: it is the more specific statement,
+	// built from values only known at run time.
+	for k, v := range out {
+		params[k] = fmt.Sprint(v)
 	}
 	return params, nil
 }

@@ -11,6 +11,7 @@ package docsem
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/stackql-labs/omnisdk/internal/semantics"
 	"github.com/stackql-labs/omnisdk/internal/system_g/facade"
@@ -127,7 +128,7 @@ func Select(cat aot.Catalog, path, verb string, inputs []string) (aot.AOTExchang
 	}
 	supplied := make(map[string]bool, len(inputs))
 	for _, in := range inputs {
-		supplied[in] = true
+		supplied[baseName(in)] = true
 	}
 	for _, op := range ops {
 		if accepts(op, supplied) {
@@ -135,6 +136,17 @@ func Select(cat aot.Catalog, path, verb string, inputs []string) (aot.AOTExchang
 		}
 	}
 	return nil, fmt.Errorf("docsem: %s %s: no operation accepts %v", path, verb, inputs)
+}
+
+// baseName is the parameter a supplied name belongs to. A list parameter is sent indexed —
+// TagSpecification.1.Tag.2.Key is a member of TagSpecification, Filter.1.Name of Filter — and a
+// document declares the parameter, never its members. Matching the whole name would rule out every
+// operation that accepts a list.
+func baseName(name string) string {
+	if i := strings.Index(name, "."); i > 0 {
+		return name[:i]
+	}
+	return name
 }
 
 // accepts reports whether an operation declares somewhere for every supplied input to go. An input

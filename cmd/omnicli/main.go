@@ -185,13 +185,15 @@ func main() {
 			a := omnisdk.Args{Params: map[string]string{"region": inputs["region"]}}
 			a.Endpoint, a.Log, a.Tuning = endpoint, logw, t.facade()
 			a.InsecureSkipTLSVerify = insecureTLS
-			pl, err := omnisdk.Converge(mustFlag(cmd, "name"), mustFlag(cmd, "state"), mustFlag(cmd, "run-id"), resources, a)
+			pl, err := omnisdk.Converge(mustFlag(cmd, "registry"), mustFlag(cmd, "name"),
+				mustFlag(cmd, "state"), mustFlag(cmd, "run-id"), resources, a)
 			if err != nil {
 				return err
 			}
 			return streamRows(pl, w)
 		}),
 	}
+	iacCmd.Flags().String("registry", "", "provider-document registry root; every effect is compiled from the document that declares it (required)")
 	iacCmd.Flags().String("handle", "", "blueprint to converge, e.g. aws-vpc-subnet (required)")
 	iacCmd.Flags().String("name", "", "collection name; the ledger key prefix and the correlation tag (required)")
 	iacCmd.Flags().String("state", "", "directory holding the ledger and run journals; local disk only (required)")
@@ -199,7 +201,7 @@ func main() {
 	iacCmd.Flags().String("run-id", "", "journal name for this run (default: a UTC timestamp)")
 	// Scope is explicit input, never inferred: which deployment, under which name, recorded in which
 	// ledger are the three things a wrong guess would silently apply to the wrong resources.
-	for _, f := range []string{"handle", "name", "state", "input"} {
+	for _, f := range []string{"registry", "handle", "name", "state", "input"} {
 		_ = iacCmd.MarkFlagRequired(f)
 	}
 	root.AddCommand(iacCmd)

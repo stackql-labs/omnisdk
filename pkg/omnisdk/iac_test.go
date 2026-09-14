@@ -11,8 +11,16 @@ import (
 	"github.com/stackql-labs/omnisdk/pkg/omnisdk"
 )
 
-// fakeEC2 answers the Query API well enough to provision: signed form POSTs in, XML out, with the
-// tags a create stamps kept so they can be asserted.
+// param reads a request value from wherever it arrived. The document declares GET with query
+// parameters; a hand-authored plan used POST form. A stand-in that reads only one of them reports a
+// wire change as a provider error.
+func param(r *http.Request, name string) string {
+	if v := r.URL.Query().Get(name); v != "" {
+		return v
+	}
+	return r.PostForm.Get(name)
+}
+
 // describe answers a read either by id or by the correlation tag filter, which is what lets an
 // object be adopted when the ledger no longer knows about it.
 func describe(w http.ResponseWriter, r *http.Request, act string, live, cidrs map[string]string) {
@@ -20,8 +28,8 @@ func describe(w http.ResponseWriter, r *http.Request, act string, live, cidrs ma
 	if act == "DescribeSubnets" {
 		set, item, idAttr = "subnetSet", "subnetId", "SubnetId.1"
 	}
-	id := r.PostForm.Get(idAttr)
-	if want := r.PostForm.Get("Filter.1.Value.1"); want != "" {
+	id := param(r, idAttr)
+	if want := param(r, "Filter.1.Value.1"); want != "" {
 		id = ""
 		for candidate, corr := range live {
 			if corr == want && strings.HasPrefix(candidate, strings.TrimSuffix(item, "Id")) {
@@ -48,24 +56,26 @@ func fakeEC2(t *testing.T, seen *[]string, tags *map[string]string) *httptest.Se
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
-		act := r.PostForm.Get("Action")
+		// The document declares GET with query parameters; the hand-written effector used POST form.
+		// Reading both keeps the stand-in honest about what actually arrives.
+		act := param(r, "Action")
 		*seen = append(*seen, act)
 		w.Header().Set("Content-Type", "text/xml")
 		switch act {
 		case "CreateVpc", "CreateSubnet", "CreateSecurityGroup":
 			for i := 1; ; i++ {
-				k := r.PostForm.Get(fmt.Sprintf("TagSpecification.1.Tag.%d.Key", i))
+				k := param(r, fmt.Sprintf("TagSpecification.1.Tag.%d.Key", i))
 				if k == "" {
 					break
 				}
-				(*tags)[act+":"+k] = r.PostForm.Get(fmt.Sprintf("TagSpecification.1.Tag.%d.Value", i))
+				(*tags)[act+":"+k] = param(r, fmt.Sprintf("TagSpecification.1.Tag.%d.Value", i))
 			}
 			n++
-			corr := r.PostForm.Get("TagSpecification.1.Tag.1.Value")
+			corr := param(r, "TagSpecification.1.Tag.1.Value")
 			if act == "CreateVpc" {
 				id := fmt.Sprintf("vpc-%03d", n)
-				live[id], cidrs[id] = corr, r.PostForm.Get("CidrBlock")
-				fmt.Fprintf(w, `<CreateVpcResponse><vpc><vpcId>%s</vpcId><cidrBlock>%s</cidrBlock></vpc></CreateVpcResponse>`, id, r.PostForm.Get("CidrBlock"))
+				live[id], cidrs[id] = corr, param(r, "CidrBlock")
+				fmt.Fprintf(w, `<CreateVpcResponse><vpc><vpcId>%s</vpcId><cidrBlock>%s</cidrBlock></vpc></CreateVpcResponse>`, id, param(r, "CidrBlock"))
 				return
 			}
 			if act == "CreateSecurityGroup" {
@@ -75,8 +85,8 @@ func fakeEC2(t *testing.T, seen *[]string, tags *map[string]string) *httptest.Se
 				return
 			}
 			id := fmt.Sprintf("subnet-%03d", n)
-			live[id], cidrs[id] = corr, r.PostForm.Get("CidrBlock")
-			fmt.Fprintf(w, `<CreateSubnetResponse><subnet><subnetId>%s</subnetId><cidrBlock>%s</cidrBlock></subnet></CreateSubnetResponse>`, id, r.PostForm.Get("CidrBlock"))
+			live[id], cidrs[id] = corr, param(r, "CidrBlock")
+			fmt.Fprintf(w, `<CreateSubnetResponse><subnet><subnetId>%s</subnetId><cidrBlock>%s</cidrBlock></subnet></CreateSubnetResponse>`, id, param(r, "CidrBlock"))
 		case "DescribeVpcs", "DescribeSubnets":
 			describe(w, r, act, live, cidrs)
 		case "DescribeSecurityGroups":
@@ -119,7 +129,7 @@ func TestNetworkProvisionAppliesBothStepsAndStampsTags(t *testing.T) {
 		"vpc_tags":    `{"Name":"demo-vpc","env":"dev"}`,
 		"subnet_tags": `{"Name":"demo-subnet"}`,
 	})
-	pl, err := omnisdk.Converge("demo", t.TempDir(), "run-1", resources, awsArgs(srv))
+	pl, err := omnisdk.Converge(corpus, "demo", t.TempDir(), "run-1", resources, awsArgs(srv))
 	if err != nil {
 		t.Fatalf("plan: %v", err)
 	}
@@ -174,7 +184,7 @@ func TestNetworkProvisionRerunIssuesNoCreates(t *testing.T) {
 		resources := render(t, map[string]string{
 			"region": "us-east-1", "vpc_cidr": "10.0.0.0/16", "subnet_cidr": "10.0.1.0/24",
 		})
-		pl, err := omnisdk.Converge("demo", state, id, resources, awsArgs(srv))
+		pl, err := omnisdk.Converge(corpus, "demo", state, id, resources, awsArgs(srv))
 		if err != nil {
 			t.Fatalf("plan: %v", err)
 		}
@@ -232,7 +242,7 @@ func TestSameBlueprintUnderTwoNames(t *testing.T) {
 	state := t.TempDir()
 	inputs := map[string]string{"region": "us-east-1", "vpc_cidr": "10.0.0.0/16", "subnet_cidr": "10.0.1.0/24"}
 	for _, name := range []string{"alpha", "beta"} {
-		pl, err := omnisdk.Converge(name, state, "run-"+name, render(t, inputs), awsArgs(srv))
+		pl, err := omnisdk.Converge(corpus, name, state, "run-"+name, render(t, inputs), awsArgs(srv))
 		if err != nil {
 			t.Fatalf("%s plan: %v", name, err)
 		}

@@ -386,19 +386,32 @@ func Spec(ex aot.AOTExchange, inputs map[string]any, reg dsl.Registry, opts ...O
 		}
 		bindings = withInput(bindings, p.Name())
 	}
-	// A provided name the document does not declare is placed anyway. The caller is asserting the
-	// wire shape, exactly as an override asserts the response shape: AWS's Query API takes a filter
-	// as Filter.1.Name / Filter.1.Value.1, while the document models it as one "Filter" parameter of
-	// a list type it never says how to serialise. Refusing to send what the document did not name
-	// would make the call unreachable over a modelling gap.
-	for name := range o.provided {
-		if _, declared := placed[name]; declared {
-			continue
+	// A name the document does not declare is placed anyway when the caller asked for it. The caller
+	// is asserting the wire shape, exactly as an override asserts the response shape: AWS's Query API
+	// takes a filter as Filter.1.Name / Filter.1.Value.1 and a tag as TagSpecification.1.Tag.2.Key,
+	// while the document models each as one parameter of a list type it never says how to serialise.
+	// Refusing to send what the document did not name would make the call unreachable over a
+	// modelling gap.
+	//
+	// Provided and bound differ in where the VALUE comes from, not in whether the parameter is sent:
+	// a provided one is built by T_in when a row arrives, a bound one travels on the row itself. So
+	// both are placed, and only the bound one joins the bindings.
+	for _, undeclared := range []struct {
+		names map[string]bool
+		bind  bool
+	}{{o.provided, false}, {o.bound, true}} {
+		for name := range undeclared.names {
+			if _, declared := placed[name]; declared {
+				continue
+			}
+			if hreq.Query == nil {
+				hreq.Query = map[string]string{}
+			}
+			hreq.Query[name] = "{" + name + "}"
+			if undeclared.bind {
+				bindings = withInput(bindings, name)
+			}
 		}
-		if hreq.Query == nil {
-			hreq.Query = map[string]string{}
-		}
-		hreq.Query[name] = "{" + name + "}"
 	}
 	// Raw material for T_in: bound so a producer delivers it, never placed on the wire.
 	for name := range o.inbox {
