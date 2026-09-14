@@ -117,6 +117,7 @@ func awsArgs(srv *httptest.Server) omnisdk.Args {
 }
 
 func TestNetworkProvisionAppliesBothStepsAndStampsTags(t *testing.T) {
+	requireCorpus(t)
 	t.Setenv("AWS_ACCESS_KEY_ID", "AKIATEST")
 	t.Setenv("AWS_SECRET_ACCESS_KEY", "secret")
 	var seen []string
@@ -171,6 +172,7 @@ func TestNetworkProvisionAppliesBothStepsAndStampsTags(t *testing.T) {
 // A second run over the same state converges: the ledger says both keys are live and the target
 // agrees, so no create is issued.
 func TestNetworkProvisionRerunIssuesNoCreates(t *testing.T) {
+	requireCorpus(t)
 	t.Setenv("AWS_ACCESS_KEY_ID", "AKIATEST")
 	t.Setenv("AWS_SECRET_ACCESS_KEY", "secret")
 	var seen []string
@@ -232,6 +234,7 @@ func TestBlueprintRejectsBadInputs(t *testing.T) {
 // A blueprint is written once and applied under any collection name: the name qualifies both the
 // keys and the bindings between them.
 func TestSameBlueprintUnderTwoNames(t *testing.T) {
+	requireCorpus(t)
 	t.Setenv("AWS_ACCESS_KEY_ID", "AKIATEST")
 	t.Setenv("AWS_SECRET_ACCESS_KEY", "secret")
 	var seen []string

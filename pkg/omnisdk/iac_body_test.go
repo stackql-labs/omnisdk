@@ -17,6 +17,7 @@ import (
 // query is how a document meant for one API goes out shaped for another — and the provider reads it
 // as a call with no content at all.
 func TestGoogleCreateSendsTheIntentAsABody(t *testing.T) {
+	requireCorpus(t)
 	t.Setenv("GOOGLE_CREDENTIALS", serviceAccountKey(t))
 
 	var body, path string
@@ -75,6 +76,7 @@ func TestGoogleCreateSendsTheIntentAsABody(t *testing.T) {
 // wrapped in the row list every projected reply shares, convergence compares a field against nothing
 // and reports drift on a resource that never changed.
 func TestRerunConvergesRatherThanReportingDrift(t *testing.T) {
+	requireCorpus(t)
 	t.Setenv("AWS_ACCESS_KEY_ID", "AKIATEST")
 	t.Setenv("AWS_SECRET_ACCESS_KEY", "secret")
 

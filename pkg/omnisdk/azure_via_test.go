@@ -15,6 +15,7 @@ import (
 // the evaluator does not have fails only when a row arrives, which is after every composition check
 // has passed.
 func TestAzureWiringProgramRuns(t *testing.T) {
+	requireCorpus(t)
 	t.Setenv("AZURE_TENANT_ID", "tenant")
 	t.Setenv("AZURE_CLIENT_ID", "client")
 	t.Setenv("AZURE_CLIENT_SECRET", "secret")

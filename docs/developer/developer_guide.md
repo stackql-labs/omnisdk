@@ -125,6 +125,23 @@ Tuning (any subcommand): `--parallelism` (fan-out concurrency), `--max-per-host`
 Credentials resolve direct flag → env var → file; env vars are never required. Scope (e.g. `--project`) is **required and never inferred** — no env or key-embedded fallback.
 
 
+## Provider-document corpus
+
+Several tests and every `doc-graph`/`iac-apply` example resolve against a registry of provider
+documents at `test/corpus/registry`. It is a vendored copy of an external registry, excluded from
+git, so a clean clone does not have it — and the tests that need it **skip**, naming what is absent,
+rather than failing and reporting a missing fixture as a broken build.
+
+```
+test/corpus/registry/<provider>/<version>/provider.yaml
+                                         /services/*.yaml
+```
+
+Populate it before running those examples, or before relying on the document-driven tests in CI.
+There is no pin recorded: every directory is `v00.00.00000`, a placeholder rather than an upstream
+version, so nothing states which commit these documents came from and a document changing under you
+would read as a code regression.
+
 ## Smoke test
 
 A short pass that exercises each shape the engine supports: a single exchange, a β bowtie, a

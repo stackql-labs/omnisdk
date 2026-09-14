@@ -49,6 +49,7 @@ func serviceAccountKey(t *testing.T) string {
 // methods share a name, an auth exchange never wired in — and all of them surface here, before any
 // request is made. A documented command that cannot build is worse than no command.
 func TestGuideGraphsCompose(t *testing.T) {
+	requireCorpus(t)
 	t.Setenv("AWS_ACCESS_KEY_ID", "AKIATEST")
 	t.Setenv("AWS_SECRET_ACCESS_KEY", "secret")
 	t.Setenv("GOOGLE_CREDENTIALS", serviceAccountKey(t))
