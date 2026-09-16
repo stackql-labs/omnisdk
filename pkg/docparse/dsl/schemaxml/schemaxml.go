@@ -121,13 +121,12 @@ func extractRows(payload map[string]any, row Schema) ([]any, map[string]any) {
 	if looksLikeRow(payload, row) {
 		return []any{projectRow(payload, row)}, nil
 	}
-	// A single named wrapper — <vpc>…</vpc> — around one row.
-	if len(payload) == 1 {
-		for _, v := range payload {
-			if m, ok := v.(map[string]any); ok && looksLikeRow(m, row) {
-				return []any{projectRow(m, row)}, nil
-			}
-		}
+	// A single named wrapper — <vpc>…</vpc> — around one row. A mutating reply carries scalars
+	// beside it (a requestId, a return flag), so the wrapper is sought among the object children
+	// rather than requiring it to be the only child: demanding that made a create's reply project
+	// to no rows at all, and an identity declared against the row shape then had nowhere to read.
+	if wrapped, ok := soleRowObject(payload, row); ok {
+		return []any{projectRow(wrapped, row)}, scalarsBeside(payload)
 	}
 	// A list member beside scalar siblings: <vpcSet><item>…</item></vpcSet> plus a token.
 	key, items := findListMember(payload, row)
@@ -149,6 +148,36 @@ func extractRows(payload map[string]any, row Schema) ([]any, map[string]any) {
 		}
 	}
 	return rows, scalars
+}
+
+// soleRowObject finds the one object child that carries the row's declared elements. More than one
+// candidate is ambiguous — the caller asked about a single object and nothing says which — so it
+// reports nothing rather than guessing.
+func soleRowObject(payload map[string]any, row Schema) (map[string]any, bool) {
+	var found map[string]any
+	for _, v := range payload {
+		m, isObj := v.(map[string]any)
+		if !isObj || !looksLikeRow(m, row) {
+			continue
+		}
+		if found != nil {
+			return nil, false
+		}
+		found = m
+	}
+	return found, found != nil
+}
+
+// scalarsBeside is what the response carries outside the row: a request id, a return flag. They
+// belong to the reply rather than to the object, and dropping them loses what the call reported.
+func scalarsBeside(payload map[string]any) map[string]any {
+	out := map[string]any{}
+	for k, v := range payload {
+		if _, isObj := v.(map[string]any); !isObj {
+			out[k] = v
+		}
+	}
+	return out
 }
 
 // looksLikeRow reports whether a map carries the row's declared elements. One match is enough: a

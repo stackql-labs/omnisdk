@@ -150,3 +150,33 @@ func TestMissingSchemaIsAnError(t *testing.T) {
 		t.Error("eval with a program succeeded; this language has no text")
 	}
 }
+
+// A create's reply is one object beside scalars — <requestId/> next to <vpc/>. The row must be
+// projected from the wrapper regardless of those siblings, because the identity a converge run
+// records is declared against the row shape.
+func TestCreateReplyWithScalarSiblings(t *testing.T) {
+	const body = `<?xml version="1.0" encoding="UTF-8"?>` +
+		`<CreateVpcResponse xmlns="http://ec2.amazonaws.com/doc/2016-11-15/">` +
+		`<requestId>abc-123</requestId><vpc><vpcId>vpc-777</vpcId>` +
+		`<cidrBlock>10.0.0.0/16</cidrBlock></vpc></CreateVpcResponse>`
+	out, err := schemaxml.New().Eval(
+		dsl.Context{Schema: vpcs(), ListProperty: "line_items"}, "", []byte(body))
+	if err != nil {
+		t.Fatalf("eval: %v", err)
+	}
+	var got map[string]any
+	if err := json.Unmarshal(out, &got); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	rows, _ := got["line_items"].([]any)
+	if len(rows) != 1 {
+		t.Fatalf("line_items = %v, want one row", got["line_items"])
+	}
+	row, _ := rows[0].(map[string]any)
+	if row["VpcId"] != "vpc-777" {
+		t.Errorf("VpcId = %v, want vpc-777", row["VpcId"])
+	}
+	if got["requestId"] != "abc-123" {
+		t.Errorf("requestId = %v, want it carried beside the row", got["requestId"])
+	}
+}

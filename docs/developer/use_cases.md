@@ -74,8 +74,8 @@ Neither is defaulted: both decide which resources a run applies to.
 
 ```bash
 ./build/omnicli iac --registry test/corpus/registry --handle aws-vpc-subnet \
-  --aws-region us-east-1 --state cicd/work/iac-state --name scratch \
-  --input '{"vpc_cidr":"10.42.0.0/16","subnet_cidr":"10.42.1.0/24","vpc_tags":{"Name":"scratch"}}'
+  --aws-region ap-southeast-2 --state cicd/work/iac-state --name scratch \
+  --input '{"vpc_cidr":"10.42.0.0/16","subnet_cidr":"10.42.1.0/24","vpc_tags":{"Name":"omnisdk-demo-vpc"},"subnet_tags":{"Name":"omnisdk-demo-subnet"}}'
 ```
 
 `./build/omnicli iac-handles` lists the precanned deployments and the inputs each takes.
@@ -109,7 +109,7 @@ the easy way to see it:
 
 ```bash
 ./build/omnicli iac --registry test/corpus/registry --handle aws-vpc-subnet \
-  --aws-region us-east-1 --state cicd/work/iac-state --name failtest \
+  --aws-region ap-southeast-2 --state cicd/work/iac-state --name failtest \
   --input '{"vpc_cidr":"10.43.0.0/16","subnet_cidr":"192.168.1.0/24"}' 
 ```
 
@@ -129,7 +129,7 @@ document leaves unsaid.
 
 ```bash
 ./build/omnicli iac-apply test/corpus/registry '{
-  "name": "scratch", "state": "cicd/work/iac-state",
+  "name": "scratch-two", "state": "cicd/work/iac-state",
   "resources": [
     {"key": "aws/ec2/vpc", "provider": "aws", "address": "ec2.vpcs",
      "desired": {"CidrBlock": "10.42.0.0/16"},
@@ -142,8 +142,8 @@ document leaves unsaid.
      "inbound": [{"from": "aws/ec2/vpc", "as": "VpcId"}],
      "identity": "line_items.SubnetId", "addressed_by": "SubnetId"}
   ],
-  "args": {"params": {"region": "us-east-1"}}
-}' --aws-region us-east-1
+  "args": {"params": {"region": "ap-southeast-2"}}
+}' --aws-region ap-southeast-2
 ```
 
 `inbound` is the β edge: the VPC's recorded identity arrives as `VpcId`. Where the shape differs
@@ -211,7 +211,7 @@ res := []omnisdk.ManagedResource{
 }
 
 pl, err := omnisdk.Converge(registry, "scratch", state, runID, res, omnisdk.Args{
-    Params: map[string]string{"region": "us-east-1"},
+    Params: map[string]string{"region": "ap-southeast-2"},
 })
 rows, err := pl.Open(ctx)          // same Plan/Rows a query returns
 for rows.Next() { rows.Row() }     // {"key":…, "identity":…, "status":…}
@@ -230,7 +230,7 @@ can already query a provider can already provision against it.
 omnisdk.Converge(registry, name, state, runID, res, omnisdk.Args{
     // Auth is optional: nil falls back to the canonical AWS_*, AZURE_* and GOOGLE_* variables.
     Auth:   &omnisdk.Auth{AccessKeyID: "...", SecretAccessKey: "..."},
-    Params: map[string]string{"region": "us-east-1"},   // scope: required, never inferred
+    Params: map[string]string{"region": "ap-southeast-2"},   // scope: required, never inferred
 })
 ```
 
@@ -242,7 +242,7 @@ Blueprints are reachable the same way:
 
 ```go
 bp, ok := omnisdk.BlueprintFor("aws-vpc-subnet")
-res, err := bp.Resources(map[string]string{"region": "us-east-1", "vpc_cidr": "10.42.0.0/16", ...})
+res, err := bp.Resources(map[string]string{"region": "ap-southeast-2", "vpc_cidr": "10.42.0.0/16", ...})
 ```
 
 ### Limits
