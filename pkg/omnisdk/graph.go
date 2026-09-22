@@ -5,7 +5,9 @@ import (
 	"strings"
 
 	"github.com/stackql-labs/omnisdk/internal/system_g/exchange/docx"
+	"github.com/stackql-labs/omnisdk/internal/system_g/fn"
 	"github.com/stackql-labs/omnisdk/internal/system_g/plan"
+	"github.com/stackql-labs/omnisdk/internal/system_g/transform"
 	"github.com/stackql-labs/omnisdk/pkg/docparse/aot"
 	"github.com/stackql-labs/omnisdk/pkg/docparse/dsl"
 	"github.com/stackql-labs/omnisdk/pkg/docparse/dsl/gotemplate"
@@ -119,10 +121,19 @@ type Graph interface {
 	Wirings() []Wiring
 	// Overrides correct what the documents say, per address.
 	Overrides() []Override
+	// Projections are select lists applied per address, replacing the document's row.
+	Projections() []Projection
 }
 
 // NewGraph declares a multi-exchange query.
 func NewGraph(addresses []string, wirings []Wiring, overrides ...Override) (Graph, error) {
+	return NewGraphWithProjections(addresses, wirings, nil, overrides...)
+}
+
+// NewGraphWithProjections declares a multi-exchange query whose addresses may carry select lists.
+// A projection is applied to that address's rows BEFORE they travel an edge, so a joined-on value
+// may be one a function computed rather than one the document returned.
+func NewGraphWithProjections(addresses []string, wirings []Wiring, projections []Projection, overrides ...Override) (Graph, error) {
 	if len(addresses) == 0 {
 		return nil, fmt.Errorf("omnisdk: a graph needs at least one address")
 	}
@@ -156,18 +167,25 @@ func NewGraph(addresses []string, wirings []Wiring, overrides ...Override) (Grap
 			return nil, fmt.Errorf("omnisdk: override targets %q, which the graph does not include", o.Address())
 		}
 	}
-	return graph{addresses: addresses, wirings: wirings, overrides: overrides}, nil
+	for _, p := range projections {
+		if !known[p.Address()] {
+			return nil, fmt.Errorf("omnisdk: projection targets %q, which the graph does not include", p.Address())
+		}
+	}
+	return graph{addresses: addresses, wirings: wirings, overrides: overrides, projections: projections}, nil
 }
 
 type graph struct {
-	addresses []string
-	wirings   []Wiring
-	overrides []Override
+	addresses   []string
+	wirings     []Wiring
+	overrides   []Override
+	projections []Projection
 }
 
-func (g graph) Addresses() []string   { return g.addresses }
-func (g graph) Wirings() []Wiring     { return g.wirings }
-func (g graph) Overrides() []Override { return g.overrides }
+func (g graph) Addresses() []string       { return g.addresses }
+func (g graph) Wirings() []Wiring         { return g.wirings }
+func (g graph) Overrides() []Override     { return g.overrides }
+func (g graph) Projections() []Projection { return g.projections }
 
 // resolved pairs an address with the name its exchange takes inside the plan. A plan names an
 // exchange by the document's own method name, so a join stated in addresses must be translated
@@ -186,6 +204,13 @@ func NewGraphQuery(dir string, g Graph, args Args) (Plan, error) {
 		return nil, err
 	}
 	reg, err := dsl.NewRegistry(append(gotemplate.Evaluators(), schemaxml.New())...)
+	if err != nil {
+		return nil, err
+	}
+	// "value" names the column a single-column table function emits. A select list renames it to
+	// the column's own output name, so the choice only shows through where a caller uses the
+	// registry directly.
+	fns, err := fn.Builtins("value")
 	if err != nil {
 		return nil, err
 	}
@@ -295,6 +320,16 @@ func NewGraphQuery(dir string, g Graph, args Args) (Plan, error) {
 				spec = plan.WithInbound(spec, docx.InboundProgram(reg, typ, body))
 			}
 		}
+		// The select list is applied to this address's rows before they travel an edge, so a join
+		// may be on a value a function computed. Attached after T_in for the same reason T_in is
+		// attached last: wrapping Make hides the compiled form the auth expansion reads.
+		if p, ok := projectionFor(g, addr); ok {
+			t, err := transform.NewSelection(p.internal(), fns)
+			if err != nil {
+				return nil, fmt.Errorf("omnisdk: %s: %w", addr, err)
+			}
+			spec = plan.WithProject(spec, t)
+		}
 		byAddress[addr] = resolved{planned: spec.Name()}
 		specs = append(specs, spec)
 	}
@@ -342,6 +377,17 @@ func planName(addr string) string {
 }
 
 // wiringFor finds a consumer's declared inbox.
+// projectionFor is the select list declared for addr, if any.
+func projectionFor(g Graph, addr string) (projection, bool) {
+	for _, p := range g.Projections() {
+		if p.Address() == addr {
+			q, ok := p.(projection)
+			return q, ok
+		}
+	}
+	return projection{}, false
+}
+
 func wiringFor(g Graph, addr string) (Wiring, bool) {
 	for _, w := range g.Wirings() {
 		if w.To() == addr {

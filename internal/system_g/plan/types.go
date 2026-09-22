@@ -1,6 +1,9 @@
 package plan
 
-import "github.com/stackql-labs/omnisdk/internal/system_g/facade"
+import (
+	"github.com/stackql-labs/omnisdk/internal/system_g/exchange"
+	"github.com/stackql-labs/omnisdk/internal/system_g/facade"
+)
 
 // Plan IR, behind interfaces (impls unexported, built via constructors).
 
@@ -123,3 +126,20 @@ func (p planData) Alphas() []AlphaEdge        { return p.alphas }
 func (p planData) Inputs() map[string]any     { return p.inputs }
 func (p planData) Egress() []facade.Transform { return p.egress }
 func (p planData) Encoder() facade.Encoder    { return p.encoder }
+
+// WithProject returns spec with t applied to every record it emits, the result exploded back into
+// one record per row. Like WithInbound it wraps Make, so it must be attached AFTER anything that
+// reads the compiled form — wrapping first would hide an exchange's auth expansion.
+func WithProject(spec ExchangeSpec, t facade.Transform) ExchangeSpec {
+	return projectSpec{ExchangeSpec: spec, project: t}
+}
+
+type projectSpec struct {
+	ExchangeSpec
+	project facade.Transform
+}
+
+func (s projectSpec) Make(bound map[string]any) facade.Operator {
+	projected := exchange.NewTransformExchange(0, s.ExchangeSpec.Make(bound), s.project, 1)
+	return exchange.NewExplodeRows(projected, 1)
+}

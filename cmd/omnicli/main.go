@@ -491,6 +491,10 @@ func main() {
 					ProgramType string `json:"program_type,omitempty"`
 					Program     string `json:"program,omitempty"`
 				} `json:"overrides,omitempty"`
+				Projections []struct {
+					Address string       `json:"address"`
+					Select  []selectJSON `json:"select"`
+				} `json:"projections,omitempty"`
 				Args *omnisdk.Args `json:"args,omitempty"`
 			}
 			if err := json.Unmarshal([]byte(cmdArgs(cmd)[1]), &spec); err != nil {
@@ -508,7 +512,23 @@ func main() {
 			for _, o := range spec.Overrides {
 				overrides = append(overrides, omnisdk.NewOverride(o.Address, o.ObjectKey, o.MediaType, o.ProgramType, o.Program))
 			}
-			g, err := omnisdk.NewGraph(spec.Addresses, wirings, overrides...)
+			projections := make([]omnisdk.Projection, 0, len(spec.Projections))
+			for _, p := range spec.Projections {
+				cols := make([]omnisdk.SelectColumn, 0, len(p.Select))
+				for _, c := range p.Select {
+					e, err := parseExpr(c.exprJSON)
+					if err != nil {
+						return fmt.Errorf("projection on %s, column %q: %w", p.Address, c.Out, err)
+					}
+					cols = append(cols, omnisdk.NewSelectColumn(c.Out, e))
+				}
+				pr, err := omnisdk.NewProjection(p.Address, cols)
+				if err != nil {
+					return err
+				}
+				projections = append(projections, pr)
+			}
+			g, err := omnisdk.NewGraphWithProjections(spec.Addresses, wirings, projections, overrides...)
 			if err != nil {
 				return err
 			}
@@ -785,4 +805,55 @@ func (t tune) facade() omnisdk.Tuning {
 		Limit:       t.limit,
 		Timeout:     60 * time.Second,
 	}
+}
+
+// exprJSON is one expression in a select list, written as exactly one of three things: a literal, a
+// field of the row, or a function over further expressions.
+type exprJSON struct {
+	Field   string          `json:"field,omitempty"`
+	Literal json.RawMessage `json:"literal,omitempty"`
+	Fn      string          `json:"fn,omitempty"`
+	Args    []exprJSON      `json:"args,omitempty"`
+}
+
+// selectJSON is an output column: the name it is emitted under, plus the expression inline.
+type selectJSON struct {
+	Out string `json:"out"`
+	exprJSON
+}
+
+// parseExpr builds one expression. Exactly one form must be present: a column that named two would
+// have to be resolved by a precedence rule nobody stated.
+func parseExpr(e exprJSON) (omnisdk.Expression, error) {
+	forms := 0
+	for _, present := range []bool{e.Field != "", e.Literal != nil, e.Fn != ""} {
+		if present {
+			forms++
+		}
+	}
+	switch {
+	case forms == 0:
+		return nil, fmt.Errorf(`expression needs one of "field", "literal" or "fn"`)
+	case forms > 1:
+		return nil, fmt.Errorf(`expression names more than one of "field", "literal", "fn"`)
+	}
+	switch {
+	case e.Field != "":
+		return omnisdk.NewField(e.Field), nil
+	case e.Literal != nil:
+		var v any
+		if err := json.Unmarshal(e.Literal, &v); err != nil {
+			return nil, fmt.Errorf("literal: %w", err)
+		}
+		return omnisdk.NewLiteral(v), nil
+	}
+	args := make([]omnisdk.Expression, 0, len(e.Args))
+	for i, a := range e.Args {
+		x, err := parseExpr(a)
+		if err != nil {
+			return nil, fmt.Errorf("%s argument %d: %w", e.Fn, i+1, err)
+		}
+		args = append(args, x)
+	}
+	return omnisdk.NewCall(e.Fn, args...), nil
 }
