@@ -45,7 +45,8 @@ func TestTranspileSimpleJoin(t *testing.T) {
 	// ON p.UserName = u.UserName becomes a β edge. It is DIRECTED, and here the direction is forced:
 	// only users can be listed without the other, so users produces and the policies consume. `via`
 	// turns the joined value into the parameter the API takes, and `provides` names it.
-	join := omnisdk.NewWiring(iamAttachedPolicies,
+	join := omnisdk.NewWiring(
+		iamAttachedPolicies,
 		[]omnisdk.Inbound{omnisdk.NewInbound(iamUsers, "UserName", "user_name")},
 		"golang_template_json_v0.1.0",
 		`{"UserName":"{{ .user_name }}"}`,
