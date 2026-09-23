@@ -26,7 +26,7 @@ export _AWS_REGION='us-east-1'
 
 ```
 
-For testing (registry) doc based resources, download any relevant contents of [the `src` directory of registry commit `a99a816`](https://github.com/stackql/stackql-provider-registry/tree/a99a8162cef862a41c97cd34aa4ca87356fdeb2e/providers/src) to `test/corpus/registry`.
+For testing (registry) doc based resources, download any relevant contents of [the `src` directory of registry commit `3434e05`](https://github.com/stackql/stackql-provider-registry/tree/3434e05dfee821baeaf952b9f8cf690d7c2a9a29/providers/src) to `test/corpus/registry`.
 
 ```bash
 go build -o build/omnicli ./cmd/omnicli
