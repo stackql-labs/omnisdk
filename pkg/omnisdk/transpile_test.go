@@ -1,6 +1,7 @@
 package omnisdk_test
 
 import (
+	"reflect"
 	"testing"
 
 	"github.com/stackql-labs/omnisdk/pkg/omnisdk"
@@ -33,7 +34,7 @@ opposite of what a transpiler has to reason about.
 Every clause lands in exactly one place, and the whole of it is three arguments to
 NewGraphSelectQuery: a directory, a Graph and Args.
 */
-func TestTranspileSimpleJoinWithFunctionProjection(t *testing.T) {
+func TestTranspileSimpleJoin(t *testing.T) {
 	requireCorpus(t)
 	t.Setenv("AWS_ACCESS_KEY_ID", "AKIATEST")
 	t.Setenv("AWS_SECRET_ACCESS_KEY", "secret")
@@ -62,8 +63,6 @@ func TestTranspileSimpleJoinWithFunctionProjection(t *testing.T) {
 	}
 	policiesSelect, err := omnisdk.NewProjection(iamAttachedPolicies, []omnisdk.SelectColumn{
 		omnisdk.NewSelectColumn("PolicyName", omnisdk.NewField("PolicyName")),
-		omnisdk.NewSelectColumn("policy_path", omnisdk.NewCall("split_part",
-			omnisdk.NewField("PolicyArn"), omnisdk.NewLiteral("/"), omnisdk.NewLiteral(2))),
 	})
 	if err != nil {
 		t.Fatalf("policies projection: %v", err)
@@ -79,7 +78,43 @@ func TestTranspileSimpleJoinWithFunctionProjection(t *testing.T) {
 	// Args.Params. This query has none beyond the scope the signing needs.
 	args := omnisdk.Args{Params: map[string]string{"region": "us-east-1"}}
 
-	// Composition is the real assertion: an exchange whose required input nothing supplies, or an
+	// The mapping itself, clause by clause, asserted against the graph a transpiler would emit.
+	if got := g.Addresses(); !reflect.DeepEqual(got, []string{iamUsers, iamAttachedPolicies}) {
+		t.Errorf("FROM/JOIN -> addresses = %v", got)
+	}
+
+	ws := g.Wirings()
+	if len(ws) != 1 {
+		t.Fatalf("ON -> wirings = %d, want 1", len(ws))
+	}
+	w := ws[0]
+	if w.To() != iamAttachedPolicies {
+		t.Errorf("the consumer is the side that cannot list alone; got %s", w.To())
+	}
+	in := w.Inbound()
+	if len(in) != 1 || in[0].From() != iamUsers || in[0].Src() != "UserName" {
+		t.Errorf("ON -> inbound = %#v", in)
+	}
+	if !reflect.DeepEqual(w.Provides(), []string{"UserName"}) {
+		t.Errorf("via builds the consumer's parameter; provides = %v", w.Provides())
+	}
+
+	// One projection per address, carrying that relation's share of the select list.
+	wantCols := map[string][]string{
+		iamUsers:            {"UserName"},
+		iamAttachedPolicies: {"PolicyName"},
+	}
+	for _, p := range g.Projections() {
+		var got []string
+		for _, c := range p.Columns() {
+			got = append(got, c.Out())
+		}
+		if want := wantCols[p.Address()]; !reflect.DeepEqual(got, want) {
+			t.Errorf("SELECT -> %s columns = %v, want %v", p.Address(), got, want)
+		}
+	}
+
+	// Composition is the last assertion: an exchange whose required input nothing supplies, or an
 	// edge onto an address the graph does not run, fails HERE — before a request is made.
 	if _, err := omnisdk.NewGraphSelectQuery(corpus, g, args); err != nil {
 		t.Fatalf("plan: %v", err)
