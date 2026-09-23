@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strings"
+	"sync"
 	"testing"
 
 	"github.com/stackql-labs/omnisdk/pkg/omnisdk"
@@ -12,13 +14,40 @@ import (
 
 const vpcsAddr = "stackql_unstable_aws.ec2.vpcs"
 
-// ec2Stub answers DescribeVpcs with one VPC whose tag value is a delimited string, which is what
-// gives a function something to do. Subnets answer with one subnet per VPC id seen.
-func ec2Stub(t *testing.T, seen *[]string) *httptest.Server {
+// calls records what the stub was asked for. A fan-out drives several requests CONCURRENTLY, so the
+// recorder is locked: an unsynchronised slice loses writes, and a lost write reads as the engine
+// having made fewer calls than it did.
+type calls struct {
+	mu   sync.Mutex
+	seen []string
+}
+
+func (c *calls) add(s string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.seen = append(c.seen, s)
+}
+
+// matching counts the recorded calls carrying prefix, and returns the remainder of each.
+func (c *calls) matching(prefix string) []string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	var out []string
+	for _, s := range c.seen {
+		if strings.HasPrefix(s, prefix) {
+			out = append(out, strings.TrimPrefix(s, prefix))
+		}
+	}
+	return out
+}
+
+// ec2Stub answers DescribeVpcs with two VPCs whose CIDR is a delimited string, which is what gives a
+// function something to do. Subnets answer with one subnet whatever the filter.
+func ec2Stub(t *testing.T, seen *calls) *httptest.Server {
 	t.Helper()
 	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		action := r.URL.Query().Get("Action")
-		*seen = append(*seen, action+"|"+r.URL.Query().Get("Filter.1.Value.1"))
+		seen.add(action + "|" + r.URL.Query().Get("Filter.1.Value.1"))
 		w.Header().Set("Content-Type", "text/xml")
 		switch action {
 		case "DescribeVpcs":
@@ -67,7 +96,7 @@ func awsEnv(t *testing.T) {
 func TestScalarFunctionProjection(t *testing.T) {
 	requireCorpus(t)
 	awsEnv(t)
-	var seen []string
+	var seen calls
 	srv := ec2Stub(t, &seen)
 	defer srv.Close()
 
@@ -106,7 +135,7 @@ func TestScalarFunctionProjection(t *testing.T) {
 func TestTableValuedFunctionProjection(t *testing.T) {
 	requireCorpus(t)
 	awsEnv(t)
-	var seen []string
+	var seen calls
 	srv := ec2Stub(t, &seen)
 	defer srv.Close()
 
@@ -165,7 +194,7 @@ const subnetsAddr = "stackql_unstable_aws.ec2.subnets"
 func TestJoinOnAScalarFunctionResult(t *testing.T) {
 	requireCorpus(t)
 	awsEnv(t)
-	var seen []string
+	var seen calls
 	srv := ec2Stub(t, &seen)
 	defer srv.Close()
 
@@ -194,12 +223,7 @@ func TestJoinOnAScalarFunctionResult(t *testing.T) {
 		t.Fatal("no rows")
 	}
 	// The filter carries the computed value, not the field the document returned.
-	var filtered []string
-	for _, s := range seen {
-		if len(s) > 16 && s[:16] == "DescribeSubnets|" {
-			filtered = append(filtered, s[16:])
-		}
-	}
+	filtered := seen.matching("DescribeSubnets|")
 	want := map[string]bool{"10.0.0.0": true, "10.1.0.0": true}
 	if len(filtered) != 2 || !want[filtered[0]] || !want[filtered[1]] {
 		t.Errorf("subnet filters = %v, want the two computed prefixes", filtered)
@@ -211,7 +235,7 @@ func TestJoinOnAScalarFunctionResult(t *testing.T) {
 func TestJoinOnATableValuedFunctionResult(t *testing.T) {
 	requireCorpus(t)
 	awsEnv(t)
-	var seen []string
+	var seen calls
 	srv := ec2Stub(t, &seen)
 	defer srv.Close()
 
@@ -240,14 +264,8 @@ func TestJoinOnATableValuedFunctionResult(t *testing.T) {
 	if rows := runGraph(t, srv, g); len(rows) == 0 {
 		t.Fatal("no rows")
 	}
-	calls := 0
-	for _, s := range seen {
-		if len(s) > 16 && s[:16] == "DescribeSubnets|" {
-			calls++
-		}
-	}
 	// Two VPCs, four octets each: the fan-out drives eight calls, not two.
-	if calls != 8 {
-		t.Errorf("subnet calls = %d, want 8 (one per produced row)", calls)
+	if n := len(seen.matching("DescribeSubnets|")); n != 8 {
+		t.Errorf("subnet calls = %d, want 8 (one per produced row)", n)
 	}
 }
