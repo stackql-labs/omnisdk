@@ -1038,9 +1038,9 @@ func DocMethods(dir, provider, service, resource string) ([]DocMethod, error) {
 	return out, nil
 }
 
-// NewFromCatalog plans one addressed exchange out of a provider bundle. Same Plan a catalog method
+// NewSelectFromCatalog plans one addressed exchange out of a provider bundle. Same Plan a catalog method
 // returns, so a consumer runs it identically.
-func NewFromCatalog(dir, address string, args Args) (Plan, error) {
+func NewSelectFromCatalog(dir, address string, args Args) (Plan, error) {
 	if err := checkEndpoint(args); err != nil {
 		return nil, err
 	}
@@ -1048,7 +1048,7 @@ func NewFromCatalog(dir, address string, args Args) (Plan, error) {
 	if err != nil {
 		return nil, err
 	}
-	candidates, err := c.Exchanges(address)
+	candidates, err := c.Operations(address, "select")
 	if err != nil {
 		return nil, err
 	}

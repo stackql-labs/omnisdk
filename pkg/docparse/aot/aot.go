@@ -214,10 +214,6 @@ type Catalog interface {
 	// lists them. That order is the selection rule: a verb fans out — a resource may declare several
 	// inserts — and the caller's inputs decide which applies, by matching signatures down the list.
 	Operations(path, verb string) ([]AOTExchange, error)
-	// Exchanges returns EVERY exchange a resource's SELECT names. A document may bind several — a
-	// get by id and a list by scope are both SELECT — and which one runs depends on what the caller
-	// supplied, so the choice cannot be made here.
-	Exchanges(path string) ([]AOTExchange, error)
 }
 
 // Method is one operation a resource declares, and the SQL verb (if any) the document maps it to.

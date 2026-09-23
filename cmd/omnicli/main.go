@@ -581,7 +581,7 @@ func main() {
 			if (a.Tuning == omnisdk.Tuning{}) {
 				a.Tuning = t.facade()
 			}
-			pl, err := omnisdk.NewFromCatalog(pos[0], pos[1], a)
+			pl, err := omnisdk.NewSelectFromCatalog(pos[0], pos[1], a)
 			if err != nil {
 				return err
 			}

@@ -132,19 +132,6 @@ func (c *catalog) Operations(addr, verb string) ([]aot.AOTExchange, error) {
 	return doc.Verb(res, verb)
 }
 
-func (c *catalog) Exchanges(addr string) ([]aot.AOTExchange, error) {
-	prov, svc, res, err := c.split(addr)
-	if err != nil {
-		return nil, err
-	}
-	_ = prov
-	doc, err := c.doc(svc)
-	if err != nil {
-		return nil, err
-	}
-	return doc.Selects(res)
-}
-
 func (c *catalog) Exchange(addr string) (aot.AOTExchange, error) {
 	prov, svc, res, err := c.split(addr)
 	if err != nil {
