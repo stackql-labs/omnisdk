@@ -63,7 +63,7 @@ func ec2Stub(t *testing.T, seen *calls) *httptest.Server {
 
 func runGraph(t *testing.T, srv *httptest.Server, g omnisdk.Graph) []omnisdk.Row {
 	t.Helper()
-	pl, err := omnisdk.NewGraphQuery(corpus, g, omnisdk.Args{
+	pl, err := omnisdk.NewGraphSelectQuery(corpus, g, omnisdk.Args{
 		Endpoint: srv.URL,
 		Params:   map[string]string{"region": "us-east-1"},
 	})
@@ -182,7 +182,7 @@ func TestSelectRefusesTwoRowProducingColumns(t *testing.T) {
 	if err != nil {
 		t.Fatalf("graph: %v", err)
 	}
-	if _, err := omnisdk.NewGraphQuery(corpus, g, omnisdk.Args{Params: map[string]string{"region": "us-east-1"}}); err == nil {
+	if _, err := omnisdk.NewGraphSelectQuery(corpus, g, omnisdk.Args{Params: map[string]string{"region": "us-east-1"}}); err == nil {
 		t.Fatal("want a refusal for two row-producing columns, got none")
 	}
 }

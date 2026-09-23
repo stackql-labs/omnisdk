@@ -544,7 +544,7 @@ func main() {
 			}
 			a.Endpoint, a.Log, a.Tuning = endpoint, logw, t.facade()
 			a.InsecureSkipTLSVerify = insecureTLS
-			pl, err := omnisdk.NewGraphQuery(cmdArgs(cmd)[0], g, a)
+			pl, err := omnisdk.NewGraphSelectQuery(cmdArgs(cmd)[0], g, a)
 			if err != nil {
 				return err
 			}

@@ -194,12 +194,12 @@ type resolved struct {
 	planned string
 }
 
-// NewGraphQuery plans a multi-exchange query over a registry root or bundle directory.
+// NewGraphSelectQuery plans a multi-exchange query over a registry root or bundle directory.
 //
 // Every exchange is compiled exactly as a single-address run compiles one, so auth, signing and
 // response handling are unchanged. What the caller adds is the data flow between them — the part a
 // document cannot state, because it describes one provider and a relationship may span two.
-func NewGraphQuery(dir string, g Graph, args Args) (Plan, error) {
+func NewGraphSelectQuery(dir string, g Graph, args Args) (Plan, error) {
 	if err := checkEndpoint(args); err != nil {
 		return nil, err
 	}
@@ -245,7 +245,7 @@ func NewGraphQuery(dir string, g Graph, args Args) (Plan, error) {
 		if err != nil {
 			return nil, err
 		}
-		candidates, err := c.Exchanges(addr)
+		candidates, err := c.Operations(addr, "select")
 		if err != nil {
 			return nil, err
 		}

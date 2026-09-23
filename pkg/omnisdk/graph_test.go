@@ -75,7 +75,7 @@ func TestGraphJoinsTwoExchangesTheDocumentDoesNotRelate(t *testing.T) {
 		t.Fatalf("graph: %v", err)
 	}
 
-	pl, err := omnisdk.NewGraphQuery(corpus, g, omnisdk.Args{
+	pl, err := omnisdk.NewGraphSelectQuery(corpus, g, omnisdk.Args{
 		Endpoint: srv.URL,
 		Params:   map[string]string{"region": "us-east-1"},
 	})

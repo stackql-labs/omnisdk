@@ -126,7 +126,7 @@ func TestGuideGraphsCompose(t *testing.T) {
 			}
 			// An unroutable endpoint: the plan must build, and the run must then fail at the wire
 			// rather than before it.
-			pl, err := omnisdk.NewGraphQuery(corpus, g, omnisdk.Args{
+			pl, err := omnisdk.NewGraphSelectQuery(corpus, g, omnisdk.Args{
 				Endpoint: "http://127.0.0.1:9",
 				Params:   tc.params,
 			})

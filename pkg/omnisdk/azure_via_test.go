@@ -50,7 +50,7 @@ func TestAzureWiringProgramRuns(t *testing.T) {
 	if err != nil {
 		t.Fatalf("graph: %v", err)
 	}
-	pl, err := omnisdk.NewGraphQuery(corpus, g, omnisdk.Args{
+	pl, err := omnisdk.NewGraphSelectQuery(corpus, g, omnisdk.Args{
 		Endpoint: srv.URL,
 		Params:   map[string]string{"subscription_id": "sub"},
 	})

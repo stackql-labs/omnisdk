@@ -36,7 +36,7 @@ if err != nil {
     return err
 }
 
-pl, err := omnisdk.NewGraphQuery(registryRoot, g, omnisdk.Args{
+pl, err := omnisdk.NewGraphSelectQuery(registryRoot, g, omnisdk.Args{
     Auth:   auth,                                        // nil falls back to the env
     Params: map[string]string{"region": "us-east-1"},    // scope
 })
