@@ -26,7 +26,13 @@ export _AWS_REGION='us-east-1'
 
 ```
 
-For testing (registry) doc based resources, download any relevant contents of [the `src` directory of registry commit `3434e05`](https://github.com/stackql/stackql-provider-registry/tree/3434e05dfee821baeaf952b9f8cf690d7c2a9a29/providers/src) to `test/corpus/registry`.
+For testing (registry) doc based resources, populate `test/corpus/registry` with:
+
+```bash
+./test/corpus/fetch.sh
+```
+
+It is pinned: the script fixes the registry commit ([`3434e05`](https://github.com/stackql/stackql-provider-registry/tree/3434e05dfee821baeaf952b9f8cf690d7c2a9a29/providers/src)) and the providers taken from it, verifies the checkout is that commit, and replaces the directory. Two machines running it get byte-identical documents. Re-run it to refresh; edit the commit in the script to repin.
 
 ```bash
 go build -o build/omnicli ./cmd/omnicli
@@ -137,10 +143,12 @@ test/corpus/registry/<provider>/<version>/provider.yaml
                                          /services/*.yaml
 ```
 
-Populate it before running those examples, or before relying on the document-driven tests in CI.
-There is no pin recorded: every directory is `v00.00.00000`, a placeholder rather than an upstream
-version, so nothing states which commit these documents came from and a document changing under you
-would read as a code regression.
+Populate it with `./test/corpus/fetch.sh`, which pins the upstream commit — the directory names
+(`v00.00.00000`) are placeholders and state nothing, so the pin lives in the script.
+
+CI runs the same script and then sets `OMNISDK_REQUIRE_CORPUS`, which turns a missing corpus from a
+skip into a failure. Locally the skip stands, so a clean clone still builds and tests without
+fetching anything.
 
 ## Smoke test
 

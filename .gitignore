@@ -2,4 +2,10 @@
 *.venv/
 *venv/
 .claude
+CLAUDE.local.md
 __debug_*
+
+# Fetched provider documents: hundreds of MB, populated by test/corpus/fetch.sh and never committed
+# — a module zip includes testdata, and Go caps one at 500MB. The fetch script itself IS tracked:
+# it carries the pinned registry commit.
+test/corpus/registry/

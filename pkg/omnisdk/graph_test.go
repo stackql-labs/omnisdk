@@ -15,16 +15,23 @@ import (
 
 const corpus = "../../test/corpus/registry"
 
-// requireCorpus skips a test that needs the provider-document corpus.
+// requireCorpus skips a test that needs the provider-document corpus, or FAILS it where the corpus
+// is meant to be there.
 //
-// The corpus is a vendored copy of an external registry and is not tracked, so a clean clone does
-// not have it. Failing there reports a missing fixture as a broken build; skipping says what is
-// absent and why, and the test still runs everywhere the corpus is present.
+// The corpus is a vendored subset of an external registry and is not tracked, so a clean clone does
+// not have it: skipping says what is absent and why, rather than reporting a missing fixture as a
+// broken build. But a silent skip in CI is worse than either — it hides a regression behind a green
+// run — so CI sets OMNISDK_REQUIRE_CORPUS after populating it, and absence is then a failure.
 func requireCorpus(t *testing.T) {
 	t.Helper()
-	if _, err := os.Stat(corpus); err != nil {
-		t.Skipf("provider-document corpus absent at %s; see the developer guide for how to populate it", corpus)
+	if _, err := os.Stat(corpus); err == nil {
+		return
 	}
+	const how = "run ./test/corpus/fetch.sh (see the developer guide)"
+	if os.Getenv("OMNISDK_REQUIRE_CORPUS") != "" {
+		t.Fatalf("provider-document corpus absent at %s and OMNISDK_REQUIRE_CORPUS is set; %s", corpus, how)
+	}
+	t.Skipf("provider-document corpus absent at %s; %s", corpus, how)
 }
 
 // A document describes one provider's calls and does not state that a subnet belongs to a VPC. The
