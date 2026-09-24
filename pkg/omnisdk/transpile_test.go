@@ -150,6 +150,9 @@ func iamStub(t *testing.T) *httptest.Server {
 			fmt.Fprint(w, `<ListUsersResponse><ListUsersResult><Users>`+
 				`<member><UserName>alice</UserName></member><member><UserName>bob</UserName></member>`+
 				`</Users></ListUsersResult></ListUsersResponse>`)
+		case "GetUser":
+			fmt.Fprintf(w, `<GetUserResponse><GetUserResult><User><UserName>%s</UserName></User></GetUserResult></GetUserResponse>`,
+				r.Form.Get("UserName"))
 		case "ListAttachedUserPolicies":
 			fmt.Fprintf(w, `<ListAttachedUserPoliciesResponse><ListAttachedUserPoliciesResult><AttachedPolicies>`+
 				`<member><PolicyName>%s-policy</PolicyName></member>`+
@@ -366,5 +369,26 @@ func TestJoinNeitherSideNeeds(t *testing.T) {
 	}
 	if want := []string{"ListUsers|us-east-1", "ListUsers|us-east-1"}; !reflect.DeepEqual(made, want) {
 		t.Errorf("calls = %v, want one listing per reference", made)
+	}
+}
+
+// SELECT u.UserName FROM aws.iam.users u WHERE region = 'us-east-1' AND u.UserName IN ('alice', 'bob')
+// UserName is a parameter of get_user, so the table runs once per name rather than listing.
+func TestInListOnATableParameterFansOut(t *testing.T) {
+	q := mustQuery(t,
+		[]query.Join{query.NewJoin(query.NewResource("u", "aws.iam.users"), query.Base)},
+		[]query.Predicate{
+			query.NewEq(query.NewColumn("", "region"), query.NewLiteral("us-east-1")),
+			query.NewIn(query.NewColumn("u", "UserName"),
+				query.NewCollection(query.NewLiteral("alice"), query.NewLiteral("bob"))),
+		},
+		[]query.Output{query.NewOutput("UserName", query.NewColumn("u", "UserName"))},
+	)
+	rows, made := runQuery(t, q)
+	if want := []string{"UserName=alice", "UserName=bob"}; !reflect.DeepEqual(rows, want) {
+		t.Errorf("rows = %v, want %v", rows, want)
+	}
+	if want := []string{"GetUser|us-east-1", "GetUser|us-east-1"}; !reflect.DeepEqual(made, want) {
+		t.Errorf("calls = %v, want one GetUser per name", made)
 	}
 }
