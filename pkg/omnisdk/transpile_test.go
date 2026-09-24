@@ -437,3 +437,85 @@ func TestOutputAcrossTables(t *testing.T) {
 		t.Errorf("rows = %v, want %v", rows, want)
 	}
 }
+
+// rowKeys are the column names of a runQuery row.
+func rowKeys(row string) []string {
+	var out []string
+	for _, kv := range strings.Split(row, ",") {
+		k, _, _ := strings.Cut(kv, "=")
+		out = append(out, k)
+	}
+	return out
+}
+
+var usersColumns = []string{"Arn", "CreateDate", "PasswordLastUsed", "Path", "PermissionsBoundary", "Tags", "UserId", "UserName"}
+
+// SELECT * FROM aws.iam.users u WHERE region = 'us-east-1'
+// The star is the columns the document declares for the row.
+func TestSelectStar(t *testing.T) {
+	q := mustQuery(t,
+		[]query.Join{query.NewJoin(query.NewResource("u", "aws.iam.users"), query.Base)},
+		[]query.Predicate{query.NewEq(query.NewColumn("", "region"), query.NewLiteral("us-east-1"))},
+		[]query.Output{query.NewOutput("", query.NewStar(""))},
+	)
+	rows, _ := runQuery(t, q)
+	if len(rows) != 2 {
+		t.Fatalf("rows = %v, want alice and bob", rows)
+	}
+	for _, r := range rows {
+		if got := rowKeys(r); !reflect.DeepEqual(got, usersColumns) {
+			t.Errorf("columns = %v, want %v", got, usersColumns)
+		}
+	}
+	if !strings.Contains(rows[0], "UserName=alice") || !strings.Contains(rows[1], "UserName=bob") {
+		t.Errorf("rows = %v", rows)
+	}
+}
+
+// SELECT u.*, p.PolicyName FROM aws.iam.users u INNER JOIN aws.iam.attached_user_policies p ON ...
+func TestQualifiedStarBesideAColumn(t *testing.T) {
+	q := mustQuery(t,
+		[]query.Join{
+			query.NewJoin(query.NewResource("u", "aws.iam.users"), query.Base),
+			query.NewJoin(query.NewResource("p", "aws.iam.attached_user_policies"), query.Inner,
+				query.NewEq(query.NewColumn("p", "UserName"), query.NewColumn("u", "UserName"))),
+		},
+		[]query.Predicate{query.NewEq(query.NewColumn("", "region"), query.NewLiteral("us-east-1"))},
+		[]query.Output{
+			query.NewOutput("", query.NewStar("u")),
+			query.NewOutput("PolicyName", query.NewColumn("p", "PolicyName")),
+		},
+	)
+	rows, _ := runQuery(t, q)
+	want := append([]string{"PolicyName"}, usersColumns...)
+	sort.Strings(want)
+	if len(rows) != 2 {
+		t.Fatalf("rows = %v", rows)
+	}
+	for _, r := range rows {
+		if got := rowKeys(r); !reflect.DeepEqual(got, want) {
+			t.Errorf("columns = %v, want %v", got, want)
+		}
+	}
+}
+
+// SELECT * over a self-join names every column twice: ambiguous, so resolution refuses it.
+func TestStarOverASelfJoinIsAmbiguous(t *testing.T) {
+	requireCorpus(t)
+	q := mustQuery(t,
+		[]query.Join{
+			query.NewJoin(query.NewResource("a", "aws.iam.users"), query.Base),
+			query.NewJoin(query.NewResource("b", "aws.iam.users"), query.Inner,
+				query.NewEq(query.NewColumn("a", "UserName"), query.NewColumn("b", "UserName"))),
+		},
+		nil,
+		[]query.Output{query.NewOutput("", query.NewStar(""))},
+	)
+	tbl, err := omnisdk.DescribeTable(corpus, iamUsers)
+	if err != nil {
+		t.Fatalf("describe: %v", err)
+	}
+	if _, err := omnisdk.Resolve(q, map[string]omnisdk.Table{"a": tbl, "b": tbl}); err == nil {
+		t.Error("resolved a star whose columns collide")
+	}
+}

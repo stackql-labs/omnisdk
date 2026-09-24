@@ -154,7 +154,65 @@ func Resolve(q query.Unresolved, tables map[string]Table) (Resolution, error) {
 			}
 		}
 	}
-	return r.build(q.Select())
+	sel, err := r.expand(q.Select())
+	if err != nil {
+		return nil, err
+	}
+	return r.build(sel)
+}
+
+// expand replaces each star with the columns its tables' documents declare, named by column. A
+// table with no declared schema cannot be expanded, and two expanded columns with one name are
+// ambiguous: each is an error rather than a guess at what the query meant.
+func (r *resolver) expand(sel []query.Output) ([]query.Output, error) {
+	var out []query.Output
+	names := map[string]string{}
+	add := func(o query.Output, from string) error {
+		if prev, clash := names[o.Name()]; clash {
+			return fmt.Errorf("omnisdk: output %q comes from %s and %s; alias one of them", o.Name(), prev, from)
+		}
+		names[o.Name()] = from
+		out = append(out, o)
+		return nil
+	}
+	for _, o := range sel {
+		st, ok := o.Expr().(query.Star)
+		if !ok {
+			if err := add(o, "the select list"); err != nil {
+				return nil, err
+			}
+			continue
+		}
+		aliases := r.order
+		if st.Qualifier() != "" {
+			aliases = []string{st.Qualifier()}
+		}
+		for _, alias := range aliases {
+			cols := columnsOf(r.tables[alias])
+			if len(cols) == 0 {
+				return nil, fmt.Errorf("omnisdk: %s.*: the document declares no columns for %s", alias, r.tables[alias].Address())
+			}
+			for _, c := range cols {
+				if err := add(query.NewOutput(c, query.NewColumn(alias, c)), alias+".*"); err != nil {
+					return nil, err
+				}
+			}
+		}
+	}
+	return out, nil
+}
+
+// columnsOf are the columns any of a table's methods declares, in first-seen order.
+func columnsOf(t Table) []string {
+	var out []string
+	for _, m := range t.Methods() {
+		for _, c := range m.Columns() {
+			if !contains(out, c) {
+				out = append(out, c)
+			}
+		}
+	}
+	return out
 }
 
 type resolver struct {

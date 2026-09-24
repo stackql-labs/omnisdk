@@ -14,7 +14,7 @@ still rejects LEFT until it selects the left-outer merge for the joined node.
 | 3 | `IN` lists | Fixed | On a table's parameter: `NewFanoutNode` gets a no-network values exchange emitting one row per value, bound into the node. Query-wide (e.g. `region`): one values exchange runs first, so every node in a row sees the same value (`valuesSpec`). |
 | 4 | Computed values: functions on join keys; expressions reading several tables | Fixed | `column = f(other table)`: where the column's table needs the value, the producer computes `f` in its projection under a hidden name and the edge carries it; otherwise it is a filter. A function on the needing side cannot be inverted and never binds (`bindComputed`). An output reading several tables is computed on each finished row, from the columns each node keeps (`outputTransform`). |
 | 5a | Output is exactly the selected columns | Fixed | Where every node has a projection, egress keeps only the projected columns (`onlyColumns`). |
-| 5b | `SELECT *` expanded from the schema | Open | |
+| 5b | `SELECT *` expanded from the schema | Fixed | `query.NewStar(qualifier)` states `*` or `u.*`. `Resolve` expands it to the columns the table's methods declare, each named by its column. A table with no declared schema, or two expanded columns sharing a name (e.g. `*` over a self-join), is an error (`expand`). |
 | 5c | ORDER BY / GROUP BY columns emitted | Open | stackql's front end adds them to the select list; nothing needed in omnisdk. |
 | 6 | Naming: stackql handles → registry addresses | Open | |
 | 7 | Queries that aren't one SELECT (CTEs, subqueries, UNION) | Open | stackql splits them into single SELECTs, sends each, and combines the results. |

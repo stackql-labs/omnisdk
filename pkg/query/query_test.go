@@ -76,6 +76,10 @@ func TestNewRejectsWhatTheQueryGetsWrong(t *testing.T) {
 			from:  []query.Join{query.NewJoin(u, query.Base)},
 			where: []query.Predicate{query.NewEq(col("x", "UserName"), query.NewLiteral("a"))},
 		},
+		"star names an unknown alias": {
+			from: []query.Join{query.NewJoin(u, query.Base)},
+			sel:  []query.Output{query.NewOutput("", query.NewStar("x"))},
+		},
 		"output named twice": {
 			from: []query.Join{query.NewJoin(u, query.Base), query.NewJoin(p, query.Inner)},
 			sel: []query.Output{

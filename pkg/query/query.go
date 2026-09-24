@@ -92,6 +92,14 @@ type Column interface {
 	Name() string
 }
 
+// Star is every column of a resource, or of every resource where Qualifier is empty: SELECT * and
+// SELECT u.*. It is an output only, and which columns it means is known on resolution.
+type Star interface {
+	Expr
+	Qualifier() string
+	star()
+}
+
 // Call is a function applied to arguments. Whether it yields a scalar or rows is the function's
 // signature, known on resolution.
 type Call interface {
@@ -182,6 +190,12 @@ func New(from []Join, where []Predicate, sel []Output) (Unresolved, error) {
 	}
 	names := map[string]bool{}
 	for _, o := range sel {
+		if st, ok := o.Expr().(Star); ok {
+			if q := st.Qualifier(); q != "" && !scope[q] {
+				return nil, fmt.Errorf("query: %s.* names %q, which is not in scope", q, q)
+			}
+			continue
+		}
 		switch {
 		case o.Name() == "":
 			return nil, fmt.Errorf("query: an output has no name")
@@ -318,6 +332,16 @@ type column struct{ q, name string }
 func (column) expr()               {}
 func (c column) Qualifier() string { return c.q }
 func (c column) Name() string      { return c.name }
+
+// NewStar is every column of the resource aliased qualifier, or of every resource where it is empty.
+// Its output takes its names from the columns, so the Output's own name is ignored.
+func NewStar(qualifier string) Star { return star{q: qualifier} }
+
+type star struct{ q string }
+
+func (star) expr()               {}
+func (star) star()               {}
+func (s star) Qualifier() string { return s.q }
 
 // NewCall applies a function.
 func NewCall(fn string, args ...Expr) Call { return call{fn: fn, args: args} }
