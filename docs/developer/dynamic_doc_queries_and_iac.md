@@ -21,10 +21,13 @@ set a run resolves against is scope, and scope is never inferred.
 const vpcs, subnets = "stackql_unstable_aws.ec2.vpcs", "stackql_unstable_aws.ec2.subnets"
 
 g, err := omnisdk.NewGraph(
-    []string{vpcs, subnets},
+    []omnisdk.Node{                              // one per table reference, keyed by alias
+        omnisdk.NewNode("v", vpcs, nil),
+        omnisdk.NewNode("s", subnets, nil),      // per-reference params override Args.Params
+    },
     []omnisdk.Wiring{omnisdk.NewWiring(
-        subnets,                                                        // the consumer
-        []omnisdk.Inbound{omnisdk.NewInbound(vpcs, "VpcId", "vpc_id")}, // β: src → inbox label
+        "s",                                                             // the consumer
+        []omnisdk.Inbound{omnisdk.NewInbound("v", "VpcId", "vpc_id")},  // β: src → inbox label
         gotemplate.TypeJSON1,                                           // T_in, or "" for identity
         `{"Filter.1.Name":"vpc-id","Filter.1.Value.1":"{{ .vpc_id }}"}`,
         "Filter.1.Name", "Filter.1.Value.1",                            // what T_in provides

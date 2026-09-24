@@ -4,7 +4,9 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/stackql-labs/omnisdk/internal/system_g/bind"
 	"github.com/stackql-labs/omnisdk/internal/system_g/exchange/docx"
+	"github.com/stackql-labs/omnisdk/internal/system_g/facade"
 	"github.com/stackql-labs/omnisdk/internal/system_g/fn"
 	"github.com/stackql-labs/omnisdk/internal/system_g/plan"
 	"github.com/stackql-labs/omnisdk/internal/system_g/transform"
@@ -14,6 +16,42 @@ import (
 	"github.com/stackql-labs/omnisdk/pkg/docparse/dsl/schemaxml"
 )
 
+// Node is one reference to a document-declared exchange: the address it runs, and the alias naming
+// this use of it. Everything else in a graph — wirings, projections — names the alias, as SQL names a
+// table reference rather than a table.
+//
+// It exists because an address is not an identity. A query may run the same address twice — a
+// self-join, or one table read in two regions — and each reference is its own exchange, with its own
+// inputs and its own rows. Keyed by address, the second reference silently merged into the first.
+type Node interface {
+	// Alias names this reference; unique within a graph. It is the address when none is given, as
+	// an unaliased SQL table is referenced by its own name — so the same address twice needs aliases.
+	Alias() string
+	// Address is the exchange it runs, "<provider>.<service>.<resource>".
+	Address() string
+	// Params are pushdown inputs for this reference alone. They take precedence over Args.Params,
+	// which is what lets two references to one address run with different values.
+	Params() map[string]string
+}
+
+// NewNode declares one reference to an address. alias may be empty, meaning the address itself;
+// params may be nil.
+func NewNode(alias, address string, params map[string]string) Node {
+	if alias == "" {
+		alias = address
+	}
+	return node{alias: alias, address: address, params: params}
+}
+
+type node struct {
+	alias, address string
+	params         map[string]string
+}
+
+func (n node) Alias() string             { return n.alias }
+func (n node) Address() string           { return n.address }
+func (n node) Params() map[string]string { return n.params }
+
 // Inbound is one value arriving at a consumer: an attribute a producer emits, landing in the
 // consumer's inbox. It is a β edge stated from the consuming side, which is where a caller thinks
 // about it — "this call needs the id that call produced".
@@ -21,7 +59,7 @@ import (
 // It exists because a document describes one provider and cannot state a relationship spanning two,
 // or one its author simply did not write down.
 type Inbound interface {
-	// From is the producing exchange's address.
+	// From is the producing node's alias.
 	From() string
 	// Src is the attribute it emits.
 	Src() string
@@ -50,7 +88,7 @@ func (i inbound) As() string   { return i.as }
 // filter expression another call's API actually accepts. A per-edge transform could not express
 // that, and β itself carries none: it is pure value transfer.
 type Wiring interface {
-	// To is the consuming exchange's address.
+	// To is the consuming node's alias.
 	To() string
 	Inbound() []Inbound
 	// Via names a DSL program mapping the inbox to the consumer's inputs, in the same language a
@@ -116,8 +154,8 @@ func (o override) Program() (string, string) { return o.programType, o.programBo
 
 // Graph is a query over several document-declared exchanges, wired by the caller.
 type Graph interface {
-	// Addresses are the exchanges taking part, each "<provider>.<service>.<resource>".
-	Addresses() []string
+	// Nodes are the references taking part, in declaration order.
+	Nodes() []Node
 	Wirings() []Wiring
 	// Overrides correct what the documents say, per address.
 	Overrides() []Override
@@ -126,27 +164,45 @@ type Graph interface {
 }
 
 // NewGraph declares a multi-exchange query.
-func NewGraph(addresses []string, wirings []Wiring, overrides ...Override) (Graph, error) {
-	return NewGraphWithProjections(addresses, wirings, nil, overrides...)
+func NewGraph(nodes []Node, wirings []Wiring, overrides ...Override) (Graph, error) {
+	return NewGraphWithProjections(nodes, wirings, nil, overrides...)
 }
 
-// NewGraphWithProjections declares a multi-exchange query whose addresses may carry select lists.
-// A projection is applied to that address's rows BEFORE they travel an edge, so a joined-on value
+// NewGraphWithProjections declares a multi-exchange query whose nodes may carry select lists.
+// A projection is applied to that node's rows BEFORE they travel an edge, so a joined-on value
 // may be one a function computed rather than one the document returned.
-func NewGraphWithProjections(addresses []string, wirings []Wiring, projections []Projection, overrides ...Override) (Graph, error) {
-	if len(addresses) == 0 {
-		return nil, fmt.Errorf("omnisdk: a graph needs at least one address")
+func NewGraphWithProjections(nodes []Node, wirings []Wiring, projections []Projection, overrides ...Override) (Graph, error) {
+	if len(nodes) == 0 {
+		return nil, fmt.Errorf("omnisdk: a graph needs at least one node")
 	}
-	known := make(map[string]bool, len(addresses))
-	for _, a := range addresses {
-		known[a] = true
+	known := make(map[string]bool, len(nodes))
+	addresses := make(map[string]bool, len(nodes))
+	for _, n := range nodes {
+		switch {
+		case n.Alias() == "":
+			return nil, fmt.Errorf("omnisdk: a node has neither an alias nor an address")
+		case strings.ContainsRune(n.Alias(), 0):
+			return nil, fmt.Errorf("omnisdk: alias %q contains a NUL byte", n.Alias())
+		case n.Address() == "":
+			return nil, fmt.Errorf("omnisdk: node %q has no address", n.Alias())
+		case known[n.Alias()]:
+			return nil, fmt.Errorf("omnisdk: %q is referenced twice; give each reference an alias", n.Alias())
+		}
+		known[n.Alias()] = true
+		addresses[n.Address()] = true
 	}
+	wired := make(map[string]bool, len(wirings))
 	for _, w := range wirings {
-		// An edge naming an exchange the query does not run is a mistake worth catching here, where
-		// it can name the address, rather than as a missing binding at execution.
+		// An edge naming a node the query does not run is a mistake worth catching here, where
+		// it can name the alias, rather than as a missing binding at execution.
 		if !known[w.To()] {
 			return nil, fmt.Errorf("omnisdk: wiring targets %q, which the graph does not include", w.To())
 		}
+		// One consumer, one inbox: a second wiring would otherwise be ignored without a word.
+		if wired[w.To()] {
+			return nil, fmt.Errorf("omnisdk: %q has two wirings; state every arrival in one", w.To())
+		}
+		wired[w.To()] = true
 		if len(w.Inbound()) == 0 {
 			return nil, fmt.Errorf("omnisdk: wiring for %q declares nothing arriving", w.To())
 		}
@@ -157,42 +213,44 @@ func NewGraphWithProjections(addresses []string, wirings []Wiring, projections [
 			if !known[in.From()] {
 				return nil, fmt.Errorf("omnisdk: %s expects a value from %q, which the graph does not include", w.To(), in.From())
 			}
+			if in.From() == w.To() {
+				return nil, fmt.Errorf("omnisdk: %s expects a value from itself; a self-join is two nodes", w.To())
+			}
 			if in.Src() == "" {
 				return nil, fmt.Errorf("omnisdk: %s declares an arrival from %s with no source attribute", w.To(), in.From())
 			}
 		}
 	}
+	// An override corrects a document, not one use of it, so it names an address.
 	for _, o := range overrides {
-		if !known[o.Address()] {
+		if !addresses[o.Address()] {
 			return nil, fmt.Errorf("omnisdk: override targets %q, which the graph does not include", o.Address())
 		}
 	}
+	projected := make(map[string]bool, len(projections))
 	for _, p := range projections {
-		if !known[p.Address()] {
-			return nil, fmt.Errorf("omnisdk: projection targets %q, which the graph does not include", p.Address())
+		if !known[p.Alias()] {
+			return nil, fmt.Errorf("omnisdk: projection targets %q, which the graph does not include", p.Alias())
 		}
+		if projected[p.Alias()] {
+			return nil, fmt.Errorf("omnisdk: %q has two projections", p.Alias())
+		}
+		projected[p.Alias()] = true
 	}
-	return graph{addresses: addresses, wirings: wirings, overrides: overrides, projections: projections}, nil
+	return graph{nodes: nodes, wirings: wirings, overrides: overrides, projections: projections}, nil
 }
 
 type graph struct {
-	addresses   []string
+	nodes       []Node
 	wirings     []Wiring
 	overrides   []Override
 	projections []Projection
 }
 
-func (g graph) Addresses() []string       { return g.addresses }
+func (g graph) Nodes() []Node             { return g.nodes }
 func (g graph) Wirings() []Wiring         { return g.wirings }
 func (g graph) Overrides() []Override     { return g.overrides }
 func (g graph) Projections() []Projection { return g.projections }
-
-// resolved pairs an address with the name its exchange takes inside the plan. A plan names an
-// exchange by the document's own method name, so a join stated in addresses must be translated
-// before it can become an edge.
-type resolved struct {
-	planned string
-}
 
 // NewGraphSelectQuery plans a multi-exchange query over a registry root or bundle directory.
 //
@@ -237,10 +295,50 @@ func NewGraphSelectQuery(dir string, g Graph, args Args) (Plan, error) {
 		}
 	}
 
+	// An edge reads its value from the node it names. The running row is one flat map every exchange
+	// merges into, so two nodes emitting the same attribute — every column of a self-join — would
+	// otherwise overwrite each other, and the edge would read whichever merged last. Each producer
+	// therefore also writes the attributes its edges read under a key private to its alias.
+	emits := map[string][]string{}
+	for _, w := range g.Wirings() {
+		for _, in := range w.Inbound() {
+			emits[in.From()] = append(emits[in.From()], in.Src())
+		}
+	}
+
 	var specs []plan.ExchangeSpec
 	var betas []plan.BetaEdge
-	byAddress := make(map[string]resolved, len(g.Addresses()))
-	for _, addr := range g.Addresses() {
+	planned := make(map[string]string, len(g.Nodes()))
+	taken := map[string]string{}
+	for _, n := range g.Nodes() {
+		alias, addr := n.Alias(), n.Address()
+		// Two documents routinely name a method the same thing — "list" above all — and a plan names
+		// its exchanges. The alias is what tells them apart; the address keeps a trace readable.
+		name := planName(addr) + "__" + planName(alias)
+		for _, nm := range []string{name, name + "_auth"} {
+			if other, clash := taken[nm]; clash {
+				return nil, fmt.Errorf("omnisdk: aliases %q and %q name the same plan exchange %q", other, alias, nm)
+			}
+			taken[nm] = alias
+		}
+		planned[alias] = name
+
+		// This reference's own pushdown overlays the query-wide inputs. It is compiled with the
+		// merged view, and bound from the seed row through a key private to the alias, so a second
+		// reference to the same address can carry a different value under the same name.
+		local := make(map[string]any, len(inputs)+len(n.Params()))
+		for k, v := range inputs {
+			local[k] = v
+		}
+		for k, v := range n.Params() {
+			if contains(bound[alias], k) || contains(provided[alias], k) {
+				return nil, fmt.Errorf("omnisdk: %s: %q is both a param and a wired input", alias, k)
+			}
+			local[k] = v
+			inputs[hidden(alias, k)] = v
+			betas = append(betas, plan.NewBetaEdge("", name, hidden(alias, k), k))
+		}
+
 		c, err := openDocs(dir, addr)
 		if err != nil {
 			return nil, err
@@ -253,9 +351,9 @@ func NewGraphSelectQuery(dir string, g Graph, args Args) (Plan, error) {
 		// needs a resource group and a VNet name, both of which come over the edge — judged on
 		// supplied inputs alone, no select is satisfiable and the query fails before its wiring is
 		// ever considered.
-		ex, err := chooseExchange(candidates, withArrivals(inputs, g, addr))
+		ex, err := chooseExchange(candidates, withArrivals(local, g, alias))
 		if err != nil {
-			return nil, fmt.Errorf("omnisdk: %s: %w", addr, err)
+			return nil, fmt.Errorf("omnisdk: %s (%s): %w", alias, addr, err)
 		}
 		var sec aot.Security
 		if p := c.Provider(); p != nil {
@@ -268,13 +366,13 @@ func NewGraphSelectQuery(dir string, g Graph, args Args) (Plan, error) {
 		if sec != nil {
 			opts = append(opts, docx.WithProviderSecurity(sec))
 		}
-		if names := bound[addr]; len(names) > 0 {
+		if names := bound[alias]; len(names) > 0 {
 			opts = append(opts, docx.WithBound(names...))
 		}
-		if names := provided[addr]; len(names) > 0 {
+		if names := provided[alias]; len(names) > 0 {
 			opts = append(opts, docx.WithProvided(names...))
 		}
-		if names := inbox[addr]; len(names) > 0 {
+		if names := inbox[alias]; len(names) > 0 {
 			opts = append(opts, docx.WithInbox(names...))
 		}
 		for _, o := range g.Overrides() {
@@ -291,14 +389,12 @@ func NewGraphSelectQuery(dir string, g Graph, args Args) (Plan, error) {
 				opts = append(opts, docx.WithResponseProgram(typ, body))
 			}
 		}
-		spec, err := docx.Spec(ex, inputs, reg, opts...)
+		spec, err := docx.Spec(ex, local, reg, opts...)
 		if err != nil {
-			return nil, fmt.Errorf("omnisdk: %s: %w", addr, err)
+			return nil, fmt.Errorf("omnisdk: %s (%s): %w", alias, addr, err)
 		}
-		// Two documents routinely name a method the same thing — "list" above all — and a plan names
-		// its exchanges. The address is what tells them apart. Renaming happens BEFORE the auth edge
-		// is built, or the edge points at a name the plan no longer has.
-		name := planName(addr)
+		// Renaming happens BEFORE the auth edge is built, or the edge points at a name the plan no
+		// longer has.
 		// A document that declares service-account auth compiles to two exchanges — a token exchange
 		// and the call, joined by a β edge carrying the bearer. A single-address run gets that wiring
 		// for free; composing several means doing it per exchange, or the plan cannot build because
@@ -315,40 +411,126 @@ func NewGraphSelectQuery(dir string, g Graph, args Args) (Plan, error) {
 		// T_in is attached LAST. Wrapping the spec hides the compiled form Expand reads, so a
 		// consumer with an inbound transform would silently lose its auth exchange — and the plan
 		// would refuse to build for want of a token.
-		if w, ok := wiringFor(g, addr); ok {
+		if w, ok := wiringFor(g, alias); ok {
 			if typ, body := w.Via(); typ != "" {
 				spec = plan.WithInbound(spec, docx.InboundProgram(reg, typ, body))
 			}
 		}
-		// The select list is applied to this address's rows before they travel an edge, so a join
+		// The select list is applied to this node's rows before they travel an edge, so a join
 		// may be on a value a function computed. Attached after T_in for the same reason T_in is
 		// attached last: wrapping Make hides the compiled form the auth expansion reads.
-		if p, ok := projectionFor(g, addr); ok {
+		if p, ok := projectionFor(g, alias); ok {
 			t, err := transform.NewSelection(p.internal(), fns)
 			if err != nil {
-				return nil, fmt.Errorf("omnisdk: %s: %w", addr, err)
+				return nil, fmt.Errorf("omnisdk: %s (%s): %w", alias, addr, err)
 			}
 			spec = plan.WithProject(spec, t)
 		}
-		byAddress[addr] = resolved{planned: spec.Name()}
+		if attrs := emits[alias]; len(attrs) > 0 {
+			spec = tagged{ExchangeSpec: spec, alias: alias, attrs: attrs}
+		}
 		specs = append(specs, spec)
 	}
 
 	for _, w := range g.Wirings() {
 		for _, in := range w.Inbound() {
-			betas = append(betas, plan.NewBetaEdge(byAddress[in.From()].planned, byAddress[w.To()].planned, in.Src(), in.As()))
+			betas = append(betas, plan.NewBetaEdge(planned[in.From()], planned[w.To()], hidden(in.From(), in.Src()), in.As()))
 		}
 	}
 
-	return &cannedPlan{plan: plan.NewPlan(specs, betas, nil, inputs, nil, nil), args: args}, nil
+	return &cannedPlan{plan: plan.NewPlan(specs, betas, nil, inputs, []facade.Transform{unhide{}}, nil), args: args}, nil
+}
+
+// hidden is the running-row key a value takes when it belongs to one alias rather than to the row:
+// a producer's emitted attribute, or a reference's own param. The NUL prefix keeps it out of any
+// namespace a provider or a caller writes, and marks it for removal before a row is returned.
+func hidden(alias, attr string) string { return "\x00" + alias + "\x00" + attr }
+
+// tagged makes a producer also write the attributes its edges read under its alias's private keys.
+// It wraps Flatten only, so it may sit outside any other wrapper.
+type tagged struct {
+	plan.ExchangeSpec
+	alias string
+	attrs []string
+}
+
+func (t tagged) Flatten() facade.Transform {
+	inner := t.ExchangeSpec.Flatten()
+	if inner == nil {
+		inner = bind.NewTupleFlatten()
+	}
+	return tagFlatten{inner: inner, alias: t.alias, attrs: t.attrs}
+}
+
+type tagFlatten struct {
+	inner facade.Transform
+	alias string
+	attrs []string
+}
+
+// Apply merges as the wrapped flatten does, then copies the attributes from THIS exchange's output —
+// not from the merged row, where another node's value of the same name may already sit.
+func (f tagFlatten) Apply(in facade.Page) (facade.Record, error) {
+	rec, err := f.inner.Apply(in)
+	if err != nil || rec == nil {
+		return rec, err
+	}
+	m, ok := bind.DocMap(in)
+	if !ok {
+		return rec, nil
+	}
+	out, _ := m[bind.KeyOutput].(map[string]any)
+	row, ok := bind.DocMap(rec)
+	if out == nil || !ok {
+		return rec, nil
+	}
+	merged := make(map[string]any, len(row)+len(f.attrs))
+	for k, v := range row {
+		merged[k] = v
+	}
+	for _, a := range f.attrs {
+		if v, ok := out[a]; ok {
+			merged[hidden(f.alias, a)] = v
+		}
+	}
+	return bind.NewDocRecord(merged), nil
+}
+
+// unhide drops the alias-private keys from a finished row: they are plumbing, not columns.
+type unhide struct{}
+
+func (unhide) Apply(in facade.Page) (facade.Record, error) {
+	row, ok := bind.DocMap(in)
+	if !ok {
+		if rec, is := in.(facade.Record); is {
+			return rec, nil
+		}
+		return nil, fmt.Errorf("omnisdk: egress received a %T, not a record", in)
+	}
+	out := make(map[string]any, len(row))
+	for k, v := range row {
+		if !strings.HasPrefix(k, "\x00") {
+			out[k] = v
+		}
+	}
+	return bind.NewDocRecord(out), nil
+}
+
+func contains(xs []string, x string) bool {
+	for _, y := range xs {
+		if y == x {
+			return true
+		}
+	}
+	return false
 }
 
 // withArrivals adds the inputs a consumer's wiring will deliver, for the purpose of choosing which
 // operation to run. The values are placeholders: only the NAMES matter here, and the real values are
 // bound per row. They are deliberately kept out of what the exchange is compiled with, where a
 // placeholder would be sent as if it were data.
-func withArrivals(inputs map[string]any, g Graph, addr string) map[string]any {
-	w, ok := wiringFor(g, addr)
+func withArrivals(inputs map[string]any, g Graph, alias string) map[string]any {
+	w, ok := wiringFor(g, alias)
 	if !ok {
 		return inputs
 	}
@@ -370,17 +552,16 @@ func withArrivals(inputs map[string]any, g Graph, addr string) map[string]any {
 	return out
 }
 
-// planName is the name an address takes inside the plan: distinct per address, and readable in a
-// trace.
+// planName makes a string safe as part of a plan exchange name.
 func planName(addr string) string {
 	return strings.NewReplacer(".", "_", "-", "_").Replace(addr)
 }
 
 // wiringFor finds a consumer's declared inbox.
-// projectionFor is the select list declared for addr, if any.
-func projectionFor(g Graph, addr string) (projection, bool) {
+// projectionFor is the select list declared for alias, if any.
+func projectionFor(g Graph, alias string) (projection, bool) {
 	for _, p := range g.Projections() {
-		if p.Address() == addr {
+		if p.Alias() == alias {
 			q, ok := p.(projection)
 			return q, ok
 		}
@@ -388,9 +569,9 @@ func projectionFor(g Graph, addr string) (projection, bool) {
 	return projection{}, false
 }
 
-func wiringFor(g Graph, addr string) (Wiring, bool) {
+func wiringFor(g Graph, alias string) (Wiring, bool) {
 	for _, w := range g.Wirings() {
-		if w.To() == addr {
+		if w.To() == alias {
 			return w, true
 		}
 	}

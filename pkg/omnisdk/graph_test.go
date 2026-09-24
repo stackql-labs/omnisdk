@@ -63,9 +63,9 @@ func TestGraphJoinsTwoExchangesTheDocumentDoesNotRelate(t *testing.T) {
 	// transform produces, and the engine now implements it. Row fields carry the SCHEMA's names —
 	// VpcId, not the wire's vpcId — because projection is what that transform does.
 	g, err := omnisdk.NewGraph(
-		[]string{vpcs, subnets},
-		[]omnisdk.Wiring{omnisdk.NewWiring(subnets,
-			[]omnisdk.Inbound{omnisdk.NewInbound(vpcs, "VpcId", "vpc_id")},
+		[]omnisdk.Node{omnisdk.NewNode("v", vpcs, nil), omnisdk.NewNode("s", subnets, nil)},
+		[]omnisdk.Wiring{omnisdk.NewWiring("s",
+			[]omnisdk.Inbound{omnisdk.NewInbound("v", "VpcId", "vpc_id")},
 			gotemplate.TypeJSON1,
 			`{"Filter.1.Name":"vpc-id","Filter.1.Value.1":"{{ .vpc_id }}"}`,
 			"Filter.1.Name", "Filter.1.Value.1",
@@ -110,13 +110,13 @@ func TestGraphJoinsTwoExchangesTheDocumentDoesNotRelate(t *testing.T) {
 	}
 }
 
-// An edge naming an exchange the query does not run is caught where it can name the address, not
-// as a missing binding at execution.
-func TestGraphRejectsAJoinOntoAnAbsentAddress(t *testing.T) {
+// An edge naming a node the query does not run is caught where it can name the alias, not as a
+// missing binding at execution.
+func TestGraphRejectsAJoinOntoAnAbsentAlias(t *testing.T) {
 	_, err := omnisdk.NewGraph(
-		[]string{"stackql_unstable_aws.ec2.vpcs"},
-		[]omnisdk.Wiring{omnisdk.NewWiring("elsewhere.ec2.subnets",
-			[]omnisdk.Inbound{omnisdk.NewInbound("stackql_unstable_aws.ec2.vpcs", "vpcId", "")}, "", "")},
+		[]omnisdk.Node{omnisdk.NewNode("v", "stackql_unstable_aws.ec2.vpcs", nil)},
+		[]omnisdk.Wiring{omnisdk.NewWiring("s",
+			[]omnisdk.Inbound{omnisdk.NewInbound("v", "vpcId", "")}, "", "")},
 	)
 	if err == nil {
 		t.Error("wiring onto an address the graph excludes was accepted")

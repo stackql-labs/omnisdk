@@ -472,8 +472,12 @@ func main() {
 		Args:  cobra.ExactArgs(2),
 		RunE: withSinks(func(cmd *cobra.Command, w, logw io.Writer) error {
 			var spec struct {
-				Addresses []string `json:"addresses"`
-				Wirings   []struct {
+				Nodes []struct {
+					Alias   string            `json:"alias"`
+					Address string            `json:"address"`
+					Params  map[string]string `json:"params,omitempty"`
+				} `json:"nodes"`
+				Wirings []struct {
 					To      string `json:"to"`
 					Inbound []struct {
 						From string `json:"from"`
@@ -492,13 +496,17 @@ func main() {
 					Program     string `json:"program,omitempty"`
 				} `json:"overrides,omitempty"`
 				Projections []struct {
-					Address string       `json:"address"`
-					Select  []selectJSON `json:"select"`
+					Alias  string       `json:"alias"`
+					Select []selectJSON `json:"select"`
 				} `json:"projections,omitempty"`
 				Args *omnisdk.Args `json:"args,omitempty"`
 			}
 			if err := json.Unmarshal([]byte(cmdArgs(cmd)[1]), &spec); err != nil {
 				return fmt.Errorf("graph json: %w", err)
+			}
+			nodes := make([]omnisdk.Node, 0, len(spec.Nodes))
+			for _, n := range spec.Nodes {
+				nodes = append(nodes, omnisdk.NewNode(n.Alias, n.Address, n.Params))
 			}
 			wirings := make([]omnisdk.Wiring, 0, len(spec.Wirings))
 			for _, wr := range spec.Wirings {
@@ -518,17 +526,17 @@ func main() {
 				for _, c := range p.Select {
 					e, err := parseExpr(c.exprJSON)
 					if err != nil {
-						return fmt.Errorf("projection on %s, column %q: %w", p.Address, c.Out, err)
+						return fmt.Errorf("projection on %s, column %q: %w", p.Alias, c.Out, err)
 					}
 					cols = append(cols, omnisdk.NewSelectColumn(c.Out, e))
 				}
-				pr, err := omnisdk.NewProjection(p.Address, cols)
+				pr, err := omnisdk.NewProjection(p.Alias, cols)
 				if err != nil {
 					return err
 				}
 				projections = append(projections, pr)
 			}
-			g, err := omnisdk.NewGraphWithProjections(spec.Addresses, wirings, projections, overrides...)
+			g, err := omnisdk.NewGraphWithProjections(nodes, wirings, projections, overrides...)
 			if err != nil {
 				return err
 			}

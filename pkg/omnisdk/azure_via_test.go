@@ -37,11 +37,11 @@ func TestAzureWiringProgramRuns(t *testing.T) {
 
 	const vnets = "stackql_unstable_azure.network.virtual_networks"
 	const subnets = "stackql_unstable_azure.network.subnets"
-	g, err := omnisdk.NewGraph([]string{vnets, subnets},
-		[]omnisdk.Wiring{omnisdk.NewWiring(subnets,
+	g, err := omnisdk.NewGraph([]omnisdk.Node{omnisdk.NewNode("v", vnets, nil), omnisdk.NewNode("s", subnets, nil)},
+		[]omnisdk.Wiring{omnisdk.NewWiring("s",
 			[]omnisdk.Inbound{
-				omnisdk.NewInbound(vnets, "name", "vnet"),
-				omnisdk.NewInbound(vnets, "id", "arm_id"),
+				omnisdk.NewInbound("v", "name", "vnet"),
+				omnisdk.NewInbound("v", "id", "arm_id"),
 			},
 			"golang_template_json_v0.1.0",
 			`{"virtual_network_name":"{{ .vnet }}","resource_group_name":"{{ index (split "/" .arm_id) 4 }}"}`,

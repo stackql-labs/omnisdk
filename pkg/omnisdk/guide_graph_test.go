@@ -59,20 +59,20 @@ func TestGuideGraphsCompose(t *testing.T) {
 
 	cases := []struct {
 		name      string
-		addresses []string
+		nodes     []omnisdk.Node
 		wirings   []omnisdk.Wiring
 		overrides []omnisdk.Override
 		params    map[string]string
 	}{
 		{
 			name: "aws vpcs and subnets",
-			addresses: []string{
-				"stackql_unstable_aws.ec2.vpcs",
-				"stackql_unstable_aws.ec2.subnets",
+			nodes: []omnisdk.Node{
+				omnisdk.NewNode("v", "stackql_unstable_aws.ec2.vpcs", nil),
+				omnisdk.NewNode("s", "stackql_unstable_aws.ec2.subnets", nil),
 			},
 			wirings: []omnisdk.Wiring{omnisdk.NewWiring(
-				"stackql_unstable_aws.ec2.subnets",
-				[]omnisdk.Inbound{omnisdk.NewInbound("stackql_unstable_aws.ec2.vpcs", "VpcId", "vpc_id")},
+				"s",
+				[]omnisdk.Inbound{omnisdk.NewInbound("v", "VpcId", "vpc_id")},
 				"golang_template_json_v0.1.0",
 				`{"Filter.1.Name":"vpc-id","Filter.1.Value.1":"{{ .vpc_id }}"}`,
 				"Filter.1.Name", "Filter.1.Value.1",
@@ -81,17 +81,17 @@ func TestGuideGraphsCompose(t *testing.T) {
 		},
 		{
 			name: "google networks and subnetworks",
-			addresses: []string{
-				"stackql_unstable_google.compute.networks",
-				"stackql_unstable_google.compute.subnetworks",
+			nodes: []omnisdk.Node{
+				omnisdk.NewNode("n", "stackql_unstable_google.compute.networks", nil),
+				omnisdk.NewNode("s", "stackql_unstable_google.compute.subnetworks", nil),
 			},
 			overrides: []omnisdk.Override{
 				omnisdk.NewOverride("stackql_unstable_google.compute.networks", "$.items", "", "", ""),
 				omnisdk.NewOverride("stackql_unstable_google.compute.subnetworks", "$.items", "", "", ""),
 			},
 			wirings: []omnisdk.Wiring{omnisdk.NewWiring(
-				"stackql_unstable_google.compute.subnetworks",
-				[]omnisdk.Inbound{omnisdk.NewInbound("stackql_unstable_google.compute.networks", "selfLink", "network")},
+				"s",
+				[]omnisdk.Inbound{omnisdk.NewInbound("n", "selfLink", "network")},
 				"golang_template_json_v0.1.0",
 				`{"filter":"network=\"{{ .network }}\""}`,
 				"filter",
@@ -100,15 +100,15 @@ func TestGuideGraphsCompose(t *testing.T) {
 		},
 		{
 			name: "azure virtual networks and subnets",
-			addresses: []string{
-				"stackql_unstable_azure.network.virtual_networks",
-				"stackql_unstable_azure.network.subnets",
+			nodes: []omnisdk.Node{
+				omnisdk.NewNode("v", "stackql_unstable_azure.network.virtual_networks", nil),
+				omnisdk.NewNode("s", "stackql_unstable_azure.network.subnets", nil),
 			},
 			wirings: []omnisdk.Wiring{omnisdk.NewWiring(
-				"stackql_unstable_azure.network.subnets",
+				"s",
 				[]omnisdk.Inbound{
-					omnisdk.NewInbound("stackql_unstable_azure.network.virtual_networks", "name", "vnet"),
-					omnisdk.NewInbound("stackql_unstable_azure.network.virtual_networks", "id", "arm_id"),
+					omnisdk.NewInbound("v", "name", "vnet"),
+					omnisdk.NewInbound("v", "id", "arm_id"),
 				},
 				"golang_template_json_v0.1.0",
 				`{"virtual_network_name":"{{ .vnet }}","resource_group_name":"{{ index (split "/" .arm_id) 4 }}"}`,
@@ -120,7 +120,7 @@ func TestGuideGraphsCompose(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			g, err := omnisdk.NewGraph(tc.addresses, tc.wirings, tc.overrides...)
+			g, err := omnisdk.NewGraph(tc.nodes, tc.wirings, tc.overrides...)
 			if err != nil {
 				t.Fatalf("graph: %v", err)
 			}

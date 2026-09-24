@@ -53,36 +53,37 @@ type selectColumn struct {
 func (c selectColumn) Out() string      { return c.out }
 func (c selectColumn) Expr() Expression { return c.e }
 
-// Projection is a select list applied to one address's rows. It replaces the row: a column the
+// Projection is a select list applied to one node's rows. It replaces the row: a column the
 // select does not name is not emitted, which is what makes it a projection rather than an
 // annotation.
 type Projection interface {
-	Address() string
+	// Alias is the node whose rows it shapes.
+	Alias() string
 	Columns() []SelectColumn
 }
 
-// NewProjection declares a projection over an address.
-func NewProjection(address string, cols []SelectColumn) (Projection, error) {
-	if address == "" {
-		return nil, fmt.Errorf("omnisdk: projection needs an address")
+// NewProjection declares a projection over a node, named by its alias.
+func NewProjection(alias string, cols []SelectColumn) (Projection, error) {
+	if alias == "" {
+		return nil, fmt.Errorf("omnisdk: projection needs an alias")
 	}
 	if len(cols) == 0 {
-		return nil, fmt.Errorf("omnisdk: projection on %s selects no columns", address)
+		return nil, fmt.Errorf("omnisdk: projection on %s selects no columns", alias)
 	}
 	for _, c := range cols {
 		if c.Out() == "" {
-			return nil, fmt.Errorf("omnisdk: projection on %s has a column with no output name", address)
+			return nil, fmt.Errorf("omnisdk: projection on %s has a column with no output name", alias)
 		}
 	}
-	return projection{address: address, cols: cols}, nil
+	return projection{alias: alias, cols: cols}, nil
 }
 
 type projection struct {
-	address string
-	cols    []SelectColumn
+	alias string
+	cols  []SelectColumn
 }
 
-func (p projection) Address() string         { return p.address }
+func (p projection) Alias() string           { return p.alias }
 func (p projection) Columns() []SelectColumn { return p.cols }
 
 // columns converts a projection to the engine's select list.

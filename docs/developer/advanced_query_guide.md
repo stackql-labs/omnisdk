@@ -32,9 +32,9 @@ computed rather than one the document returned.
 
 ```bash
 _now="$(date +%s)" && ./build/omnicli doc-graph test/corpus/registry '{
-  "addresses": ["stackql_unstable_aws.ec2.subnets"],
+  "nodes": [{"alias": "s", "address": "stackql_unstable_aws.ec2.subnets"}],
   "projections": [{
-    "address": "stackql_unstable_aws.ec2.subnets",
+    "alias": "s",
     "select": [
       {"out": "subnet", "field": "SubnetId"},
       {"out": "vpc", "field": "VpcId"},
@@ -54,9 +54,9 @@ are scalar columns and are carried onto every produced row.
 
 ```bash
 _now="$(date +%s)" && ./build/omnicli doc-graph test/corpus/registry '{
-  "addresses": ["stackql_unstable_aws.ec2.subnets"],
+  "nodes": [{"alias": "s", "address": "stackql_unstable_aws.ec2.subnets"}],
   "projections": [{
-    "address": "stackql_unstable_aws.ec2.subnets",
+    "alias": "s",
     "select": [
       {"out": "subnet", "field": "SubnetId"},
       {"out": "cidr", "field": "CidrBlock"},
@@ -78,9 +78,9 @@ projection replaces the row and the edge still needs it.
 
 ```bash
 _now="$(date +%s)" && ./build/omnicli doc-graph test/corpus/registry '{
-  "addresses": ["stackql_unstable_aws.ec2.vpcs", "stackql_unstable_aws.ec2.subnets"],
+  "nodes": [{"alias": "v", "address": "stackql_unstable_aws.ec2.vpcs"}, {"alias": "s", "address": "stackql_unstable_aws.ec2.subnets"}],
   "projections": [{
-    "address": "stackql_unstable_aws.ec2.vpcs",
+    "alias": "v",
     "select": [
       {"out": "VpcId", "field": "VpcId"},
       {"out": "az", "fn": "split_part", "args": [
@@ -89,10 +89,10 @@ _now="$(date +%s)" && ./build/omnicli doc-graph test/corpus/registry '{
     ]
   }],
   "wirings": [{
-    "to": "stackql_unstable_aws.ec2.subnets",
+    "to": "s",
     "inbound": [
-      {"from": "stackql_unstable_aws.ec2.vpcs", "src": "VpcId", "as": "vpc_id"},
-      {"from": "stackql_unstable_aws.ec2.vpcs", "src": "az", "as": "az"}
+      {"from": "v", "src": "VpcId", "as": "vpc_id"},
+      {"from": "v", "src": "az", "as": "az"}
     ],
     "via_type": "golang_template_json_v0.1.0",
     "via": "{\"Filter.1.Name\":\"vpc-id\",\"Filter.1.Value.1\":\"{{ .vpc_id }}\",\"Filter.2.Name\":\"availability-zone\",\"Filter.2.Value.1\":\"{{ .az }}\"}",
@@ -110,9 +110,9 @@ two zones is four calls, not two — the fan-out happens before the edge.
 
 ```bash
 _now="$(date +%s)" && ./build/omnicli doc-graph test/corpus/registry '{
-  "addresses": ["stackql_unstable_aws.ec2.vpcs", "stackql_unstable_aws.ec2.subnets"],
+  "nodes": [{"alias": "v", "address": "stackql_unstable_aws.ec2.vpcs"}, {"alias": "s", "address": "stackql_unstable_aws.ec2.subnets"}],
   "projections": [{
-    "address": "stackql_unstable_aws.ec2.vpcs",
+    "alias": "v",
     "select": [
       {"out": "VpcId", "field": "VpcId"},
       {"out": "az", "fn": "string_to_table", "args": [
@@ -121,10 +121,10 @@ _now="$(date +%s)" && ./build/omnicli doc-graph test/corpus/registry '{
     ]
   }],
   "wirings": [{
-    "to": "stackql_unstable_aws.ec2.subnets",
+    "to": "s",
     "inbound": [
-      {"from": "stackql_unstable_aws.ec2.vpcs", "src": "VpcId", "as": "vpc_id"},
-      {"from": "stackql_unstable_aws.ec2.vpcs", "src": "az", "as": "az"}
+      {"from": "v", "src": "VpcId", "as": "vpc_id"},
+      {"from": "v", "src": "az", "as": "az"}
     ],
     "via_type": "golang_template_json_v0.1.0",
     "via": "{\"Filter.1.Name\":\"vpc-id\",\"Filter.1.Value.1\":\"{{ .vpc_id }}\",\"Filter.2.Name\":\"availability-zone\",\"Filter.2.Value.1\":\"{{ .az }}\"}",

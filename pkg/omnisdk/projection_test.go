@@ -100,7 +100,7 @@ func TestScalarFunctionProjection(t *testing.T) {
 	srv := ec2Stub(t, &seen)
 	defer srv.Close()
 
-	p, err := omnisdk.NewProjection(vpcsAddr, []omnisdk.SelectColumn{
+	p, err := omnisdk.NewProjection("v", []omnisdk.SelectColumn{
 		omnisdk.NewSelectColumn("vpc", omnisdk.NewField("VpcId")),
 		omnisdk.NewSelectColumn("prefix", omnisdk.NewCall("split_part",
 			omnisdk.NewField("CidrBlock"), omnisdk.NewLiteral("/"), omnisdk.NewLiteral(1))),
@@ -110,7 +110,7 @@ func TestScalarFunctionProjection(t *testing.T) {
 	if err != nil {
 		t.Fatalf("projection: %v", err)
 	}
-	g, err := omnisdk.NewGraphWithProjections([]string{vpcsAddr}, nil, []omnisdk.Projection{p})
+	g, err := omnisdk.NewGraphWithProjections([]omnisdk.Node{omnisdk.NewNode("v", vpcsAddr, nil)}, nil, []omnisdk.Projection{p})
 	if err != nil {
 		t.Fatalf("graph: %v", err)
 	}
@@ -139,7 +139,7 @@ func TestTableValuedFunctionProjection(t *testing.T) {
 	srv := ec2Stub(t, &seen)
 	defer srv.Close()
 
-	p, err := omnisdk.NewProjection(vpcsAddr, []omnisdk.SelectColumn{
+	p, err := omnisdk.NewProjection("v", []omnisdk.SelectColumn{
 		omnisdk.NewSelectColumn("vpc", omnisdk.NewField("VpcId")),
 		omnisdk.NewSelectColumn("octet", omnisdk.NewCall("string_to_table",
 			omnisdk.NewCall("split_part", omnisdk.NewField("CidrBlock"), omnisdk.NewLiteral("/"), omnisdk.NewLiteral(1)),
@@ -148,7 +148,7 @@ func TestTableValuedFunctionProjection(t *testing.T) {
 	if err != nil {
 		t.Fatalf("projection: %v", err)
 	}
-	g, err := omnisdk.NewGraphWithProjections([]string{vpcsAddr}, nil, []omnisdk.Projection{p})
+	g, err := omnisdk.NewGraphWithProjections([]omnisdk.Node{omnisdk.NewNode("v", vpcsAddr, nil)}, nil, []omnisdk.Projection{p})
 	if err != nil {
 		t.Fatalf("graph: %v", err)
 	}
@@ -171,14 +171,14 @@ func TestTableValuedFunctionProjection(t *testing.T) {
 func TestSelectRefusesTwoRowProducingColumns(t *testing.T) {
 	requireCorpus(t)
 	awsEnv(t)
-	p, err := omnisdk.NewProjection(vpcsAddr, []omnisdk.SelectColumn{
+	p, err := omnisdk.NewProjection("v", []omnisdk.SelectColumn{
 		omnisdk.NewSelectColumn("a", omnisdk.NewCall("string_to_table", omnisdk.NewField("VpcId"), omnisdk.NewLiteral("-"))),
 		omnisdk.NewSelectColumn("b", omnisdk.NewCall("string_to_table", omnisdk.NewField("CidrBlock"), omnisdk.NewLiteral("."))),
 	})
 	if err != nil {
 		t.Fatalf("projection: %v", err)
 	}
-	g, err := omnisdk.NewGraphWithProjections([]string{vpcsAddr}, nil, []omnisdk.Projection{p})
+	g, err := omnisdk.NewGraphWithProjections([]omnisdk.Node{omnisdk.NewNode("v", vpcsAddr, nil)}, nil, []omnisdk.Projection{p})
 	if err != nil {
 		t.Fatalf("graph: %v", err)
 	}
@@ -198,7 +198,7 @@ func TestJoinOnAScalarFunctionResult(t *testing.T) {
 	srv := ec2Stub(t, &seen)
 	defer srv.Close()
 
-	p, err := omnisdk.NewProjection(vpcsAddr, []omnisdk.SelectColumn{
+	p, err := omnisdk.NewProjection("v", []omnisdk.SelectColumn{
 		omnisdk.NewSelectColumn("VpcId", omnisdk.NewField("VpcId")),
 		omnisdk.NewSelectColumn("prefix", omnisdk.NewCall("split_part",
 			omnisdk.NewField("CidrBlock"), omnisdk.NewLiteral("/"), omnisdk.NewLiteral(1))),
@@ -207,9 +207,9 @@ func TestJoinOnAScalarFunctionResult(t *testing.T) {
 		t.Fatalf("projection: %v", err)
 	}
 	g, err := omnisdk.NewGraphWithProjections(
-		[]string{vpcsAddr, subnetsAddr},
-		[]omnisdk.Wiring{omnisdk.NewWiring(subnetsAddr,
-			[]omnisdk.Inbound{omnisdk.NewInbound(vpcsAddr, "prefix", "prefix")},
+		[]omnisdk.Node{omnisdk.NewNode("v", vpcsAddr, nil), omnisdk.NewNode("s", subnetsAddr, nil)},
+		[]omnisdk.Wiring{omnisdk.NewWiring("s",
+			[]omnisdk.Inbound{omnisdk.NewInbound("v", "prefix", "prefix")},
 			"golang_template_json_v0.1.0",
 			`{"Filter.1.Name":"cidr-block","Filter.1.Value.1":"{{ .prefix }}"}`,
 			"Filter.1.Name", "Filter.1.Value.1")},
@@ -239,7 +239,7 @@ func TestJoinOnATableValuedFunctionResult(t *testing.T) {
 	srv := ec2Stub(t, &seen)
 	defer srv.Close()
 
-	p, err := omnisdk.NewProjection(vpcsAddr, []omnisdk.SelectColumn{
+	p, err := omnisdk.NewProjection("v", []omnisdk.SelectColumn{
 		omnisdk.NewSelectColumn("VpcId", omnisdk.NewField("VpcId")),
 		omnisdk.NewSelectColumn("octet", omnisdk.NewCall("string_to_table",
 			omnisdk.NewCall("split_part", omnisdk.NewField("CidrBlock"), omnisdk.NewLiteral("/"), omnisdk.NewLiteral(1)),
@@ -249,9 +249,9 @@ func TestJoinOnATableValuedFunctionResult(t *testing.T) {
 		t.Fatalf("projection: %v", err)
 	}
 	g, err := omnisdk.NewGraphWithProjections(
-		[]string{vpcsAddr, subnetsAddr},
-		[]omnisdk.Wiring{omnisdk.NewWiring(subnetsAddr,
-			[]omnisdk.Inbound{omnisdk.NewInbound(vpcsAddr, "octet", "octet")},
+		[]omnisdk.Node{omnisdk.NewNode("v", vpcsAddr, nil), omnisdk.NewNode("s", subnetsAddr, nil)},
+		[]omnisdk.Wiring{omnisdk.NewWiring("s",
+			[]omnisdk.Inbound{omnisdk.NewInbound("v", "octet", "octet")},
 			"golang_template_json_v0.1.0",
 			`{"Filter.1.Name":"tag:octet","Filter.1.Value.1":"{{ .octet }}"}`,
 			"Filter.1.Name", "Filter.1.Value.1")},

@@ -438,13 +438,18 @@ A document describes one provider and cannot state a relationship spanning two �
 simply left out. `doc-graph` runs several document exchanges in one plan and lets the query supply
 what the documents do not:
 
+- **`nodes`** — the table references, each an `alias` and the `address` it runs, with optional
+  per-reference `params`. Everything else names the alias, so one address may appear twice — a
+  self-join, or one table read in two regions — as two nodes. Aliases are unique; an omitted one is
+  the address, so the same address twice needs aliases.
 - **`wirings`** — β edges stated from the consuming side: `inbound` names what arrives, `via` is
   `T_in`, the transform turning the inbox into that consumer's inputs. It belongs to the consumer
   rather than to an edge because one input may be built from several producers' values.
 - **`provides`** — the inputs `via` builds. Required whenever `via` is set: placement happens when
   the plan is built and the program does not run until a row arrives, so an optional parameter
   nobody supplied would be dropped before the program could fill it.
-- **`overrides`** — corrections to what a document says about its response. A document can be wrong
+- **`overrides`** — corrections to what a document says about its response. These name an
+  `address`, not an alias: they correct the document, and so apply to every reference to it. A document can be wrong
   *for this engine* rather than wrong in itself, and editing the bundle is not the remedy.
 
 ```bash
@@ -462,10 +467,10 @@ that produces it. Row fields carry the schema's names (`VpcId`), not the wire's 
 
 ```bash
 ./build/omnicli doc-graph $R '{
-  "addresses": ["stackql_unstable_aws.ec2.vpcs", "stackql_unstable_aws.ec2.subnets"],
+  "nodes": [{"alias": "v", "address": "stackql_unstable_aws.ec2.vpcs"}, {"alias": "s", "address": "stackql_unstable_aws.ec2.subnets"}],
   "wirings": [{
-    "to": "stackql_unstable_aws.ec2.subnets",
-    "inbound": [{"from": "stackql_unstable_aws.ec2.vpcs", "src": "VpcId", "as": "vpc_id"}],
+    "to": "s",
+    "inbound": [{"from": "v", "src": "VpcId", "as": "vpc_id"}],
     "via_type": "golang_template_json_v0.1.0",
     "via": "{\"Filter.1.Name\":\"vpc-id\",\"Filter.1.Value.1\":\"{{ .vpc_id }}\"}",
     "provides": ["Filter.1.Name", "Filter.1.Value.1"]
@@ -480,14 +485,14 @@ matched by its `selfLink`.
 
 ```bash
 ./build/omnicli doc-graph $R '{
-  "addresses": ["stackql_unstable_google.compute.networks", "stackql_unstable_google.compute.subnetworks"],
+  "nodes": [{"alias": "n", "address": "stackql_unstable_google.compute.networks"}, {"alias": "s", "address": "stackql_unstable_google.compute.subnetworks"}],
   "overrides": [
     {"address": "stackql_unstable_google.compute.networks", "object_key": "$.items"},
     {"address": "stackql_unstable_google.compute.subnetworks", "object_key": "$.items"}
   ],
   "wirings": [{
-    "to": "stackql_unstable_google.compute.subnetworks",
-    "inbound": [{"from": "stackql_unstable_google.compute.networks", "src": "selfLink", "as": "network"}],
+    "to": "s",
+    "inbound": [{"from": "n", "src": "selfLink", "as": "network"}],
     "via_type": "golang_template_json_v0.1.0",
     "via": "{\"filter\":\"network=\\\"{{ .network }}\\\"\"}",
     "provides": ["filter"]
@@ -507,12 +512,12 @@ VNet name, and the resource group appears only inside the ARM resource id — so
 ## or export AZURE_SUBSCRIPTION_ID='<your subscription id>'
 
 ./build/omnicli doc-graph $R '{
-  "addresses": ["stackql_unstable_azure.network.virtual_networks", "stackql_unstable_azure.network.subnets"],
+  "nodes": [{"alias": "v", "address": "stackql_unstable_azure.network.virtual_networks"}, {"alias": "s", "address": "stackql_unstable_azure.network.subnets"}],
   "wirings": [{
-    "to": "stackql_unstable_azure.network.subnets",
+    "to": "s",
     "inbound": [
-      {"from": "stackql_unstable_azure.network.virtual_networks", "src": "name", "as": "vnet"},
-      {"from": "stackql_unstable_azure.network.virtual_networks", "src": "id", "as": "arm_id"}
+      {"from": "v", "src": "name", "as": "vnet"},
+      {"from": "v", "src": "id", "as": "arm_id"}
     ],
     "via_type": "golang_template_json_v0.1.0",
     "via": "{\"virtual_network_name\":\"{{ .vnet }}\",\"resource_group_name\":\"{{ index (split \"/\" .arm_id) 4 }}\"}",
