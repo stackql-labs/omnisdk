@@ -1,7 +1,12 @@
 package omnisdk_test
 
 import (
+	"context"
+	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"reflect"
+	"sort"
 	"testing"
 
 	"github.com/stackql-labs/omnisdk/pkg/omnisdk"
@@ -129,4 +134,119 @@ func TestTranspileSimpleJoin(t *testing.T) {
 	if _, err := omnisdk.NewGraphSelectQuery(corpus, g, args); err != nil {
 		t.Fatalf("plan: %v", err)
 	}
+}
+
+// iamStub answers ListUsers with alice and bob, and ListAttachedUserPolicies with one policy named
+// after the user asked about — so the join is visible in the rows.
+func iamStub(t *testing.T) *httptest.Server {
+	t.Helper()
+	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = r.ParseForm()
+		w.Header().Set("Content-Type", "text/xml")
+		switch r.Form.Get("Action") {
+		case "ListUsers":
+			fmt.Fprint(w, `<ListUsersResponse><ListUsersResult><Users>`+
+				`<member><UserName>alice</UserName></member><member><UserName>bob</UserName></member>`+
+				`</Users></ListUsersResult></ListUsersResponse>`)
+		case "ListAttachedUserPolicies":
+			fmt.Fprintf(w, `<ListAttachedUserPoliciesResponse><ListAttachedUserPoliciesResult><AttachedPolicies>`+
+				`<member><PolicyName>%s-policy</PolicyName></member>`+
+				`</AttachedPolicies></ListAttachedUserPoliciesResult></ListAttachedUserPoliciesResponse>`, r.Form.Get("UserName"))
+		default:
+			http.Error(w, "unexpected action "+r.Form.Get("Action"), http.StatusBadRequest)
+		}
+	}))
+}
+
+/*
+The same query as a SQL front end would hand it over, in three steps.
+
+ 1. The parse: table references with their aliases, the ON and WHERE conjuncts, the select list.
+    Nothing a document would have to say.
+ 2. The signatures: each table's select methods, their parameters and row columns, from omnisdk.
+ 3. Execution: Analyze combines the two into the graph, which runs.
+*/
+func TestParsedQueryDescribedThenRun(t *testing.T) {
+	requireCorpus(t)
+	t.Setenv("AWS_ACCESS_KEY_ID", "AKIATEST")
+	t.Setenv("AWS_SECRET_ACCESS_KEY", "secret")
+	srv := iamStub(t)
+	defer srv.Close()
+
+	// 1. SELECT u.UserName, p.PolicyName
+	//    FROM aws.iam.users u INNER JOIN aws.iam.attached_user_policies p ON p.UserName = u.UserName
+	//    WHERE region = 'us-east-1'
+	q := omnisdk.NewQuery(
+		[]omnisdk.Node{
+			omnisdk.NewNode("u", iamUsers, nil),
+			omnisdk.NewNode("p", iamAttachedPolicies, nil),
+		},
+		[]omnisdk.Expression{
+			omnisdk.NewEquals(omnisdk.NewColumn("p", "UserName"), omnisdk.NewColumn("u", "UserName")),
+			omnisdk.NewEquals(omnisdk.NewField("region"), omnisdk.NewLiteral("us-east-1")),
+		},
+		[]omnisdk.SelectColumn{
+			omnisdk.NewSelectColumn("UserName", omnisdk.NewColumn("u", "UserName")),
+			omnisdk.NewSelectColumn("PolicyName", omnisdk.NewColumn("p", "PolicyName")),
+		},
+	)
+
+	// 2. What the documents say about each table.
+	described := map[string][]omnisdk.MethodSignature{}
+	for _, n := range q.Nodes() {
+		ms, err := omnisdk.Describe(corpus, n.Address())
+		if err != nil {
+			t.Fatalf("describe %s: %v", n.Alias(), err)
+		}
+		described[n.Alias()] = ms
+	}
+	// list_attached_user_policies requires UserName and users lists without it: that asymmetry is
+	// the join's direction, and it is in the documents, not the query.
+	if m := described["p"]; len(m) != 1 || !requires(m[0], "UserName") {
+		t.Fatalf("p: want one method requiring UserName, got %v", methods(m))
+	}
+
+	// 3. Resolve and run.
+	a, err := omnisdk.Analyze(q, described)
+	if err != nil {
+		t.Fatalf("analyze: %v", err)
+	}
+	pl, err := omnisdk.NewGraphSelectQuery(corpus, a.Graph(), omnisdk.Args{Endpoint: srv.URL, Params: a.Params()})
+	if err != nil {
+		t.Fatalf("plan: %v", err)
+	}
+	rows, err := pl.Open(context.Background())
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	defer rows.Close()
+	var got []string
+	for rows.Next() {
+		r := rows.Row()
+		got = append(got, fmt.Sprintf("%v/%v", r["UserName"], r["PolicyName"]))
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatalf("rows: %v", err)
+	}
+	sort.Strings(got)
+	if want := []string{"alice/alice-policy", "bob/bob-policy"}; !reflect.DeepEqual(got, want) {
+		t.Errorf("rows = %v, want %v", got, want)
+	}
+}
+
+func requires(m omnisdk.MethodSignature, name string) bool {
+	for _, p := range m.Params() {
+		if p.Name() == name && p.Required() {
+			return true
+		}
+	}
+	return false
+}
+
+func methods(ms []omnisdk.MethodSignature) []string {
+	var out []string
+	for _, m := range ms {
+		out = append(out, m.Method())
+	}
+	return out
 }

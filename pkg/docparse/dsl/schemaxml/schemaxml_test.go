@@ -150,3 +150,23 @@ func TestMissingSchemaIsAnError(t *testing.T) {
 		t.Error("eval with a program succeeded; this language has no text")
 	}
 }
+
+// The query protocol (IAM) nests rows in <ActionResult> beside <ResponseMetadata>, with <member>
+// items and the truncation flag as a sibling of the list.
+func TestQueryProtocolResultAndMembers(t *testing.T) {
+	row := &schema{props: map[string]*schema{"UserName": {}, "UserId": {}}}
+	users := &schema{props: map[string]*schema{"line_items": {items: row}}}
+	got := run(t, `<ListUsersResponse><ListUsersResult><Users>`+
+		`<member><UserName>alice</UserName></member><member><UserName>bob</UserName></member>`+
+		`</Users><IsTruncated>false</IsTruncated></ListUsersResult>`+
+		`<ResponseMetadata><RequestId>r-1</RequestId></ResponseMetadata></ListUsersResponse>`,
+		dsl.Context{Schema: users, ListProperty: "line_items", Protocol: "query"})
+
+	rows, _ := got["line_items"].([]any)
+	if len(rows) != 2 {
+		t.Fatalf("rows = %v, want alice and bob", got["line_items"])
+	}
+	if got["IsTruncated"] != "false" {
+		t.Errorf("got %v, want the truncation flag retained", got)
+	}
+}
