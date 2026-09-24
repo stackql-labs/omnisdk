@@ -113,7 +113,8 @@ func (r resolution) Params() map[string]string { return r.params }
 // cannot be placed is an error naming it, never a guess.
 func Resolve(q query.Unresolved, tables map[string]Table) (Resolution, error) {
 	r := resolver{tables: map[string]Table{}, params: map[string]string{}, nodeParams: map[string]map[string]string{},
-		fanout: map[string]map[string][]string{}, wide: map[string][]string{}, arrivals: map[string][]arrival{}, retain: map[string][]string{}}
+		fanout: map[string]map[string][]string{}, wide: map[string][]string{}, arrivals: map[string][]arrival{}, retain: map[string][]string{},
+		computed: map[string][]SelectColumn{}}
 	var conjuncts []query.Predicate
 	for _, j := range q.From() {
 		alias := j.Resource().Alias()
@@ -166,7 +167,9 @@ type resolver struct {
 	arrivals   map[string][]arrival
 	consumers  []string
 	retain     map[string][]string
+	computed   map[string][]SelectColumn
 	filters    []query.Predicate
+	finals     []query.Output
 }
 
 type arrival struct{ from, src, as string }
@@ -247,7 +250,12 @@ func (r *resolver) bindJoin(p query.Predicate) (bool, error) {
 	}
 	l, lok := c.Left().(query.Column)
 	rc, rok := c.Right().(query.Column)
-	if !lok || !rok {
+	switch {
+	case lok && !rok:
+		return r.bindComputed(c, l, c.Right())
+	case rok && !lok:
+		return r.bindComputed(c, rc, c.Left())
+	case !lok && !rok:
 		return false, nil
 	}
 	var err error
@@ -276,9 +284,41 @@ func (r *resolver) bindJoin(p query.Predicate) (bool, error) {
 	if _, seen := r.arrivals[to.Qualifier()]; !seen {
 		r.consumers = append(r.consumers, to.Qualifier())
 	}
-	r.arrivals[to.Qualifier()] = append(r.arrivals[to.Qualifier()], arrival{from: from.Qualifier(), src: from.Name(), as: to.Name()})
+	r.arrivals[to.Qualifier()] = append(r.arrivals[to.Qualifier()], arrival{from: from.Qualifier(), src: kept(from.Name()), as: to.Name()})
 	r.keep(from.Qualifier(), from.Name())
 	if hasColumn(r.tables[to.Qualifier()], to.Name()) {
+		if err := r.filter(c); err != nil {
+			return false, err
+		}
+	}
+	return true, nil
+}
+
+// bindComputed places column = f(other table's columns). Where the column's table needs the value,
+// the producer computes it in its projection, before its rows travel the edge; otherwise it is a
+// filter. A function on the needing side cannot be inverted, so it never binds.
+func (r *resolver) bindComputed(c query.Compare, col query.Column, e query.Expr) (bool, error) {
+	if _, isCall := e.(query.Call); !isCall {
+		return false, nil
+	}
+	col, err := r.qualify(col)
+	if err != nil {
+		return false, fmt.Errorf("omnisdk: %s: %w", describe(c), err)
+	}
+	from, x, err := r.projected(e)
+	if err != nil || from == col.Qualifier() {
+		return false, nil
+	}
+	if !needs(r.tables[col.Qualifier()], col.Name(), r.known(col.Qualifier())) {
+		return false, nil
+	}
+	name := computed(len(r.computed[from]))
+	r.computed[from] = append(r.computed[from], NewSelectColumn(name, x))
+	if _, seen := r.arrivals[col.Qualifier()]; !seen {
+		r.consumers = append(r.consumers, col.Qualifier())
+	}
+	r.arrivals[col.Qualifier()] = append(r.arrivals[col.Qualifier()], arrival{from: from, src: name, as: col.Name()})
+	if hasColumn(r.tables[col.Qualifier()], col.Name()) {
 		if err := r.filter(c); err != nil {
 			return false, err
 		}
@@ -390,6 +430,15 @@ func (r *resolver) keep(alias, name string) {
 func (r *resolver) build(sel []query.Output) (Resolution, error) {
 	byAlias := map[string][]SelectColumn{}
 	for _, o := range sel {
+		if len(r.aliasesOf(o.Expr())) > 1 {
+			// Reads several tables: computed on the finished row, from what each node keeps.
+			e, err := r.rewriteExpr(o.Expr())
+			if err != nil {
+				return nil, fmt.Errorf("omnisdk: output %q: %w", o.Name(), err)
+			}
+			r.finals = append(r.finals, query.NewOutput(o.Name(), e))
+			continue
+		}
 		alias, e, err := r.projected(o.Expr())
 		if err != nil {
 			return nil, fmt.Errorf("omnisdk: output %q: %w", o.Name(), err)
@@ -407,6 +456,7 @@ func (r *resolver) build(sel []query.Output) (Resolution, error) {
 		for _, name := range r.retain[alias] {
 			cols = append(cols, NewSelectColumn(kept(name), NewField(name)))
 		}
+		cols = append(cols, r.computed[alias]...)
 		if len(cols) == 0 {
 			continue
 		}
@@ -420,11 +470,11 @@ func (r *resolver) build(sel []query.Output) (Resolution, error) {
 	for _, to := range r.consumers {
 		var in []Inbound
 		for _, a := range r.arrivals[to] {
-			in = append(in, NewInbound(a.from, kept(a.src), a.as))
+			in = append(in, NewInbound(a.from, a.src, a.as))
 		}
 		wirings = append(wirings, NewWiring(to, in, "", ""))
 	}
-	g, err := NewGraphWithFilters(nodes, wirings, projections, r.filters, r.wide)
+	g, err := NewGraphWithFilters(nodes, wirings, projections, NewRowOps(r.filters, r.wide, r.finals))
 	if err != nil {
 		return nil, err
 	}
@@ -583,3 +633,30 @@ func describeExpr(e query.Expr) string {
 
 // kept names a column retained for an edge but not selected; egress drops it.
 func kept(name string) string { return "\x00" + name }
+
+// computed names the n'th value a node computes for an edge; egress drops it.
+func computed(n int) string { return fmt.Sprintf("\x00=%d", n) }
+
+// aliasesOf are the tables an expression reads, where each column can be placed.
+func (r *resolver) aliasesOf(e query.Expr) []string {
+	var out []string
+	var walk func(query.Expr)
+	walk = func(e query.Expr) {
+		switch e := e.(type) {
+		case query.Column:
+			if c, err := r.qualify(e); err == nil && !contains(out, c.Qualifier()) {
+				out = append(out, c.Qualifier())
+			}
+		case query.Collection:
+			for _, x := range e.Items() {
+				walk(x)
+			}
+		case query.Call:
+			for _, x := range e.Args() {
+				walk(x)
+			}
+		}
+	}
+	walk(e)
+	return out
+}

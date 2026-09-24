@@ -179,7 +179,32 @@ type Graph interface {
 	// Fanout are query-wide inputs taking several values, e.g. region IN (...): the whole query
 	// runs once per value, and every node in one run sees the same value.
 	Fanout() map[string][]string
+	// Outputs are columns computed on each finished row, from several nodes' columns.
+	Outputs() []query.Output
 }
+
+// RowOps is what a graph does to rows beyond running its nodes: the filters every returned row
+// meets, the query-wide fanout, and the columns computed across nodes.
+type RowOps interface {
+	Filters() []query.Predicate
+	Fanout() map[string][]string
+	Outputs() []query.Output
+}
+
+// NewRowOps bundles row operations; any may be nil.
+func NewRowOps(filters []query.Predicate, fanout map[string][]string, outputs []query.Output) RowOps {
+	return rowOps{filters: filters, fanout: fanout, outputs: outputs}
+}
+
+type rowOps struct {
+	filters []query.Predicate
+	fanout  map[string][]string
+	outputs []query.Output
+}
+
+func (o rowOps) Filters() []query.Predicate  { return o.filters }
+func (o rowOps) Fanout() map[string][]string { return o.fanout }
+func (o rowOps) Outputs() []query.Output     { return o.outputs }
 
 // NewGraph declares a multi-exchange query.
 func NewGraph(nodes []Node, wirings []Wiring, overrides ...Override) (Graph, error) {
@@ -190,13 +215,14 @@ func NewGraph(nodes []Node, wirings []Wiring, overrides ...Override) (Graph, err
 // A projection is applied to that node's rows BEFORE they travel an edge, so a joined-on value
 // may be one a function computed rather than one the document returned.
 func NewGraphWithProjections(nodes []Node, wirings []Wiring, projections []Projection, overrides ...Override) (Graph, error) {
-	return NewGraphWithFilters(nodes, wirings, projections, nil, nil, overrides...)
+	return NewGraphWithFilters(nodes, wirings, projections, NewRowOps(nil, nil, nil), overrides...)
 }
 
 // NewGraphWithFilters declares a multi-exchange query whose rows must also meet filters —
 // conditions no request can apply, evaluated on each row the query returns — and which may run
 // once per value of a query-wide fanout.
-func NewGraphWithFilters(nodes []Node, wirings []Wiring, projections []Projection, filters []query.Predicate, fanout map[string][]string, overrides ...Override) (Graph, error) {
+func NewGraphWithFilters(nodes []Node, wirings []Wiring, projections []Projection, rows RowOps, overrides ...Override) (Graph, error) {
+	filters, fanout, outputs := rows.Filters(), rows.Fanout(), rows.Outputs()
 	if len(nodes) == 0 {
 		return nil, fmt.Errorf("omnisdk: a graph needs at least one node")
 	}
@@ -272,12 +298,19 @@ func NewGraphWithFilters(nodes []Node, wirings []Wiring, projections []Projectio
 			}
 		}
 	}
+	for _, o := range outputs {
+		for _, c := range predicateColumns(query.NewTest(o.Expr())) {
+			if c.Qualifier() == "" || !known[c.Qualifier()] {
+				return nil, fmt.Errorf("omnisdk: output %q reads %s.%s, which the graph does not include", o.Name(), c.Qualifier(), c.Name())
+			}
+		}
+	}
 	for k, vs := range fanout {
 		if len(vs) == 0 {
 			return nil, fmt.Errorf("omnisdk: query-wide %q has no values", k)
 		}
 	}
-	return graph{nodes: nodes, wirings: wirings, overrides: overrides, projections: projections, filters: filters, fanout: fanout}, nil
+	return graph{nodes: nodes, wirings: wirings, overrides: overrides, projections: projections, filters: filters, fanout: fanout, outputs: outputs}, nil
 }
 
 type graph struct {
@@ -287,7 +320,10 @@ type graph struct {
 	projections []Projection
 	filters     []query.Predicate
 	fanout      map[string][]string
+	outputs     []query.Output
 }
+
+func (g graph) Outputs() []query.Output { return g.outputs }
 
 func (g graph) Fanout() map[string][]string { return g.fanout }
 func (g graph) Filters() []query.Predicate  { return g.filters }
@@ -358,8 +394,12 @@ func NewGraphSelectQuery(dir string, g Graph, args Args) (Plan, error) {
 			emits[in.From()] = append(emits[in.From()], in.Src())
 		}
 	}
-	// A filter reads the node it names by the same means.
-	for _, f := range g.Filters() {
+	// A filter and a computed output read the node they name by the same means.
+	reads := append([]query.Predicate(nil), g.Filters()...)
+	for _, o := range g.Outputs() {
+		reads = append(reads, query.NewTest(o.Expr()))
+	}
+	for _, f := range reads {
 		for _, c := range predicateColumns(f) {
 			if !contains(emits[c.Qualifier()], c.Name()) {
 				emits[c.Qualifier()] = append(emits[c.Qualifier()], c.Name())
@@ -544,6 +584,9 @@ func egress(g Graph, fns facade.FnRegistry) []facade.Transform {
 	if fs := g.Filters(); len(fs) > 0 {
 		out = append(out, filterTransform{filters: fs, fns: fns})
 	}
+	if os := g.Outputs(); len(os) > 0 {
+		out = append(out, outputTransform{outputs: os, fns: fns})
+	}
 	out = append(out, unhide{})
 	// Where every node states its select list, those lists are the row: the inputs that seeded it
 	// are not columns the query asked for.
@@ -553,6 +596,9 @@ func egress(g Graph, fns facade.FnRegistry) []facade.Transform {
 			for _, c := range p.Columns() {
 				keep[c.Out()] = true
 			}
+		}
+		for _, o := range g.Outputs() {
+			keep[o.Name()] = true
 		}
 		out = append(out, onlyColumns(keep))
 	}

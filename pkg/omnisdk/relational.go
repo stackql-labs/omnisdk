@@ -412,3 +412,32 @@ func (r *replayReader) Err() error {
 }
 
 func (r *replayReader) Close() error { return nil }
+
+// outputTransform computes the columns that read several nodes, on the finished row.
+type outputTransform struct {
+	outputs []query.Output
+	fns     facade.FnRegistry
+}
+
+func (o outputTransform) Apply(in facade.Page) (facade.Record, error) {
+	row, ok := bind.DocMap(in)
+	if !ok {
+		if rec, is := in.(facade.Record); is {
+			return rec, nil
+		}
+		return nil, fmt.Errorf("omnisdk: output received a %T, not a record", in)
+	}
+	f := filterTransform{fns: o.fns}
+	out := make(map[string]any, len(row)+len(o.outputs))
+	for k, v := range row {
+		out[k] = v
+	}
+	for _, c := range o.outputs {
+		v, err := f.value(c.Expr(), row)
+		if err != nil {
+			return nil, fmt.Errorf("omnisdk: output %q: %w", c.Name(), err)
+		}
+		out[c.Name()] = v
+	}
+	return bind.NewDocRecord(out), nil
+}

@@ -392,3 +392,48 @@ func TestInListOnATableParameterFansOut(t *testing.T) {
 		t.Errorf("calls = %v, want one GetUser per name", made)
 	}
 }
+
+// SELECT u.UserName, p.PolicyName FROM aws.iam.users u INNER JOIN aws.iam.attached_user_policies p
+// ON p.UserName = split_part(u.UserName, 'l', 1) WHERE region = 'us-east-1'
+// The join value is computed by the producer before it travels the edge: alice → "a", bob → "bob".
+func TestJoinOnAComputedValue(t *testing.T) {
+	q := mustQuery(t,
+		[]query.Join{
+			query.NewJoin(query.NewResource("u", "aws.iam.users"), query.Base),
+			query.NewJoin(query.NewResource("p", "aws.iam.attached_user_policies"), query.Inner,
+				query.NewEq(query.NewColumn("p", "UserName"),
+					query.NewCall("split_part", query.NewColumn("u", "UserName"), query.NewLiteral("l"), query.NewLiteral(1)))),
+		},
+		[]query.Predicate{query.NewEq(query.NewColumn("", "region"), query.NewLiteral("us-east-1"))},
+		[]query.Output{
+			query.NewOutput("UserName", query.NewColumn("u", "UserName")),
+			query.NewOutput("PolicyName", query.NewColumn("p", "PolicyName")),
+		},
+	)
+	rows, _ := runQuery(t, q)
+	if want := []string{"PolicyName=a-policy,UserName=alice", "PolicyName=bob-policy,UserName=bob"}; !reflect.DeepEqual(rows, want) {
+		t.Errorf("rows = %v, want %v", rows, want)
+	}
+}
+
+// SELECT u.UserName, split_part(p.PolicyName, u.UserName, 2) AS suffix FROM ... ON p.UserName = u.UserName
+// An output reading two tables is computed on the finished row.
+func TestOutputAcrossTables(t *testing.T) {
+	q := mustQuery(t,
+		[]query.Join{
+			query.NewJoin(query.NewResource("u", "aws.iam.users"), query.Base),
+			query.NewJoin(query.NewResource("p", "aws.iam.attached_user_policies"), query.Inner,
+				query.NewEq(query.NewColumn("p", "UserName"), query.NewColumn("u", "UserName"))),
+		},
+		[]query.Predicate{query.NewEq(query.NewColumn("", "region"), query.NewLiteral("us-east-1"))},
+		[]query.Output{
+			query.NewOutput("UserName", query.NewColumn("u", "UserName")),
+			query.NewOutput("suffix", query.NewCall("split_part",
+				query.NewColumn("p", "PolicyName"), query.NewColumn("u", "UserName"), query.NewLiteral(2))),
+		},
+	)
+	rows, _ := runQuery(t, q)
+	if want := []string{"UserName=alice,suffix=-policy", "UserName=bob,suffix=-policy"}; !reflect.DeepEqual(rows, want) {
+		t.Errorf("rows = %v, want %v", rows, want)
+	}
+}
