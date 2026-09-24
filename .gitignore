@@ -1,7 +1,6 @@
 .DS_Store
 *.venv/
 *venv/
-.claude
 CLAUDE.local.md
 __debug_*
 
