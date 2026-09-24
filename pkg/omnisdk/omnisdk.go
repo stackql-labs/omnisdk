@@ -1336,6 +1336,7 @@ func (c *cannedPlan) decorate(parent context.Context) (context.Context, context.
 	if c.args.InsecureSkipTLSVerify {
 		ctx = httpx.WithClient(ctx, httpx.InsecureClient())
 	}
+	ctx = withReplay(ctx)
 	ctx, abortCancel := abort.WithSignal(ctx)
 	ctx = abort.WithLimit(ctx, c.args.Tuning.Limit)
 	logw, closeLog := logSink(c.args.Log)

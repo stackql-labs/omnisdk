@@ -107,11 +107,13 @@ func (r resolution) Graph() Graph              { return r.graph }
 func (r resolution) Params() map[string]string { return r.params }
 
 // Resolve places every part of a query, given each alias's table. A binding becomes a request
-// parameter or an edge according to what the tables' methods take and require; the direction of an
-// edge is the side that cannot run without it. Anything that cannot be placed is an error naming it,
-// never a guess.
+// parameter, a fan-out or an edge according to what the tables' methods take and require; the
+// direction of an edge is the side that cannot run without it. Every other condition, and every
+// binding the row can also be checked against, is a filter on the returned rows. Anything that
+// cannot be placed is an error naming it, never a guess.
 func Resolve(q query.Unresolved, tables map[string]Table) (Resolution, error) {
-	r := resolver{tables: map[string]Table{}, params: map[string]string{}, nodeParams: map[string]map[string]string{}}
+	r := resolver{tables: map[string]Table{}, params: map[string]string{}, nodeParams: map[string]map[string]string{},
+		fanout: map[string]map[string][]string{}, wide: map[string][]string{}, arrivals: map[string][]arrival{}, retain: map[string][]string{}}
 	var conjuncts []query.Predicate
 	for _, j := range q.From() {
 		alias := j.Resource().Alias()
@@ -130,24 +132,25 @@ func Resolve(q query.Unresolved, tables map[string]Table) (Resolution, error) {
 	conjuncts = append(conjuncts, q.Where()...)
 
 	// Constant bindings first: they decide what each table can run without the others.
-	var joins []query.Compare
+	var rest []query.Predicate
 	for _, p := range conjuncts {
-		c, ok := p.(query.Compare)
-		if !ok || c.Op() != query.Eq {
-			return nil, fmt.Errorf("omnisdk: %s: only equality is supported; client-side filtering is not yet", describe(p))
-		}
-		col, lit, ok := columnAndLiteral(c)
-		if !ok {
-			joins = append(joins, c)
-			continue
-		}
-		if err := r.bindConstant(c, col, lit); err != nil {
+		placed, err := r.bindConstant(p)
+		if err != nil {
 			return nil, err
+		}
+		if !placed {
+			rest = append(rest, p)
 		}
 	}
-	for _, c := range joins {
-		if err := r.bindJoin(c); err != nil {
+	for _, p := range rest {
+		placed, err := r.bindJoin(p)
+		if err != nil {
 			return nil, err
+		}
+		if !placed {
+			if err := r.filter(p); err != nil {
+				return nil, err
+			}
 		}
 	}
 	return r.build(q.Select())
@@ -158,75 +161,228 @@ type resolver struct {
 	order      []string
 	params     map[string]string
 	nodeParams map[string]map[string]string
+	fanout     map[string]map[string][]string
+	wide       map[string][]string
 	arrivals   map[string][]arrival
 	consumers  []string
 	retain     map[string][]string
+	filters    []query.Predicate
 }
 
 type arrival struct{ from, src, as string }
 
-// bindConstant places column = literal. A qualified column binds its table's parameter. An
-// unqualified one binds the one table that has it; where none or several do, it is query-wide, as a
-// scope value such as region is.
-func (r *resolver) bindConstant(c query.Compare, col query.Column, lit query.Literal) error {
+// bindConstant places column = literal and column IN (literals). A qualified column binds its
+// table's parameter. An unqualified one binds the one table that has it; where none or several do,
+// it is query-wide, as a scope value such as region is. A column the table does not take is not
+// placed here, and becomes a filter. A placed binding on a column the row also carries is checked
+// again on the rows, since a request parameter is not always applied exactly.
+func (r *resolver) bindConstant(p query.Predicate) (bool, error) {
+	var col query.Column
+	var values []string
+	switch p := p.(type) {
+	case query.Compare:
+		c, lit, ok := columnAndLiteral(p)
+		if !ok || p.Op() != query.Eq {
+			return false, nil
+		}
+		col, values = c, []string{fmt.Sprint(lit.Value())}
+	case query.In:
+		c, ok := p.Expr().(query.Column)
+		set, isSet := p.Set().(query.Collection)
+		if !ok || !isSet {
+			return false, nil
+		}
+		for _, x := range set.Items() {
+			lit, ok := x.(query.Literal)
+			if !ok {
+				return false, nil
+			}
+			values = append(values, fmt.Sprint(lit.Value()))
+		}
+		col = c
+	default:
+		return false, nil
+	}
 	alias := col.Qualifier()
 	if alias == "" {
 		owners := r.owners(col.Name())
 		if len(owners) != 1 {
-			r.params[col.Name()] = fmt.Sprint(lit.Value())
-			return nil
+			if len(values) == 1 {
+				r.params[col.Name()] = values[0]
+			} else {
+				r.wide[col.Name()] = values
+			}
+			return true, nil
 		}
 		alias = owners[0]
 	}
 	if !accepts(r.tables[alias], col.Name()) {
-		return fmt.Errorf("omnisdk: %s: %s takes no %q; client-side filtering is not yet supported", describe(c), alias, col.Name())
+		return false, nil
 	}
-	if r.nodeParams[alias] == nil {
-		r.nodeParams[alias] = map[string]string{}
+	if len(values) == 1 {
+		if r.nodeParams[alias] == nil {
+			r.nodeParams[alias] = map[string]string{}
+		}
+		r.nodeParams[alias][col.Name()] = values[0]
+	} else {
+		if r.fanout[alias] == nil {
+			r.fanout[alias] = map[string][]string{}
+		}
+		r.fanout[alias][col.Name()] = values
 	}
-	r.nodeParams[alias][col.Name()] = fmt.Sprint(lit.Value())
-	return nil
+	if hasColumn(r.tables[alias], col.Name()) {
+		if err := r.filter(p); err != nil {
+			return false, err
+		}
+	}
+	return true, nil
 }
 
 // bindJoin places column = column across two tables as an edge onto the side that needs the value.
-func (r *resolver) bindJoin(c query.Compare) error {
+// Where neither needs it the tables run independently and the equality is a filter on their rows.
+func (r *resolver) bindJoin(p query.Predicate) (bool, error) {
+	c, ok := p.(query.Compare)
+	if !ok || c.Op() != query.Eq {
+		return false, nil
+	}
 	l, lok := c.Left().(query.Column)
 	rc, rok := c.Right().(query.Column)
 	if !lok || !rok {
-		return fmt.Errorf("omnisdk: %s: a computed join value is not yet supported", describe(c))
+		return false, nil
 	}
 	var err error
 	if l, err = r.qualify(l); err != nil {
-		return fmt.Errorf("omnisdk: %s: %w", describe(c), err)
+		return false, fmt.Errorf("omnisdk: %s: %w", describe(c), err)
 	}
 	if rc, err = r.qualify(rc); err != nil {
-		return fmt.Errorf("omnisdk: %s: %w", describe(c), err)
+		return false, fmt.Errorf("omnisdk: %s: %w", describe(c), err)
 	}
 	if l.Qualifier() == rc.Qualifier() {
-		return fmt.Errorf("omnisdk: %s: both sides are %s; client-side filtering is not yet supported", describe(c), l.Qualifier())
+		return false, nil
 	}
 	lNeeds := needs(r.tables[l.Qualifier()], l.Name(), r.known(l.Qualifier()))
 	rNeeds := needs(r.tables[rc.Qualifier()], rc.Name(), r.known(rc.Qualifier()))
 	var to, from query.Column
 	switch {
 	case lNeeds && rNeeds:
-		return fmt.Errorf("omnisdk: %s: %s and %s each need the other", describe(c), l.Qualifier(), rc.Qualifier())
+		return false, fmt.Errorf("omnisdk: %s: %s and %s each need the other", describe(c), l.Qualifier(), rc.Qualifier())
 	case lNeeds:
 		to, from = l, rc
 	case rNeeds:
 		to, from = rc, l
 	default:
-		return fmt.Errorf("omnisdk: %s: neither side needs the other's value; a client-side join is not yet supported", describe(c))
-	}
-	if r.arrivals == nil {
-		r.arrivals, r.retain = map[string][]arrival{}, map[string][]string{}
+		return false, nil
 	}
 	if _, seen := r.arrivals[to.Qualifier()]; !seen {
 		r.consumers = append(r.consumers, to.Qualifier())
 	}
 	r.arrivals[to.Qualifier()] = append(r.arrivals[to.Qualifier()], arrival{from: from.Qualifier(), src: from.Name(), as: to.Name()})
-	r.retain[from.Qualifier()] = append(r.retain[from.Qualifier()], from.Name())
+	r.keep(from.Qualifier(), from.Name())
+	if hasColumn(r.tables[to.Qualifier()], to.Name()) {
+		if err := r.filter(c); err != nil {
+			return false, err
+		}
+	}
+	return true, nil
+}
+
+// filter adds a condition on the returned rows, with its columns qualified and pointed at the
+// names their nodes keep them under.
+func (r *resolver) filter(p query.Predicate) error {
+	q, err := r.rewrite(p)
+	if err != nil {
+		return fmt.Errorf("omnisdk: %s: %w", describe(p), err)
+	}
+	r.filters = append(r.filters, q)
 	return nil
+}
+
+func (r *resolver) rewrite(p query.Predicate) (query.Predicate, error) {
+	switch p := p.(type) {
+	case query.Compare:
+		l, err := r.rewriteExpr(p.Left())
+		if err != nil {
+			return nil, err
+		}
+		rt, err := r.rewriteExpr(p.Right())
+		if err != nil {
+			return nil, err
+		}
+		return query.NewCompare(p.Op(), l, rt), nil
+	case query.In:
+		e, err := r.rewriteExpr(p.Expr())
+		if err != nil {
+			return nil, err
+		}
+		set, err := r.rewriteExpr(p.Set())
+		if err != nil {
+			return nil, err
+		}
+		return query.NewIn(e, set), nil
+	case query.Test:
+		e, err := r.rewriteExpr(p.Cond())
+		if err != nil {
+			return nil, err
+		}
+		return query.NewTest(e), nil
+	case query.Or:
+		var any []query.Predicate
+		for _, q := range p.Any() {
+			x, err := r.rewrite(q)
+			if err != nil {
+				return nil, err
+			}
+			any = append(any, x)
+		}
+		return query.NewOr(any...), nil
+	case query.Not:
+		x, err := r.rewrite(p.Negated())
+		if err != nil {
+			return nil, err
+		}
+		return query.NewNot(x), nil
+	}
+	return nil, fmt.Errorf("unsupported condition %T", p)
+}
+
+func (r *resolver) rewriteExpr(e query.Expr) (query.Expr, error) {
+	switch e := e.(type) {
+	case query.Column:
+		c, err := r.qualify(e)
+		if err != nil {
+			return nil, err
+		}
+		r.keep(c.Qualifier(), c.Name())
+		return query.NewColumn(c.Qualifier(), kept(c.Name())), nil
+	case query.Collection:
+		var items []query.Expr
+		for _, x := range e.Items() {
+			y, err := r.rewriteExpr(x)
+			if err != nil {
+				return nil, err
+			}
+			items = append(items, y)
+		}
+		return query.NewCollection(items...), nil
+	case query.Call:
+		var args []query.Expr
+		for _, x := range e.Args() {
+			y, err := r.rewriteExpr(x)
+			if err != nil {
+				return nil, err
+			}
+			args = append(args, y)
+		}
+		return query.NewCall(e.Func(), args...), nil
+	}
+	return e, nil
+}
+
+// keep records a column a node must carry past its projection for an edge or a filter.
+func (r *resolver) keep(alias, name string) {
+	if !contains(r.retain[alias], name) {
+		r.retain[alias] = append(r.retain[alias], name)
+	}
 }
 
 // build assembles the graph: nodes with their bound params, one projection per table carrying its
@@ -243,15 +399,13 @@ func (r *resolver) build(sel []query.Output) (Resolution, error) {
 	var nodes []Node
 	var projections []Projection
 	for _, alias := range r.order {
-		nodes = append(nodes, NewNode(alias, r.tables[alias].Address(), r.nodeParams[alias]))
+		nodes = append(nodes, NewFanoutNode(alias, r.tables[alias].Address(), r.nodeParams[alias], r.fanout[alias]))
 		cols := byAlias[alias]
-		// A column an edge reads is kept even where the query never selected it: the projection
-		// replaces the row, and the edge reads it afterwards. Kept under a hidden name, so it is
-		// dropped from the output the query asked for.
+		// A column an edge or a filter reads is kept whether or not the query selected it: the
+		// projection replaces the row, and they read it afterwards. Kept under a hidden name, so it
+		// is dropped from the output the query asked for.
 		for _, name := range r.retain[alias] {
-			if !selects(cols, name) {
-				cols = append(cols, NewSelectColumn(kept(name), NewField(name)))
-			}
+			cols = append(cols, NewSelectColumn(kept(name), NewField(name)))
 		}
 		if len(cols) == 0 {
 			continue
@@ -266,15 +420,11 @@ func (r *resolver) build(sel []query.Output) (Resolution, error) {
 	for _, to := range r.consumers {
 		var in []Inbound
 		for _, a := range r.arrivals[to] {
-			src := a.src
-			if !selects(byAlias[a.from], src) {
-				src = kept(src)
-			}
-			in = append(in, NewInbound(a.from, src, a.as))
+			in = append(in, NewInbound(a.from, kept(a.src), a.as))
 		}
 		wirings = append(wirings, NewWiring(to, in, "", ""))
 	}
-	g, err := NewGraphWithProjections(nodes, wirings, projections)
+	g, err := NewGraphWithFilters(nodes, wirings, projections, r.filters, r.wide)
 	if err != nil {
 		return nil, err
 	}
@@ -284,39 +434,25 @@ func (r *resolver) build(sel []query.Output) (Resolution, error) {
 // projected converts an output expression to the engine's, reporting the one table it reads.
 func (r *resolver) projected(e query.Expr) (string, Expression, error) {
 	var alias string
-	var conv func(query.Expr) (fn.Expr, error)
-	conv = func(e query.Expr) (fn.Expr, error) {
-		switch e := e.(type) {
-		case query.Literal:
-			return fn.Literal(e.Value()), nil
-		case query.Column:
-			c, err := r.qualify(e)
-			if err != nil {
-				return nil, err
-			}
-			if alias != "" && alias != c.Qualifier() {
-				return nil, fmt.Errorf("reads %s and %s; an expression across tables is not yet supported", alias, c.Qualifier())
-			}
-			alias = c.Qualifier()
-			return fn.Field(c.Name()), nil
-		case query.Call:
-			args := make([]fn.Expr, 0, len(e.Args()))
-			for _, a := range e.Args() {
-				x, err := conv(a)
-				if err != nil {
-					return nil, err
-				}
-				args = append(args, x)
-			}
-			return fn.Call(e.Func(), args...), nil
+	var failed error
+	x, err := engineExpr(e, func(c query.Column) fn.Expr {
+		q, err := r.qualify(c)
+		switch {
+		case err != nil:
+			failed = err
+		case alias != "" && alias != q.Qualifier():
+			failed = fmt.Errorf("reads %s and %s; an expression across tables is not yet supported", alias, q.Qualifier())
+		default:
+			alias = q.Qualifier()
 		}
-		return nil, fmt.Errorf("%T cannot be projected", e)
-	}
-	x, err := conv(e)
-	if err != nil {
+		return fn.Field(c.Name())
+	})
+	switch {
+	case err != nil:
 		return "", nil, err
-	}
-	if alias == "" {
+	case failed != nil:
+		return "", nil, failed
+	case alias == "":
 		return "", nil, fmt.Errorf("reads no table")
 	}
 	return alias, expression{e: x}, nil
@@ -352,6 +488,9 @@ func (r *resolver) owners(name string) []string {
 func (r *resolver) known(alias string) map[string]bool {
 	k := map[string]bool{}
 	for name := range r.params {
+		k[name] = true
+	}
+	for name := range r.wide {
 		k[name] = true
 	}
 	for name := range r.nodeParams[alias] {
@@ -444,12 +583,3 @@ func describeExpr(e query.Expr) string {
 
 // kept names a column retained for an edge but not selected; egress drops it.
 func kept(name string) string { return "\x00" + name }
-
-func selects(cols []SelectColumn, name string) bool {
-	for _, c := range cols {
-		if c.Out() == name {
-			return true
-		}
-	}
-	return false
-}

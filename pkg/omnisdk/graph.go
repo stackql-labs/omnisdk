@@ -2,6 +2,7 @@ package omnisdk
 
 import (
 	"fmt"
+	"maps"
 	"strings"
 
 	"github.com/stackql-labs/omnisdk/internal/system_g/bind"
@@ -14,6 +15,7 @@ import (
 	"github.com/stackql-labs/omnisdk/pkg/docparse/dsl"
 	"github.com/stackql-labs/omnisdk/pkg/docparse/dsl/gotemplate"
 	"github.com/stackql-labs/omnisdk/pkg/docparse/dsl/schemaxml"
+	"github.com/stackql-labs/omnisdk/pkg/query"
 )
 
 // Node is one reference to a document-declared exchange: the address it runs, and the alias naming
@@ -32,25 +34,35 @@ type Node interface {
 	// Params are pushdown inputs for this reference alone. They take precedence over Args.Params,
 	// which is what lets two references to one address run with different values.
 	Params() map[string]string
+	// Fanout are inputs taking several values: the reference runs once per value, and once per
+	// combination where there are several — an IN list pushed down.
+	Fanout() map[string][]string
 }
 
 // NewNode declares one reference to an address. alias may be empty, meaning the address itself;
 // params may be nil.
 func NewNode(alias, address string, params map[string]string) Node {
+	return NewFanoutNode(alias, address, params, nil)
+}
+
+// NewFanoutNode declares a reference with multi-valued inputs as well. fanout may be nil.
+func NewFanoutNode(alias, address string, params map[string]string, fanout map[string][]string) Node {
 	if alias == "" {
 		alias = address
 	}
-	return node{alias: alias, address: address, params: params}
+	return node{alias: alias, address: address, params: params, fanout: fanout}
 }
 
 type node struct {
 	alias, address string
 	params         map[string]string
+	fanout         map[string][]string
 }
 
-func (n node) Alias() string             { return n.alias }
-func (n node) Address() string           { return n.address }
-func (n node) Params() map[string]string { return n.params }
+func (n node) Alias() string               { return n.alias }
+func (n node) Address() string             { return n.address }
+func (n node) Params() map[string]string   { return n.params }
+func (n node) Fanout() map[string][]string { return n.fanout }
 
 // Inbound is one value arriving at a consumer: an attribute a producer emits, landing in the
 // consumer's inbox. It is a β edge stated from the consuming side, which is where a caller thinks
@@ -159,8 +171,14 @@ type Graph interface {
 	Wirings() []Wiring
 	// Overrides correct what the documents say, per address.
 	Overrides() []Override
-	// Projections are select lists applied per address, replacing the document's row.
+	// Projections are select lists applied per node, replacing the document's row.
 	Projections() []Projection
+	// Filters are conditions every returned row meets. Columns are qualified by alias and name a
+	// node's row as it leaves that node — after its projection, where it has one.
+	Filters() []query.Predicate
+	// Fanout are query-wide inputs taking several values, e.g. region IN (...): the whole query
+	// runs once per value, and every node in one run sees the same value.
+	Fanout() map[string][]string
 }
 
 // NewGraph declares a multi-exchange query.
@@ -172,6 +190,13 @@ func NewGraph(nodes []Node, wirings []Wiring, overrides ...Override) (Graph, err
 // A projection is applied to that node's rows BEFORE they travel an edge, so a joined-on value
 // may be one a function computed rather than one the document returned.
 func NewGraphWithProjections(nodes []Node, wirings []Wiring, projections []Projection, overrides ...Override) (Graph, error) {
+	return NewGraphWithFilters(nodes, wirings, projections, nil, nil, overrides...)
+}
+
+// NewGraphWithFilters declares a multi-exchange query whose rows must also meet filters —
+// conditions no request can apply, evaluated on each row the query returns — and which may run
+// once per value of a query-wide fanout.
+func NewGraphWithFilters(nodes []Node, wirings []Wiring, projections []Projection, filters []query.Predicate, fanout map[string][]string, overrides ...Override) (Graph, error) {
 	if len(nodes) == 0 {
 		return nil, fmt.Errorf("omnisdk: a graph needs at least one node")
 	}
@@ -237,7 +262,22 @@ func NewGraphWithProjections(nodes []Node, wirings []Wiring, projections []Proje
 		}
 		projected[p.Alias()] = true
 	}
-	return graph{nodes: nodes, wirings: wirings, overrides: overrides, projections: projections}, nil
+	for _, f := range filters {
+		for _, c := range predicateColumns(f) {
+			switch {
+			case c.Qualifier() == "":
+				return nil, fmt.Errorf("omnisdk: filter reads %q unqualified; name its node", c.Name())
+			case !known[c.Qualifier()]:
+				return nil, fmt.Errorf("omnisdk: filter reads %s.%s, which the graph does not include", c.Qualifier(), c.Name())
+			}
+		}
+	}
+	for k, vs := range fanout {
+		if len(vs) == 0 {
+			return nil, fmt.Errorf("omnisdk: query-wide %q has no values", k)
+		}
+	}
+	return graph{nodes: nodes, wirings: wirings, overrides: overrides, projections: projections, filters: filters, fanout: fanout}, nil
 }
 
 type graph struct {
@@ -245,12 +285,16 @@ type graph struct {
 	wirings     []Wiring
 	overrides   []Override
 	projections []Projection
+	filters     []query.Predicate
+	fanout      map[string][]string
 }
 
-func (g graph) Nodes() []Node             { return g.nodes }
-func (g graph) Wirings() []Wiring         { return g.wirings }
-func (g graph) Overrides() []Override     { return g.overrides }
-func (g graph) Projections() []Projection { return g.projections }
+func (g graph) Fanout() map[string][]string { return g.fanout }
+func (g graph) Filters() []query.Predicate  { return g.filters }
+func (g graph) Nodes() []Node               { return g.nodes }
+func (g graph) Wirings() []Wiring           { return g.wirings }
+func (g graph) Overrides() []Override       { return g.overrides }
+func (g graph) Projections() []Projection   { return g.projections }
 
 // NewGraphSelectQuery plans a multi-exchange query over a registry root or bundle directory.
 //
@@ -294,6 +338,15 @@ func NewGraphSelectQuery(dir string, g Graph, args Args) (Plan, error) {
 			bound[w.To()] = append(bound[w.To()], in.As())
 		}
 	}
+	// A multi-valued input arrives per row from the node's values exchange, as a wired one does.
+	for _, n := range g.Nodes() {
+		for k := range n.Fanout() {
+			if contains(bound[n.Alias()], k) || contains(provided[n.Alias()], k) {
+				return nil, fmt.Errorf("omnisdk: %s: %q is both a multi-valued input and a wired one", n.Alias(), k)
+			}
+			bound[n.Alias()] = append(bound[n.Alias()], k)
+		}
+	}
 
 	// An edge reads its value from the node it names. The running row is one flat map every exchange
 	// merges into, so two nodes emitting the same attribute — every column of a self-join — would
@@ -305,23 +358,47 @@ func NewGraphSelectQuery(dir string, g Graph, args Args) (Plan, error) {
 			emits[in.From()] = append(emits[in.From()], in.Src())
 		}
 	}
+	// A filter reads the node it names by the same means.
+	for _, f := range g.Filters() {
+		for _, c := range predicateColumns(f) {
+			if !contains(emits[c.Qualifier()], c.Name()) {
+				emits[c.Qualifier()] = append(emits[c.Qualifier()], c.Name())
+			}
+		}
+	}
 
 	var specs []plan.ExchangeSpec
 	var betas []plan.BetaEdge
 	planned := make(map[string]string, len(g.Nodes()))
 	taken := map[string]string{}
+	// A query-wide fanout runs first and merges one value per row, so every node in that row binds
+	// the same value by name. Each node compiles as though the value were supplied, which it is.
+	const queryValues = "query_values"
+	if fan := g.Fanout(); len(fan) > 0 {
+		taken[queryValues] = ""
+		specs = append(specs, valuesSpec(queryValues, "", fan))
+		for k, vs := range fan {
+			if _, clash := inputs[k]; clash {
+				return nil, fmt.Errorf("omnisdk: %q is both a param and a query-wide multi-valued input", k)
+			}
+			inputs[k] = vs[0]
+		}
+	}
 	for _, n := range g.Nodes() {
 		alias, addr := n.Alias(), n.Address()
 		// Two documents routinely name a method the same thing — "list" above all — and a plan names
 		// its exchanges. The alias is what tells them apart; the address keeps a trace readable.
 		name := planName(addr) + "__" + planName(alias)
-		for _, nm := range []string{name, name + "_auth"} {
+		for _, nm := range []string{name, name + "_auth", name + "_values"} {
 			if other, clash := taken[nm]; clash {
 				return nil, fmt.Errorf("omnisdk: aliases %q and %q name the same plan exchange %q", other, alias, nm)
 			}
 			taken[nm] = alias
 		}
 		planned[alias] = name
+		for k := range g.Fanout() {
+			betas = append(betas, plan.NewBetaEdge(queryValues, name, k, k))
+		}
 
 		// This reference's own pushdown overlays the query-wide inputs. It is compiled with the
 		// merged view, and bound from the seed row through a key private to the alias, so a second
@@ -334,9 +411,24 @@ func NewGraphSelectQuery(dir string, g Graph, args Args) (Plan, error) {
 			if contains(bound[alias], k) || contains(provided[alias], k) {
 				return nil, fmt.Errorf("omnisdk: %s: %q is both a param and a wired input", alias, k)
 			}
+			if _, multi := n.Fanout()[k]; multi {
+				return nil, fmt.Errorf("omnisdk: %s: %q is both a param and a multi-valued input", alias, k)
+			}
 			local[k] = v
 			inputs[hidden(alias, k)] = v
 			betas = append(betas, plan.NewBetaEdge("", name, hidden(alias, k), k))
+		}
+		arrivals := withArrivals(local, g, alias)
+		if fan := n.Fanout(); len(fan) > 0 {
+			arrivals = maps.Clone(arrivals)
+			for k, vs := range fan {
+				if len(vs) == 0 {
+					return nil, fmt.Errorf("omnisdk: %s: %q has no values", alias, k)
+				}
+				arrivals[k] = "<bound>"
+				betas = append(betas, plan.NewBetaEdge(name+"_values", name, hidden(alias, k), k))
+			}
+			specs = append(specs, valuesSpec(name+"_values", alias, fan))
 		}
 
 		c, err := openDocs(dir, addr)
@@ -351,7 +443,7 @@ func NewGraphSelectQuery(dir string, g Graph, args Args) (Plan, error) {
 		// needs a resource group and a VNet name, both of which come over the edge — judged on
 		// supplied inputs alone, no select is satisfiable and the query fails before its wiring is
 		// ever considered.
-		ex, err := chooseExchange(candidates, withArrivals(local, g, alias))
+		ex, err := chooseExchange(candidates, arrivals)
 		if err != nil {
 			return nil, fmt.Errorf("omnisdk: %s (%s): %w", alias, addr, err)
 		}
@@ -426,6 +518,10 @@ func NewGraphSelectQuery(dir string, g Graph, args Args) (Plan, error) {
 			}
 			spec = plan.WithProject(spec, t)
 		}
+		// Nothing wired in means the same inputs for every upstream row: run once, replay the rest.
+		if _, consumer := wiringFor(g, alias); !consumer {
+			spec = replayed{ExchangeSpec: spec}
+		}
 		if attrs := emits[alias]; len(attrs) > 0 {
 			spec = tagged{ExchangeSpec: spec, alias: alias, attrs: attrs}
 		}
@@ -438,7 +534,49 @@ func NewGraphSelectQuery(dir string, g Graph, args Args) (Plan, error) {
 		}
 	}
 
-	return &cannedPlan{plan: plan.NewPlan(specs, betas, nil, inputs, []facade.Transform{unhide{}}, nil), args: args}, nil
+	return &cannedPlan{plan: plan.NewPlan(specs, betas, nil, inputs, egress(g, fns), nil), args: args}, nil
+}
+
+// egress is what every finished row passes through: the filters, then the removal of the keys
+// private to each node.
+func egress(g Graph, fns facade.FnRegistry) []facade.Transform {
+	var out []facade.Transform
+	if fs := g.Filters(); len(fs) > 0 {
+		out = append(out, filterTransform{filters: fs, fns: fns})
+	}
+	out = append(out, unhide{})
+	// Where every node states its select list, those lists are the row: the inputs that seeded it
+	// are not columns the query asked for.
+	if len(g.Projections()) == len(g.Nodes()) {
+		keep := map[string]bool{}
+		for _, p := range g.Projections() {
+			for _, c := range p.Columns() {
+				keep[c.Out()] = true
+			}
+		}
+		out = append(out, onlyColumns(keep))
+	}
+	return out
+}
+
+// onlyColumns drops every column not named.
+type onlyColumns map[string]bool
+
+func (o onlyColumns) Apply(in facade.Page) (facade.Record, error) {
+	row, ok := bind.DocMap(in)
+	if !ok {
+		if rec, is := in.(facade.Record); is {
+			return rec, nil
+		}
+		return nil, fmt.Errorf("omnisdk: egress received a %T, not a record", in)
+	}
+	out := make(map[string]any, len(o))
+	for k, v := range row {
+		if o[k] {
+			out[k] = v
+		}
+	}
+	return bind.NewDocRecord(out), nil
 }
 
 // hidden is the running-row key a value takes when it belongs to one alias rather than to the row:

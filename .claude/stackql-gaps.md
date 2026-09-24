@@ -4,32 +4,22 @@ Target: stackql sends the read side of every query to omnisdk as a `query.Unreso
 it against the documents and returns an eager, unordered, unaggregated row stream. stackql applies
 ORDER BY, GROUP BY and aggregation.
 
-Works today (`TestRealWorldQueryEndToEnd`): inner joins on equality, with the edge direction derived
-from which side's methods require the value; constant equality bindings; single-table projections,
-functions included.
+Joins: stackql supports only inner and left outer joins, and the engine has both merges. `Resolve`
+still rejects LEFT until it selects the left-outer merge for the joined node.
 
-## Gaps
-
-1. **Filters that can't bind:** `<>`, `<`, `LIKE`, `OR`, `NOT`, and bindings the API applies
-   inexactly (e.g. `PathPrefix`), which must still be re-filtered locally.
-2. **Joins neither side needs:** two listable tables joined on columns. Common. Needs a local join;
-   today an unwired node is re-listed once per upstream row.
-3. **LEFT JOIN.**
-4. **`IN` lists:** `region IN ('a','b')` must fan out one request per value. Common.
-5. **Computed values:** functions on join keys; expressions reading several tables.
-6. **Output contract:**
-   - emit exactly the selected columns (`region` currently leaks into every row);
-   - expand `SELECT *` from the schema;
-   - emit the ORDER BY / GROUP BY columns, which stackql's front end adds to the select list.
-7. **Naming:** mapping stackql handles (`aws.iam.users`) to registry addresses
-   (`stackql_unstable_aws.iam.users`).
-8. **Queries that aren't one SELECT** (CTEs, subqueries, UNION): stackql splits them into single
-   SELECTs, sends each, and combines the results.
-9. **Mutations** (INSERT/UPDATE/DELETE/EXEC): a separate path, not covered by the read-query
-   abstraction.
+| # | Gap | Status | Implementation |
+|---|-----|--------|----------------|
+| 1 | Filters that can't bind (`<>`, `<`, `OR`, `NOT`, `Test`), and bindings the API may apply inexactly | Fixed | `Resolve` turns every unplaced condition into a graph filter, and re-checks a pushed-down binding wherever the row has that column. Filters run on each finished row with SQL three-valued logic, reading each column from its node's private key (`relational.go`: `filterTransform`). |
+| 2 | Joins neither side needs | Fixed | The equality becomes a filter over the engine's nested loop. A node with no wiring into it runs once per distinct input and is replayed from a per-run cache, streaming as its rows arrive (`replayed`). Each side is listed once. |
+| 3 | `IN` lists | Fixed | On a table's parameter: `NewFanoutNode` gets a no-network values exchange emitting one row per value, bound into the node. Query-wide (e.g. `region`): one values exchange runs first, so every node in a row sees the same value (`valuesSpec`). |
+| 4 | Computed values: functions on join keys; expressions reading several tables | Open | |
+| 5a | Output is exactly the selected columns | Fixed | Where every node has a projection, egress keeps only the projected columns (`onlyColumns`). |
+| 5b | `SELECT *` expanded from the schema | Open | |
+| 5c | ORDER BY / GROUP BY columns emitted | Open | stackql's front end adds them to the select list; nothing needed in omnisdk. |
+| 6 | Naming: stackql handles → registry addresses | Open | |
+| 7 | Queries that aren't one SELECT (CTEs, subqueries, UNION) | Open | stackql splits them into single SELECTs, sends each, and combines the results. |
+| 8 | Mutations (INSERT/UPDATE/DELETE/EXEC) | Open | A separate path, not covered by the read-query abstraction. |
 
 ## Deferred
 
 - Choosing a hash join vs a per-row lookup needs cardinality stats, which aren't collected.
-- A node with no wiring into it could run once and be replayed from a cache instead of being
-  re-listed per row. Not built.

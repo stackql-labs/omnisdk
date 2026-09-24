@@ -242,3 +242,129 @@ func TestRealWorldQueryEndToEnd(t *testing.T) {
 		t.Errorf("rows = %v, want %v", got, want)
 	}
 }
+
+// runQuery resolves q against the corpus and returns its rows as "col=value" strings, sorted, and
+// the IAM calls made as "action|signing region".
+func runQuery(t *testing.T, q query.Unresolved) ([]string, []string) {
+	t.Helper()
+	requireCorpus(t)
+	t.Setenv("AWS_ACCESS_KEY_ID", "AKIATEST")
+	t.Setenv("AWS_SECRET_ACCESS_KEY", "secret")
+	var seen calls
+	stub := iamStub(t)
+	defer stub.Close()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = r.ParseForm()
+		seen.add(r.Form.Get("Action") + "|" + signingRegion(r.Header.Get("Authorization")))
+		stub.Config.Handler.ServeHTTP(w, r)
+	}))
+	defer srv.Close()
+
+	tables := map[string]omnisdk.Table{}
+	for _, j := range q.From() {
+		_, rest, _ := strings.Cut(j.Resource().Handle(), ".")
+		tbl, err := omnisdk.DescribeTable(corpus, "stackql_unstable_aws."+rest)
+		if err != nil {
+			t.Fatalf("describe: %v", err)
+		}
+		tables[j.Resource().Alias()] = tbl
+	}
+	res, err := omnisdk.Resolve(q, tables)
+	if err != nil {
+		t.Fatalf("resolve: %v", err)
+	}
+	pl, err := omnisdk.NewGraphSelectQuery(corpus, res.Graph(), omnisdk.Args{Endpoint: srv.URL, Params: res.Params()})
+	if err != nil {
+		t.Fatalf("plan: %v", err)
+	}
+	rows, err := pl.Open(context.Background())
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	defer rows.Close()
+	var got []string
+	for rows.Next() {
+		var cols []string
+		for k, v := range rows.Row() {
+			cols = append(cols, fmt.Sprintf("%s=%v", k, v))
+		}
+		sort.Strings(cols)
+		got = append(got, strings.Join(cols, ","))
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatalf("rows: %v", err)
+	}
+	sort.Strings(got)
+	made := seen.matching("")
+	sort.Strings(made)
+	return got, made
+}
+
+func mustQuery(t *testing.T, from []query.Join, where []query.Predicate, sel []query.Output) query.Unresolved {
+	t.Helper()
+	q, err := query.New(from, where, sel)
+	if err != nil {
+		t.Fatalf("query: %v", err)
+	}
+	return q
+}
+
+// SELECT u.UserName FROM aws.iam.users u WHERE region = 'us-east-1' AND u.UserName <> 'bob'
+// <> binds nothing, so it is a filter on the rows.
+func TestFilterThatCannotBind(t *testing.T) {
+	q := mustQuery(t,
+		[]query.Join{query.NewJoin(query.NewResource("u", "aws.iam.users"), query.Base)},
+		[]query.Predicate{
+			query.NewEq(query.NewColumn("", "region"), query.NewLiteral("us-east-1")),
+			query.NewCompare(query.Ne, query.NewColumn("u", "UserName"), query.NewLiteral("bob")),
+		},
+		[]query.Output{query.NewOutput("UserName", query.NewColumn("u", "UserName"))},
+	)
+	rows, _ := runQuery(t, q)
+	if want := []string{"UserName=alice"}; !reflect.DeepEqual(rows, want) {
+		t.Errorf("rows = %v, want %v", rows, want)
+	}
+}
+
+// SELECT u.UserName FROM aws.iam.users u WHERE region IN ('us-east-1', 'us-west-2')
+// The query runs once per region, each request signed into its own.
+func TestInListFansOut(t *testing.T) {
+	q := mustQuery(t,
+		[]query.Join{query.NewJoin(query.NewResource("u", "aws.iam.users"), query.Base)},
+		[]query.Predicate{query.NewIn(query.NewColumn("", "region"),
+			query.NewCollection(query.NewLiteral("us-east-1"), query.NewLiteral("us-west-2")))},
+		[]query.Output{query.NewOutput("UserName", query.NewColumn("u", "UserName"))},
+	)
+	rows, made := runQuery(t, q)
+	if want := []string{"UserName=alice", "UserName=alice", "UserName=bob", "UserName=bob"}; !reflect.DeepEqual(rows, want) {
+		t.Errorf("rows = %v, want %v", rows, want)
+	}
+	if want := []string{"ListUsers|us-east-1", "ListUsers|us-west-2"}; !reflect.DeepEqual(made, want) {
+		t.Errorf("calls = %v, want %v", made, want)
+	}
+}
+
+// SELECT a.UserName AS a, b.UserName AS b FROM aws.iam.users a INNER JOIN aws.iam.users b
+// ON a.UserName = b.UserName WHERE region = 'us-east-1'
+// Both sides list alone, so the join is local — and b is listed once, not once per row of a.
+func TestJoinNeitherSideNeeds(t *testing.T) {
+	q := mustQuery(t,
+		[]query.Join{
+			query.NewJoin(query.NewResource("a", "aws.iam.users"), query.Base),
+			query.NewJoin(query.NewResource("b", "aws.iam.users"), query.Inner,
+				query.NewEq(query.NewColumn("a", "UserName"), query.NewColumn("b", "UserName"))),
+		},
+		[]query.Predicate{query.NewEq(query.NewColumn("", "region"), query.NewLiteral("us-east-1"))},
+		[]query.Output{
+			query.NewOutput("a", query.NewColumn("a", "UserName")),
+			query.NewOutput("b", query.NewColumn("b", "UserName")),
+		},
+	)
+	rows, made := runQuery(t, q)
+	if want := []string{"a=alice,b=alice", "a=bob,b=bob"}; !reflect.DeepEqual(rows, want) {
+		t.Errorf("rows = %v, want %v", rows, want)
+	}
+	if want := []string{"ListUsers|us-east-1", "ListUsers|us-east-1"}; !reflect.DeepEqual(made, want) {
+		t.Errorf("calls = %v, want one listing per reference", made)
+	}
+}
