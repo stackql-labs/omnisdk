@@ -4,60 +4,20 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/stackql-labs/omnisdk/internal/system_g/fn"
 	"github.com/stackql-labs/omnisdk/pkg/docparse/aot"
+	"github.com/stackql-labs/omnisdk/pkg/query"
 )
 
-// Query is a parsed SELECT before any document is consulted: the table references, the WHERE and
-// ON conjuncts, and the select list. It states what SQL states and nothing more — which conjunct is
-// a request input, which a join edge and which a client-side filter is decided by Analyze, from the
-// documents.
-type Query interface {
-	Nodes() []Node
-	// Filters are the WHERE and ON conjuncts. SQL does not distinguish them for an inner join, and
-	// neither does analysis.
-	Filters() []Expression
-	// Outputs is the select list, each column qualified by alias.
-	Outputs() []SelectColumn
+// Table is what the documents say about one resource: the address it resolves to and the select
+// methods it can run. It is what a query cannot state and resolution needs.
+type Table interface {
+	Address() string
+	Methods() []MethodSignature
 }
 
-// NewQuery declares a parsed query.
-func NewQuery(nodes []Node, filters []Expression, outputs []SelectColumn) Query {
-	return query{nodes: nodes, filters: filters, outputs: outputs}
-}
-
-type query struct {
-	nodes   []Node
-	filters []Expression
-	outputs []SelectColumn
-}
-
-func (q query) Nodes() []Node           { return q.nodes }
-func (q query) Filters() []Expression   { return q.filters }
-func (q query) Outputs() []SelectColumn { return q.outputs }
-
-// NewEquals is the predicate l = r.
-func NewEquals(l, r Expression) Expression { return NewCall(opEquals, l, r) }
-
-const opEquals = "="
-
-// Analysis is a query resolved against documents: the graph to run and the query-wide params.
-type Analysis interface {
-	Graph() Graph
-	// Params are the unqualified constant equalities: request inputs for every node that takes them.
-	Params() map[string]string
-}
-
-type analysis struct {
-	graph  Graph
-	params map[string]string
-}
-
-func (a analysis) Graph() Graph              { return a.graph }
-func (a analysis) Params() map[string]string { return a.params }
-
-// MethodSignature is one select method of an exchange, as its document declares it: what it takes and
-// the columns each row has. It is what a SQL front end needs to know about a table and cannot get
-// from the query.
+// MethodSignature is one select method, as its document declares it: what it takes and the columns
+// each row has.
 type MethodSignature interface {
 	Method() string
 	Params() []ParamSignature
@@ -71,8 +31,8 @@ type ParamSignature interface {
 	Required() bool
 }
 
-// Describe returns the select methods an address can run.
-func Describe(dir, address string) ([]MethodSignature, error) {
+// DescribeTable reads what the documents under dir say about an address.
+func DescribeTable(dir, address string) (Table, error) {
 	c, err := openDocs(dir, address)
 	if err != nil {
 		return nil, err
@@ -81,12 +41,20 @@ func Describe(dir, address string) ([]MethodSignature, error) {
 	if err != nil {
 		return nil, err
 	}
-	out := make([]MethodSignature, 0, len(ops))
+	methods := make([]MethodSignature, 0, len(ops))
 	for _, ex := range ops {
-		out = append(out, docSignature{ex: ex})
+		methods = append(methods, docSignature{ex: ex})
 	}
-	return out, nil
+	return table{address: address, methods: methods}, nil
 }
+
+type table struct {
+	address string
+	methods []MethodSignature
+}
+
+func (t table) Address() string            { return t.address }
+func (t table) Methods() []MethodSignature { return t.methods }
 
 type docSignature struct{ ex aot.AOTExchange }
 
@@ -123,12 +91,287 @@ func (s docSignature) Columns() []string {
 	return sch.Properties()
 }
 
-// signatures is what analysis reads of one node.
-type signatures []MethodSignature
+// Resolution is a query resolved against its tables: the graph to run and the query-wide params.
+type Resolution interface {
+	Graph() Graph
+	// Params are constant bindings no single table owns: request inputs for every node taking them.
+	Params() map[string]string
+}
+
+type resolution struct {
+	graph  Graph
+	params map[string]string
+}
+
+func (r resolution) Graph() Graph              { return r.graph }
+func (r resolution) Params() map[string]string { return r.params }
+
+// Resolve places every part of a query, given each alias's table. A binding becomes a request
+// parameter or an edge according to what the tables' methods take and require; the direction of an
+// edge is the side that cannot run without it. Anything that cannot be placed is an error naming it,
+// never a guess.
+func Resolve(q query.Unresolved, tables map[string]Table) (Resolution, error) {
+	r := resolver{tables: map[string]Table{}, params: map[string]string{}, nodeParams: map[string]map[string]string{}}
+	var conjuncts []query.Predicate
+	for _, j := range q.From() {
+		alias := j.Resource().Alias()
+		t, ok := tables[alias]
+		if !ok {
+			return nil, fmt.Errorf("omnisdk: no table described for %q", alias)
+		}
+		if j.Form() == query.Left {
+			return nil, fmt.Errorf("omnisdk: %s: a left join is not yet supported", alias)
+		}
+		r.tables[alias] = t
+		r.order = append(r.order, alias)
+		// Under an inner join ON and WHERE are the same filter.
+		conjuncts = append(conjuncts, j.On()...)
+	}
+	conjuncts = append(conjuncts, q.Where()...)
+
+	// Constant bindings first: they decide what each table can run without the others.
+	var joins []query.Compare
+	for _, p := range conjuncts {
+		c, ok := p.(query.Compare)
+		if !ok || c.Op() != query.Eq {
+			return nil, fmt.Errorf("omnisdk: %s: only equality is supported; client-side filtering is not yet", describe(p))
+		}
+		col, lit, ok := columnAndLiteral(c)
+		if !ok {
+			joins = append(joins, c)
+			continue
+		}
+		if err := r.bindConstant(c, col, lit); err != nil {
+			return nil, err
+		}
+	}
+	for _, c := range joins {
+		if err := r.bindJoin(c); err != nil {
+			return nil, err
+		}
+	}
+	return r.build(q.Select())
+}
+
+type resolver struct {
+	tables     map[string]Table
+	order      []string
+	params     map[string]string
+	nodeParams map[string]map[string]string
+	arrivals   map[string][]arrival
+	consumers  []string
+	retain     map[string][]string
+}
+
+type arrival struct{ from, src, as string }
+
+// bindConstant places column = literal. A qualified column binds its table's parameter. An
+// unqualified one binds the one table that has it; where none or several do, it is query-wide, as a
+// scope value such as region is.
+func (r *resolver) bindConstant(c query.Compare, col query.Column, lit query.Literal) error {
+	alias := col.Qualifier()
+	if alias == "" {
+		owners := r.owners(col.Name())
+		if len(owners) != 1 {
+			r.params[col.Name()] = fmt.Sprint(lit.Value())
+			return nil
+		}
+		alias = owners[0]
+	}
+	if !accepts(r.tables[alias], col.Name()) {
+		return fmt.Errorf("omnisdk: %s: %s takes no %q; client-side filtering is not yet supported", describe(c), alias, col.Name())
+	}
+	if r.nodeParams[alias] == nil {
+		r.nodeParams[alias] = map[string]string{}
+	}
+	r.nodeParams[alias][col.Name()] = fmt.Sprint(lit.Value())
+	return nil
+}
+
+// bindJoin places column = column across two tables as an edge onto the side that needs the value.
+func (r *resolver) bindJoin(c query.Compare) error {
+	l, lok := c.Left().(query.Column)
+	rc, rok := c.Right().(query.Column)
+	if !lok || !rok {
+		return fmt.Errorf("omnisdk: %s: a computed join value is not yet supported", describe(c))
+	}
+	var err error
+	if l, err = r.qualify(l); err != nil {
+		return fmt.Errorf("omnisdk: %s: %w", describe(c), err)
+	}
+	if rc, err = r.qualify(rc); err != nil {
+		return fmt.Errorf("omnisdk: %s: %w", describe(c), err)
+	}
+	if l.Qualifier() == rc.Qualifier() {
+		return fmt.Errorf("omnisdk: %s: both sides are %s; client-side filtering is not yet supported", describe(c), l.Qualifier())
+	}
+	lNeeds := needs(r.tables[l.Qualifier()], l.Name(), r.known(l.Qualifier()))
+	rNeeds := needs(r.tables[rc.Qualifier()], rc.Name(), r.known(rc.Qualifier()))
+	var to, from query.Column
+	switch {
+	case lNeeds && rNeeds:
+		return fmt.Errorf("omnisdk: %s: %s and %s each need the other", describe(c), l.Qualifier(), rc.Qualifier())
+	case lNeeds:
+		to, from = l, rc
+	case rNeeds:
+		to, from = rc, l
+	default:
+		return fmt.Errorf("omnisdk: %s: neither side needs the other's value; a client-side join is not yet supported", describe(c))
+	}
+	if r.arrivals == nil {
+		r.arrivals, r.retain = map[string][]arrival{}, map[string][]string{}
+	}
+	if _, seen := r.arrivals[to.Qualifier()]; !seen {
+		r.consumers = append(r.consumers, to.Qualifier())
+	}
+	r.arrivals[to.Qualifier()] = append(r.arrivals[to.Qualifier()], arrival{from: from.Qualifier(), src: from.Name(), as: to.Name()})
+	r.retain[from.Qualifier()] = append(r.retain[from.Qualifier()], from.Name())
+	return nil
+}
+
+// build assembles the graph: nodes with their bound params, one projection per table carrying its
+// share of the select list plus what its edges read, and the wirings.
+func (r *resolver) build(sel []query.Output) (Resolution, error) {
+	byAlias := map[string][]SelectColumn{}
+	for _, o := range sel {
+		alias, e, err := r.projected(o.Expr())
+		if err != nil {
+			return nil, fmt.Errorf("omnisdk: output %q: %w", o.Name(), err)
+		}
+		byAlias[alias] = append(byAlias[alias], NewSelectColumn(o.Name(), e))
+	}
+	var nodes []Node
+	var projections []Projection
+	for _, alias := range r.order {
+		nodes = append(nodes, NewNode(alias, r.tables[alias].Address(), r.nodeParams[alias]))
+		cols := byAlias[alias]
+		// A column an edge reads is kept even where the query never selected it: the projection
+		// replaces the row, and the edge reads it afterwards. Kept under a hidden name, so it is
+		// dropped from the output the query asked for.
+		for _, name := range r.retain[alias] {
+			if !selects(cols, name) {
+				cols = append(cols, NewSelectColumn(kept(name), NewField(name)))
+			}
+		}
+		if len(cols) == 0 {
+			continue
+		}
+		p, err := NewProjection(alias, cols)
+		if err != nil {
+			return nil, err
+		}
+		projections = append(projections, p)
+	}
+	var wirings []Wiring
+	for _, to := range r.consumers {
+		var in []Inbound
+		for _, a := range r.arrivals[to] {
+			src := a.src
+			if !selects(byAlias[a.from], src) {
+				src = kept(src)
+			}
+			in = append(in, NewInbound(a.from, src, a.as))
+		}
+		wirings = append(wirings, NewWiring(to, in, "", ""))
+	}
+	g, err := NewGraphWithProjections(nodes, wirings, projections)
+	if err != nil {
+		return nil, err
+	}
+	return resolution{graph: g, params: r.params}, nil
+}
+
+// projected converts an output expression to the engine's, reporting the one table it reads.
+func (r *resolver) projected(e query.Expr) (string, Expression, error) {
+	var alias string
+	var conv func(query.Expr) (fn.Expr, error)
+	conv = func(e query.Expr) (fn.Expr, error) {
+		switch e := e.(type) {
+		case query.Literal:
+			return fn.Literal(e.Value()), nil
+		case query.Column:
+			c, err := r.qualify(e)
+			if err != nil {
+				return nil, err
+			}
+			if alias != "" && alias != c.Qualifier() {
+				return nil, fmt.Errorf("reads %s and %s; an expression across tables is not yet supported", alias, c.Qualifier())
+			}
+			alias = c.Qualifier()
+			return fn.Field(c.Name()), nil
+		case query.Call:
+			args := make([]fn.Expr, 0, len(e.Args()))
+			for _, a := range e.Args() {
+				x, err := conv(a)
+				if err != nil {
+					return nil, err
+				}
+				args = append(args, x)
+			}
+			return fn.Call(e.Func(), args...), nil
+		}
+		return nil, fmt.Errorf("%T cannot be projected", e)
+	}
+	x, err := conv(e)
+	if err != nil {
+		return "", nil, err
+	}
+	if alias == "" {
+		return "", nil, fmt.Errorf("reads no table")
+	}
+	return alias, expression{e: x}, nil
+}
+
+// qualify gives an unqualified column the one table whose rows have it.
+func (r *resolver) qualify(c query.Column) (query.Column, error) {
+	if c.Qualifier() != "" {
+		return c, nil
+	}
+	switch owners := r.owners(c.Name()); len(owners) {
+	case 1:
+		return query.NewColumn(owners[0], c.Name()), nil
+	case 0:
+		return nil, fmt.Errorf("no table has a column %q", c.Name())
+	default:
+		return nil, fmt.Errorf("%q is ambiguous between %v; qualify it", c.Name(), owners)
+	}
+}
+
+// owners are the aliases whose tables have name as a column or a parameter.
+func (r *resolver) owners(name string) []string {
+	var out []string
+	for _, alias := range r.order {
+		if hasColumn(r.tables[alias], name) || accepts(r.tables[alias], name) {
+			out = append(out, alias)
+		}
+	}
+	return out
+}
+
+// known is what a table has bound before any edge: query-wide params and its own.
+func (r *resolver) known(alias string) map[string]bool {
+	k := map[string]bool{}
+	for name := range r.params {
+		k[name] = true
+	}
+	for name := range r.nodeParams[alias] {
+		k[name] = true
+	}
+	return k
+}
+
+func hasColumn(t Table, name string) bool {
+	for _, m := range t.Methods() {
+		if contains(m.Columns(), name) {
+			return true
+		}
+	}
+	return false
+}
 
 // accepts reports whether any method takes the parameter.
-func (s signatures) accepts(name string) bool {
-	for _, m := range s {
+func accepts(t Table, name string) bool {
+	for _, m := range t.Methods() {
 		for _, p := range m.Params() {
 			if p.Name() == name {
 				return true
@@ -138,13 +381,13 @@ func (s signatures) accepts(name string) bool {
 	return false
 }
 
-// needs reports whether the node cannot run on known alone and name would help: no method is
+// needs reports whether the table cannot run on known alone and name would help: no method is
 // satisfiable from known, and some method takes name.
-func (s signatures) needs(name string, known map[string]bool) bool {
-	if !s.accepts(name) {
+func needs(t Table, name string, known map[string]bool) bool {
+	if !accepts(t, name) {
 		return false
 	}
-	for _, m := range s {
+	for _, m := range t.Methods() {
 		ok := true
 		for _, p := range m.Params() {
 			if p.Required() && !known[p.Name()] {
@@ -159,221 +402,44 @@ func (s signatures) needs(name string, known map[string]bool) bool {
 	return true
 }
 
-// Analyze resolves a query into a graph, given each node's signatures keyed by alias. Everything it
-// cannot place is an error naming the conjunct or column, never a guess.
-func Analyze(q Query, described map[string][]MethodSignature) (Analysis, error) {
-	sigs := make(map[string]signatures, len(q.Nodes()))
-	for _, n := range q.Nodes() {
-		d, ok := described[n.Alias()]
-		if !ok {
-			return nil, fmt.Errorf("omnisdk: no signatures for %q", n.Alias())
+func columnAndLiteral(c query.Compare) (query.Column, query.Literal, bool) {
+	if col, ok := c.Left().(query.Column); ok {
+		if lit, ok := c.Right().(query.Literal); ok {
+			return col, lit, true
 		}
-		sigs[n.Alias()] = d
 	}
-
-	// Constants first: they decide what each node can run without the others.
-	params := map[string]string{}
-	nodeParams := map[string]map[string]string{}
-	var joins []expression
-	for _, f := range q.Filters() {
-		l, r, ok := equality(f)
-		if !ok {
-			return nil, fmt.Errorf("omnisdk: filter %s: only equalities are supported; client-side filtering is not yet", describe(f))
+	if col, ok := c.Right().(query.Column); ok {
+		if lit, ok := c.Left().(query.Literal); ok {
+			return col, lit, true
 		}
-		col, lit, ok := columnAndLiteral(l, r)
-		if !ok {
-			joins = append(joins, f.(expression))
-			continue
-		}
-		v := fmt.Sprint(lit.lit)
-		if col.alias == "" {
-			params[col.name] = v
-			continue
-		}
-		sig, known := sigs[col.alias]
-		switch {
-		case !known:
-			return nil, fmt.Errorf("omnisdk: filter %s names %q, which the query does not reference", describe(f), col.alias)
-		case !sig.accepts(col.name):
-			return nil, fmt.Errorf("omnisdk: filter %s: %s takes no %q; client-side filtering is not yet", describe(f), col.alias, col.name)
-		}
-		if nodeParams[col.alias] == nil {
-			nodeParams[col.alias] = map[string]string{}
-		}
-		nodeParams[col.alias][col.name] = v
 	}
-	knownFor := func(alias string) map[string]bool {
-		k := map[string]bool{}
-		for name := range params {
-			k[name] = true
-		}
-		for name := range nodeParams[alias] {
-			k[name] = true
-		}
-		return k
-	}
-
-	// An equality between two nodes is an edge onto the side that cannot run without it.
-	type arrival struct{ from, src, as string }
-	arrivals := map[string][]arrival{}
-	var consumers []string
-	retain := map[string][]string{} // columns a producer must keep for its edges
-	for _, f := range joins {
-		l, r, _ := equality(f)
-		to, param, value, err := direct(l, r, sigs, knownFor)
-		if err != nil {
-			return nil, fmt.Errorf("omnisdk: filter %s: %w", describe(f), err)
-		}
-		src, ok := value.(expression)
-		if !ok || src.alias == "" || src.call != "" {
-			return nil, fmt.Errorf("omnisdk: filter %s: a computed join value is not yet supported", describe(f))
-		}
-		if _, seen := arrivals[to]; !seen {
-			consumers = append(consumers, to)
-		}
-		arrivals[to] = append(arrivals[to], arrival{from: src.alias, src: src.name, as: param})
-		retain[src.alias] = append(retain[src.alias], src.name)
-	}
-
-	// The select list splits by node; each column reads exactly one.
-	byNode := map[string][]SelectColumn{}
-	outNames := map[string]bool{}
-	for _, c := range q.Outputs() {
-		deps := c.Expr().Deps()
-		switch {
-		case len(deps) == 0:
-			return nil, fmt.Errorf("omnisdk: output %q reads no node; qualify its columns", c.Out())
-		case len(deps) > 1:
-			return nil, fmt.Errorf("omnisdk: output %q reads %v; an expression across nodes is not yet supported", c.Out(), deps)
-		case outNames[c.Out()]:
-			return nil, fmt.Errorf("omnisdk: output %q is named twice; alias one of them", c.Out())
-		}
-		outNames[c.Out()] = true
-		byNode[deps[0]] = append(byNode[deps[0]], c)
-	}
-
-	var nodes []Node
-	var projections []Projection
-	for _, n := range q.Nodes() {
-		nodes = append(nodes, NewNode(n.Alias(), n.Address(), merged(n.Params(), nodeParams[n.Alias()])))
-		cols := byNode[n.Alias()]
-		// A column an edge reads is kept even where the query never selected it: the projection
-		// replaces the row, and the edge reads it afterwards. Kept under a hidden name, so it is
-		// dropped from the output the query asked for.
-		for _, name := range retain[n.Alias()] {
-			if !selects(cols, name) {
-				cols = append(cols, NewSelectColumn(kept(name), NewColumn(n.Alias(), name)))
-			}
-		}
-		if len(cols) == 0 {
-			continue
-		}
-		p, err := NewProjection(n.Alias(), cols)
-		if err != nil {
-			return nil, err
-		}
-		projections = append(projections, p)
-	}
-	var wirings []Wiring
-	for _, to := range consumers {
-		var in []Inbound
-		for _, a := range arrivals[to] {
-			src := a.src
-			if !selects(byNode[a.from], src) {
-				src = kept(src)
-			}
-			in = append(in, NewInbound(a.from, src, a.as))
-		}
-		wirings = append(wirings, NewWiring(to, in, "", ""))
-	}
-	g, err := NewGraphWithProjections(nodes, wirings, projections)
-	if err != nil {
-		return nil, err
-	}
-	return analysis{graph: g, params: params}, nil
+	return nil, nil, false
 }
 
-// direct decides which side of a two-node equality consumes the other. The consumer is the side that
-// cannot run without the value; both is a cycle and neither is a client-side join, and each is an
-// error rather than a choice.
-func direct(l, r Expression, sigs map[string]signatures, knownFor func(string) map[string]bool) (to, param string, value Expression, err error) {
-	lc, lok := l.(expression)
-	rc, rok := r.(expression)
-	if !lok || !rok {
-		return "", "", nil, fmt.Errorf("unrecognised expression")
+func describe(p query.Predicate) string {
+	if c, ok := p.(query.Compare); ok {
+		return describeExpr(c.Left()) + " " + string(c.Op()) + " " + describeExpr(c.Right())
 	}
-	lNeeds := lc.alias != "" && lc.call == "" && len(r.Deps()) > 0 && !contains(r.Deps(), lc.alias) &&
-		sigs[lc.alias].needs(lc.name, knownFor(lc.alias))
-	rNeeds := rc.alias != "" && rc.call == "" && len(l.Deps()) > 0 && !contains(l.Deps(), rc.alias) &&
-		sigs[rc.alias].needs(rc.name, knownFor(rc.alias))
-	switch {
-	case lNeeds && rNeeds:
-		return "", "", nil, fmt.Errorf("%s and %s each need the other", lc.alias, rc.alias)
-	case lNeeds:
-		return lc.alias, lc.name, r, nil
-	case rNeeds:
-		return rc.alias, rc.name, l, nil
-	}
-	return "", "", nil, fmt.Errorf("neither side needs the other's value; a client-side join is not yet supported")
+	return fmt.Sprintf("%T", p)
 }
 
-func equality(f Expression) (Expression, Expression, bool) {
-	x, ok := f.(expression)
-	if !ok || x.call != opEquals || len(x.args) != 2 {
-		return nil, nil, false
-	}
-	return x.args[0], x.args[1], true
-}
-
-func columnAndLiteral(l, r Expression) (col, lit expression, ok bool) {
-	a, _ := l.(expression)
-	b, _ := r.(expression)
-	isCol := func(x expression) bool { return x.name != "" && x.call == "" }
-	isLit := func(x expression) bool { return x.name == "" && x.call == "" }
-	switch {
-	case isCol(a) && isLit(b):
-		return a, b, true
-	case isCol(b) && isLit(a):
-		return b, a, true
-	}
-	return expression{}, expression{}, false
-}
-
-func describe(e Expression) string {
-	x, ok := e.(expression)
-	switch {
-	case !ok:
-		return "?"
-	case x.call != "":
+func describeExpr(e query.Expr) string {
+	switch e := e.(type) {
+	case query.Column:
+		if e.Qualifier() == "" {
+			return e.Name()
+		}
+		return e.Qualifier() + "." + e.Name()
+	case query.Literal:
+		return fmt.Sprintf("%q", fmt.Sprint(e.Value()))
+	case query.Call:
 		var args []string
-		for _, a := range x.args {
-			args = append(args, describe(a))
+		for _, a := range e.Args() {
+			args = append(args, describeExpr(a))
 		}
-		if x.call == opEquals && len(args) == 2 {
-			return args[0] + " = " + args[1]
-		}
-		return fmt.Sprintf("%s(%v)", x.call, args)
-	case x.alias != "":
-		return x.alias + "." + x.name
-	case x.name != "":
-		return x.name
+		return e.Func() + "(" + strings.Join(args, ", ") + ")"
 	}
-	return fmt.Sprintf("%q", fmt.Sprint(x.lit))
-}
-
-// merged is a overlaid by b.
-func merged(a, b map[string]string) map[string]string {
-	if len(a)+len(b) == 0 {
-		return nil
-	}
-	out := make(map[string]string, len(a)+len(b))
-	for k, v := range a {
-		out[k] = v
-	}
-	for k, v := range b {
-		out[k] = v
-	}
-	return out
+	return fmt.Sprintf("%T", e)
 }
 
 // kept names a column retained for an edge but not selected; egress drops it.

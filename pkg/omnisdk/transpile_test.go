@@ -7,9 +7,11 @@ import (
 	"net/http/httptest"
 	"reflect"
 	"sort"
+	"strings"
 	"testing"
 
 	"github.com/stackql-labs/omnisdk/pkg/omnisdk"
+	"github.com/stackql-labs/omnisdk/pkg/query"
 )
 
 const (
@@ -159,59 +161,66 @@ func iamStub(t *testing.T) *httptest.Server {
 }
 
 /*
-The same query as a SQL front end would hand it over, in three steps.
+The real-world query, end to end:
 
- 1. The parse: table references with their aliases, the ON and WHERE conjuncts, the select list.
-    Nothing a document would have to say.
- 2. The signatures: each table's select methods, their parameters and row columns, from omnisdk.
- 3. Execution: Analyze combines the two into the graph, which runs.
+		SELECT u.UserName, p.PolicyName
+		FROM aws.iam.users u INNER JOIN aws.iam.attached_user_policies p ON p.UserName = u.UserName
+		where region = 'us-east-1'
+		;
+
+	 1. The front end states it as a query.Unresolved: resources, joins, bindings and projection exactly
+	    as written. Nothing a document would have to say.
+	 2. Each resource is described from the documents: its select methods, their parameters and
+	    columns. The handle aws.iam.users names a provider this registry publishes as
+	    stackql_unstable_aws; that naming is the front end's, so it is stated here, not inferred.
+	 3. Resolve places each binding — the ON becomes an edge, directed by which side's methods require
+	    UserName; region becomes a query-wide param — and the graph runs.
 */
-func TestParsedQueryDescribedThenRun(t *testing.T) {
+func TestRealWorldQueryEndToEnd(t *testing.T) {
 	requireCorpus(t)
 	t.Setenv("AWS_ACCESS_KEY_ID", "AKIATEST")
 	t.Setenv("AWS_SECRET_ACCESS_KEY", "secret")
 	srv := iamStub(t)
 	defer srv.Close()
 
-	// 1. SELECT u.UserName, p.PolicyName
-	//    FROM aws.iam.users u INNER JOIN aws.iam.attached_user_policies p ON p.UserName = u.UserName
-	//    WHERE region = 'us-east-1'
-	q := omnisdk.NewQuery(
-		[]omnisdk.Node{
-			omnisdk.NewNode("u", iamUsers, nil),
-			omnisdk.NewNode("p", iamAttachedPolicies, nil),
+	// 1. The query, as written.
+	q, err := query.New(
+		[]query.Join{
+			query.NewJoin(query.NewResource("u", "aws.iam.users"), query.Base),
+			query.NewJoin(query.NewResource("p", "aws.iam.attached_user_policies"), query.Inner,
+				query.NewEq(query.NewColumn("p", "UserName"), query.NewColumn("u", "UserName"))),
 		},
-		[]omnisdk.Expression{
-			omnisdk.NewEquals(omnisdk.NewColumn("p", "UserName"), omnisdk.NewColumn("u", "UserName")),
-			omnisdk.NewEquals(omnisdk.NewField("region"), omnisdk.NewLiteral("us-east-1")),
+		[]query.Predicate{
+			query.NewEq(query.NewColumn("", "region"), query.NewLiteral("us-east-1")),
 		},
-		[]omnisdk.SelectColumn{
-			omnisdk.NewSelectColumn("UserName", omnisdk.NewColumn("u", "UserName")),
-			omnisdk.NewSelectColumn("PolicyName", omnisdk.NewColumn("p", "PolicyName")),
+		[]query.Output{
+			query.NewOutput("UserName", query.NewColumn("u", "UserName")),
+			query.NewOutput("PolicyName", query.NewColumn("p", "PolicyName")),
 		},
 	)
-
-	// 2. What the documents say about each table.
-	described := map[string][]omnisdk.MethodSignature{}
-	for _, n := range q.Nodes() {
-		ms, err := omnisdk.Describe(corpus, n.Address())
-		if err != nil {
-			t.Fatalf("describe %s: %v", n.Alias(), err)
-		}
-		described[n.Alias()] = ms
+	if err != nil {
+		t.Fatalf("query: %v", err)
 	}
-	// list_attached_user_policies requires UserName and users lists without it: that asymmetry is
-	// the join's direction, and it is in the documents, not the query.
-	if m := described["p"]; len(m) != 1 || !requires(m[0], "UserName") {
-		t.Fatalf("p: want one method requiring UserName, got %v", methods(m))
+
+	// 2. What the documents say about each resource.
+	providers := map[string]string{"aws": "stackql_unstable_aws"}
+	tables := map[string]omnisdk.Table{}
+	for _, j := range q.From() {
+		r := j.Resource()
+		provider, rest, _ := strings.Cut(r.Handle(), ".")
+		tbl, err := omnisdk.DescribeTable(corpus, providers[provider]+"."+rest)
+		if err != nil {
+			t.Fatalf("describe %s: %v", r.Alias(), err)
+		}
+		tables[r.Alias()] = tbl
 	}
 
 	// 3. Resolve and run.
-	a, err := omnisdk.Analyze(q, described)
+	res, err := omnisdk.Resolve(q, tables)
 	if err != nil {
-		t.Fatalf("analyze: %v", err)
+		t.Fatalf("resolve: %v", err)
 	}
-	pl, err := omnisdk.NewGraphSelectQuery(corpus, a.Graph(), omnisdk.Args{Endpoint: srv.URL, Params: a.Params()})
+	pl, err := omnisdk.NewGraphSelectQuery(corpus, res.Graph(), omnisdk.Args{Endpoint: srv.URL, Params: res.Params()})
 	if err != nil {
 		t.Fatalf("plan: %v", err)
 	}
@@ -232,21 +241,4 @@ func TestParsedQueryDescribedThenRun(t *testing.T) {
 	if want := []string{"alice/alice-policy", "bob/bob-policy"}; !reflect.DeepEqual(got, want) {
 		t.Errorf("rows = %v, want %v", got, want)
 	}
-}
-
-func requires(m omnisdk.MethodSignature, name string) bool {
-	for _, p := range m.Params() {
-		if p.Name() == name && p.Required() {
-			return true
-		}
-	}
-	return false
-}
-
-func methods(ms []omnisdk.MethodSignature) []string {
-	var out []string
-	for _, m := range ms {
-		out = append(out, m.Method())
-	}
-	return out
 }
