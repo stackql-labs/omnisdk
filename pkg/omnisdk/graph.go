@@ -6,6 +6,7 @@ import (
 	"maps"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/stackql-labs/omnisdk/internal/journal"
 	"github.com/stackql-labs/omnisdk/internal/system_g/bind"
@@ -164,6 +165,30 @@ type Override interface {
 	MediaType() string
 	// Program replaces the document's response transform; empty type leaves it.
 	Program() (dslType, body string)
+	// Poll, where set, re-requests the exchange until its response matures; the zero Poll sends once.
+	Poll() Poll
+}
+
+// Poll is a response that matures: re-request until the value at StatusPath equals Done, waiting
+// Interval between attempts, at most MaxAttempts times. A create's long-running operation is the
+// case — polled until DONE, so what it made can be read.
+type Poll struct {
+	StatusPath  string
+	Done        string
+	Interval    time.Duration
+	MaxAttempts int
+}
+
+// NewPollOverride makes an exchange poll until its response matures. Every bound is required: how
+// long a query may wait is the caller's to say.
+func NewPollOverride(address string, p Poll) (Override, error) {
+	switch {
+	case p.StatusPath == "" || p.Done == "":
+		return nil, fmt.Errorf("omnisdk: poll on %s needs a status path and a done value", address)
+	case p.Interval <= 0 || p.MaxAttempts <= 0:
+		return nil, fmt.Errorf("omnisdk: poll on %s needs an interval and a maximum number of attempts", address)
+	}
+	return override{address: address, poll: &p}, nil
 }
 
 // NewOverride corrects one exchange's response handling.
@@ -175,6 +200,14 @@ func NewOverride(address, objectKey, mediaType, programType, programBody string)
 type override struct {
 	address, objectKey, mediaType string
 	programType, programBody      string
+	poll                          *Poll
+}
+
+func (o override) Poll() Poll {
+	if o.poll == nil {
+		return Poll{}
+	}
+	return *o.poll
 }
 
 func (o override) Address() string           { return o.address }
@@ -433,6 +466,9 @@ func NewGraphSelectQuery(dir string, g Graph, args Args) (Plan, error) {
 
 	var specs []plan.ExchangeSpec
 	var betas []plan.BetaEdge
+	// Auth values travel on the row so exchanges can bind them. They are credentials, not data, and
+	// never leave in a result. Which names they are is whatever each auth expansion declares.
+	plumbing := map[string]bool{}
 	planned := make(map[string]string, len(g.Nodes()))
 	taken := map[string]string{}
 	// A query-wide fanout runs first and merges one value per row, so every node in that row binds
@@ -552,6 +588,9 @@ func NewGraphSelectQuery(dir string, g Graph, args Args) (Plan, error) {
 			if typ, body := o.Program(); typ != "" {
 				opts = append(opts, docx.WithResponseProgram(typ, body))
 			}
+			if p := o.Poll(); p.StatusPath != "" {
+				opts = append(opts, docx.WithPoll(p.StatusPath, p.Done, p.Interval, p.MaxAttempts))
+			}
 		}
 		spec, err := docx.Spec(ex, local, reg, opts...)
 		if err != nil {
@@ -565,10 +604,14 @@ func NewGraphSelectQuery(dir string, g Graph, args Args) (Plan, error) {
 		// nothing supplies the token.
 		if auth, authInputs, needs := docx.Expand(spec); needs {
 			auth = docx.Rename(auth, name+"_auth")
+			for _, attr := range auth.Out() {
+				plumbing[attr] = true
+			}
 			specs = append(specs, auth)
 			betas = append(betas, plan.NewBetaEdge(auth.Name(), name, docx.TokenAttr, docx.TokenAttr))
 			for k, v := range authInputs {
 				inputs[k] = v
+				plumbing[k] = true
 			}
 		}
 		spec = docx.Rename(spec, name)
@@ -609,7 +652,7 @@ func NewGraphSelectQuery(dir string, g Graph, args Args) (Plan, error) {
 		}
 	}
 
-	return &cannedPlan{plan: plan.NewPlan(specs, betas, nil, inputs, egress(g, fns), nil), args: args}, nil
+	return &cannedPlan{plan: plan.NewPlan(specs, betas, nil, inputs, egress(g, fns, redactor{policy: args.Redaction, credentials: plumbing}), nil), args: args}, nil
 }
 
 // openJournal opens the write-ahead journal a query's mutations record into, where the caller opted
@@ -641,7 +684,7 @@ func openJournal(g Graph, args Args) (facade.Journal, error) {
 
 // egress is what every finished row passes through: the filters, then the removal of the keys
 // private to each node.
-func egress(g Graph, fns facade.FnRegistry) []facade.Transform {
+func egress(g Graph, fns facade.FnRegistry, redact redactor) []facade.Transform {
 	var out []facade.Transform
 	if fs := g.Filters(); len(fs) > 0 {
 		out = append(out, filterTransform{filters: fs, fns: fns})
@@ -649,7 +692,7 @@ func egress(g Graph, fns facade.FnRegistry) []facade.Transform {
 	if os := g.Outputs(); len(os) > 0 {
 		out = append(out, outputTransform{outputs: os, fns: fns})
 	}
-	out = append(out, unhide{})
+	out = append(out, unhide{}, redact)
 	// Where every node states its select list, those lists are the row: the inputs that seeded it
 	// are not columns the query asked for.
 	if len(g.Projections()) == len(g.Nodes()) {
@@ -665,6 +708,33 @@ func egress(g Graph, fns facade.FnRegistry) []facade.Transform {
 		out = append(out, onlyColumns(keep))
 	}
 	return out
+}
+
+// redactor applies a Redaction to each finished row, telling it which columns are credentials.
+type redactor struct {
+	policy      Redaction
+	credentials map[string]bool
+}
+
+func (d redactor) Apply(in facade.Page) (facade.Record, error) {
+	policy := d.policy
+	if policy == nil {
+		policy = DefaultRedaction()
+	}
+	row, ok := bind.DocMap(in)
+	if !ok {
+		if rec, is := in.(facade.Record); is {
+			return rec, nil
+		}
+		return nil, fmt.Errorf("omnisdk: egress received a %T, not a record", in)
+	}
+	out := make(map[string]any, len(row))
+	for k, v := range row {
+		if !policy.Drop(k, d.credentials[k]) {
+			out[k] = v
+		}
+	}
+	return bind.NewDocRecord(out), nil
 }
 
 // onlyColumns drops every column not named.

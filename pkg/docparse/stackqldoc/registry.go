@@ -3,6 +3,7 @@ package stackqldoc
 import (
 	"fmt"
 	"io/fs"
+	"path"
 	"sort"
 	"strings"
 	"sync"
@@ -175,4 +176,30 @@ func (r *registry) Exchange(address string) (aot.AOTExchange, error) {
 		return nil, err
 	}
 	return c.Exchange(address)
+}
+
+// ServiceFile is the path, relative to the registry root, of the document behind a service address
+// "<provider>.<service>". It is how a caller patching one service finds the one file to rewrite.
+func (r *registry) ServiceFile(address string) (string, error) {
+	full, ok := r.providerOf(address)
+	if !ok {
+		return "", fmt.Errorf("stackqldoc: no provider for %q in registry (have %v)", address, r.Providers())
+	}
+	service := strings.TrimPrefix(address, full+".")
+	c, err := r.Catalog(full)
+	if err != nil {
+		return "", err
+	}
+	cat, ok := c.(*catalog)
+	if !ok {
+		return "", fmt.Errorf("stackqldoc: %s is not a document catalog", full)
+	}
+	cat.mu.Lock()
+	file, ok := cat.files[service]
+	cat.mu.Unlock()
+	if !ok {
+		return "", fmt.Errorf("stackqldoc: %s has no service %q (have %v)", full, service, cat.Services())
+	}
+	dir := r.dirs[r.dirName(full)]
+	return path.Join(dir, r.versions[dir], file), nil
 }

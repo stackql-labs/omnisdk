@@ -133,3 +133,75 @@ _now="$(date +%s)" && ./build/omnicli doc-graph test/corpus/registry '{
 }' --aws-region "${_AWS_REGION}" --out "./cicd/out/simple-table-valued-function-join-${_now}.jsonl" --log "./cicd/out/simple-table-valued-function-join-${_now}.log"
 
 ```
+
+## Create, poll, then read
+
+A create on Google Compute returns a long-running **operation**, not the thing it made. Reading the
+result takes three steps: create, poll the operation until it is `DONE`, then get what it made. That
+is one graph with three nodes, and every node's columns come out in the row as usual:
+
+```
+c: networks insert ──name→operation──▶ o: global_operations get (poll until DONE) ──targetLink→network──▶ n: networks get
+```
+
+Three things make it expressible:
+
+- **`verb` and `body` on a node.** `c` runs the document's `insert` method, not a select. `body`
+  names which of its params are request-body fields (`name`); the rest (`project`) are parameters.
+  A mutating node is never retried or replayed.
+- **`poll` on an override.** It re-requests the exchange until `status_path` reads `done`, waiting
+  `interval` between attempts, at most `max_attempts` times. Every bound is required.
+- **`patches` with a `doc_cache`.** The compute document declares the global-operation URL but no
+  method for it, so `global_operations` cannot be read one at a time. A patch — an RFC 7386 merge
+  patch on one service document, addressed `<provider>.<service>` — adds the `get` for this query
+  only. Patched documents are written under `doc_cache.dir`, keyed by the patches, and reused by
+  every query with the same ones; `"fresh": true` rebuilds them. Every other document, and every
+  other caller, reads the registry unchanged.
+
+`n`'s wiring cuts the network's name out of the operation's `targetLink`
+(`https://www.googleapis.com/compute/v1/projects/<p>/global/networks/<name>`).
+
+Auth values that travel on the row (the service account's signed assertion, the bearer token) are
+dropped from results by default. `--show-credentials` keeps them, for a caller who needs them and
+takes responsibility for the output; in the SDK, `Args.Redaction` takes any policy.
+
+This **creates a network** in `${_GOOGLE_PROJECT_ID}`.
+
+```bash
+_now="$(date +%s)" && ./build/omnicli doc-graph test/corpus/registry '{
+  "patches": [{
+    "service": "stackql_unstable_google.compute",
+    "merge": {"components": {"x-stackQL-resources": {"global_operations": {
+      "methods": {"get": {
+        "operation": {"$ref": "#/paths/~1projects~1{project}~1global~1operations~1{operation}/get"},
+        "response": {"mediaType": "application/json", "openAPIDocKey": "200"}
+      }},
+      "sqlVerbs": {"select": [
+        {"$ref": "#/components/x-stackQL-resources/global_operations/methods/aggregated_list"},
+        {"$ref": "#/components/x-stackQL-resources/global_operations/methods/get"}
+      ]}
+    }}}}
+  }],
+  "doc_cache": {"dir": "./cicd/out/doc-cache"},
+  "nodes": [
+    {"alias": "c", "address": "stackql_unstable_google.compute.networks", "verb": "insert",
+     "params": {"project": "'"${_GOOGLE_PROJECT_ID}"'", "name": "omnisdk-demo-'"${_now}"'"}, "body": ["name"]},
+    {"alias": "o", "address": "stackql_unstable_google.compute.global_operations",
+     "params": {"project": "'"${_GOOGLE_PROJECT_ID}"'"}},
+    {"alias": "n", "address": "stackql_unstable_google.compute.networks",
+     "params": {"project": "'"${_GOOGLE_PROJECT_ID}"'"}}
+  ],
+  "wirings": [
+    {"to": "o", "inbound": [{"from": "c", "src": "name", "as": "operation"}]},
+    {"to": "n", "inbound": [{"from": "o", "src": "targetLink", "as": "link"}],
+     "via_type": "golang_template_json_v0.1.0",
+     "via": "{\"network\":\"{{ index (split \"/\" .link) 9 }}\"}",
+     "provides": ["network"]}
+  ],
+  "overrides": [{
+    "address": "stackql_unstable_google.compute.global_operations",
+    "poll": {"status_path": "status", "done": "DONE", "interval": "2s", "max_attempts": 60}
+  }]
+}' --out "./cicd/out/create-poll-read-${_now}.jsonl" --log "./cicd/out/create-poll-read-${_now}.log"
+
+```

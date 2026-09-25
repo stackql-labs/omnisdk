@@ -148,9 +148,13 @@ type Args struct {
 	Params map[string]string
 	// Journal opts a query's mutations into write-ahead intent: each effect is recorded, and on disk,
 	// before its request is sent. Nil runs them unjournaled. Reads ignore it.
-	Journal  *Journal `json:"journal,omitempty"`
-	Auth     *Auth
-	Endpoint string
+	Journal *Journal `json:"journal,omitempty"`
+	// Redaction decides which columns a result may not carry. Nil is DefaultRedaction: the values
+	// auth put on the row are dropped, everything else is kept. A power user who needs them sets
+	// RedactNone, or a policy of their own.
+	Redaction Redaction `json:"-"`
+	Auth      *Auth
+	Endpoint  string
 	// InsecureSkipTLSVerify accepts any certificate. It exists for mocks that serve a self-signed one,
 	// but it is not tied to Endpoint: a private CA or an intercepting proxy is a real reason to need it
 	// against a real host, and a flag that silently did nothing in that case would be worse than the
@@ -161,6 +165,37 @@ type Args struct {
 }
 
 func (a Args) param(name string) string { return a.Params[name] }
+
+// Redaction decides which columns leave in a result. credential is true for a value an auth
+// expansion put on the row — a signed assertion, a bearer token — whatever its name; which names
+// those are comes from the auth scheme, never a fixed list.
+type Redaction interface {
+	Drop(column string, credential bool) bool
+}
+
+// DefaultRedaction drops credentials and keeps everything else.
+func DefaultRedaction() Redaction {
+	return redactFunc(func(_ string, credential bool) bool { return credential })
+}
+
+// RedactNone keeps every column, credentials included: for a caller that needs the token, e.g. to
+// hand it on, and has taken responsibility for where the result goes.
+func RedactNone() Redaction { return redactFunc(func(string, bool) bool { return false }) }
+
+// RedactAlso drops the named columns as well as whatever base drops.
+func RedactAlso(base Redaction, columns ...string) Redaction {
+	named := make(map[string]bool, len(columns))
+	for _, c := range columns {
+		named[c] = true
+	}
+	return redactFunc(func(column string, credential bool) bool {
+		return named[column] || base.Drop(column, credential)
+	})
+}
+
+type redactFunc func(string, bool) bool
+
+func (f redactFunc) Drop(column string, credential bool) bool { return f(column, credential) }
 
 // Journal is where a query's write-ahead intent goes: the journal under State, the same one Converge
 // keeps, in RunID's file. Both are required — which run a record belongs to and where it lives are

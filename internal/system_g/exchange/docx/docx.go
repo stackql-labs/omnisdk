@@ -18,6 +18,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/stackql-labs/omnisdk/internal/system_g/awsv4"
 	"github.com/stackql-labs/omnisdk/internal/system_g/bind"
@@ -62,6 +63,8 @@ type options struct {
 	body []byte
 	// bodyFields are values placed as fields of the request body, each bound per row.
 	bodyFields map[string]bool
+	// poll re-requests until a status matures; nil sends once.
+	poll *httpx.Continuation
 	// inbox names values T_in CONSUMES. They are bound — a producer emits each one — but never
 	// placed: they are raw material for the transform, not parameters the service has heard of.
 	inbox map[string]bool
@@ -189,6 +192,17 @@ func WithProvided(names ...string) Option {
 // what encoding; what goes in it is supplied whole.
 func WithBody(doc []byte) Option {
 	return func(o *options) { o.body = doc }
+}
+
+// WithPoll re-requests the call until the value at statusPath in its response equals done, waiting
+// interval between attempts and giving up after attempts. Only the final response is emitted. It is
+// for an operation whose answer is a status that matures: a create's long-running operation, polled
+// until it is DONE before anything reads what it made.
+func WithPoll(statusPath, done string, interval time.Duration, attempts int) Option {
+	return func(o *options) {
+		o.poll = &httpx.Continuation{Kind: httpx.ContPoll, StatusPath: statusPath, DoneValue: done,
+			Interval: interval, MaxAttempts: attempts}
+	}
 }
 
 // WithBodyFields places named values as fields of the request body, bound per row like any input.
@@ -371,6 +385,9 @@ func Spec(ex aot.AOTExchange, inputs map[string]any, reg dsl.Registry, opts ...O
 
 	url := retarget(req.URL(), o.baseURL)
 	hreq := httpx.Request{Method: req.Method(), URL: url}
+	if o.poll != nil {
+		hreq.Continuation = *o.poll
+	}
 	if params := req.Params(); len(params) > 0 {
 		body := make(map[string]any, len(params))
 		for k, v := range params {

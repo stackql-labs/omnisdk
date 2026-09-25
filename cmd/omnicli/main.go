@@ -24,7 +24,7 @@ import (
 
 func main() {
 	var outPath, logPath, endpoint string
-	var insecureTLS bool
+	var insecureTLS, showCredentials bool
 	var awsRegion string
 	var t tune
 
@@ -38,6 +38,7 @@ func main() {
 	pf.StringVarP(&outPath, "out", "o", "", "output file (default stdout)")
 	pf.StringVar(&logPath, "log", "", "log raw responses to this file (default off)")
 	pf.StringVar(&endpoint, "endpoint", "", "endpoint override, path-style (e.g. http://localhost:8085); default real cloud")
+	pf.BoolVar(&showCredentials, "show-credentials", false, "keep auth values (assertion, bearer token) in doc-graph results; dropped by default")
 	pf.BoolVar(&insecureTLS, "tls-skip-verify", false, "accept a self-signed certificate; only applies with --endpoint")
 	pf.IntVar(&t.parallelism, "parallelism", 16, "max concurrent fan-out units (bind-join inners)")
 	pf.IntVar(&t.perHost, "max-per-host", 8, "max concurrent requests per backend host")
@@ -476,6 +477,8 @@ func main() {
 					Alias   string            `json:"alias"`
 					Address string            `json:"address"`
 					Params  map[string]string `json:"params,omitempty"`
+					Verb    string            `json:"verb,omitempty"`
+					Body    []string          `json:"body,omitempty"`
 				} `json:"nodes"`
 				Wirings []struct {
 					To      string `json:"to"`
@@ -494,7 +497,15 @@ func main() {
 					MediaType   string `json:"media_type,omitempty"`
 					ProgramType string `json:"program_type,omitempty"`
 					Program     string `json:"program,omitempty"`
+					Poll        *struct {
+						StatusPath  string `json:"status_path"`
+						Done        string `json:"done"`
+						Interval    string `json:"interval"`
+						MaxAttempts int    `json:"max_attempts"`
+					} `json:"poll,omitempty"`
 				} `json:"overrides,omitempty"`
+				Patches     []omnisdk.DocPatch `json:"patches,omitempty"`
+				DocCache    *omnisdk.DocCache  `json:"doc_cache,omitempty"`
 				Projections []struct {
 					Alias  string       `json:"alias"`
 					Select []selectJSON `json:"select"`
@@ -506,7 +517,11 @@ func main() {
 			}
 			nodes := make([]omnisdk.Node, 0, len(spec.Nodes))
 			for _, n := range spec.Nodes {
-				nodes = append(nodes, omnisdk.NewNode(n.Alias, n.Address, n.Params))
+				verb := n.Verb
+				if verb == "" {
+					verb = "select"
+				}
+				nodes = append(nodes, omnisdk.NewMutationNode(n.Alias, n.Address, verb, n.Params, nil, n.Body))
 			}
 			wirings := make([]omnisdk.Wiring, 0, len(spec.Wirings))
 			for _, wr := range spec.Wirings {
@@ -518,7 +533,23 @@ func main() {
 			}
 			overrides := make([]omnisdk.Override, 0, len(spec.Overrides))
 			for _, o := range spec.Overrides {
-				overrides = append(overrides, omnisdk.NewOverride(o.Address, o.ObjectKey, o.MediaType, o.ProgramType, o.Program))
+				if o.Poll == nil {
+					overrides = append(overrides, omnisdk.NewOverride(o.Address, o.ObjectKey, o.MediaType, o.ProgramType, o.Program))
+					continue
+				}
+				if o.ObjectKey != "" || o.MediaType != "" || o.ProgramType != "" {
+					return fmt.Errorf("override on %s: a poll is its own entry; state the correction in another", o.Address)
+				}
+				interval, err := time.ParseDuration(o.Poll.Interval)
+				if err != nil {
+					return fmt.Errorf("override on %s: poll interval: %w", o.Address, err)
+				}
+				po, err := omnisdk.NewPollOverride(o.Address, omnisdk.Poll{StatusPath: o.Poll.StatusPath, Done: o.Poll.Done,
+					Interval: interval, MaxAttempts: o.Poll.MaxAttempts})
+				if err != nil {
+					return err
+				}
+				overrides = append(overrides, po)
 			}
 			projections := make([]omnisdk.Projection, 0, len(spec.Projections))
 			for _, p := range spec.Projections {
@@ -552,7 +583,19 @@ func main() {
 			}
 			a.Endpoint, a.Log, a.Tuning = endpoint, logw, t.facade()
 			a.InsecureSkipTLSVerify = insecureTLS
-			pl, err := omnisdk.NewGraphSelectQuery(cmdArgs(cmd)[0], g, a)
+			if showCredentials {
+				a.Redaction = omnisdk.RedactNone()
+			}
+			registry := cmdArgs(cmd)[0]
+			if len(spec.Patches) > 0 {
+				if spec.DocCache == nil {
+					return fmt.Errorf("patches need a doc_cache: where the patched documents are kept")
+				}
+				if registry, err = omnisdk.EffectiveRegistry(registry, spec.Patches, *spec.DocCache); err != nil {
+					return err
+				}
+			}
+			pl, err := omnisdk.NewGraphSelectQuery(registry, g, a)
 			if err != nil {
 				return err
 			}
