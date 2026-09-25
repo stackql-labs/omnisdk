@@ -142,6 +142,9 @@ func TestTranspileSimpleJoin(t *testing.T) {
 	}
 }
 
+// withoutPolicies names a user the IAM stub reports no attached policies for; empty means none.
+var withoutPolicies string
+
 // iamStub answers ListUsers with alice and bob, and ListAttachedUserPolicies with one policy named
 // after the user asked about — so the join is visible in the rows.
 func iamStub(t *testing.T) *httptest.Server {
@@ -173,6 +176,11 @@ func iamStub(t *testing.T) *httptest.Server {
 			fmt.Fprintf(w, `<GetUserResponse><GetUserResult><User><UserName>%s</UserName></User></GetUserResult></GetUserResponse>`,
 				r.Form.Get("UserName"))
 		case "ListAttachedUserPolicies":
+			if r.Form.Get("UserName") == withoutPolicies {
+				fmt.Fprint(w, `<ListAttachedUserPoliciesResponse><ListAttachedUserPoliciesResult><AttachedPolicies/>`+
+					`</ListAttachedUserPoliciesResult></ListAttachedUserPoliciesResponse>`)
+				return
+			}
 			fmt.Fprintf(w, `<ListAttachedUserPoliciesResponse><ListAttachedUserPoliciesResult><AttachedPolicies>`+
 				`<member><PolicyName>%s-policy</PolicyName></member>`+
 				`</AttachedPolicies></ListAttachedUserPoliciesResult></ListAttachedUserPoliciesResponse>`, r.Form.Get("UserName"))
@@ -827,5 +835,80 @@ func TestRejectedEffectIsReportedAsRejected(t *testing.T) {
 	_, _, err := tryQuery(t, q)
 	if err == nil || !strings.Contains(err.Error(), "was rejected") {
 		t.Errorf("err = %v, want the effect reported as rejected", err)
+	}
+}
+
+// SELECT u.UserName, p.PolicyName FROM aws.iam.users u LEFT JOIN aws.iam.attached_user_policies p
+// ON p.UserName = u.UserName WHERE region = 'us-east-1'
+// bob has no policies: his row stays, without a PolicyName.
+func TestLeftJoinKeepsTheUnmatched(t *testing.T) {
+	withoutPolicies = "bob"
+	defer func() { withoutPolicies = "" }()
+	q := mustQuery(t,
+		[]query.Join{
+			query.NewJoin(users("u"), query.Base),
+			query.NewJoin(query.NewResource("p", "aws.iam.attached_user_policies"), query.Left,
+				query.NewEq(query.NewColumn("p", "UserName"), query.NewColumn("u", "UserName"))),
+		},
+		[]query.Predicate{regionEq()},
+		[]query.Output{
+			query.NewOutput("UserName", query.NewColumn("u", "UserName")),
+			query.NewOutput("PolicyName", query.NewColumn("p", "PolicyName")),
+		},
+	)
+	rows, _ := runQuery(t, q)
+	if want := []string{"PolicyName=alice-policy,UserName=alice", "UserName=bob"}; !reflect.DeepEqual(rows, want) {
+		t.Errorf("rows = %v, want %v", rows, want)
+	}
+}
+
+// SELECT a.UserName AS a, b.UserName AS b FROM aws.iam.users a LEFT JOIN aws.iam.users b
+// ON b.UserName = a.UserName AND b.UserName <> 'bob' WHERE region = 'us-east-1'
+// The <> is part of the match, not a filter: bob stays, unmatched. b is listed once.
+func TestLeftJoinConditionDecidesTheMatch(t *testing.T) {
+	q := mustQuery(t,
+		[]query.Join{
+			query.NewJoin(users("a"), query.Base),
+			query.NewJoin(users("b"), query.Left,
+				query.NewEq(query.NewColumn("b", "UserName"), query.NewColumn("a", "UserName")),
+				query.NewCompare(query.Ne, query.NewColumn("b", "UserName"), query.NewLiteral("bob"))),
+		},
+		[]query.Predicate{regionEq()},
+		[]query.Output{
+			query.NewOutput("a", query.NewColumn("a", "UserName")),
+			query.NewOutput("b", query.NewColumn("b", "UserName")),
+		},
+	)
+	rows, made := runQuery(t, q)
+	if want := []string{"a=alice,b=alice", "a=bob"}; !reflect.DeepEqual(rows, want) {
+		t.Errorf("rows = %v, want %v", rows, want)
+	}
+	if want := []string{"ListUsers|us-east-1", "ListUsers|us-east-1"}; !reflect.DeepEqual(made, want) {
+		t.Errorf("calls = %v, want one listing per reference", made)
+	}
+}
+
+// FROM aws.iam.attached_user_policies p LEFT JOIN aws.iam.users u ON p.UserName = u.UserName
+// p is preserved but cannot list without u's UserName: nothing to preserve.
+func TestLeftJoinRefusesAPreservedSideThatNeedsTheOther(t *testing.T) {
+	requireCorpus(t)
+	q := mustQuery(t,
+		[]query.Join{
+			query.NewJoin(query.NewResource("p", "aws.iam.attached_user_policies"), query.Base),
+			query.NewJoin(users("u"), query.Left,
+				query.NewEq(query.NewColumn("p", "UserName"), query.NewColumn("u", "UserName"))),
+		},
+		nil, nil,
+	)
+	pt, err := omnisdk.DescribeTable(corpus, iamAttachedPolicies)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ut, err := omnisdk.DescribeTable(corpus, iamUsers)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := omnisdk.Resolve(q, map[string]omnisdk.Table{"p": pt, "u": ut}); err == nil {
+		t.Error("resolved a left join whose preserved side needs the joined one")
 	}
 }

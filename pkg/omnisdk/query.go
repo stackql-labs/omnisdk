@@ -133,7 +133,8 @@ func (r resolution) Params() map[string]string { return r.params }
 func Resolve(q query.Unresolved, tables map[string]Table) (Resolution, error) {
 	r := resolver{tables: map[string]Table{}, params: map[string]string{}, nodeParams: map[string]map[string]string{},
 		fanout: map[string]map[string][]string{}, wide: map[string][]string{}, arrivals: map[string][]arrival{}, retain: map[string][]string{},
-		computed: map[string][]SelectColumn{}, body: map[string]any{}}
+		computed: map[string][]SelectColumn{}, body: map[string]any{},
+		outer: map[string][]query.Predicate{}, on: map[string][]query.Predicate{}}
 	var conjuncts []query.Predicate
 	for _, j := range q.From() {
 		alias := j.Resource().Alias()
@@ -141,11 +142,14 @@ func Resolve(q query.Unresolved, tables map[string]Table) (Resolution, error) {
 		if !ok {
 			return nil, fmt.Errorf("omnisdk: no table described for %q", alias)
 		}
-		if j.Form() == query.Left {
-			return nil, fmt.Errorf("omnisdk: %s: a left join is not yet supported", alias)
-		}
 		r.tables[alias] = t
 		r.order = append(r.order, alias)
+		if j.Form() == query.Left {
+			// A left join's ON decides what matches, not what survives: it is placed against the
+			// joined node, after the rest.
+			r.outer[alias] = j.On()
+			continue
+		}
 		// Under an inner join ON and WHERE are the same filter.
 		conjuncts = append(conjuncts, j.On()...)
 	}
@@ -174,6 +178,13 @@ func Resolve(q query.Unresolved, tables map[string]Table) (Resolution, error) {
 		}
 		if !placed {
 			if err := r.filter(p); err != nil {
+				return nil, err
+			}
+		}
+	}
+	for _, alias := range r.order {
+		if on, left := r.outer[alias]; left {
+			if err := r.leftJoin(alias, on); err != nil {
 				return nil, err
 			}
 		}
@@ -366,6 +377,11 @@ type resolver struct {
 	mutating, verb string
 	// body is the target's request-body fields, see Node.Body.
 	body map[string]any
+	// outer is each left-joined node's ON; on is the match conditions placed against it, and
+	// onTarget the node whose ON is being placed.
+	outer    map[string][]query.Predicate
+	on       map[string][]query.Predicate
+	onTarget string
 }
 
 type arrival struct{ from, src, as string }
@@ -477,6 +493,9 @@ func (r *resolver) bindJoin(p query.Predicate) (bool, error) {
 	default:
 		return false, nil
 	}
+	if r.onTarget != "" && to.Qualifier() != r.onTarget {
+		return false, fmt.Errorf("omnisdk: %s: in a left join the preserved side %s cannot need a value from %s", describe(c), to.Qualifier(), r.onTarget)
+	}
 	if from.Qualifier() == r.mutating {
 		return false, fmt.Errorf("omnisdk: %s: %s would need a value the %s returns, after its effect", describe(c), to.Qualifier(), r.verb)
 	}
@@ -491,6 +510,37 @@ func (r *resolver) bindJoin(p query.Predicate) (bool, error) {
 		}
 	}
 	return true, nil
+}
+
+// leftJoin places a left join's ON against its node. A constant its methods take is pushed down, an
+// equality it needs is an edge into it, and anything else is a match condition on its rows: all of
+// them narrow what matches, and none drops an upstream row. The preserved side needing a value from
+// the joined one is refused — it would have no rows to preserve.
+func (r *resolver) leftJoin(alias string, on []query.Predicate) error {
+	r.onTarget = alias
+	defer func() { r.onTarget = "" }()
+	var rest []query.Predicate
+	for _, p := range on {
+		placed, err := r.bindConstant(p)
+		if err != nil {
+			return err
+		}
+		if !placed {
+			rest = append(rest, p)
+		}
+	}
+	for _, p := range rest {
+		placed, err := r.bindJoin(p)
+		if err != nil {
+			return err
+		}
+		if !placed {
+			if err := r.filter(p); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
 }
 
 // bindComputed places column = f(other table's columns). Where the column's table needs the value,
@@ -510,6 +560,9 @@ func (r *resolver) bindComputed(c query.Compare, col query.Column, e query.Expr)
 	}
 	if !needs(r.tables[col.Qualifier()], col.Name(), r.known(col.Qualifier())) {
 		return false, nil
+	}
+	if r.onTarget != "" && col.Qualifier() != r.onTarget {
+		return false, fmt.Errorf("omnisdk: %s: in a left join the preserved side %s cannot need a value from %s", describe(c), col.Qualifier(), r.onTarget)
 	}
 	name := computed(len(r.computed[from]))
 	r.computed[from] = append(r.computed[from], NewSelectColumn(name, x))
@@ -535,8 +588,33 @@ func (r *resolver) filter(p query.Predicate) error {
 	if err != nil {
 		return fmt.Errorf("omnisdk: %s: %w", describe(p), err)
 	}
-	r.filters = append(r.filters, q)
+	if r.onTarget == "" {
+		r.filters = append(r.filters, q)
+		return nil
+	}
+	// A match condition runs on the joined node's rows. Another node's column reaches it through
+	// the inbox, under that node's private key, and is never sent.
+	for _, c := range predicateColumns(q) {
+		if c.Qualifier() == r.onTarget {
+			continue
+		}
+		as := hidden(c.Qualifier(), c.Name())
+		if !r.arriving(r.onTarget, as) {
+			r.arrive(r.onTarget, arrival{from: c.Qualifier(), src: c.Name(), as: as})
+		}
+	}
+	r.on[r.onTarget] = append(r.on[r.onTarget], q)
 	return nil
+}
+
+// arriving reports whether a value already arrives at a node under a name.
+func (r *resolver) arriving(to, as string) bool {
+	for _, a := range r.arrivals[to] {
+		if a.as == as {
+			return true
+		}
+	}
+	return false
 }
 
 func (r *resolver) rewrite(p query.Predicate) (query.Predicate, error) {
@@ -658,7 +736,11 @@ func (r *resolver) build(sel []query.Output) (Resolution, error) {
 		if alias == r.mutating {
 			body = r.body
 		}
-		nodes = append(nodes, NewMutationNode(alias, r.tables[alias].Address(), verb, r.nodeParams[alias], r.fanout[alias], body))
+		n := NewMutationNode(alias, r.tables[alias].Address(), verb, r.nodeParams[alias], r.fanout[alias], body)
+		if _, left := r.outer[alias]; left {
+			n = NewOuterNode(n, r.on[alias])
+		}
+		nodes = append(nodes, n)
 		cols := byAlias[alias]
 		// A column an edge or a filter reads is kept whether or not the query selected it: the
 		// projection replaces the row, and they read it afterwards. Kept under a hidden name, so it

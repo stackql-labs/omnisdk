@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -320,7 +321,15 @@ type replayOp struct {
 
 func (o replayOp) Open(ctx context.Context) facade.Records {
 	store, _ := ctx.Value(replayKey{}).(*replayStore)
-	key, err := json.Marshal(o.bound)
+	// Values under private keys are for match conditions, not the request, so they do not make
+	// the request different.
+	requested := make(map[string]any, len(o.bound))
+	for k, v := range o.bound {
+		if !strings.HasPrefix(k, "\x00") {
+			requested[k] = v
+		}
+	}
+	key, err := json.Marshal(requested)
 	if store == nil || err != nil {
 		return o.spec.Make(o.bound).Open(ctx)
 	}
@@ -543,3 +552,82 @@ func failed(err error) facade.Records {
 type never struct{}
 
 func (never) Recover(context.Context, facade.Attempt) (time.Duration, bool) { return 0, false }
+
+// leftOuter keeps an upstream row a node matched nothing for, with the node's columns absent. The
+// join already emits such a row; a node's own merge otherwise drops it.
+type leftOuter struct{ plan.ExchangeSpec }
+
+func (leftOuter) Flatten() facade.Transform { return bind.NewTupleFlatten() }
+
+// matched keeps the node rows that meet its match conditions. It runs on the node's side of the
+// join, before the join decides whether an upstream row matched anything.
+type matched struct {
+	plan.ExchangeSpec
+	alias string
+	on    []query.Predicate
+	fns   facade.FnRegistry
+}
+
+func (m matched) Make(bound map[string]any) facade.Operator {
+	return matchOp{inner: m.ExchangeSpec.Make(bound), bound: bound, m: m}
+}
+
+type matchOp struct {
+	inner facade.Operator
+	bound map[string]any
+	m     matched
+}
+
+func (o matchOp) Open(ctx context.Context) facade.Records {
+	return &matchRecords{Records: o.inner.Open(ctx), op: o}
+}
+
+type matchRecords struct {
+	facade.Records
+	op  matchOp
+	err error
+}
+
+func (r *matchRecords) Next(ctx context.Context) bool {
+	f := filterTransform{fns: r.op.m.fns}
+	for r.Records.Next(ctx) {
+		row, ok := bind.DocMap(r.Records.Record())
+		if !ok {
+			return true
+		}
+		// A condition reads this node's columns and, for another node's, what the inbox delivered —
+		// both under the private keys filters read.
+		env := make(map[string]any, len(row)+len(r.op.bound))
+		for k, v := range row {
+			env[hidden(r.op.m.alias, k)] = v
+		}
+		for k, v := range r.op.bound {
+			if strings.HasPrefix(k, "\x00") {
+				env[k] = v
+			}
+		}
+		keep := true
+		for _, p := range r.op.m.on {
+			t, err := f.eval(p, env)
+			if err != nil {
+				r.err = err
+				return false
+			}
+			if t != isTrue {
+				keep = false
+				break
+			}
+		}
+		if keep {
+			return true
+		}
+	}
+	return false
+}
+
+func (r *matchRecords) Err() error {
+	if r.err != nil {
+		return r.err
+	}
+	return r.Records.Err()
+}

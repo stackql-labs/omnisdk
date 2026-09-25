@@ -45,6 +45,14 @@ type Node interface {
 	// Verb is what the reference does: "select", or "insert", "update" or "delete" for a mutation,
 	// whose request has an effect and whose rows are what it returns.
 	Verb() string
+	// Outer keeps each upstream row this node matches nothing for, with its columns absent: the
+	// right side of a LEFT JOIN.
+	Outer() bool
+	// On are conditions a row of this node must meet to count as a match. They decide the match, so
+	// under Outer a failure keeps the upstream row rather than dropping it — the ON of a LEFT JOIN,
+	// as opposed to a WHERE. A column of this node is named by its alias; one of another node is
+	// read from this node's inbox, where a wiring delivers it under that node's private key.
+	On() []query.Predicate
 	// Body is the request-body fields: a field's value is the constant it is sent with, typed as JSON
 	// types it, or nil where the value arrives some other way — a param, a wiring, a fanout.
 	Body() map[string]any
@@ -63,6 +71,12 @@ func NewFanoutNode(alias, address string, params map[string]string, fanout map[s
 
 // NewMutationNode declares a reference running the methods of verb. A mutating verb's node is never
 // replayed and its requests are never retried: each would repeat the effect.
+// NewOuterNode makes n the right side of a LEFT JOIN, matching its rows by on.
+func NewOuterNode(n Node, on []query.Predicate) Node {
+	return node{alias: n.Alias(), address: n.Address(), verb: n.Verb(), params: n.Params(),
+		fanout: n.Fanout(), body: n.Body(), outer: true, on: on}
+}
+
 // body is the request-body fields, see Node.Body.
 func NewMutationNode(alias, address, verb string, params map[string]string, fanout map[string][]string, body map[string]any) Node {
 	if alias == "" {
@@ -76,7 +90,12 @@ type node struct {
 	params               map[string]string
 	fanout               map[string][]string
 	body                 map[string]any
+	outer                bool
+	on                   []query.Predicate
 }
+
+func (n node) Outer() bool           { return n.outer }
+func (n node) On() []query.Predicate { return n.on }
 
 func (n node) Alias() string               { return n.alias }
 func (n node) Address() string             { return n.address }
@@ -430,6 +449,12 @@ func NewGraphSelectQuery(dir string, g Graph, args Args) (Plan, error) {
 			continue
 		}
 		for _, in := range w.Inbound() {
+			// A value delivered under a private key is for the node's own conditions, not its
+			// request: bound so it arrives, never placed on the wire.
+			if strings.HasPrefix(in.As(), "\x00") {
+				inbox[w.To()] = append(inbox[w.To()], in.As())
+				continue
+			}
 			bound[w.To()] = append(bound[w.To()], in.As())
 		}
 	}
@@ -648,11 +673,19 @@ func NewGraphSelectQuery(dir string, g Graph, args Args) (Plan, error) {
 			spec = plan.WithProject(spec, t)
 		}
 		// Nothing wired in means the same inputs for every upstream row: run once, replay the rest.
-		switch _, consumer := wiringFor(g, alias); {
+		switch consumer := requestWired(g, alias); {
 		case mutating:
 			spec = effect{ExchangeSpec: spec, alias: alias, verb: n.Verb(), exchange: exchangeOf(addr, n.Verb()), journal: wal}
 		case !consumer:
 			spec = replayed{ExchangeSpec: spec}
+		}
+		// Match conditions run on this node's rows, so the join sees only matches and keeps an
+		// upstream row that has none.
+		if on := n.On(); len(on) > 0 {
+			spec = matched{ExchangeSpec: spec, alias: alias, on: on, fns: fns}
+		}
+		if n.Outer() {
+			spec = leftOuter{ExchangeSpec: spec}
 		}
 		if attrs := emits[alias]; len(attrs) > 0 {
 			spec = tagged{ExchangeSpec: spec, alias: alias, attrs: attrs}
@@ -694,6 +727,24 @@ func openJournal(g Graph, args Args) (facade.Journal, error) {
 		return nil, err
 	}
 	return journals.For(context.Background(), j.RunID)
+}
+
+// requestWired reports whether anything wired into a node reaches its request. Values delivered only
+// for its match conditions do not, so such a node binds the same request for every upstream row.
+func requestWired(g Graph, alias string) bool {
+	w, ok := wiringFor(g, alias)
+	if !ok {
+		return false
+	}
+	if t, _ := w.Via(); t != "" {
+		return true
+	}
+	for _, in := range w.Inbound() {
+		if !strings.HasPrefix(in.As(), "\x00") {
+			return true
+		}
+	}
+	return false
 }
 
 // egress is what every finished row passes through: the filters, then the removal of the keys

@@ -4,8 +4,12 @@ Target: stackql sends the read side of every query to omnisdk as a `query.Unreso
 it against the documents and returns an eager, unordered, unaggregated row stream. stackql applies
 ORDER BY, GROUP BY and aggregation.
 
-Joins: stackql supports only inner and left outer joins, and the engine has both merges. `Resolve`
-still rejects LEFT until it selects the left-outer merge for the joined node.
+Joins: stackql supports only inner and left outer joins, and both work. A LEFT JOIN's ON is placed
+against the joined node (`leftJoin`): a constant its methods take is pushed down, an equality it
+needs is an edge into it, and anything else is a match condition run on its rows (`matched`), with
+other nodes' values delivered through its inbox and never sent. The node keeps the upstream rows it
+matches nothing for (`leftOuter`), and is still fetched once when only its conditions are wired. A
+preserved side that needs the joined side's value is refused.
 
 | # | Gap | Status | Implementation |
 |---|-----|--------|----------------|
