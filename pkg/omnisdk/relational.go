@@ -2,6 +2,8 @@ package omnisdk
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"strconv"
@@ -10,6 +12,7 @@ import (
 
 	"github.com/stackql-labs/omnisdk/internal/system_g/bind"
 	"github.com/stackql-labs/omnisdk/internal/system_g/buffer"
+	"github.com/stackql-labs/omnisdk/internal/system_g/exchange/docx"
 	"github.com/stackql-labs/omnisdk/internal/system_g/facade"
 	"github.com/stackql-labs/omnisdk/internal/system_g/fn"
 	"github.com/stackql-labs/omnisdk/internal/system_g/plan"
@@ -446,22 +449,35 @@ func (o outputTransform) Apply(in facade.Page) (facade.Record, error) {
 
 // effect is a mutation node. Its requests are never retried, whatever the run's policy: a retry
 // after a request that reached the provider repeats the effect. A failure is reported as possibly
-// applied, since a transport error says nothing about whether the provider acted.
+// applied, since a transport error says nothing about whether the provider acted. With a journal,
+// each effect's intent is appended — and synced — before its request is opened; a failed append
+// means the request is never made.
 type effect struct {
 	plan.ExchangeSpec
-	alias, verb string
+	alias, verb, exchange string
+	journal               facade.Journal
 }
 
 func (e effect) Make(bound map[string]any) facade.Operator {
-	return effectOp{inner: e.ExchangeSpec.Make(bound), alias: e.alias, verb: e.verb}
+	return effectOp{inner: e.ExchangeSpec.Make(bound), bound: bound, e: e}
 }
 
 type effectOp struct {
-	inner       facade.Operator
-	alias, verb string
+	inner facade.Operator
+	bound map[string]any
+	e     effect
 }
 
 func (o effectOp) Open(ctx context.Context) facade.Records {
+	if j := o.e.journal; j != nil {
+		key, err := effectKey(o.e.alias, o.bound)
+		if err == nil {
+			_, err = j.Append(ctx, key, o.e.exchange, formOf(o.e.verb), nil)
+		}
+		if err != nil {
+			return failed(fmt.Errorf("omnisdk: %s %s was not attempted: recording its intent failed: %w", o.e.verb, o.e.alias, err))
+		}
+	}
 	return effectRecords{Records: o.inner.Open(retry.WithPolicy(ctx, never{})), op: o}
 }
 
@@ -472,9 +488,46 @@ type effectRecords struct {
 
 func (r effectRecords) Err() error {
 	if err := r.Records.Err(); err != nil {
-		return fmt.Errorf("omnisdk: %s %s may or may not have taken effect: %w", r.op.verb, r.op.alias, err)
+		return fmt.Errorf("omnisdk: %s %s may or may not have taken effect: %w", r.op.e.verb, r.op.e.alias, err)
 	}
 	return nil
+}
+
+// effectKey identifies one effect in the journal: the node and the inputs it was bound with, so the
+// same statement over the same row keys the same way on a rerun. The bearer token is a credential,
+// not part of what was asked for, and is left out.
+func effectKey(alias string, bound map[string]any) (facade.LedgerKey, error) {
+	in := make(map[string]any, len(bound))
+	for k, v := range bound {
+		if k != docx.TokenAttr {
+			in[k] = v
+		}
+	}
+	b, err := json.Marshal(in)
+	if err != nil {
+		return "", err
+	}
+	sum := sha256.Sum256(b)
+	return facade.LedgerKey(alias + "/" + hex.EncodeToString(sum[:8])), nil
+}
+
+func formOf(verb string) facade.FormClass {
+	switch verb {
+	case "insert":
+		return facade.FormCreate
+	case "update":
+		return facade.FormUpdate
+	case "delete":
+		return facade.FormDelete
+	}
+	return facade.FormRead
+}
+
+// failed is a cursor that yields nothing and err.
+func failed(err error) facade.Records {
+	buf := buffer.NewBuffer(1, 1, 0)
+	buf.Complete(err)
+	return buf.Reader()
 }
 
 // never is a retry policy that never retries.

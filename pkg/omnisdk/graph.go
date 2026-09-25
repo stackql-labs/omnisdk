@@ -1,10 +1,13 @@
 package omnisdk
 
 import (
+	"context"
 	"fmt"
 	"maps"
+	"path/filepath"
 	"strings"
 
+	"github.com/stackql-labs/omnisdk/internal/journal"
 	"github.com/stackql-labs/omnisdk/internal/system_g/bind"
 	"github.com/stackql-labs/omnisdk/internal/system_g/exchange/docx"
 	"github.com/stackql-labs/omnisdk/internal/system_g/facade"
@@ -370,6 +373,10 @@ func NewGraphSelectQuery(dir string, g Graph, args Args) (Plan, error) {
 		return nil, err
 	}
 	inputs := docInputs(args)
+	wal, err := openJournal(g, args)
+	if err != nil {
+		return nil, err
+	}
 
 	// A value arriving over an edge is not one the caller supplied, and an optional parameter nobody
 	// supplied is dropped. Declaring the inbox names keeps the placeholders on the wire so the edge
@@ -586,7 +593,7 @@ func NewGraphSelectQuery(dir string, g Graph, args Args) (Plan, error) {
 		// Nothing wired in means the same inputs for every upstream row: run once, replay the rest.
 		switch _, consumer := wiringFor(g, alias); {
 		case mutating:
-			spec = effect{ExchangeSpec: spec, alias: alias, verb: n.Verb()}
+			spec = effect{ExchangeSpec: spec, alias: alias, verb: n.Verb(), exchange: exchangeOf(addr, n.Verb()), journal: wal}
 		case !consumer:
 			spec = replayed{ExchangeSpec: spec}
 		}
@@ -603,6 +610,33 @@ func NewGraphSelectQuery(dir string, g Graph, args Args) (Plan, error) {
 	}
 
 	return &cannedPlan{plan: plan.NewPlan(specs, betas, nil, inputs, egress(g, fns), nil), args: args}, nil
+}
+
+// openJournal opens the write-ahead journal a query's mutations record into, where the caller opted
+// in and the query has any. Opting in without saying where, or for which run, is an error: both are
+// scope.
+func openJournal(g Graph, args Args) (facade.Journal, error) {
+	j := args.Journal
+	if j == nil {
+		return nil, nil
+	}
+	mutates := false
+	for _, n := range g.Nodes() {
+		mutates = mutates || n.Verb() != "select"
+	}
+	switch {
+	case !mutates:
+		return nil, nil
+	case j.State == "":
+		return nil, fmt.Errorf("omnisdk: a journal needs a state directory")
+	case j.RunID == "":
+		return nil, fmt.Errorf("omnisdk: a journal needs a run id")
+	}
+	journals, err := journal.NewFiles(filepath.Join(j.State, "journal"))
+	if err != nil {
+		return nil, err
+	}
+	return journals.For(context.Background(), j.RunID)
 }
 
 // egress is what every finished row passes through: the filters, then the removal of the keys

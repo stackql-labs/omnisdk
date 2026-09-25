@@ -145,7 +145,10 @@ type Method struct {
 // Args are the inputs to run a resource: explicit scope Params, optional Auth (config-driven-auth
 // resources), an endpoint override, run Tuning, and an optional traffic log.
 type Args struct {
-	Params   map[string]string
+	Params map[string]string
+	// Journal opts a query's mutations into write-ahead intent: each effect is recorded, and on disk,
+	// before its request is sent. Nil runs them unjournaled. Reads ignore it.
+	Journal  *Journal `json:"journal,omitempty"`
 	Auth     *Auth
 	Endpoint string
 	// InsecureSkipTLSVerify accepts any certificate. It exists for mocks that serve a self-signed one,
@@ -158,6 +161,14 @@ type Args struct {
 }
 
 func (a Args) param(name string) string { return a.Params[name] }
+
+// Journal is where a query's write-ahead intent goes: the journal under State, the same one Converge
+// keeps, in RunID's file. Both are required — which run a record belongs to and where it lives are
+// scope, never defaulted — so recovery and unwind read a query's effects as they read a converge's.
+type Journal struct {
+	State string `json:"state"`
+	RunID string `json:"run_id"`
+}
 
 // UnmarshalJSON lets Endpoint be written either way a consumer would naturally write it: a URL
 // string, or the per-service object inline. Both land in the same string field the engine resolves,

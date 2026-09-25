@@ -7,6 +7,8 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"reflect"
 	"sort"
 	"strings"
@@ -273,6 +275,13 @@ func runQuery(t *testing.T, q query.Unresolved) ([]string, []string) {
 // tryQuery is runQuery returning the run's error rather than failing on it.
 func tryQuery(t *testing.T, q query.Unresolved) (got []string, made []string, runErr error) {
 	t.Helper()
+	return tryQueryWith(t, q, nil, nil)
+}
+
+// tryQueryWith is tryQuery with the run's Args adjusted, and each request shown to seen before it
+// is answered.
+func tryQueryWith(t *testing.T, q query.Unresolved, adjust func(*omnisdk.Args), onRequest func(*http.Request)) (got []string, made []string, runErr error) {
+	t.Helper()
 	requireCorpus(t)
 	t.Setenv("AWS_ACCESS_KEY_ID", "AKIATEST")
 	t.Setenv("AWS_SECRET_ACCESS_KEY", "secret")
@@ -281,6 +290,9 @@ func tryQuery(t *testing.T, q query.Unresolved) (got []string, made []string, ru
 	defer stub.Close()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_ = r.ParseForm()
+		if onRequest != nil {
+			onRequest(r)
+		}
 		call := r.Form.Get("Action") + "|" + signingRegion(r.Header.Get("Authorization"))
 		if strings.HasSuffix(r.Form.Get("Action"), "User") && r.Form.Get("Action") != "GetUser" {
 			call += "|" + r.Form.Get("UserName") + r.Form.Get("NewPath")
@@ -311,9 +323,13 @@ func tryQuery(t *testing.T, q query.Unresolved) (got []string, made []string, ru
 	if err != nil {
 		t.Fatalf("resolve: %v", err)
 	}
-	pl, err := omnisdk.NewGraphSelectQuery(corpus, res.Graph(), omnisdk.Args{Endpoint: srv.URL, Params: res.Params()})
+	args := omnisdk.Args{Endpoint: srv.URL, Params: res.Params()}
+	if adjust != nil {
+		adjust(&args)
+	}
+	pl, err := omnisdk.NewGraphSelectQuery(corpus, res.Graph(), args)
 	if err != nil {
-		t.Fatalf("plan: %v", err)
+		return nil, nil, err
 	}
 	rows, err := pl.Open(context.Background())
 	if err != nil {
@@ -735,5 +751,65 @@ func TestInsertIntoAJSONBody(t *testing.T) {
 	}
 	if len(got) != 1 || got[0]["name"] != "my-bucket" || got[0]["location"] != "US" {
 		t.Errorf("rows = %v, want the created bucket", got)
+	}
+}
+
+func insertCarol(t *testing.T) query.Unresolved {
+	return mustMutation(t,
+		query.NewInsert(users("t"), query.NewAssignment("UserName", query.NewLiteral("carol"))),
+		nil, []query.Predicate{regionEq()}, nil,
+	)
+}
+
+// With a journal, the effect's intent is on disk before its request reaches the provider.
+func TestJournaledEffectIsRecordedBeforeItsRequest(t *testing.T) {
+	state := t.TempDir()
+	path := filepath.Join(state, "journal", "run-1.jsonl")
+	var atRequest string
+	_, made, err := tryQueryWith(t, insertCarol(t),
+		func(a *omnisdk.Args) { a.Journal = &omnisdk.Journal{State: state, RunID: "run-1"} },
+		func(r *http.Request) {
+			if r.Form.Get("Action") == "CreateUser" {
+				b, _ := os.ReadFile(path)
+				atRequest = string(b)
+			}
+		})
+	if err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	if want := []string{"CreateUser|us-east-1|carol"}; !reflect.DeepEqual(made, want) {
+		t.Errorf("calls = %v, want %v", made, want)
+	}
+	if !strings.Contains(atRequest, `"t/`) {
+		t.Fatalf("journal at request time = %q, want the intent already recorded", atRequest)
+	}
+	if !strings.Contains(atRequest, "stackql_unstable_aws.iam.users:insert") {
+		t.Errorf("journal = %q, want the insert exchange named", atRequest)
+	}
+}
+
+// If the intent cannot be recorded, the request is never made.
+func TestUnrecordableEffectIsNotAttempted(t *testing.T) {
+	state := t.TempDir()
+	// The run's journal file cannot be opened for append: a directory stands where it would be.
+	if err := os.MkdirAll(filepath.Join(state, "journal", "run-1.jsonl"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	_, made, err := tryQueryWith(t, insertCarol(t),
+		func(a *omnisdk.Args) { a.Journal = &omnisdk.Journal{State: state, RunID: "run-1"} }, nil)
+	if err == nil || !strings.Contains(err.Error(), "was not attempted") {
+		t.Errorf("err = %v, want the effect reported as not attempted", err)
+	}
+	if len(made) != 0 {
+		t.Errorf("calls = %v, want none", made)
+	}
+}
+
+// Opting in without naming the run is refused: which run a record belongs to is scope.
+func TestJournalNeedsARunID(t *testing.T) {
+	_, _, err := tryQueryWith(t, insertCarol(t),
+		func(a *omnisdk.Args) { a.Journal = &omnisdk.Journal{State: t.TempDir()} }, nil)
+	if err == nil || !strings.Contains(err.Error(), "run id") {
+		t.Errorf("err = %v, want a missing run id refused", err)
 	}
 }
