@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strconv"
 	"sync"
@@ -15,6 +16,7 @@ import (
 	"github.com/stackql-labs/omnisdk/internal/system_g/exchange/docx"
 	"github.com/stackql-labs/omnisdk/internal/system_g/facade"
 	"github.com/stackql-labs/omnisdk/internal/system_g/fn"
+	"github.com/stackql-labs/omnisdk/internal/system_g/httpx"
 	"github.com/stackql-labs/omnisdk/internal/system_g/plan"
 	"github.com/stackql-labs/omnisdk/internal/system_g/retry"
 	"github.com/stackql-labs/omnisdk/pkg/query"
@@ -486,11 +488,18 @@ type effectRecords struct {
 	op effectOp
 }
 
+// Err says what is known about the effect. A 4xx is the provider refusing the request, so it did not
+// take effect. Anything else — no response, a 5xx — says nothing either way, and is reported so.
 func (r effectRecords) Err() error {
-	if err := r.Records.Err(); err != nil {
-		return fmt.Errorf("omnisdk: %s %s may or may not have taken effect: %w", r.op.e.verb, r.op.e.alias, err)
+	err := r.Records.Err()
+	if err == nil {
+		return nil
 	}
-	return nil
+	var status *httpx.StatusError
+	if errors.As(err, &status) && status.Status >= 400 && status.Status < 500 {
+		return fmt.Errorf("omnisdk: %s %s was rejected: %w", r.op.e.verb, r.op.e.alias, err)
+	}
+	return fmt.Errorf("omnisdk: %s %s may or may not have taken effect: %w", r.op.e.verb, r.op.e.alias, err)
 }
 
 // effectKey identifies one effect in the journal: the node and the inputs it was bound with, so the

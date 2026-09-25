@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -186,6 +187,7 @@ func TestCreatePollThenGet(t *testing.T) {
 	requireCorpus(t)
 	t.Setenv("GOOGLE_CREDENTIALS", serviceAccountKey(t))
 	var opPolls int
+	var created string
 	var mu sync.Mutex
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
@@ -194,6 +196,10 @@ func TestCreatePollThenGet(t *testing.T) {
 		case strings.Contains(p, "/token"):
 			fmt.Fprint(w, `{"access_token":"tok","expires_in":3600}`)
 		case r.Method == http.MethodPost && strings.HasSuffix(p, "/global/networks"):
+			b, _ := io.ReadAll(r.Body)
+			mu.Lock()
+			created = string(b)
+			mu.Unlock()
 			fmt.Fprint(w, `{"name":"op-1","status":"RUNNING"}`)
 		case strings.HasSuffix(p, "/global/operations/op-1"):
 			mu.Lock()
@@ -227,7 +233,8 @@ func TestCreatePollThenGet(t *testing.T) {
 	project := map[string]string{"project": "demo"}
 	g, err := omnisdk.NewGraph(
 		[]omnisdk.Node{
-			omnisdk.NewMutationNode("c", networks, "insert", map[string]string{"project": "demo", "name": "net-1"}, nil, []string{"name"}),
+			omnisdk.NewMutationNode("c", networks, "insert", project, nil,
+				map[string]any{"name": "net-1", "autoCreateSubnetworks": false}),
 			omnisdk.NewNode("o", operations, project),
 			omnisdk.NewNode("n", networks, project),
 		},
@@ -244,6 +251,11 @@ func TestCreatePollThenGet(t *testing.T) {
 	got := runCreatePoll(t, view, g, omnisdk.Args{Endpoint: srv.URL})
 	if opPolls != 3 {
 		t.Errorf("operation polled %d times, want until DONE on the third", opPolls)
+	}
+	// A body constant keeps its JSON type: false, not "false".
+	var sent map[string]any
+	if err := json.Unmarshal([]byte(created), &sent); err != nil || sent["name"] != "net-1" || sent["autoCreateSubnetworks"] != false {
+		t.Errorf("create body = %s, want name and a boolean autoCreateSubnetworks", created)
 	}
 	if len(got) != 1 || got[0]["id"] != "123" || got[0]["status"] != "DONE" {
 		t.Fatalf("rows = %v, want the created network's detail beside its finished operation", got)

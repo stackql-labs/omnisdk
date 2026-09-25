@@ -155,6 +155,10 @@ func iamStub(t *testing.T) *httptest.Server {
 				`<member><UserName>alice</UserName></member><member><UserName>bob</UserName></member>`+
 				`</Users></ListUsersResult></ListUsersResponse>`)
 		case "CreateUser":
+			if r.Form.Get("UserName") == "taken" {
+				http.Error(w, "EntityAlreadyExists", http.StatusConflict)
+				return
+			}
 			if r.Form.Get("UserName") == "fail" {
 				http.Error(w, "internal", http.StatusInternalServerError)
 				return
@@ -811,5 +815,17 @@ func TestJournalNeedsARunID(t *testing.T) {
 		func(a *omnisdk.Args) { a.Journal = &omnisdk.Journal{State: t.TempDir()} }, nil)
 	if err == nil || !strings.Contains(err.Error(), "run id") {
 		t.Errorf("err = %v, want a missing run id refused", err)
+	}
+}
+
+// A 4xx is the provider refusing the request: the effect did not happen, and is reported so.
+func TestRejectedEffectIsReportedAsRejected(t *testing.T) {
+	q := mustMutation(t,
+		query.NewInsert(users("t"), query.NewAssignment("UserName", query.NewLiteral("taken"))),
+		nil, []query.Predicate{regionEq()}, nil,
+	)
+	_, _, err := tryQuery(t, q)
+	if err == nil || !strings.Contains(err.Error(), "was rejected") {
+		t.Errorf("err = %v, want the effect reported as rejected", err)
 	}
 }

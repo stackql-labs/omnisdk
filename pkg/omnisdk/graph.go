@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"maps"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 
@@ -44,8 +45,9 @@ type Node interface {
 	// Verb is what the reference does: "select", or "insert", "update" or "delete" for a mutation,
 	// whose request has an effect and whose rows are what it returns.
 	Verb() string
-	// Body names the inputs that are fields of the request body rather than parameters.
-	Body() []string
+	// Body is the request-body fields: a field's value is the constant it is sent with, typed as JSON
+	// types it, or nil where the value arrives some other way — a param, a wiring, a fanout.
+	Body() map[string]any
 }
 
 // NewNode declares one reference to an address. alias may be empty, meaning the address itself;
@@ -61,8 +63,8 @@ func NewFanoutNode(alias, address string, params map[string]string, fanout map[s
 
 // NewMutationNode declares a reference running the methods of verb. A mutating verb's node is never
 // replayed and its requests are never retried: each would repeat the effect.
-// body names the inputs, from params, fanout or wirings, that are request body fields.
-func NewMutationNode(alias, address, verb string, params map[string]string, fanout map[string][]string, body []string) Node {
+// body is the request-body fields, see Node.Body.
+func NewMutationNode(alias, address, verb string, params map[string]string, fanout map[string][]string, body map[string]any) Node {
 	if alias == "" {
 		alias = address
 	}
@@ -73,14 +75,14 @@ type node struct {
 	alias, address, verb string
 	params               map[string]string
 	fanout               map[string][]string
-	body                 []string
+	body                 map[string]any
 }
 
 func (n node) Alias() string               { return n.alias }
 func (n node) Address() string             { return n.address }
 func (n node) Params() map[string]string   { return n.params }
 func (n node) Fanout() map[string][]string { return n.fanout }
-func (n node) Body() []string              { return n.body }
+func (n node) Body() map[string]any        { return n.body }
 func (n node) Verb() string                { return n.verb }
 
 // Inbound is one value arriving at a consumer: an attribute a producer emits, landing in the
@@ -518,6 +520,18 @@ func NewGraphSelectQuery(dir string, g Graph, args Args) (Plan, error) {
 			inputs[hidden(alias, k)] = v
 			betas = append(betas, plan.NewBetaEdge("", name, hidden(alias, k), k))
 		}
+		// A body constant keeps its type all the way to the wire, bound like a param.
+		for k, v := range n.Body() {
+			if v == nil {
+				continue
+			}
+			if _, clash := n.Params()[k]; clash {
+				return nil, fmt.Errorf("omnisdk: %s: %q is both a param and a body constant", alias, k)
+			}
+			local[k] = v
+			inputs[hidden(alias, k)] = v
+			betas = append(betas, plan.NewBetaEdge("", name, hidden(alias, k), k))
+		}
 		arrivals := withArrivals(local, g, alias)
 		if fan := n.Fanout(); len(fan) > 0 {
 			arrivals = maps.Clone(arrivals)
@@ -563,8 +577,8 @@ func NewGraphSelectQuery(dir string, g Graph, args Args) (Plan, error) {
 			// A mutation's reply is often undocumented; the effect is the point.
 			opts = append(opts, docx.WithoutResponseDecode())
 		}
-		if names := n.Body(); len(names) > 0 {
-			opts = append(opts, docx.WithBodyFields(names...))
+		if body := n.Body(); len(body) > 0 {
+			opts = append(opts, docx.WithBodyFields(slices.Sorted(maps.Keys(body))...))
 		}
 		if names := bound[alias]; len(names) > 0 {
 			opts = append(opts, docx.WithBound(names...))

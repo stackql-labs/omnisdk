@@ -478,7 +478,7 @@ func main() {
 					Address string            `json:"address"`
 					Params  map[string]string `json:"params,omitempty"`
 					Verb    string            `json:"verb,omitempty"`
-					Body    []string          `json:"body,omitempty"`
+					Body    map[string]any    `json:"body,omitempty"`
 				} `json:"nodes"`
 				Wirings []struct {
 					To      string `json:"to"`

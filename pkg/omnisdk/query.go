@@ -133,7 +133,7 @@ func (r resolution) Params() map[string]string { return r.params }
 func Resolve(q query.Unresolved, tables map[string]Table) (Resolution, error) {
 	r := resolver{tables: map[string]Table{}, params: map[string]string{}, nodeParams: map[string]map[string]string{},
 		fanout: map[string]map[string][]string{}, wide: map[string][]string{}, arrivals: map[string][]arrival{}, retain: map[string][]string{},
-		computed: map[string][]SelectColumn{}}
+		computed: map[string][]SelectColumn{}, body: map[string]any{}}
 	var conjuncts []query.Predicate
 	for _, j := range q.From() {
 		alias := j.Resource().Alias()
@@ -210,10 +210,18 @@ func (r *resolver) target(t query.Target, tables map[string]Table) error {
 		if err != nil {
 			return fmt.Errorf("omnisdk: %s %s: %w", r.verb, alias, err)
 		}
-		if inBody {
-			r.body = append(r.body, name)
-		}
 		a = query.NewAssignment(name, a.Value())
+		if inBody {
+			// A body constant keeps its type; any other value arrives and is bound by name.
+			var constant any
+			if lit, ok := a.Value().(query.Literal); ok {
+				constant = lit.Value()
+			}
+			r.body[name] = constant
+			if constant != nil {
+				continue
+			}
+		}
 		switch v := a.Value().(type) {
 		case query.Literal:
 			if r.nodeParams[alias] == nil {
@@ -356,8 +364,8 @@ type resolver struct {
 	finals     []query.Output
 	// mutating is the target's alias in a mutation, and verb what it does; empty for a read.
 	mutating, verb string
-	// body is the target's inputs that are request body fields.
-	body []string
+	// body is the target's request-body fields, see Node.Body.
+	body map[string]any
 }
 
 type arrival struct{ from, src, as string }
@@ -646,7 +654,7 @@ func (r *resolver) build(sel []query.Output) (Resolution, error) {
 		if alias == r.mutating {
 			verb = r.verb
 		}
-		var body []string
+		var body map[string]any
 		if alias == r.mutating {
 			body = r.body
 		}

@@ -146,9 +146,11 @@ c: networks insert ──name→operation──▶ o: global_operations get (pol
 
 Three things make it expressible:
 
-- **`verb` and `body` on a node.** `c` runs the document's `insert` method, not a select. `body`
-  names which of its params are request-body fields (`name`); the rest (`project`) are parameters.
-  A mutating node is never retried or replayed.
+- **`verb` and `body` on a node.** `c` runs the document's `insert` method, not a select. `body` is
+  the request-body fields with their values, sent with their JSON types — `autoCreateSubnetworks` goes
+  as `false`, not `"false"`, and Google refuses a network insert without it. `params` (`project`) are
+  parameters. A mutating node is never retried or replayed, and a failure says whether the provider
+  rejected it (4xx) or its outcome is unknown.
 - **`poll` on an override.** It re-requests the exchange until `status_path` reads `done`, waiting
   `interval` between attempts, at most `max_attempts` times. Every bound is required.
 - **`patches` with a `doc_cache`.** The compute document declares the global-operation URL but no
@@ -168,6 +170,7 @@ takes responsibility for the output; in the SDK, `Args.Redaction` takes any poli
 This **creates a network** in `${_GOOGLE_PROJECT_ID}`.
 
 ```bash
+
 _now="$(date +%s)" && ./build/omnicli doc-graph test/corpus/registry '{
   "patches": [{
     "service": "stackql_unstable_google.compute",
@@ -185,7 +188,8 @@ _now="$(date +%s)" && ./build/omnicli doc-graph test/corpus/registry '{
   "doc_cache": {"dir": "./cicd/out/doc-cache"},
   "nodes": [
     {"alias": "c", "address": "stackql_unstable_google.compute.networks", "verb": "insert",
-     "params": {"project": "'"${_GOOGLE_PROJECT_ID}"'", "name": "omnisdk-demo-'"${_now}"'"}, "body": ["name"]},
+     "params": {"project": "'"${_GOOGLE_PROJECT_ID}"'"},
+     "body": {"name": "omnisdk-demo-'"${_now}"'", "autoCreateSubnetworks": false}},
     {"alias": "o", "address": "stackql_unstable_google.compute.global_operations",
      "params": {"project": "'"${_GOOGLE_PROJECT_ID}"'"}},
     {"alias": "n", "address": "stackql_unstable_google.compute.networks",
