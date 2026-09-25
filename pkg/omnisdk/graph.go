@@ -37,6 +37,11 @@ type Node interface {
 	// Fanout are inputs taking several values: the reference runs once per value, and once per
 	// combination where there are several — an IN list pushed down.
 	Fanout() map[string][]string
+	// Verb is what the reference does: "select", or "insert", "update" or "delete" for a mutation,
+	// whose request has an effect and whose rows are what it returns.
+	Verb() string
+	// Body names the inputs that are fields of the request body rather than parameters.
+	Body() []string
 }
 
 // NewNode declares one reference to an address. alias may be empty, meaning the address itself;
@@ -47,22 +52,32 @@ func NewNode(alias, address string, params map[string]string) Node {
 
 // NewFanoutNode declares a reference with multi-valued inputs as well. fanout may be nil.
 func NewFanoutNode(alias, address string, params map[string]string, fanout map[string][]string) Node {
+	return NewMutationNode(alias, address, "select", params, fanout, nil)
+}
+
+// NewMutationNode declares a reference running the methods of verb. A mutating verb's node is never
+// replayed and its requests are never retried: each would repeat the effect.
+// body names the inputs, from params, fanout or wirings, that are request body fields.
+func NewMutationNode(alias, address, verb string, params map[string]string, fanout map[string][]string, body []string) Node {
 	if alias == "" {
 		alias = address
 	}
-	return node{alias: alias, address: address, params: params, fanout: fanout}
+	return node{alias: alias, address: address, verb: verb, params: params, fanout: fanout, body: body}
 }
 
 type node struct {
-	alias, address string
-	params         map[string]string
-	fanout         map[string][]string
+	alias, address, verb string
+	params               map[string]string
+	fanout               map[string][]string
+	body                 []string
 }
 
 func (n node) Alias() string               { return n.alias }
 func (n node) Address() string             { return n.address }
 func (n node) Params() map[string]string   { return n.params }
 func (n node) Fanout() map[string][]string { return n.fanout }
+func (n node) Body() []string              { return n.body }
+func (n node) Verb() string                { return n.verb }
 
 // Inbound is one value arriving at a consumer: an attribute a producer emits, landing in the
 // consumer's inbox. It is a β edge stated from the consuming side, which is where a caller thinks
@@ -236,6 +251,8 @@ func NewGraphWithFilters(nodes []Node, wirings []Wiring, projections []Projectio
 			return nil, fmt.Errorf("omnisdk: alias %q contains a NUL byte", n.Alias())
 		case n.Address() == "":
 			return nil, fmt.Errorf("omnisdk: node %q has no address", n.Alias())
+		case !contains([]string{"select", "insert", "update", "delete"}, n.Verb()):
+			return nil, fmt.Errorf("omnisdk: node %q has unknown verb %q", n.Alias(), n.Verb())
 		case known[n.Alias()]:
 			return nil, fmt.Errorf("omnisdk: %q is referenced twice; give each reference an alias", n.Alias())
 		}
@@ -475,7 +492,7 @@ func NewGraphSelectQuery(dir string, g Graph, args Args) (Plan, error) {
 		if err != nil {
 			return nil, err
 		}
-		candidates, err := c.Operations(addr, "select")
+		candidates, err := c.Operations(addr, n.Verb())
 		if err != nil {
 			return nil, err
 		}
@@ -497,6 +514,14 @@ func NewGraphSelectQuery(dir string, g Graph, args Args) (Plan, error) {
 		}
 		if sec != nil {
 			opts = append(opts, docx.WithProviderSecurity(sec))
+		}
+		mutating := n.Verb() != "select"
+		if mutating {
+			// A mutation's reply is often undocumented; the effect is the point.
+			opts = append(opts, docx.WithoutResponseDecode())
+		}
+		if names := n.Body(); len(names) > 0 {
+			opts = append(opts, docx.WithBodyFields(names...))
 		}
 		if names := bound[alias]; len(names) > 0 {
 			opts = append(opts, docx.WithBound(names...))
@@ -559,7 +584,10 @@ func NewGraphSelectQuery(dir string, g Graph, args Args) (Plan, error) {
 			spec = plan.WithProject(spec, t)
 		}
 		// Nothing wired in means the same inputs for every upstream row: run once, replay the rest.
-		if _, consumer := wiringFor(g, alias); !consumer {
+		switch _, consumer := wiringFor(g, alias); {
+		case mutating:
+			spec = effect{ExchangeSpec: spec, alias: alias, verb: n.Verb()}
+		case !consumer:
 			spec = replayed{ExchangeSpec: spec}
 		}
 		if attrs := emits[alias]; len(attrs) > 0 {

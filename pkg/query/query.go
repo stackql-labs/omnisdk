@@ -12,14 +12,53 @@ package query
 
 import "fmt"
 
-// Unresolved is a whole query.
+// Unresolved is a whole query: a read, or a mutation that may also return rows. A mutation differs
+// from a read only in that its target's request has an effect; its RETURNING is its Select.
 type Unresolved interface {
-	// From is the resources in the order the query joins them. The first is the base.
+	// From is the resources in the order the query joins them. The first is the base. A mutation's
+	// From is where its values come from, and is empty for INSERT … VALUES.
 	From() []Join
-	// Where is the conjuncts applied after every join.
+	// Where is the conjuncts applied after every join. A mutation's may name its target.
 	Where() []Predicate
-	// Select is the projection, in output order.
+	// Select is the projection, in output order: a mutation's RETURNING.
 	Select() []Output
+	// Target is the resource a mutation changes; nil for a read.
+	Target() Target
+}
+
+// Verb is what a mutation does to its target.
+type Verb int
+
+const (
+	Insert Verb = iota + 1
+	Update
+	Delete
+)
+
+func (v Verb) String() string {
+	switch v {
+	case Insert:
+		return "insert"
+	case Update:
+		return "update"
+	case Delete:
+		return "delete"
+	}
+	return fmt.Sprintf("Verb(%d)", int(v))
+}
+
+// Target is a mutation's resource, what it does, and the values it sets.
+type Target interface {
+	Verb() Verb
+	Resource() Resource
+	// Set is INSERT's columns and values, or UPDATE's SET; empty for DELETE.
+	Set() []Assignment
+}
+
+// Assignment is one column set to a value, which may read the mutation's From.
+type Assignment interface {
+	Column() string
+	Value() Expr
 }
 
 // JoinForm is how a resource's rows combine with those before it.
@@ -163,6 +202,28 @@ func New(from []Join, where []Predicate, sel []Output) (Unresolved, error) {
 	if len(from) == 0 {
 		return nil, fmt.Errorf("query: no resources")
 	}
+	return build(nil, from, where, sel)
+}
+
+// NewMutation validates and returns a mutation. Its values may read from; its WHERE and RETURNING
+// may also name the target.
+func NewMutation(t Target, from []Join, where []Predicate, returning []Output) (Unresolved, error) {
+	switch {
+	case t == nil:
+		return nil, fmt.Errorf("query: a mutation needs a target")
+	case t.Verb() != Insert && t.Verb() != Update && t.Verb() != Delete:
+		return nil, fmt.Errorf("query: unknown verb %s", t.Verb())
+	case t.Resource().Alias() == "":
+		return nil, fmt.Errorf("query: the target has neither an alias nor a handle")
+	case t.Verb() == Delete && len(t.Set()) > 0:
+		return nil, fmt.Errorf("query: a delete sets nothing")
+	case t.Verb() != Delete && len(t.Set()) == 0:
+		return nil, fmt.Errorf("query: an %s sets no columns", t.Verb())
+	}
+	return build(t, from, where, returning)
+}
+
+func build(t Target, from []Join, where []Predicate, sel []Output) (Unresolved, error) {
 	scope := map[string]bool{}
 	for i, j := range from {
 		switch {
@@ -182,6 +243,27 @@ func New(from []Join, where []Predicate, sel []Output) (Unresolved, error) {
 				return nil, fmt.Errorf("query: ON of %s: %w", j.Resource().Alias(), err)
 			}
 		}
+	}
+	if t != nil {
+		alias := t.Resource().Alias()
+		if scope[alias] {
+			return nil, fmt.Errorf("query: %q is both the target and a source; give each reference an alias", alias)
+		}
+		// Values read the sources, never the row being written.
+		cols := map[string]bool{}
+		for _, a := range t.Set() {
+			switch {
+			case a.Column() == "":
+				return nil, fmt.Errorf("query: an assignment names no column")
+			case cols[a.Column()]:
+				return nil, fmt.Errorf("query: %q is set twice", a.Column())
+			}
+			cols[a.Column()] = true
+			if err := exprInScope(a.Value(), scope); err != nil {
+				return nil, fmt.Errorf("query: %s = …: %w", a.Column(), err)
+			}
+		}
+		scope[alias] = true
 	}
 	for _, p := range where {
 		if err := inScope(p, scope); err != nil {
@@ -207,7 +289,7 @@ func New(from []Join, where []Predicate, sel []Output) (Unresolved, error) {
 			return nil, fmt.Errorf("query: output %q: %w", o.Name(), err)
 		}
 	}
-	return unresolved{from: from, where: where, sel: sel}, nil
+	return unresolved{from: from, where: where, sel: sel, target: t}, nil
 }
 
 func inScope(p Predicate, scope map[string]bool) error {
@@ -259,14 +341,47 @@ func exprInScope(e Expr, scope map[string]bool) error {
 }
 
 type unresolved struct {
-	from  []Join
-	where []Predicate
-	sel   []Output
+	from   []Join
+	where  []Predicate
+	sel    []Output
+	target Target
 }
+
+func (u unresolved) Target() Target { return u.target }
 
 func (u unresolved) From() []Join       { return u.from }
 func (u unresolved) Where() []Predicate { return u.where }
 func (u unresolved) Select() []Output   { return u.sel }
+
+// NewInsert targets r with INSERT; set is its columns and values.
+func NewInsert(r Resource, set ...Assignment) Target { return target{verb: Insert, r: r, set: set} }
+
+// NewUpdate targets r with UPDATE … SET.
+func NewUpdate(r Resource, set ...Assignment) Target { return target{verb: Update, r: r, set: set} }
+
+// NewDelete targets r with DELETE.
+func NewDelete(r Resource) Target { return target{verb: Delete, r: r} }
+
+type target struct {
+	verb Verb
+	r    Resource
+	set  []Assignment
+}
+
+func (t target) Verb() Verb         { return t.verb }
+func (t target) Resource() Resource { return t.r }
+func (t target) Set() []Assignment  { return t.set }
+
+// NewAssignment sets column to value.
+func NewAssignment(column string, value Expr) Assignment { return assignment{col: column, v: value} }
+
+type assignment struct {
+	col string
+	v   Expr
+}
+
+func (a assignment) Column() string { return a.col }
+func (a assignment) Value() Expr    { return a.v }
 
 // NewResource references a resource. An empty alias is the handle, as an unaliased SQL table is
 // referenced by its own name.

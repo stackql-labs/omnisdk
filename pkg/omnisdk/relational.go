@@ -6,12 +6,14 @@ import (
 	"fmt"
 	"strconv"
 	"sync"
+	"time"
 
 	"github.com/stackql-labs/omnisdk/internal/system_g/bind"
 	"github.com/stackql-labs/omnisdk/internal/system_g/buffer"
 	"github.com/stackql-labs/omnisdk/internal/system_g/facade"
 	"github.com/stackql-labs/omnisdk/internal/system_g/fn"
 	"github.com/stackql-labs/omnisdk/internal/system_g/plan"
+	"github.com/stackql-labs/omnisdk/internal/system_g/retry"
 	"github.com/stackql-labs/omnisdk/pkg/query"
 )
 
@@ -441,3 +443,41 @@ func (o outputTransform) Apply(in facade.Page) (facade.Record, error) {
 	}
 	return bind.NewDocRecord(out), nil
 }
+
+// effect is a mutation node. Its requests are never retried, whatever the run's policy: a retry
+// after a request that reached the provider repeats the effect. A failure is reported as possibly
+// applied, since a transport error says nothing about whether the provider acted.
+type effect struct {
+	plan.ExchangeSpec
+	alias, verb string
+}
+
+func (e effect) Make(bound map[string]any) facade.Operator {
+	return effectOp{inner: e.ExchangeSpec.Make(bound), alias: e.alias, verb: e.verb}
+}
+
+type effectOp struct {
+	inner       facade.Operator
+	alias, verb string
+}
+
+func (o effectOp) Open(ctx context.Context) facade.Records {
+	return effectRecords{Records: o.inner.Open(retry.WithPolicy(ctx, never{})), op: o}
+}
+
+type effectRecords struct {
+	facade.Records
+	op effectOp
+}
+
+func (r effectRecords) Err() error {
+	if err := r.Records.Err(); err != nil {
+		return fmt.Errorf("omnisdk: %s %s may or may not have taken effect: %w", r.op.verb, r.op.alias, err)
+	}
+	return nil
+}
+
+// never is a retry policy that never retries.
+type never struct{}
+
+func (never) Recover(context.Context, facade.Attempt) (time.Duration, bool) { return 0, false }

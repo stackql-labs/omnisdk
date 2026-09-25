@@ -2,7 +2,9 @@ package omnisdk_test
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"reflect"
@@ -150,6 +152,17 @@ func iamStub(t *testing.T) *httptest.Server {
 			fmt.Fprint(w, `<ListUsersResponse><ListUsersResult><Users>`+
 				`<member><UserName>alice</UserName></member><member><UserName>bob</UserName></member>`+
 				`</Users></ListUsersResult></ListUsersResponse>`)
+		case "CreateUser":
+			if r.Form.Get("UserName") == "fail" {
+				http.Error(w, "internal", http.StatusInternalServerError)
+				return
+			}
+			fmt.Fprintf(w, `<CreateUserResponse><CreateUserResult><User><UserName>%s</UserName><Arn>arn:aws:iam::1:user/%s</Arn></User></CreateUserResult></CreateUserResponse>`,
+				r.Form.Get("UserName"), r.Form.Get("UserName"))
+		case "UpdateUser":
+			fmt.Fprint(w, `<UpdateUserResponse><ResponseMetadata><RequestId>r</RequestId></ResponseMetadata></UpdateUserResponse>`)
+		case "DeleteUser":
+			fmt.Fprint(w, `<DeleteUserResponse><ResponseMetadata><RequestId>r</RequestId></ResponseMetadata></DeleteUserResponse>`)
 		case "GetUser":
 			fmt.Fprintf(w, `<GetUserResponse><GetUserResult><User><UserName>%s</UserName></User></GetUserResult></GetUserResponse>`,
 				r.Form.Get("UserName"))
@@ -250,6 +263,16 @@ func TestRealWorldQueryEndToEnd(t *testing.T) {
 // the IAM calls made as "action|signing region".
 func runQuery(t *testing.T, q query.Unresolved) ([]string, []string) {
 	t.Helper()
+	rows, made, err := tryQuery(t, q)
+	if err != nil {
+		t.Fatalf("rows: %v", err)
+	}
+	return rows, made
+}
+
+// tryQuery is runQuery returning the run's error rather than failing on it.
+func tryQuery(t *testing.T, q query.Unresolved) (got []string, made []string, runErr error) {
+	t.Helper()
 	requireCorpus(t)
 	t.Setenv("AWS_ACCESS_KEY_ID", "AKIATEST")
 	t.Setenv("AWS_SECRET_ACCESS_KEY", "secret")
@@ -258,7 +281,11 @@ func runQuery(t *testing.T, q query.Unresolved) ([]string, []string) {
 	defer stub.Close()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_ = r.ParseForm()
-		seen.add(r.Form.Get("Action") + "|" + signingRegion(r.Header.Get("Authorization")))
+		call := r.Form.Get("Action") + "|" + signingRegion(r.Header.Get("Authorization"))
+		if strings.HasSuffix(r.Form.Get("Action"), "User") && r.Form.Get("Action") != "GetUser" {
+			call += "|" + r.Form.Get("UserName") + r.Form.Get("NewPath")
+		}
+		seen.add(call)
 		stub.Config.Handler.ServeHTTP(w, r)
 	}))
 	defer srv.Close()
@@ -271,6 +298,14 @@ func runQuery(t *testing.T, q query.Unresolved) ([]string, []string) {
 			t.Fatalf("describe: %v", err)
 		}
 		tables[j.Resource().Alias()] = tbl
+	}
+	if tg := q.Target(); tg != nil {
+		_, rest, _ := strings.Cut(tg.Resource().Handle(), ".")
+		tbl, err := omnisdk.DescribeMutation(corpus, "stackql_unstable_aws."+rest, tg.Verb().String())
+		if err != nil {
+			t.Fatalf("describe target: %v", err)
+		}
+		tables[tg.Resource().Alias()] = tbl
 	}
 	res, err := omnisdk.Resolve(q, tables)
 	if err != nil {
@@ -285,7 +320,6 @@ func runQuery(t *testing.T, q query.Unresolved) ([]string, []string) {
 		t.Fatalf("open: %v", err)
 	}
 	defer rows.Close()
-	var got []string
 	for rows.Next() {
 		var cols []string
 		for k, v := range rows.Row() {
@@ -294,13 +328,11 @@ func runQuery(t *testing.T, q query.Unresolved) ([]string, []string) {
 		sort.Strings(cols)
 		got = append(got, strings.Join(cols, ","))
 	}
-	if err := rows.Err(); err != nil {
-		t.Fatalf("rows: %v", err)
-	}
+	runErr = rows.Err()
 	sort.Strings(got)
-	made := seen.matching("")
+	made = seen.matching("")
 	sort.Strings(made)
-	return got, made
+	return got, made, runErr
 }
 
 func mustQuery(t *testing.T, from []query.Join, where []query.Predicate, sel []query.Output) query.Unresolved {
@@ -517,5 +549,191 @@ func TestStarOverASelfJoinIsAmbiguous(t *testing.T) {
 	}
 	if _, err := omnisdk.Resolve(q, map[string]omnisdk.Table{"a": tbl, "b": tbl}); err == nil {
 		t.Error("resolved a star whose columns collide")
+	}
+}
+
+func users(alias string) query.Resource { return query.NewResource(alias, "aws.iam.users") }
+
+func regionEq() query.Predicate {
+	return query.NewEq(query.NewColumn("", "region"), query.NewLiteral("us-east-1"))
+}
+
+func mustMutation(t *testing.T, tg query.Target, from []query.Join, where []query.Predicate, ret []query.Output) query.Unresolved {
+	t.Helper()
+	q, err := query.NewMutation(tg, from, where, ret)
+	if err != nil {
+		t.Fatalf("mutation: %v", err)
+	}
+	return q
+}
+
+// INSERT INTO aws.iam.users (UserName) VALUES ('carol') RETURNING UserName, Arn
+func TestInsertValuesReturning(t *testing.T) {
+	q := mustMutation(t,
+		query.NewInsert(users("t"), query.NewAssignment("UserName", query.NewLiteral("carol"))),
+		nil, []query.Predicate{regionEq()},
+		[]query.Output{
+			query.NewOutput("UserName", query.NewColumn("t", "UserName")),
+			query.NewOutput("Arn", query.NewColumn("t", "Arn")),
+		},
+	)
+	rows, made := runQuery(t, q)
+	if want := []string{"Arn=arn:aws:iam::1:user/carol,UserName=carol"}; !reflect.DeepEqual(rows, want) {
+		t.Errorf("rows = %v, want %v", rows, want)
+	}
+	if want := []string{"CreateUser|us-east-1|carol"}; !reflect.DeepEqual(made, want) {
+		t.Errorf("calls = %v, want %v", made, want)
+	}
+}
+
+// INSERT INTO aws.iam.users (UserName) SELECT split_part(u.UserName, 'l', 1) FROM aws.iam.users u
+// One effect per source row, each value computed on the source before it travels the edge.
+func TestInsertSelect(t *testing.T) {
+	q := mustMutation(t,
+		query.NewInsert(users("t"), query.NewAssignment("UserName",
+			query.NewCall("split_part", query.NewColumn("u", "UserName"), query.NewLiteral("l"), query.NewLiteral(1)))),
+		[]query.Join{query.NewJoin(users("u"), query.Base)},
+		[]query.Predicate{regionEq()},
+		nil,
+	)
+	_, made := runQuery(t, q)
+	want := []string{"CreateUser|us-east-1|a", "CreateUser|us-east-1|bob", "ListUsers|us-east-1"}
+	if !reflect.DeepEqual(made, want) {
+		t.Errorf("calls = %v, want %v", made, want)
+	}
+}
+
+// UPDATE aws.iam.users SET NewPath = '/x/' WHERE UserName IN ('alice', 'bob')
+func TestUpdateFansOutOverItsWhere(t *testing.T) {
+	q := mustMutation(t,
+		query.NewUpdate(users("t"), query.NewAssignment("NewPath", query.NewLiteral("/x/"))),
+		nil,
+		[]query.Predicate{regionEq(), query.NewIn(query.NewColumn("t", "UserName"),
+			query.NewCollection(query.NewLiteral("alice"), query.NewLiteral("bob")))},
+		nil,
+	)
+	_, made := runQuery(t, q)
+	if want := []string{"UpdateUser|us-east-1|alice/x/", "UpdateUser|us-east-1|bob/x/"}; !reflect.DeepEqual(made, want) {
+		t.Errorf("calls = %v, want %v", made, want)
+	}
+}
+
+// DELETE FROM aws.iam.users WHERE UserName = 'alice'
+func TestDelete(t *testing.T) {
+	q := mustMutation(t, query.NewDelete(users("t")), nil,
+		[]query.Predicate{regionEq(), query.NewEq(query.NewColumn("", "UserName"), query.NewLiteral("alice"))},
+		nil,
+	)
+	_, made := runQuery(t, q)
+	if want := []string{"DeleteUser|us-east-1|alice"}; !reflect.DeepEqual(made, want) {
+		t.Errorf("calls = %v, want %v", made, want)
+	}
+}
+
+// A failed effect is sent once, never retried, and reported as possibly applied.
+func TestFailedEffectIsNotRetried(t *testing.T) {
+	q := mustMutation(t,
+		query.NewInsert(users("t"), query.NewAssignment("UserName", query.NewLiteral("fail"))),
+		nil, []query.Predicate{regionEq()}, nil,
+	)
+	_, made, err := tryQuery(t, q)
+	if err == nil || !strings.Contains(err.Error(), "may or may not have taken effect") {
+		t.Errorf("err = %v, want the outcome reported as unknown", err)
+	}
+	if want := []string{"CreateUser|us-east-1|fail"}; !reflect.DeepEqual(made, want) {
+		t.Errorf("calls = %v, want exactly one attempt", made)
+	}
+}
+
+// DELETE FROM aws.iam.users WHERE Path <> '/keep/'
+// Path is no parameter of delete_user: the condition could only be checked after the effect.
+func TestMutationRefusesAConditionItCannotTake(t *testing.T) {
+	requireCorpus(t)
+	q := mustMutation(t, query.NewDelete(users("t")), nil,
+		[]query.Predicate{query.NewCompare(query.Ne, query.NewColumn("t", "Path"), query.NewLiteral("/keep/"))},
+		nil,
+	)
+	tbl, err := omnisdk.DescribeMutation(corpus, iamUsers, "delete")
+	if err != nil {
+		t.Fatalf("describe: %v", err)
+	}
+	if _, err := omnisdk.Resolve(q, map[string]omnisdk.Table{"t": tbl}); err == nil {
+		t.Error("resolved a delete whose condition would apply after the effect")
+	}
+}
+
+// INSERT INTO google.storage.buckets (project, name, location) VALUES ('demo', 'my-bucket', 'US')
+// RETURNING name, location
+// project is a declared query parameter. name and location are declared nowhere: the method takes a
+// JSON body, so they are its fields. RETURNING reads the created bucket.
+func TestInsertIntoAJSONBody(t *testing.T) {
+	requireCorpus(t)
+	t.Setenv("GOOGLE_CREDENTIALS", serviceAccountKey(t))
+	var method, rawQuery, body string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if strings.Contains(r.URL.Path, "/token") {
+			fmt.Fprint(w, `{"access_token":"tok","expires_in":3600}`)
+			return
+		}
+		b, _ := io.ReadAll(r.Body)
+		method, rawQuery, body = r.Method, r.URL.RawQuery, string(b)
+		fmt.Fprint(w, `{"kind":"storage#bucket","id":"my-bucket","name":"my-bucket","location":"US"}`)
+	}))
+	defer srv.Close()
+
+	const address = "stackql_unstable_google.storage.buckets"
+	q := mustMutation(t,
+		query.NewInsert(query.NewResource("b", "google.storage.buckets"),
+			query.NewAssignment("project", query.NewLiteral("demo")),
+			query.NewAssignment("name", query.NewLiteral("my-bucket")),
+			query.NewAssignment("location", query.NewLiteral("US")),
+		),
+		nil, nil,
+		[]query.Output{
+			query.NewOutput("name", query.NewColumn("b", "name")),
+			query.NewOutput("location", query.NewColumn("b", "location")),
+		},
+	)
+	tbl, err := omnisdk.DescribeMutation(corpus, address, "insert")
+	if err != nil {
+		t.Fatalf("describe: %v", err)
+	}
+	res, err := omnisdk.Resolve(q, map[string]omnisdk.Table{"b": tbl})
+	if err != nil {
+		t.Fatalf("resolve: %v", err)
+	}
+	pl, err := omnisdk.NewGraphSelectQuery(corpus, res.Graph(), omnisdk.Args{Endpoint: srv.URL, Params: res.Params()})
+	if err != nil {
+		t.Fatalf("plan: %v", err)
+	}
+	rows, err := pl.Open(context.Background())
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	defer rows.Close()
+	var got []omnisdk.Row
+	for rows.Next() {
+		got = append(got, rows.Row())
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatalf("rows: %v", err)
+	}
+
+	if method != http.MethodPost {
+		t.Errorf("method = %q, want POST", method)
+	}
+	var sent map[string]any
+	if err := json.Unmarshal([]byte(body), &sent); err != nil {
+		t.Fatalf("body %q is not JSON: %v", body, err)
+	}
+	if sent["name"] != "my-bucket" || sent["location"] != "US" {
+		t.Errorf("body = %s, want name and location as its fields", body)
+	}
+	if !strings.Contains(rawQuery, "project=demo") || strings.Contains(rawQuery, "my-bucket") {
+		t.Errorf("query = %q, want project there and the body fields not", rawQuery)
+	}
+	if len(got) != 1 || got[0]["name"] != "my-bucket" || got[0]["location"] != "US" {
+		t.Errorf("rows = %v, want the created bucket", got)
 	}
 }

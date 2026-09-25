@@ -96,3 +96,44 @@ func TestNewRejectsWhatTheQueryGetsWrong(t *testing.T) {
 		})
 	}
 }
+
+func TestNewMutationRejectsWhatTheQueryGetsWrong(t *testing.T) {
+	u := query.NewResource("u", "aws.iam.users")
+	set := query.NewAssignment("UserName", query.NewLiteral("a"))
+	cases := map[string]struct {
+		tg   query.Target
+		from []query.Join
+	}{
+		"no target":                 {},
+		"a delete that sets":        {tg: query.NewDelete(u)},
+		"an insert setting nothing": {tg: query.NewInsert(u)},
+		"target is also a source":   {tg: query.NewInsert(u, set), from: []query.Join{query.NewJoin(u, query.Base)}},
+		"a value reads the target":  {tg: query.NewInsert(u, query.NewAssignment("UserName", query.NewColumn("u", "UserName")))},
+		"a column set twice":        {tg: query.NewUpdate(u, set, set)},
+	}
+	cases["a delete that sets"] = struct {
+		tg   query.Target
+		from []query.Join
+	}{tg: deleteSetting(u, set)}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			if _, err := query.NewMutation(tc.tg, tc.from, nil, nil); err == nil {
+				t.Error("accepted")
+			}
+		})
+	}
+}
+
+// deleteSetting is a Target no constructor makes: a delete carrying assignments.
+func deleteSetting(r query.Resource, set ...query.Assignment) query.Target {
+	return badTarget{r: r, set: set}
+}
+
+type badTarget struct {
+	r   query.Resource
+	set []query.Assignment
+}
+
+func (b badTarget) Verb() query.Verb         { return query.Delete }
+func (b badTarget) Resource() query.Resource { return b.r }
+func (b badTarget) Set() []query.Assignment  { return b.set }

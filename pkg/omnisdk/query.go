@@ -6,6 +6,7 @@ import (
 
 	"github.com/stackql-labs/omnisdk/internal/system_g/fn"
 	"github.com/stackql-labs/omnisdk/pkg/docparse/aot"
+	"github.com/stackql-labs/omnisdk/pkg/namespace"
 	"github.com/stackql-labs/omnisdk/pkg/query"
 )
 
@@ -23,21 +24,38 @@ type MethodSignature interface {
 	Params() []ParamSignature
 	// Columns are the row's declared properties, empty where the document states no schema.
 	Columns() []string
+	// TakesBody reports whether the method sends a request body. Its fields are the caller's to
+	// name: a document states a body's encoding, not its fields.
+	TakesBody() bool
 }
 
 // ParamSignature is one declared input.
 type ParamSignature interface {
 	Name() string
 	Required() bool
+	// In is where it goes on the wire: query, path, header or body.
+	In() string
 }
 
-// DescribeTable reads what the documents under dir say about an address.
-func DescribeTable(dir, address string) (Table, error) {
+// DescribeTable reads what the documents under dir say about an address's reads.
+func DescribeTable(dir, address string) (Table, error) { return describeTable(dir, address, "select") }
+
+// DescribeMutation reads what the documents under dir say about an address's methods for a
+// mutating verb: "insert", "update" or "delete".
+func DescribeMutation(dir, address, verb string) (Table, error) {
+	switch verb {
+	case "insert", "update", "delete":
+		return describeTable(dir, address, verb)
+	}
+	return nil, fmt.Errorf("omnisdk: %q is not a mutating verb", verb)
+}
+
+func describeTable(dir, address, verb string) (Table, error) {
 	c, err := openDocs(dir, address)
 	if err != nil {
 		return nil, err
 	}
-	ops, err := c.Operations(address, "select")
+	ops, err := c.Operations(address, verb)
 	if err != nil {
 		return nil, err
 	}
@@ -58,7 +76,8 @@ func (t table) Methods() []MethodSignature { return t.methods }
 
 type docSignature struct{ ex aot.AOTExchange }
 
-func (s docSignature) Method() string { return s.ex.Name() }
+func (s docSignature) Method() string  { return s.ex.Name() }
+func (s docSignature) TakesBody() bool { return s.ex.Request().BodyMediaType() != "" }
 
 func (s docSignature) Params() []ParamSignature {
 	var out []ParamSignature
@@ -130,6 +149,11 @@ func Resolve(q query.Unresolved, tables map[string]Table) (Resolution, error) {
 		// Under an inner join ON and WHERE are the same filter.
 		conjuncts = append(conjuncts, j.On()...)
 	}
+	if t := q.Target(); t != nil {
+		if err := r.target(t, tables); err != nil {
+			return nil, err
+		}
+	}
 	conjuncts = append(conjuncts, q.Where()...)
 
 	// Constant bindings first: they decide what each table can run without the others.
@@ -154,11 +178,113 @@ func Resolve(q query.Unresolved, tables map[string]Table) (Resolution, error) {
 			}
 		}
 	}
+	if r.mutating != "" && len(q.From()) > 0 {
+		if _, fed := r.arrivals[r.mutating]; !fed {
+			return nil, fmt.Errorf("omnisdk: nothing from the sources reaches %s; the effect would repeat once per source row", r.mutating)
+		}
+	}
 	sel, err := r.expand(q.Select())
 	if err != nil {
 		return nil, err
 	}
 	return r.build(sel)
+}
+
+// target places a mutation's resource as the last node, running its verb's methods, and binds
+// what it sets: a literal is a parameter, a source's column or a function of one is an edge.
+func (r *resolver) target(t query.Target, tables map[string]Table) error {
+	alias := t.Resource().Alias()
+	tbl, ok := tables[alias]
+	if !ok {
+		return fmt.Errorf("omnisdk: no table described for %q", alias)
+	}
+	r.tables[alias] = tbl
+	r.order = append(r.order, alias)
+	r.mutating, r.verb = alias, t.Verb().String()
+	ns, err := requestNamespace(tbl)
+	if err != nil {
+		return fmt.Errorf("omnisdk: %s %s: %w", r.verb, alias, err)
+	}
+	for _, a := range t.Set() {
+		name, inBody, err := placeAssignment(ns, tbl, a.Column())
+		if err != nil {
+			return fmt.Errorf("omnisdk: %s %s: %w", r.verb, alias, err)
+		}
+		if inBody {
+			r.body = append(r.body, name)
+		}
+		a = query.NewAssignment(name, a.Value())
+		switch v := a.Value().(type) {
+		case query.Literal:
+			if r.nodeParams[alias] == nil {
+				r.nodeParams[alias] = map[string]string{}
+			}
+			r.nodeParams[alias][a.Column()] = fmt.Sprint(v.Value())
+		case query.Column:
+			c, err := r.qualify(v)
+			if err != nil {
+				return fmt.Errorf("omnisdk: %s = …: %w", a.Column(), err)
+			}
+			if c.Qualifier() == alias {
+				return fmt.Errorf("omnisdk: %s = %s reads the row being written", a.Column(), describeExpr(v))
+			}
+			r.arrive(alias, arrival{from: c.Qualifier(), src: kept(c.Name()), as: a.Column()})
+			r.keep(c.Qualifier(), c.Name())
+		case query.Call:
+			from, x, err := r.projected(v)
+			if err != nil || from == alias {
+				return fmt.Errorf("omnisdk: %s = %s: a value must read exactly one source", a.Column(), describeExpr(v))
+			}
+			name := computed(len(r.computed[from]))
+			r.computed[from] = append(r.computed[from], NewSelectColumn(name, x))
+			r.arrive(alias, arrival{from: from, src: name, as: a.Column()})
+		default:
+			return fmt.Errorf("omnisdk: %s = %s cannot be set", a.Column(), describeExpr(a.Value()))
+		}
+	}
+	return nil
+}
+
+// requestNamespace is the vocabulary a mutation writes into: every parameter its methods declare,
+// in the space the document puts it. A name two spaces claim is ambiguous and must be qualified.
+func requestNamespace(t Table) (namespace.Namespace, error) {
+	seen := map[string]bool{}
+	var attrs []namespace.Attribute
+	for _, m := range t.Methods() {
+		for _, p := range m.Params() {
+			a := namespace.New(namespace.Space(p.In()), p.Name())
+			if !seen[a.Qualified()] {
+				seen[a.Qualified()] = true
+				attrs = append(attrs, a)
+			}
+		}
+	}
+	return namespace.Build(attrs)
+}
+
+// placeAssignment resolves the column an assignment writes: a declared parameter, or a field of the
+// request body. The namespace is built ambiguity-free, so a name it cannot resolve is one no
+// parameter declares; that is a body field where the method takes a body, and has nowhere to go
+// where it does not. It returns the name as the wire knows it.
+func placeAssignment(ns namespace.Namespace, t Table, column string) (string, bool, error) {
+	if a, err := ns.Resolve(column); err == nil {
+		return a.Name(), a.Space() == namespace.Body, nil
+	}
+	name := strings.TrimPrefix(column, string(namespace.Body)+".")
+	for _, m := range t.Methods() {
+		if m.TakesBody() {
+			return name, true, nil
+		}
+	}
+	return "", false, fmt.Errorf("%q is not a parameter, and the method takes no request body", column)
+}
+
+// arrive records a value wired into a node.
+func (r *resolver) arrive(to string, a arrival) {
+	if _, seen := r.arrivals[to]; !seen {
+		r.consumers = append(r.consumers, to)
+	}
+	r.arrivals[to] = append(r.arrivals[to], a)
 }
 
 // expand replaces each star with the columns its tables' documents declare, named by column. A
@@ -228,6 +354,10 @@ type resolver struct {
 	computed   map[string][]SelectColumn
 	filters    []query.Predicate
 	finals     []query.Output
+	// mutating is the target's alias in a mutation, and verb what it does; empty for a read.
+	mutating, verb string
+	// body is the target's inputs that are request body fields.
+	body []string
 }
 
 type arrival struct{ from, src, as string }
@@ -291,7 +421,7 @@ func (r *resolver) bindConstant(p query.Predicate) (bool, error) {
 		}
 		r.fanout[alias][col.Name()] = values
 	}
-	if hasColumn(r.tables[alias], col.Name()) {
+	if r.mutating == "" && hasColumn(r.tables[alias], col.Name()) {
 		if err := r.filter(p); err != nil {
 			return false, err
 		}
@@ -339,12 +469,15 @@ func (r *resolver) bindJoin(p query.Predicate) (bool, error) {
 	default:
 		return false, nil
 	}
+	if from.Qualifier() == r.mutating {
+		return false, fmt.Errorf("omnisdk: %s: %s would need a value the %s returns, after its effect", describe(c), to.Qualifier(), r.verb)
+	}
 	if _, seen := r.arrivals[to.Qualifier()]; !seen {
 		r.consumers = append(r.consumers, to.Qualifier())
 	}
 	r.arrivals[to.Qualifier()] = append(r.arrivals[to.Qualifier()], arrival{from: from.Qualifier(), src: kept(from.Name()), as: to.Name()})
 	r.keep(from.Qualifier(), from.Name())
-	if hasColumn(r.tables[to.Qualifier()], to.Name()) {
+	if r.mutating == "" && hasColumn(r.tables[to.Qualifier()], to.Name()) {
 		if err := r.filter(c); err != nil {
 			return false, err
 		}
@@ -376,7 +509,7 @@ func (r *resolver) bindComputed(c query.Compare, col query.Column, e query.Expr)
 		r.consumers = append(r.consumers, col.Qualifier())
 	}
 	r.arrivals[col.Qualifier()] = append(r.arrivals[col.Qualifier()], arrival{from: from, src: name, as: col.Name()})
-	if hasColumn(r.tables[col.Qualifier()], col.Name()) {
+	if r.mutating == "" && hasColumn(r.tables[col.Qualifier()], col.Name()) {
 		if err := r.filter(c); err != nil {
 			return false, err
 		}
@@ -387,6 +520,9 @@ func (r *resolver) bindComputed(c query.Compare, col query.Column, e query.Expr)
 // filter adds a condition on the returned rows, with its columns qualified and pointed at the
 // names their nodes keep them under.
 func (r *resolver) filter(p query.Predicate) error {
+	if r.mutating != "" {
+		return fmt.Errorf("omnisdk: %s: in a mutation this could only be checked on rows, after the effect; it must be a parameter the methods take", describe(p))
+	}
 	q, err := r.rewrite(p)
 	if err != nil {
 		return fmt.Errorf("omnisdk: %s: %w", describe(p), err)
@@ -506,7 +642,15 @@ func (r *resolver) build(sel []query.Output) (Resolution, error) {
 	var nodes []Node
 	var projections []Projection
 	for _, alias := range r.order {
-		nodes = append(nodes, NewFanoutNode(alias, r.tables[alias].Address(), r.nodeParams[alias], r.fanout[alias]))
+		verb := "select"
+		if alias == r.mutating {
+			verb = r.verb
+		}
+		var body []string
+		if alias == r.mutating {
+			body = r.body
+		}
+		nodes = append(nodes, NewMutationNode(alias, r.tables[alias].Address(), verb, r.nodeParams[alias], r.fanout[alias], body))
 		cols := byAlias[alias]
 		// A column an edge or a filter reads is kept whether or not the query selected it: the
 		// projection replaces the row, and they read it afterwards. Kept under a hidden name, so it

@@ -60,6 +60,8 @@ type options struct {
 	provided map[string]bool
 	// body is a document sent whole, for an operation that declares a request body.
 	body []byte
+	// bodyFields are values placed as fields of the request body, each bound per row.
+	bodyFields map[string]bool
 	// inbox names values T_in CONSUMES. They are bound — a producer emits each one — but never
 	// placed: they are raw material for the transform, not parameters the service has heard of.
 	inbox map[string]bool
@@ -187,6 +189,20 @@ func WithProvided(names ...string) Option {
 // what encoding; what goes in it is supplied whole.
 func WithBody(doc []byte) Option {
 	return func(o *options) { o.body = doc }
+}
+
+// WithBodyFields places named values as fields of the request body, bound per row like any input.
+// It exists because a document states that an operation takes a body and in what encoding, but not
+// the body's fields: a caller writing one names them, and they go into the body rather than the query.
+func WithBodyFields(names ...string) Option {
+	return func(o *options) {
+		if o.bodyFields == nil {
+			o.bodyFields = map[string]bool{}
+		}
+		for _, n := range names {
+			o.bodyFields[n] = true
+		}
+	}
 }
 
 // WithInbox declares values the consumer's inbound transform consumes. They are bound so a producer
@@ -404,6 +420,21 @@ func Spec(ex aot.AOTExchange, inputs map[string]any, reg dsl.Registry, opts ...O
 			continue
 		}
 		bindings = withInput(bindings, p.Name())
+	}
+	// Body fields the caller names go into the body, in the encoding the document states for it.
+	for name := range o.bodyFields {
+		if placed[name] {
+			continue
+		}
+		if req.BodyMediaType() == "" {
+			return nil, fmt.Errorf("docx: exchange %q takes no request body, so %q has nowhere to go", ex.Name(), name)
+		}
+		if hreq.Body.Params == nil {
+			hreq.Body = httpx.Body{Encoding: bodyEncoding(req.BodyMediaType()), Params: map[string]any{}}
+		}
+		hreq.Body.Params[name] = "{" + name + "}"
+		placed[name] = true
+		bindings = withInput(bindings, name)
 	}
 	// A name the document does not declare is placed anyway when the caller asked for it. The caller
 	// is asserting the wire shape, exactly as an override asserts the response shape: AWS's Query API
