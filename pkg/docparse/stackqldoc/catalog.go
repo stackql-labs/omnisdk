@@ -14,7 +14,35 @@ import (
 // Option configures how a bundle is resolved.
 type Option func(*settings)
 
-type settings struct{ prefix string }
+type settings struct {
+	prefix string
+	docs   DocCache
+	docKey string
+}
+
+// DocCache holds parsed service documents across catalogs. A parsed document is read-only, so one
+// entry serves every concurrent reader.
+type DocCache interface {
+	Get(key string) (Doc, bool)
+	Put(key string, d Doc, cost int64)
+}
+
+// WithDocCache keeps parsed documents in c, keyed under root — the directory the documents are
+// read from. Two views of a registry are two roots, so a client's patched documents never serve
+// another client. A document's key includes its size and modification time, so a rewritten file is
+// parsed afresh.
+func WithDocCache(c DocCache, root string) Option {
+	return func(s *settings) { s.docs, s.docKey = c, root }
+}
+
+// underKey places a catalog's documents beneath its directory within the cache's root.
+func underKey(dir string) Option {
+	return func(s *settings) { s.docKey = path.Join(s.docKey, dir) }
+}
+
+// docCost estimates a parsed document's footprint from its source size: decoded YAML carries
+// several times its text in node and map overhead.
+const docCost = 4
 
 // WithProviderPrefix sets the namespace document-derived addresses live under. Empty means none — a
 // caller that treats the documents as authoritative can drop it deliberately, which is different from
@@ -43,7 +71,8 @@ func Open(fsys fs.FS, opts ...Option) (aot.Catalog, error) {
 	if err != nil {
 		return nil, err
 	}
-	c := &catalog{fsys: fsys, provider: p, files: map[string]string{}, prefix: resolveSettings(opts).prefix}
+	st := resolveSettings(opts)
+	c := &catalog{fsys: fsys, provider: p, files: map[string]string{}, prefix: st.prefix, docs: st.docs, docKey: st.docKey}
 	// A provider lists every service it could offer; only those whose document is present here are
 	// addressable. Which is which is a fact about the bundle, so it is settled once, up front.
 	for _, s := range p.Services() {
@@ -55,17 +84,20 @@ func Open(fsys fs.FS, opts ...Option) (aot.Catalog, error) {
 	return c, nil
 }
 
-// A catalog holds NO parsed documents. A query spans several services and several providers, so
-// caching documents would make the working set the sum of every document touched — the largest thing
-// in play — instead of the exchanges actually needed. A document is parsed, its exchange resolved,
-// and the document dropped; a resolved exchange is self-contained (templates and programs, a few KB)
-// and never refers back to it. So planning is the release point and execution holds no documents at
-// all.
+// A catalog holds NO parsed documents itself. A query spans several services and several providers,
+// so holding documents would make the working set the sum of every document touched instead of the
+// exchanges actually needed. A document is parsed, its exchange resolved, and the document released;
+// a resolved exchange is self-contained and never refers back to it. Where documents should outlive a
+// query — parsing a large one costs more than a request — a DocCache holds them, under a budget it
+// enforces, rather than every catalog holding its own.
 type catalog struct {
 	fsys     fs.FS
 	provider aot.Provider
 
 	prefix string // the namespace addresses live under
+
+	docs   DocCache // parsed documents shared across catalogs; nil parses every time
+	docKey string
 
 	mu    sync.Mutex
 	files map[string]string // service → document path, for services actually present
@@ -181,11 +213,27 @@ func (c *catalog) doc(service string) (Doc, error) {
 		return nil, fmt.Errorf("stackqldoc: service %q has no document in this bundle (have %d services)",
 			service, len(known))
 	}
+	var key string
+	if c.docs != nil {
+		if fi, err := fs.Stat(c.fsys, file); err == nil {
+			key = fmt.Sprintf("%s/%s\x00%d\x00%d", c.docKey, file, fi.Size(), fi.ModTime().UnixNano())
+			if d, ok := c.docs.Get(key); ok {
+				return d, nil
+			}
+		}
+	}
 	b, err := fs.ReadFile(c.fsys, file)
 	if err != nil {
 		return nil, fmt.Errorf("stackqldoc: read %s: %w", file, err)
 	}
-	return Parse(b)
+	d, err := Parse(b)
+	if err != nil {
+		return nil, err
+	}
+	if key != "" {
+		c.docs.Put(key, d, int64(len(b))*docCost)
+	}
+	return d, nil
 }
 
 func (c *catalog) servicesLocked() []string {

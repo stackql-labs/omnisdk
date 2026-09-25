@@ -14,12 +14,15 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/stackql-labs/omnisdk/pkg/cache"
 	"io"
 	"io/fs"
 	"os"
+	"path/filepath"
 	"regexp"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"google.golang.org/grpc"
@@ -996,10 +999,11 @@ func NewFromDoc(doc []byte, resource string, args Args) (Plan, error) {
 // registry and is ignored for a bundle.
 func openDocs(dir, address string) (aot.Catalog, error) {
 	fsys := os.DirFS(dir)
+	cached := docCacheOption(dir)
 	if _, err := fs.Stat(fsys, "provider.yaml"); err == nil {
-		return stackqldoc.Open(fsys)
+		return stackqldoc.Open(fsys, cached)
 	}
-	reg, err := stackqldoc.OpenRegistry(fsys)
+	reg, err := stackqldoc.OpenRegistry(fsys, cached)
 	if err != nil {
 		return nil, err
 	}
@@ -1009,6 +1013,34 @@ func openDocs(dir, address string) (aot.Catalog, error) {
 			dir, len(reg.Providers()), firstOr(reg.Providers()))
 	}
 	return reg.Catalog(provider)
+}
+
+// documents is the process's parsed-document cache. Entries are keyed by the directory a document is
+// read from, so each client's patched view (EffectiveRegistry) is cached apart from every other and
+// from the base, and a rewritten file is parsed afresh.
+var (
+	documentsMu sync.RWMutex
+	documents   = cache.New[string, stackqldoc.Doc](cache.Config{})
+)
+
+// ConfigureDocumentCache replaces the parsed-document cache with one bounded by cfg; the zero Config
+// takes a quarter of the process's memory limit. MaxCost is in estimated bytes of parsed document.
+// Entries in the previous cache are dropped.
+func ConfigureDocumentCache(cfg cache.Config) {
+	documentsMu.Lock()
+	defer documentsMu.Unlock()
+	documents = cache.New[string, stackqldoc.Doc](cfg)
+}
+
+func docCacheOption(dir string) stackqldoc.Option {
+	documentsMu.RLock()
+	c := documents
+	documentsMu.RUnlock()
+	root, err := filepath.Abs(dir)
+	if err != nil {
+		root = dir
+	}
+	return stackqldoc.WithDocCache(c, root)
 }
 
 func firstOr(ss []string) string {

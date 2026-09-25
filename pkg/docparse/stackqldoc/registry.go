@@ -155,7 +155,7 @@ func (r *registry) Catalog(provider string) (aot.Catalog, error) {
 	if err != nil {
 		return nil, err
 	}
-	c, err := Open(sub, r.opts...)
+	c, err := Open(sub, append(append([]Option{}, r.opts...), underKey(dir+"/"+version))...)
 	if err != nil {
 		return nil, err
 	}

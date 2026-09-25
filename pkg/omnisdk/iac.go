@@ -261,7 +261,7 @@ func openRegistry(root string) (aot.Registry, error) {
 	if _, err := os.Stat(root); err != nil {
 		return nil, fmt.Errorf("omnisdk: document registry %q: %w", root, err)
 	}
-	return stackqldoc.OpenRegistry(os.DirFS(root))
+	return stackqldoc.OpenRegistry(os.DirFS(root), docCacheOption(root))
 }
 
 type convergePlan struct {
