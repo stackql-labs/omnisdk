@@ -240,6 +240,10 @@ func (o override) Program() (string, string) { return o.programType, o.programBo
 type Graph interface {
 	// Nodes are the references taking part, in declaration order.
 	Nodes() []Node
+	// Addresses are the nodes' addresses, in node order.
+	//
+	// Deprecated: use Nodes; an address may appear under several aliases.
+	Addresses() []string
 	Wirings() []Wiring
 	// Overrides correct what the documents say, per address.
 	Overrides() []Override
