@@ -44,7 +44,39 @@ const (
 	// for a bearer token. Azure declares it, and so does any provider whose documents say oauth2
 	// without naming a dialect.
 	SchemeOAuthClientCredentials Scheme = "oauth2.client_credentials"
+	// SchemeBasic is HTTP basic auth: a username and password, or a pre-encoded pair.
+	SchemeBasic Scheme = "http.basic"
+	// SchemeBearer is a static bearer token in the Authorization header.
+	SchemeBearer Scheme = "http.bearer"
+	// SchemeAPIKey is a key sent in a named header or query parameter.
+	SchemeAPIKey Scheme = "api_key"
 )
+
+// TypedSchema is implemented by a Schema that knows its declared type: OpenAPI's type ("string",
+// "integer", "number", "boolean", "object", "array") and format ("int64", "date-time", …). Either is
+// empty where the document declares none.
+type TypedSchema interface {
+	Type() string
+	Format() string
+}
+
+// AuthDefaults is what a provider document says about authenticating beyond its scheme: where a key
+// goes, what prefixes it, and which environment variables hold the credentials. A caller's own
+// settings take precedence field by field; these fill what the caller left empty.
+type AuthDefaults struct {
+	Type              string
+	Name              string // header or query parameter carrying a key
+	Location          string // "header" (default) or "query"
+	ValuePrefix       string
+	CredentialsEnvVar string
+	UsernameEnvVar    string
+	PasswordEnvVar    string
+}
+
+// AuthConfigured is implemented by a Provider whose document states AuthDefaults.
+type AuthConfigured interface {
+	AuthDefaults() AuthDefaults
+}
 
 // Security is the declared authentication for a call.
 type Security interface {

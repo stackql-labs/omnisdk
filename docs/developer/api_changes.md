@@ -21,6 +21,14 @@ Kept with a deprecation notice, no change needed yet:
 | `NewGraphQuery` | `NewGraphSelectQuery` |
 | `Graph.Addresses()` | `Graph.Nodes()` — one address may now appear under several aliases |
 
+Interfaces that gained methods (a caller that only *uses* them is unaffected; one that *implements*
+them must add the methods): `MethodSignature.ColumnTypes`, `ParamSignature.In`, `Node.Tuples`,
+`query.Target.Rows`.
+
+Additions, no change needed: `Args.AuthByProvider`, `Args.Functions`, `Auth.Location`,
+`Auth.Username`/`Password`/`UsernameEnvVar`/`PasswordEnvVar`, `ColumnType`, `EffectError` and the
+`ErrRejected`/`ErrOutcomeUnknown`/`ErrNotAttempted` sentinels, `query.NewInsertRows`, `pkg/sqlfn`.
+
 ### Behaviour changes
 
 | Change | Who is affected |
@@ -29,6 +37,8 @@ Kept with a deprecation notice, no change needed yet:
 | When every node has a projection, a row holds exactly the projected columns; query inputs such as `region` no longer appear in it. | Anyone reading an input back out of a projected row. Project it explicitly. |
 | A JSON request-body value that is exactly one placeholder is sent with the bound value's type, so a number or boolean arrives as one, not as its text. | Anyone relying on the API accepting a string where it declares a number or boolean. |
 | A failed mutation reports "rejected" for a 4xx; only no response or a 5xx is "may or may not have taken effect". | Anyone matching on the error text. |
+| A provider whose document declares `basic`, `bearer` or `custom` auth is now authenticated; with no credential available the query fails at plan time, naming the provider. | Anyone who relied on such calls going out unauthenticated. |
+| A document parameter declared by `$ref` is now a parameter; a `$ref` that resolves to nothing is an error. | Anyone whose query worked only because a required parameter was dropped. |
 
 ### CLI: `doc-graph` JSON
 

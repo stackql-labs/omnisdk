@@ -169,11 +169,18 @@ func (f filterTransform) eval(p query.Predicate, row map[string]any) (truth, err
 		if err != nil {
 			return unknown, err
 		}
-		b, ok := v.(bool)
-		if !ok {
+		// A condition is true, false or unknown; SQLite's 1 and 0 are true and false.
+		switch b := v.(type) {
+		case bool:
+			return truthOf(b), nil
+		case nil:
 			return unknown, nil
 		}
-		return truthOf(b), nil
+		n, err := strconv.ParseFloat(fmt.Sprint(v), 64)
+		if err != nil {
+			return unknown, nil
+		}
+		return truthOf(n != 0), nil
 	case query.Or:
 		result := isFalse
 		for _, q := range p.Any() {
@@ -486,7 +493,8 @@ func (o effectOp) Open(ctx context.Context) facade.Records {
 			_, err = j.Append(ctx, key, o.e.exchange, formOf(o.e.verb), nil)
 		}
 		if err != nil {
-			return failed(fmt.Errorf("omnisdk: %s %s was not attempted: recording its intent failed: %w", o.e.verb, o.e.alias, err))
+			return failed(&EffectError{Outcome: ErrNotAttempted, Verb: o.e.verb, Alias: o.e.alias,
+				Cause: fmt.Errorf("recording its intent failed: %w", err)})
 		}
 	}
 	return effectRecords{Records: o.inner.Open(retry.WithPolicy(ctx, never{})), op: o}
@@ -504,12 +512,42 @@ func (r effectRecords) Err() error {
 	if err == nil {
 		return nil
 	}
+	outcome := ErrOutcomeUnknown
 	var status *httpx.StatusError
 	if errors.As(err, &status) && status.Status >= 400 && status.Status < 500 {
-		return fmt.Errorf("omnisdk: %s %s was rejected: %w", r.op.e.verb, r.op.e.alias, err)
+		outcome = ErrRejected
 	}
-	return fmt.Errorf("omnisdk: %s %s may or may not have taken effect: %w", r.op.e.verb, r.op.e.alias, err)
+	return &EffectError{Outcome: outcome, Verb: r.op.e.verb, Alias: r.op.e.alias, Cause: err}
 }
+
+// What is known about a mutation that failed. Test with errors.Is; the EffectError carrying one says
+// which node and what caused it.
+var (
+	// ErrRejected: the provider answered and refused the request (a 4xx). The effect did not happen.
+	ErrRejected = errors.New("rejected")
+	// ErrOutcomeUnknown: no answer, or a 5xx. The effect may or may not have happened; read the
+	// target before retrying.
+	ErrOutcomeUnknown = errors.New("may or may not have taken effect")
+	// ErrNotAttempted: the request was never sent — its intent could not be recorded.
+	ErrNotAttempted = errors.New("was not attempted")
+)
+
+// EffectError is a failed mutation: which node, what is known about the outcome, and the cause.
+type EffectError struct {
+	Outcome     error // ErrRejected, ErrOutcomeUnknown or ErrNotAttempted
+	Verb, Alias string
+	Cause       error
+}
+
+func (e *EffectError) Error() string {
+	phrase := e.Outcome.Error()
+	if e.Outcome == ErrRejected {
+		phrase = "was rejected"
+	}
+	return fmt.Sprintf("omnisdk: %s %s %s: %v", e.Verb, e.Alias, phrase, e.Cause)
+}
+
+func (e *EffectError) Unwrap() []error { return []error{e.Outcome, e.Cause} }
 
 // effectKey identifies one effect in the journal: the node and the inputs it was bound with, so the
 // same statement over the same row keys the same way on a rerun. The bearer token is a credential,
@@ -630,4 +668,23 @@ func (r *matchRecords) Err() error {
 		return r.err
 	}
 	return r.Records.Err()
+}
+
+// tupleSpec is a values exchange emitting the given rows as they are, under a node's private keys.
+func tupleSpec(name, alias string, tuples []map[string]any) plan.ExchangeSpec {
+	rows := make([]map[string]any, 0, len(tuples))
+	var out []string
+	for i, t := range tuples {
+		r := make(map[string]any, len(t))
+		for k, v := range t {
+			r[hidden(alias, k)] = v
+			if i == 0 {
+				out = append(out, hidden(alias, k))
+			}
+		}
+		rows = append(rows, r)
+	}
+	return plan.NewExchangeSpec(name, nil, out, func(map[string]any) facade.Operator {
+		return staticOp{rows: rows}
+	}, nil)
 }

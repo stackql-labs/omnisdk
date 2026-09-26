@@ -10,7 +10,10 @@
 // Standard library only. A front end depends on this and nothing else of the module.
 package query
 
-import "fmt"
+import (
+	"fmt"
+	"strings"
+)
 
 // Unresolved is a whole query: a read, or a mutation that may also return rows. A mutation differs
 // from a read only in that its target's request has an effect; its RETURNING is its Select.
@@ -51,8 +54,11 @@ func (v Verb) String() string {
 type Target interface {
 	Verb() Verb
 	Resource() Resource
-	// Set is INSERT's columns and values, or UPDATE's SET; empty for DELETE.
+	// Set is INSERT's columns and values, or UPDATE's SET; empty for DELETE. For a multi-row INSERT it
+	// is the first row.
 	Set() []Assignment
+	// Rows is every row an INSERT … VALUES writes; one row, Set, for anything else.
+	Rows() [][]Assignment
 }
 
 // Assignment is one column set to a value, which may read the mutation's From.
@@ -220,6 +226,14 @@ func NewMutation(t Target, from []Join, where []Predicate, returning []Output) (
 	case t.Verb() != Delete && len(t.Set()) == 0:
 		return nil, fmt.Errorf("query: an %s sets no columns", t.Verb())
 	}
+	if rows := t.Rows(); len(rows) > 1 {
+		first := columnsOf(rows[0])
+		for i, row := range rows[1:] {
+			if got := columnsOf(row); got != first {
+				return nil, fmt.Errorf("query: VALUES row %d sets (%s), row 1 sets (%s)", i+2, got, first)
+			}
+		}
+	}
 	return build(t, from, where, returning)
 }
 
@@ -356,6 +370,25 @@ func (u unresolved) Select() []Output   { return u.sel }
 // NewInsert targets r with INSERT; set is its columns and values.
 func NewInsert(r Resource, set ...Assignment) Target { return target{verb: Insert, r: r, set: set} }
 
+// NewInsertRows targets r with a multi-row INSERT … VALUES: one assignment set per row, each setting
+// the same columns.
+func NewInsertRows(r Resource, rows ...[]Assignment) Target {
+	t := target{verb: Insert, r: r, rows: rows}
+	if len(rows) > 0 {
+		t.set = rows[0]
+	}
+	return t
+}
+
+// columnsOf is a row's column list, for comparing rows.
+func columnsOf(row []Assignment) string {
+	names := make([]string, 0, len(row))
+	for _, a := range row {
+		names = append(names, a.Column())
+	}
+	return strings.Join(names, ", ")
+}
+
 // NewUpdate targets r with UPDATE … SET.
 func NewUpdate(r Resource, set ...Assignment) Target { return target{verb: Update, r: r, set: set} }
 
@@ -366,6 +399,17 @@ type target struct {
 	verb Verb
 	r    Resource
 	set  []Assignment
+	rows [][]Assignment
+}
+
+func (t target) Rows() [][]Assignment {
+	if len(t.rows) > 0 {
+		return t.rows
+	}
+	if t.set == nil {
+		return nil
+	}
+	return [][]Assignment{t.set}
 }
 
 func (t target) Verb() Verb         { return t.verb }

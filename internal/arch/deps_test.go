@@ -43,8 +43,10 @@ func TestFacadeDependsOnStdlibOnly(t *testing.T) {
 // query is what a front end builds. It must stay standard-library only, so a front end in another
 // language's toolchain depends on it and nothing else of the module.
 func TestQueryDependsOnStdlibOnly(t *testing.T) {
-	if got := deps(t, module+"/pkg/query"); len(got) > 0 {
-		t.Errorf("query depends on %v, want stdlib only", got)
+	for _, pkg := range []string{"/pkg/query", "/pkg/sqlfn", "/pkg/cache"} {
+		if got := deps(t, module+pkg); len(got) > 0 {
+			t.Errorf("%s depends on %v, want stdlib only", pkg, got)
+		}
 	}
 }
 

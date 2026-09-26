@@ -134,6 +134,7 @@ type badTarget struct {
 	set []query.Assignment
 }
 
-func (b badTarget) Verb() query.Verb         { return query.Delete }
-func (b badTarget) Resource() query.Resource { return b.r }
-func (b badTarget) Set() []query.Assignment  { return b.set }
+func (b badTarget) Verb() query.Verb           { return query.Delete }
+func (b badTarget) Resource() query.Resource   { return b.r }
+func (b badTarget) Set() []query.Assignment    { return b.set }
+func (b badTarget) Rows() [][]query.Assignment { return [][]query.Assignment{b.set} }

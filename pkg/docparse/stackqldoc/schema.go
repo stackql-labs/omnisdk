@@ -19,7 +19,12 @@ type materialised struct {
 	names []string
 	items *materialised
 	wire  string
+	typ   string
+	fmt   string
 }
+
+func (m *materialised) Type() string   { return m.typ }
+func (m *materialised) Format() string { return m.fmt }
 
 func (m *materialised) Property(name string) (aot.Schema, bool) {
 	p, ok := m.props[name]
@@ -65,6 +70,12 @@ func materialise(node *yaml.Node, components map[string]*yaml.Node, depth int) *
 	resolved := resolve(node, components)
 	if resolved == nil {
 		return out
+	}
+	if t := field(resolved, "type"); t != nil {
+		out.typ = t.Value
+	}
+	if f := field(resolved, "format"); f != nil {
+		out.fmt = f.Value
 	}
 	if items := field(resolved, "items"); items != nil {
 		out.items = materialise(items, components, depth+1)

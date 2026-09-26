@@ -15,6 +15,7 @@ import (
 	"errors"
 	"fmt"
 	"github.com/stackql-labs/omnisdk/pkg/cache"
+	"github.com/stackql-labs/omnisdk/pkg/sqlfn"
 	"io"
 	"io/fs"
 	"os"
@@ -88,6 +89,16 @@ type Auth struct {
 	ClientSecret       string   `json:"client_secret,omitempty"`
 	ClientIDEnvVar     string   `json:"client_id_env_var,omitempty"`     // AZURE_CLIENT_ID
 	ClientSecretEnvVar string   `json:"client_secret_env_var,omitempty"` // AZURE_CLIENT_SECRET
+
+	// Key placement (api_key / custom): "header" (default) or "query".
+	Location string `json:"location,omitempty"`
+
+	// Basic: username and password, inline or by env var; else Credentials* holding the pair
+	// base64-encoded, as stackql's basic credentials are.
+	Username       string `json:"username,omitempty"`
+	Password       string `json:"password,omitempty"`
+	UsernameEnvVar string `json:"username_var,omitempty"`
+	PasswordEnvVar string `json:"password_var,omitempty"`
 }
 
 func (a Auth) internal() auth.AuthStruct {
@@ -96,6 +107,8 @@ func (a Auth) internal() auth.AuthStruct {
 		CredentialsFilePath: a.CredentialsFilePath, ValuePrefix: a.ValuePrefix, Name: a.Name,
 		Scopes: a.Scopes, TokenURL: a.TokenURL, ClientID: a.ClientID, ClientSecret: a.ClientSecret,
 		ClientIDEnvVar: a.ClientIDEnvVar, ClientSecretEnvVar: a.ClientSecretEnvVar,
+		Location: a.Location, Username: a.Username, Password: a.Password,
+		UsernameEnvVar: a.UsernameEnvVar, PasswordEnvVar: a.PasswordEnvVar,
 	}
 }
 
@@ -152,10 +165,17 @@ type Args struct {
 	// Journal opts a query's mutations into write-ahead intent: each effect is recorded, and on disk,
 	// before its request is sent. Nil runs them unjournaled. Reads ignore it.
 	Journal *Journal `json:"journal,omitempty"`
+	// AuthByProvider gives each provider its own credentials, keyed by provider name — namespaced
+	// ("stackql_unstable_github") or as its document declares it ("github"). A provider absent here
+	// uses Auth. Needed where one query reads several providers.
+	AuthByProvider map[string]*Auth `json:"auth_by_provider,omitempty"`
 	// Redaction decides which columns a result may not carry. Nil is DefaultRedaction: the values
 	// auth put on the row are dropped, everything else is kept. A power user who needs them sets
 	// RedactNone, or a policy of their own.
 	Redaction Redaction `json:"-"`
+	// Functions adds a caller's own SQL functions to the built-in catalogue for this query. A name the
+	// built-ins already use is an error.
+	Functions sqlfn.Catalog `json:"-"`
 	Auth      *Auth
 	Endpoint  string
 	// InsecureSkipTLSVerify accepts any certificate. It exists for mocks that serve a self-signed one,
@@ -1138,16 +1158,9 @@ func NewSelectFromCatalog(dir, address string, args Args) (Plan, error) {
 	if err != nil {
 		return nil, err
 	}
-	var sec aot.Security
-	if p := c.Provider(); p != nil {
-		sec = p.Security()
-	}
-	opts, err := docOptions(args, sec)
+	opts, err := providerOptions(args, c.Provider())
 	if err != nil {
 		return nil, err
-	}
-	if p := c.Provider(); p != nil {
-		opts = append(opts, docx.WithProviderSecurity(p.Security()))
 	}
 	pl, err := docx.PlanFor(ex, docInputs(args), reg, opts...)
 	if err != nil {
@@ -1239,6 +1252,88 @@ func docOptions(args Args, sec aot.Security) ([]docx.Option, error) {
 		return nil, fmt.Errorf("omnisdk: Google credentials cannot be used: %w", err)
 	}
 	return opts, nil
+}
+
+// providerOptions are docOptions for a provider: its own credentials, its document's auth defaults
+// under them, and the header, query or basic auth its scheme applies.
+func providerOptions(args Args, p aot.Provider) ([]docx.Option, error) {
+	if p == nil {
+		return docOptions(args, nil)
+	}
+	args = args.forProvider(p)
+	sec := p.Security()
+	opts, err := docOptions(args, sec)
+	if err != nil {
+		return nil, err
+	}
+	opts = append(opts, docx.WithProviderSecurity(sec))
+	t, err := headerAuth(args, p)
+	if err != nil {
+		return nil, err
+	}
+	if t != nil {
+		opts = append(opts, docx.WithRequestTransform(t))
+	}
+	return opts, nil
+}
+
+// forProvider is args with Auth replaced by the provider's own, where AuthByProvider has one.
+func (a Args) forProvider(p aot.Provider) Args {
+	if len(a.AuthByProvider) == 0 {
+		return a
+	}
+	for _, key := range []string{aot.DefaultProviderPrefix + p.Name(), p.Name()} {
+		if au, ok := a.AuthByProvider[key]; ok {
+			a.Auth = au
+			return a
+		}
+	}
+	return a
+}
+
+// headerAuth is the request transform for a provider authenticated by something sent with each
+// request — basic, a bearer token, an API key — built from the caller's settings over the document's
+// defaults. Nil for schemes that sign or exchange a token, which docOptions handles. A document that
+// declares one of these and finds no credential is an error naming what was looked for.
+func headerAuth(args Args, p aot.Provider) (facade.Transform, error) {
+	caller := authOf(args)
+	var def aot.AuthDefaults
+	if c, ok := p.(aot.AuthConfigured); ok {
+		def = c.AuthDefaults()
+	}
+	kind := caller.Type
+	if kind == "" {
+		switch p.Security().Scheme() {
+		case aot.SchemeBasic:
+			kind = "basic"
+		case aot.SchemeBearer:
+			kind = "bearer"
+		case aot.SchemeAPIKey:
+			kind = "custom"
+		default:
+			return nil, nil
+		}
+	}
+	switch auth.Kind(kind) {
+	case auth.KindBasic, auth.KindBearer, auth.KindAPIKey, auth.KindCustom:
+	default:
+		return nil, nil
+	}
+	cfg := caller.internal()
+	cfg.Type = kind
+	cfg.Name = orStr(cfg.Name, def.Name)
+	cfg.Location = orStr(cfg.Location, def.Location)
+	cfg.ValuePrefix = orStr(cfg.ValuePrefix, def.ValuePrefix)
+	if cfg.Credentials == "" && cfg.CredentialsFilePath == "" {
+		cfg.CredentialsEnvVar = orStr(cfg.CredentialsEnvVar, def.CredentialsEnvVar)
+	}
+	cfg.UsernameEnvVar = orStr(cfg.UsernameEnvVar, def.UsernameEnvVar)
+	cfg.PasswordEnvVar = orStr(cfg.PasswordEnvVar, def.PasswordEnvVar)
+	m, err := auth.New(cfg)
+	if err != nil {
+		return nil, fmt.Errorf("omnisdk: %s %s credentials cannot be used: %w", p.Name(), kind, err)
+	}
+	return m.RequestTransform(), nil
 }
 
 // authOf returns args.Auth, or a zero Auth when none was supplied — so resolution always reads from a

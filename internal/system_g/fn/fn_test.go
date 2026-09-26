@@ -2,6 +2,8 @@ package fn_test
 
 import (
 	"reflect"
+	"slices"
+	"sort"
 	"testing"
 
 	"github.com/stackql-labs/omnisdk/internal/system_g/facade"
@@ -172,7 +174,28 @@ func TestBuiltinsAreListedInNameOrder(t *testing.T) {
 	for _, f := range r.Fns() {
 		names = append(names, f.Name())
 	}
-	if !reflect.DeepEqual(names, []string{"split_part", "string_to_table"}) {
-		t.Fatalf("Fns() = %v", names)
+	if !sort.StringsAreSorted(names) {
+		t.Fatalf("Fns() = %v, want name order", names)
+	}
+	for _, want := range []string{"split_part", "string_to_table", "json_extract", "json_each"} {
+		if !slices.Contains(names, want) {
+			t.Errorf("Fns() lacks %s", want)
+		}
+	}
+}
+
+// A catalogue function is called with the row's values as they are, and a table one yields rows.
+func TestCatalogueFunctionsRunThroughInvoke(t *testing.T) {
+	r := builtins(t)
+	got, err := fn.Invoke(r, "json_extract", []any{map[string]any{"a": []any{1.0, 2.0}}, "$.a[1]"})
+	if err != nil || got != 2.0 {
+		t.Fatalf("json_extract = %#v, %v", got, err)
+	}
+	rows, err := fn.RowProducing(r, "json_each")
+	if err != nil || !rows {
+		t.Fatalf("json_each row-producing = %v, %v", rows, err)
+	}
+	if _, err := fn.Invoke(r, "lower", []any{"a", "b"}); err == nil {
+		t.Error("lower accepted two arguments")
 	}
 }

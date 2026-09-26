@@ -5,6 +5,7 @@ package fn
 import (
 	"encoding/json"
 	"fmt"
+	"github.com/stackql-labs/omnisdk/pkg/sqlfn"
 	"sort"
 	"strconv"
 	"strings"
@@ -49,6 +50,9 @@ func Invoke(r facade.FnRegistry, name string, args []any) (any, error) {
 	f, ok := r.Fn(name)
 	if !ok {
 		return nil, fmt.Errorf("fn: no function %q", name)
+	}
+	if rc, ok := f.(rawCaller); ok {
+		return rc.callRaw(args)
 	}
 	sigs := f.Signatures()
 	if len(sigs) == 0 {
@@ -158,8 +162,20 @@ func lexeme(v any) ([]byte, error) {
 // Builtins is the registry this module ships. out names the column a single-column table function
 // emits: required input ("value" is SQLite's convention, but the caller states it).
 func Builtins(out string) (facade.FnRegistry, error) {
-	return NewRegistry(
-		NewSplitPart(),
-		NewStringToTable(out),
-	)
+	return BuiltinsWith(out, nil)
+}
+
+// BuiltinsWith is Builtins plus extra, a caller's own catalogue. A name extra shares with a built-in
+// is an error: which one a query meant would depend on order.
+func BuiltinsWith(out string, extra sqlfn.Catalog) (facade.FnRegistry, error) {
+	fns := []facade.Fn{NewSplitPart(), NewStringToTable(out)}
+	for _, f := range sqlfn.Builtins().Funcs() {
+		fns = append(fns, FromSQL(f))
+	}
+	if extra != nil {
+		for _, f := range extra.Funcs() {
+			fns = append(fns, FromSQL(f))
+		}
+	}
+	return NewRegistry(fns...)
 }

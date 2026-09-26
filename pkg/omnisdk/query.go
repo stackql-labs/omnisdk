@@ -24,9 +24,18 @@ type MethodSignature interface {
 	Params() []ParamSignature
 	// Columns are the row's declared properties, empty where the document states no schema.
 	Columns() []string
+	// ColumnTypes are the declared type of each column that declares one.
+	ColumnTypes() map[string]ColumnType
 	// TakesBody reports whether the method sends a request body. Its fields are the caller's to
 	// name: a document states a body's encoding, not its fields.
 	TakesBody() bool
+}
+
+// ColumnType is a column's declared type as the document states it: OpenAPI's type ("string",
+// "integer", "number", "boolean", "object", "array") and format ("int64", "date-time", …).
+type ColumnType struct {
+	Type   string `json:"type,omitempty"`
+	Format string `json:"format,omitempty"`
 }
 
 // ParamSignature is one declared input.
@@ -89,6 +98,33 @@ func (s docSignature) Params() []ParamSignature {
 
 // Columns walks the response schema to the row: down the object key, then into an array's items.
 func (s docSignature) Columns() []string {
+	row := s.row()
+	if row == nil {
+		return nil
+	}
+	return row.Properties()
+}
+
+func (s docSignature) ColumnTypes() map[string]ColumnType {
+	row := s.row()
+	if row == nil {
+		return nil
+	}
+	out := map[string]ColumnType{}
+	for _, name := range row.Properties() {
+		p, ok := row.Property(name)
+		if !ok {
+			continue
+		}
+		if ts, ok := p.(aot.TypedSchema); ok && (ts.Type() != "" || ts.Format() != "") {
+			out[name] = ColumnType{Type: ts.Type(), Format: ts.Format()}
+		}
+	}
+	return out
+}
+
+// row is the schema of one row: the response schema, down the object key, into an array's items.
+func (s docSignature) row() aot.Schema {
 	resp := s.ex.Response()
 	sch := resp.Schema()
 	if sch == nil {
@@ -107,7 +143,7 @@ func (s docSignature) Columns() []string {
 	if items, ok := sch.Items(); ok {
 		sch = items
 	}
-	return sch.Properties()
+	return sch
 }
 
 // Resolution is a query resolved against its tables: the graph to run and the query-wide params.
@@ -216,6 +252,9 @@ func (r *resolver) target(t query.Target, tables map[string]Table) error {
 	if err != nil {
 		return fmt.Errorf("omnisdk: %s %s: %w", r.verb, alias, err)
 	}
+	if rows := t.Rows(); len(rows) > 1 {
+		return r.valuesRows(alias, tbl, ns, rows)
+	}
 	for _, a := range t.Set() {
 		name, inBody, err := placeAssignment(ns, tbl, a.Column())
 		if err != nil {
@@ -296,6 +335,31 @@ func placeAssignment(ns namespace.Namespace, t Table, column string) (string, bo
 		}
 	}
 	return "", false, fmt.Errorf("%q is not a parameter, and the method takes no request body", column)
+}
+
+// valuesRows places a multi-row INSERT … VALUES: one tuple per row, each value a literal, so the
+// target runs once per row with that row's values together.
+func (r *resolver) valuesRows(alias string, tbl Table, ns namespace.Namespace, rows [][]query.Assignment) error {
+	for i, row := range rows {
+		tuple := make(map[string]any, len(row))
+		for _, a := range row {
+			lit, ok := a.Value().(query.Literal)
+			if !ok {
+				return fmt.Errorf("omnisdk: %s %s: VALUES row %d: %s = %s is not a literal; read values from a table with INSERT … SELECT",
+					r.verb, alias, i+1, a.Column(), describeExpr(a.Value()))
+			}
+			name, inBody, err := placeAssignment(ns, tbl, a.Column())
+			if err != nil {
+				return fmt.Errorf("omnisdk: %s %s: %w", r.verb, alias, err)
+			}
+			if inBody {
+				r.body[name] = nil
+			}
+			tuple[name] = lit.Value()
+		}
+		r.tuples = append(r.tuples, tuple)
+	}
+	return nil
 }
 
 // arrive records a value wired into a node.
@@ -382,6 +446,8 @@ type resolver struct {
 	outer    map[string][]query.Predicate
 	on       map[string][]query.Predicate
 	onTarget string
+	// tuples are a multi-row INSERT's rows.
+	tuples []map[string]any
 }
 
 type arrival struct{ from, src, as string }
@@ -739,6 +805,9 @@ func (r *resolver) build(sel []query.Output) (Resolution, error) {
 		n := NewMutationNode(alias, r.tables[alias].Address(), verb, r.nodeParams[alias], r.fanout[alias], body)
 		if _, left := r.outer[alias]; left {
 			n = NewOuterNode(n, r.on[alias])
+		}
+		if alias == r.mutating && len(r.tuples) > 0 {
+			n = NewTupleNode(n, r.tuples)
 		}
 		nodes = append(nodes, n)
 		cols := byAlias[alias]

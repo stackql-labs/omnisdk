@@ -72,14 +72,38 @@ func Open(fsys fs.FS, opts ...Option) (aot.Catalog, error) {
 		return nil, err
 	}
 	st := resolveSettings(opts)
-	c := &catalog{fsys: fsys, provider: p, files: map[string]string{}, prefix: st.prefix, docs: st.docs, docKey: st.docKey}
+	c := &catalog{fsys: fsys, provider: p, files: map[string]string{}, missing: map[string]string{},
+		prefix: st.prefix, docs: st.docs, docKey: st.docKey}
 	// A provider lists every service it could offer; only those whose document is present here are
 	// addressable. Which is which is a fact about the bundle, so it is settled once, up front.
+	//
+	// A provider may list one service several times, at several versions, and not every entry names a
+	// document. An entry without one, or naming one that is absent, is skipped; where several have
+	// documents, the one marked preferred wins, else the first. Settling by list order alone let an
+	// entry with no document replace one with, and the catalog then tried to read the services
+	// directory itself.
+	preferredSet := map[string]bool{}
 	for _, s := range p.Services() {
-		file := path.Join("services", path.Base(s.Ref()))
-		if _, err := fs.Stat(fsys, file); err == nil {
-			c.files[s.Name()] = file
+		if s.Ref() == "" {
+			continue
 		}
+		file := path.Join("services", path.Base(s.Ref()))
+		if fi, err := fs.Stat(fsys, file); err != nil || !fi.Mode().IsRegular() {
+			if _, have := c.files[s.Name()]; !have {
+				c.missing[s.Name()] = file
+			}
+			continue
+		}
+		pref := false
+		if ps, ok := s.(interface{ Preferred() bool }); ok {
+			pref = ps.Preferred()
+		}
+		if _, have := c.files[s.Name()]; have && (!pref || preferredSet[s.Name()]) {
+			continue
+		}
+		c.files[s.Name()] = file
+		preferredSet[s.Name()] = pref
+		delete(c.missing, s.Name())
 	}
 	return c, nil
 }
@@ -99,8 +123,9 @@ type catalog struct {
 	docs   DocCache // parsed documents shared across catalogs; nil parses every time
 	docKey string
 
-	mu    sync.Mutex
-	files map[string]string // service → document path, for services actually present
+	mu      sync.Mutex
+	files   map[string]string // service → document path, for services actually present
+	missing map[string]string // service → the document path the provider names but the bundle lacks
 }
 
 func (c *catalog) Provider() aot.Provider { return c.provider }
@@ -210,6 +235,12 @@ func (c *catalog) doc(service string) (Doc, error) {
 	known := c.servicesLocked()
 	c.mu.Unlock()
 	if !ok {
+		c.mu.Lock()
+		absent, declared := c.missing[service]
+		c.mu.Unlock()
+		if declared {
+			return nil, fmt.Errorf("stackqldoc: service %q names document %s, which is not in this bundle", service, absent)
+		}
 		return nil, fmt.Errorf("stackqldoc: service %q has no document in this bundle (have %d services)",
 			service, len(known))
 	}

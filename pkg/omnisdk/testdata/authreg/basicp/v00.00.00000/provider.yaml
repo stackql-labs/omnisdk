@@ -1,0 +1,15 @@
+id: basicp
+name: basicp
+version: v00.00.00000
+providerServices:
+  things:
+    id: things:v00.00.00000
+    name: things
+    preferred: true
+    service:
+      $ref: basicp/v00.00.00000/services/things.yaml
+config:
+  auth:
+    type: basic
+    username_var: TEST_BASIC_USER
+    password_var: TEST_BASIC_PASS

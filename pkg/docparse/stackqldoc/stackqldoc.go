@@ -64,6 +64,8 @@ type document struct {
 		// bytes — EC2's runs to tens of thousands of lines — and an exchange needs the handful of
 		// shapes its own response names, so they are read on demand rather than decoded up front.
 		Schemas map[string]yaml.Node `yaml:"schemas"`
+		// Parameters are shared input declarations an operation reaches by $ref.
+		Parameters map[string]pathParam `yaml:"parameters"`
 	} `yaml:"components"`
 }
 
@@ -147,6 +149,8 @@ type pathParam struct {
 	Name     string `yaml:"name"`
 	In       string `yaml:"in"`
 	Required bool   `yaml:"required"`
+	// Ref points at a shared declaration under components/parameters, in place of the fields.
+	Ref string `yaml:"$ref"`
 }
 
 // ---- resolution -------------------------------------------------------------
@@ -217,6 +221,12 @@ func (d *document) Verb(name, verb string) ([]aot.AOTExchange, error) {
 			firstErr = orErr(firstErr, fmt.Errorf("stackqldoc: resource %q method %q: decode %s %s: %w", name, mName, httpVerb, path, err))
 			continue
 		}
+		params, err := d.parameters(path, op.Parameters)
+		if err != nil {
+			firstErr = orErr(firstErr, fmt.Errorf("stackqldoc: resource %q method %q: %w", name, mName, err))
+			continue
+		}
+		op.Parameters = params
 		out = append(out, d.build(mName, httpVerb, path, op, m))
 	}
 	if len(out) == 0 {
@@ -226,6 +236,52 @@ func (d *document) Verb(name, verb string) ([]aot.AOTExchange, error) {
 		return nil, fmt.Errorf("stackqldoc: resource %q %s resolves to nothing", name, verb)
 	}
 	return out, nil
+}
+
+// parameters are an operation's inputs with every $ref followed and the path's own parameters
+// included, as OpenAPI defines them: a path-level parameter applies to each of its operations unless
+// the operation declares one with the same name and location. A shared declaration is where most
+// generated documents put a common input (GitHub's org, username), so dropping a $ref drops the very
+// parameter a join binds. A $ref that resolves to nothing is an error, not an omission.
+func (d *document) parameters(path string, own []pathParam) ([]pathParam, error) {
+	var shared []pathParam
+	if node, ok := d.Paths[path]["parameters"]; ok {
+		if err := node.Decode(&shared); err != nil {
+			return nil, fmt.Errorf("decode parameters of %s: %w", path, err)
+		}
+	}
+	resolve := func(ps []pathParam) ([]pathParam, error) {
+		out := make([]pathParam, 0, len(ps))
+		for _, p := range ps {
+			for hops := 0; p.Ref != ""; hops++ {
+				target, ok := d.Components.Parameters[strings.TrimPrefix(p.Ref, "#/components/parameters/")]
+				if !ok || hops > 8 {
+					return nil, fmt.Errorf("parameter %s resolves to nothing", p.Ref)
+				}
+				p = target
+			}
+			out = append(out, p)
+		}
+		return out, nil
+	}
+	pathLevel, err := resolve(shared)
+	if err != nil {
+		return nil, err
+	}
+	opLevel, err := resolve(own)
+	if err != nil {
+		return nil, err
+	}
+	declared := map[string]bool{}
+	for _, p := range opLevel {
+		declared[p.In+"\x00"+p.Name] = true
+	}
+	for _, p := range pathLevel {
+		if !declared[p.In+"\x00"+p.Name] {
+			opLevel = append(opLevel, p)
+		}
+	}
+	return opLevel, nil
 }
 
 func orErr(first, next error) error {

@@ -1,0 +1,32 @@
+openapi: 3.0.0
+info: {title: things, version: v1}
+servers:
+  - url: https://api.example.com
+paths:
+  /basicp/items:
+    get:
+      operationId: list_items
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        id: {type: string}
+components:
+  x-stackQL-resources:
+    items:
+      id: basicp.things.items
+      name: items
+      methods:
+        list:
+          operation: {$ref: '#/paths/~1basicp~1items/get'}
+          response: {mediaType: application/json, openAPIDocKey: '200', objectKey: $.items}
+      sqlVerbs:
+        select: [{$ref: '#/components/x-stackQL-resources/items/methods/list'}]

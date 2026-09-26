@@ -3,6 +3,7 @@ package omnisdk_test
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -12,6 +13,7 @@ import (
 	"reflect"
 	"sort"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/stackql-labs/omnisdk/pkg/omnisdk"
@@ -665,7 +667,7 @@ func TestFailedEffectIsNotRetried(t *testing.T) {
 		nil, []query.Predicate{regionEq()}, nil,
 	)
 	_, made, err := tryQuery(t, q)
-	if err == nil || !strings.Contains(err.Error(), "may or may not have taken effect") {
+	if err == nil || !strings.Contains(err.Error(), "may or may not have taken effect") || !errors.Is(err, omnisdk.ErrOutcomeUnknown) {
 		t.Errorf("err = %v, want the outcome reported as unknown", err)
 	}
 	if want := []string{"CreateUser|us-east-1|fail"}; !reflect.DeepEqual(made, want) {
@@ -809,7 +811,7 @@ func TestUnrecordableEffectIsNotAttempted(t *testing.T) {
 	}
 	_, made, err := tryQueryWith(t, insertCarol(t),
 		func(a *omnisdk.Args) { a.Journal = &omnisdk.Journal{State: state, RunID: "run-1"} }, nil)
-	if err == nil || !strings.Contains(err.Error(), "was not attempted") {
+	if err == nil || !strings.Contains(err.Error(), "was not attempted") || !errors.Is(err, omnisdk.ErrNotAttempted) {
 		t.Errorf("err = %v, want the effect reported as not attempted", err)
 	}
 	if len(made) != 0 {
@@ -833,7 +835,7 @@ func TestRejectedEffectIsReportedAsRejected(t *testing.T) {
 		nil, []query.Predicate{regionEq()}, nil,
 	)
 	_, _, err := tryQuery(t, q)
-	if err == nil || !strings.Contains(err.Error(), "was rejected") {
+	if err == nil || !strings.Contains(err.Error(), "was rejected") || !errors.Is(err, omnisdk.ErrRejected) {
 		t.Errorf("err = %v, want the effect reported as rejected", err)
 	}
 }
@@ -910,5 +912,96 @@ func TestLeftJoinRefusesAPreservedSideThatNeedsTheOther(t *testing.T) {
 	}
 	if _, err := omnisdk.Resolve(q, map[string]omnisdk.Table{"p": pt, "u": ut}); err == nil {
 		t.Error("resolved a left join whose preserved side needs the joined one")
+	}
+}
+
+// INSERT INTO aws.iam.users (UserName) VALUES ('carol'), ('dave') — one effect per row.
+func TestInsertSeveralValuesRows(t *testing.T) {
+	row := func(name string) []query.Assignment {
+		return []query.Assignment{query.NewAssignment("UserName", query.NewLiteral(name))}
+	}
+	q := mustMutation(t, query.NewInsertRows(users("t"), row("carol"), row("dave")), nil, []query.Predicate{regionEq()}, nil)
+	_, made := runQuery(t, q)
+	if want := []string{"CreateUser|us-east-1|carol", "CreateUser|us-east-1|dave"}; !reflect.DeepEqual(made, want) {
+		t.Errorf("calls = %v, want %v", made, want)
+	}
+}
+
+// INSERT INTO google.storage.buckets (project, name, location) VALUES ('demo','a','US'), ('demo','b','EU')
+// Each row's body fields go together, in its own request.
+func TestInsertSeveralRowsIntoAJSONBody(t *testing.T) {
+	requireCorpus(t)
+	t.Setenv("GOOGLE_CREDENTIALS", serviceAccountKey(t))
+	var mu sync.Mutex
+	var bodies []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if strings.Contains(r.URL.Path, "/token") {
+			fmt.Fprint(w, `{"access_token":"tok","expires_in":3600}`)
+			return
+		}
+		b, _ := io.ReadAll(r.Body)
+		mu.Lock()
+		bodies = append(bodies, r.URL.Query().Get("project")+" "+string(b))
+		mu.Unlock()
+		fmt.Fprint(w, `{"kind":"storage#bucket"}`)
+	}))
+	defer srv.Close()
+	row := func(name, loc string) []query.Assignment {
+		return []query.Assignment{
+			query.NewAssignment("project", query.NewLiteral("demo")),
+			query.NewAssignment("name", query.NewLiteral(name)),
+			query.NewAssignment("location", query.NewLiteral(loc)),
+		}
+	}
+	q := mustMutation(t, query.NewInsertRows(query.NewResource("b", "google.storage.buckets"), row("a", "US"), row("b", "EU")), nil, nil, nil)
+	tbl, err := omnisdk.DescribeMutation(corpus, "stackql_unstable_google.storage.buckets", "insert")
+	if err != nil {
+		t.Fatal(err)
+	}
+	res, err := omnisdk.Resolve(q, map[string]omnisdk.Table{"b": tbl})
+	if err != nil {
+		t.Fatalf("resolve: %v", err)
+	}
+	pl, err := omnisdk.NewGraphSelectQuery(corpus, res.Graph(), omnisdk.Args{Endpoint: srv.URL})
+	if err != nil {
+		t.Fatalf("plan: %v", err)
+	}
+	rows, err := pl.Open(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for rows.Next() {
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatalf("rows: %v", err)
+	}
+	rows.Close()
+	sort.Strings(bodies)
+	want := []string{`demo {"location":"EU","name":"b"}`, `demo {"location":"US","name":"a"}`}
+	if !reflect.DeepEqual(bodies, want) {
+		t.Errorf("requests = %v, want %v", bodies, want)
+	}
+}
+
+// SELECT u.UserName, upper(u.UserName) AS shout FROM aws.iam.users u
+// WHERE region = 'us-east-1' AND regexp_like(u.UserName, '^A', 'i') AND json_extract('{"k":1}', '$.k') = 1
+// Catalogue functions project and filter like any other.
+func TestCatalogueFunctionsInAQuery(t *testing.T) {
+	q := mustQuery(t,
+		[]query.Join{query.NewJoin(users("u"), query.Base)},
+		[]query.Predicate{
+			regionEq(),
+			query.NewTest(query.NewCall("regexp_like", query.NewColumn("u", "UserName"), query.NewLiteral("^A"), query.NewLiteral("i"))),
+			query.NewEq(query.NewCall("json_extract", query.NewLiteral(`{"k":1}`), query.NewLiteral("$.k")), query.NewLiteral(1)),
+		},
+		[]query.Output{
+			query.NewOutput("UserName", query.NewColumn("u", "UserName")),
+			query.NewOutput("shout", query.NewCall("upper", query.NewColumn("u", "UserName"))),
+		},
+	)
+	rows, _ := runQuery(t, q)
+	if want := []string{"UserName=alice,shout=ALICE"}; !reflect.DeepEqual(rows, want) {
+		t.Errorf("rows = %v, want %v", rows, want)
 	}
 }

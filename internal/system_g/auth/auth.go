@@ -6,8 +6,10 @@
 package auth
 
 import (
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"net/url"
 	"strings"
 
 	"github.com/stackql-labs/omnisdk/internal/system_g/facade"
@@ -25,6 +27,10 @@ const (
 	KindSigV4             Kind = "aws_signing_v4"
 	KindServiceAccount    Kind = "service_account"
 	KindClientCredentials Kind = "client_credentials"
+	KindBasic             Kind = "basic"
+	// KindCustom is stackql's name for a key in a named header or query parameter: api_key by another
+	// name.
+	KindCustom Kind = "custom"
 )
 
 // AuthStruct is the pared-back stackql auth config: the JSON that SELECTS a method and carries its
@@ -42,6 +48,15 @@ type AuthStruct struct {
 	// Header injection (bearer, api_key).
 	ValuePrefix string `json:"valuePrefix,omitempty"` // e.g. "Bearer " (default for bearer)
 	Name        string `json:"name,omitempty"`        // header name (default Authorization)
+	// Location is where an api_key goes: "header" (default) or "query".
+	Location string `json:"location,omitempty"`
+
+	// Basic: a username and password (inline, else env), or else Credentials holding the pair already
+	// base64-encoded, as stackql's basic credentials are.
+	Username       string `json:"username,omitempty"`
+	Password       string `json:"password,omitempty"`
+	UsernameEnvVar string `json:"username_var,omitempty"`
+	PasswordEnvVar string `json:"password_var,omitempty"`
 
 	// OAuth2 token exchange (client_credentials for Azure/Entra & generic OIDC).
 	Scopes             []string `json:"scopes,omitempty"`
@@ -95,15 +110,27 @@ func New(cfg AuthStruct) (Method, error) {
 			return nil, err
 		}
 		return static{kind: KindBearer, t: headerT{name: def(cfg.Name, "Authorization"), value: def(cfg.ValuePrefix, "Bearer ") + tok}, raw: tok}, nil
-	case KindAPIKey:
+	case KindAPIKey, KindCustom:
 		if cfg.Name == "" {
-			return nil, fmt.Errorf("auth: api_key requires name")
+			return nil, fmt.Errorf("auth: %s requires name", cfg.Type)
 		}
 		tok, err := cred(cfg)
 		if err != nil {
 			return nil, err
 		}
-		return static{kind: KindAPIKey, t: headerT{name: cfg.Name, value: cfg.ValuePrefix + tok}}, nil
+		switch strings.ToLower(def(cfg.Location, "header")) {
+		case "header":
+			return static{kind: KindAPIKey, t: headerT{name: cfg.Name, value: cfg.ValuePrefix + tok}}, nil
+		case "query":
+			return static{kind: KindAPIKey, t: queryT{name: cfg.Name, value: cfg.ValuePrefix + tok}}, nil
+		}
+		return nil, fmt.Errorf("auth: %s location %q is neither header nor query", cfg.Type, cfg.Location)
+	case KindBasic:
+		enc, err := basicCredential(cfg)
+		if err != nil {
+			return nil, err
+		}
+		return static{kind: KindBasic, t: headerT{name: def(cfg.Name, "Authorization"), value: def(cfg.ValuePrefix, "Basic ") + enc}}, nil
 	case KindClientCredentials, KindServiceAccount:
 		tr, err := tokenRequest(cfg)
 		if err != nil {
@@ -178,6 +205,35 @@ func (t headerT) Apply(in facade.Page) (facade.Record, error) {
 	h := httpx.Header(in)
 	h.Set(t.name, t.value)
 	return httpx.NewRequestRecord(httpx.Method(in), httpx.URL(in), h, httpx.ReqBody(in)), nil
+}
+
+// queryT sets a query parameter on each outgoing request.
+type queryT struct{ name, value string }
+
+func (t queryT) Apply(in facade.Page) (facade.Record, error) {
+	u, err := url.Parse(httpx.URL(in))
+	if err != nil {
+		return nil, fmt.Errorf("auth: %w", err)
+	}
+	q := u.Query()
+	q.Set(t.name, t.value)
+	u.RawQuery = q.Encode()
+	return httpx.NewRequestRecord(httpx.Method(in), u.String(), httpx.Header(in), httpx.ReqBody(in)), nil
+}
+
+// basicCredential is the base64 user:password pair: from a username and password where both
+// resolve, else the credential blob, which stackql's convention holds already encoded.
+func basicCredential(cfg AuthStruct) (string, error) {
+	user := secret.Optional(secret.Literal(cfg.Username), secret.Env(cfg.UsernameEnvVar))
+	pass := secret.Optional(secret.Literal(cfg.Password), secret.Env(cfg.PasswordEnvVar))
+	if user != "" && pass != "" {
+		return base64.StdEncoding.EncodeToString([]byte(user + ":" + pass)), nil
+	}
+	enc, err := cred(cfg)
+	if err != nil {
+		return "", fmt.Errorf("auth: basic needs a username and password, or an encoded credential: %w", err)
+	}
+	return enc, nil
 }
 
 // cred resolves the credential blob (token / api key / SA JSON): inline value → env var → file.

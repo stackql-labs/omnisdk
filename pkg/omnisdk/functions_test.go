@@ -2,6 +2,7 @@ package omnisdk_test
 
 import (
 	"reflect"
+	"slices"
 	"testing"
 
 	"github.com/stackql-labs/omnisdk/pkg/omnisdk"
@@ -16,8 +17,13 @@ func TestFunctionCatalogPublishesSignatures(t *testing.T) {
 	for _, f := range c.Functions() {
 		names = append(names, f.Name())
 	}
-	if !reflect.DeepEqual(names, []string{"split_part", "string_to_table"}) {
-		t.Fatalf("Functions() = %v", names)
+	// Every function the stackql test suites call row-by-row is listed.
+	for _, want := range []string{"split_part", "string_to_table", "json_extract", "json_extract_path_text",
+		"json_each", "json_array_elements_text", "lower", "substr", "instr", "regexp_replace", "date",
+		"datetime", "julianday", "coalesce", "typeof", "aws_policy_equal", "json_equal"} {
+		if !slices.Contains(names, want) {
+			t.Errorf("Functions() lacks %s", want)
+		}
 	}
 
 	sp, ok := c.GetFunction("split_part")

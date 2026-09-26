@@ -1,0 +1,16 @@
+id: keyed
+name: keyed
+version: v00.00.00000
+providerServices:
+  things:
+    id: things:v00.00.00000
+    name: things
+    preferred: true
+    service:
+      $ref: keyed/v00.00.00000/services/things.yaml
+config:
+  auth:
+    type: custom
+    location: header
+    name: x-api-key
+    credentialsenvvar: TEST_API_KEY

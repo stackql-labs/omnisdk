@@ -16,7 +16,6 @@ import (
 	"github.com/stackql-labs/omnisdk/internal/system_g/fn"
 	"github.com/stackql-labs/omnisdk/internal/system_g/plan"
 	"github.com/stackql-labs/omnisdk/internal/system_g/transform"
-	"github.com/stackql-labs/omnisdk/pkg/docparse/aot"
 	"github.com/stackql-labs/omnisdk/pkg/docparse/dsl"
 	"github.com/stackql-labs/omnisdk/pkg/docparse/dsl/gotemplate"
 	"github.com/stackql-labs/omnisdk/pkg/docparse/dsl/schemaxml"
@@ -45,6 +44,9 @@ type Node interface {
 	// Verb is what the reference does: "select", or "insert", "update" or "delete" for a mutation,
 	// whose request has an effect and whose rows are what it returns.
 	Verb() string
+	// Tuples are rows the node runs once each for, each binding its keys together — a multi-row
+	// INSERT's VALUES. Unlike Fanout, which runs every combination, a tuple's values go together.
+	Tuples() []map[string]any
 	// Outer keeps each upstream row this node matches nothing for, with its columns absent: the
 	// right side of a LEFT JOIN.
 	Outer() bool
@@ -74,7 +76,13 @@ func NewFanoutNode(alias, address string, params map[string]string, fanout map[s
 // NewOuterNode makes n the right side of a LEFT JOIN, matching its rows by on.
 func NewOuterNode(n Node, on []query.Predicate) Node {
 	return node{alias: n.Alias(), address: n.Address(), verb: n.Verb(), params: n.Params(),
-		fanout: n.Fanout(), body: n.Body(), outer: true, on: on}
+		fanout: n.Fanout(), body: n.Body(), tuples: n.Tuples(), outer: true, on: on}
+}
+
+// NewTupleNode makes n run once per tuple, each binding its keys together.
+func NewTupleNode(n Node, tuples []map[string]any) Node {
+	return node{alias: n.Alias(), address: n.Address(), verb: n.Verb(), params: n.Params(),
+		fanout: n.Fanout(), body: n.Body(), tuples: tuples, outer: n.Outer(), on: n.On()}
 }
 
 // body is the request-body fields, see Node.Body.
@@ -92,7 +100,10 @@ type node struct {
 	body                 map[string]any
 	outer                bool
 	on                   []query.Predicate
+	tuples               []map[string]any
 }
+
+func (n node) Tuples() []map[string]any { return n.tuples }
 
 func (n node) Outer() bool           { return n.outer }
 func (n node) On() []query.Predicate { return n.on }
@@ -426,7 +437,7 @@ func NewGraphSelectQuery(dir string, g Graph, args Args) (Plan, error) {
 	// "value" names the column a single-column table function emits. A select list renames it to
 	// the column's own output name, so the choice only shows through where a caller uses the
 	// registry directly.
-	fns, err := fn.Builtins("value")
+	fns, err := fn.BuiltinsWith("value", args.Functions)
 	if err != nil {
 		return nil, err
 	}
@@ -462,8 +473,20 @@ func NewGraphSelectQuery(dir string, g Graph, args Args) (Plan, error) {
 			bound[w.To()] = append(bound[w.To()], in.As())
 		}
 	}
-	// A multi-valued input arrives per row from the node's values exchange, as a wired one does.
+	// A multi-valued input, or a tuple's value, arrives per row from the node's values exchange, as a
+	// wired one does. A body field is placed by the body, not bound as a parameter.
 	for _, n := range g.Nodes() {
+		if len(n.Tuples()) > 0 && len(n.Fanout()) > 0 {
+			return nil, fmt.Errorf("omnisdk: %s has both tuples and a fanout; state one", n.Alias())
+		}
+		for _, k := range tupleKeys(n) {
+			if contains(bound[n.Alias()], k) || contains(provided[n.Alias()], k) {
+				return nil, fmt.Errorf("omnisdk: %s: %q is both a tuple value and a wired input", n.Alias(), k)
+			}
+			if _, isBody := n.Body()[k]; !isBody {
+				bound[n.Alias()] = append(bound[n.Alias()], k)
+			}
+		}
 		for k := range n.Fanout() {
 			if contains(bound[n.Alias()], k) || contains(provided[n.Alias()], k) {
 				return nil, fmt.Errorf("omnisdk: %s: %q is both a multi-valued input and a wired one", n.Alias(), k)
@@ -573,6 +596,14 @@ func NewGraphSelectQuery(dir string, g Graph, args Args) (Plan, error) {
 			}
 			specs = append(specs, valuesSpec(name+"_values", alias, fan))
 		}
+		if tuples := n.Tuples(); len(tuples) > 0 {
+			arrivals = maps.Clone(arrivals)
+			for _, k := range tupleKeys(n) {
+				arrivals[k] = "<bound>"
+				betas = append(betas, plan.NewBetaEdge(name+"_values", name, hidden(alias, k), k))
+			}
+			specs = append(specs, tupleSpec(name+"_values", alias, tuples))
+		}
 
 		c, err := openDocs(dir, addr)
 		if err != nil {
@@ -590,16 +621,9 @@ func NewGraphSelectQuery(dir string, g Graph, args Args) (Plan, error) {
 		if err != nil {
 			return nil, fmt.Errorf("omnisdk: %s (%s): %w", alias, addr, err)
 		}
-		var sec aot.Security
-		if p := c.Provider(); p != nil {
-			sec = p.Security()
-		}
-		opts, err := docOptions(args, sec)
+		opts, err := providerOptions(args, c.Provider())
 		if err != nil {
 			return nil, err
-		}
-		if sec != nil {
-			opts = append(opts, docx.WithProviderSecurity(sec))
 		}
 		mutating := n.Verb() != "select"
 		if mutating {
@@ -731,6 +755,14 @@ func openJournal(g Graph, args Args) (facade.Journal, error) {
 		return nil, err
 	}
 	return journals.For(context.Background(), j.RunID)
+}
+
+// tupleKeys are the keys a node's tuples bind, sorted; every tuple binds the same ones.
+func tupleKeys(n Node) []string {
+	if len(n.Tuples()) == 0 {
+		return nil
+	}
+	return slices.Sorted(maps.Keys(n.Tuples()[0]))
 }
 
 // requestWired reports whether anything wired into a node reaches its request. Values delivered only

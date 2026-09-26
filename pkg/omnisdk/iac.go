@@ -198,16 +198,9 @@ func providerWiring(registry string, resources []ManagedResource, args Args) (fa
 
 	routes := map[string]facade.Effector{}
 	for prov, cat := range catalogs {
-		var sec aot.Security
-		if pr := cat.Provider(); pr != nil {
-			sec = pr.Security()
-		}
-		opts, err := docOptions(args, sec)
+		opts, err := providerOptions(args, cat.Provider())
 		if err != nil {
 			return nil, nil, nil, err
-		}
-		if sec != nil {
-			opts = append(opts, docx.WithProviderSecurity(sec))
 		}
 		routes[prov] = docrun.New(cat, dslReg, residues[prov], opts...)
 	}
