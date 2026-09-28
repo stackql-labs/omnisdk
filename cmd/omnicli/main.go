@@ -24,7 +24,7 @@ import (
 
 func main() {
 	var outPath, logPath, endpoint string
-	var insecureTLS bool
+	var insecureTLS, showCredentials bool
 	var awsRegion string
 	var t tune
 
@@ -38,6 +38,7 @@ func main() {
 	pf.StringVarP(&outPath, "out", "o", "", "output file (default stdout)")
 	pf.StringVar(&logPath, "log", "", "log raw responses to this file (default off)")
 	pf.StringVar(&endpoint, "endpoint", "", "endpoint override, path-style (e.g. http://localhost:8085); default real cloud")
+	pf.BoolVar(&showCredentials, "show-credentials", false, "keep auth values (assertion, bearer token) in doc-graph results; dropped by default")
 	pf.BoolVar(&insecureTLS, "tls-skip-verify", false, "accept a self-signed certificate; only applies with --endpoint")
 	pf.IntVar(&t.parallelism, "parallelism", 16, "max concurrent fan-out units (bind-join inners)")
 	pf.IntVar(&t.perHost, "max-per-host", 8, "max concurrent requests per backend host")
@@ -472,8 +473,14 @@ func main() {
 		Args:  cobra.ExactArgs(2),
 		RunE: withSinks(func(cmd *cobra.Command, w, logw io.Writer) error {
 			var spec struct {
-				Addresses []string `json:"addresses"`
-				Wirings   []struct {
+				Nodes []struct {
+					Alias   string            `json:"alias"`
+					Address string            `json:"address"`
+					Params  map[string]string `json:"params,omitempty"`
+					Verb    string            `json:"verb,omitempty"`
+					Body    map[string]any    `json:"body,omitempty"`
+				} `json:"nodes"`
+				Wirings []struct {
 					To      string `json:"to"`
 					Inbound []struct {
 						From string `json:"from"`
@@ -490,11 +497,31 @@ func main() {
 					MediaType   string `json:"media_type,omitempty"`
 					ProgramType string `json:"program_type,omitempty"`
 					Program     string `json:"program,omitempty"`
+					Poll        *struct {
+						StatusPath  string `json:"status_path"`
+						Done        string `json:"done"`
+						Interval    string `json:"interval"`
+						MaxAttempts int    `json:"max_attempts"`
+					} `json:"poll,omitempty"`
 				} `json:"overrides,omitempty"`
+				Patches     []omnisdk.DocPatch `json:"patches,omitempty"`
+				DocCache    *omnisdk.DocCache  `json:"doc_cache,omitempty"`
+				Projections []struct {
+					Alias  string       `json:"alias"`
+					Select []selectJSON `json:"select"`
+				} `json:"projections,omitempty"`
 				Args *omnisdk.Args `json:"args,omitempty"`
 			}
 			if err := json.Unmarshal([]byte(cmdArgs(cmd)[1]), &spec); err != nil {
 				return fmt.Errorf("graph json: %w", err)
+			}
+			nodes := make([]omnisdk.Node, 0, len(spec.Nodes))
+			for _, n := range spec.Nodes {
+				verb := n.Verb
+				if verb == "" {
+					verb = "select"
+				}
+				nodes = append(nodes, omnisdk.NewMutationNode(n.Alias, n.Address, verb, n.Params, nil, n.Body))
 			}
 			wirings := make([]omnisdk.Wiring, 0, len(spec.Wirings))
 			for _, wr := range spec.Wirings {
@@ -506,9 +533,41 @@ func main() {
 			}
 			overrides := make([]omnisdk.Override, 0, len(spec.Overrides))
 			for _, o := range spec.Overrides {
-				overrides = append(overrides, omnisdk.NewOverride(o.Address, o.ObjectKey, o.MediaType, o.ProgramType, o.Program))
+				if o.Poll == nil {
+					overrides = append(overrides, omnisdk.NewOverride(o.Address, o.ObjectKey, o.MediaType, o.ProgramType, o.Program))
+					continue
+				}
+				if o.ObjectKey != "" || o.MediaType != "" || o.ProgramType != "" {
+					return fmt.Errorf("override on %s: a poll is its own entry; state the correction in another", o.Address)
+				}
+				interval, err := time.ParseDuration(o.Poll.Interval)
+				if err != nil {
+					return fmt.Errorf("override on %s: poll interval: %w", o.Address, err)
+				}
+				po, err := omnisdk.NewPollOverride(o.Address, omnisdk.Poll{StatusPath: o.Poll.StatusPath, Done: o.Poll.Done,
+					Interval: interval, MaxAttempts: o.Poll.MaxAttempts})
+				if err != nil {
+					return err
+				}
+				overrides = append(overrides, po)
 			}
-			g, err := omnisdk.NewGraph(spec.Addresses, wirings, overrides...)
+			projections := make([]omnisdk.Projection, 0, len(spec.Projections))
+			for _, p := range spec.Projections {
+				cols := make([]omnisdk.SelectColumn, 0, len(p.Select))
+				for _, c := range p.Select {
+					e, err := parseExpr(c.exprJSON)
+					if err != nil {
+						return fmt.Errorf("projection on %s, column %q: %w", p.Alias, c.Out, err)
+					}
+					cols = append(cols, omnisdk.NewSelectColumn(c.Out, e))
+				}
+				pr, err := omnisdk.NewProjection(p.Alias, cols)
+				if err != nil {
+					return err
+				}
+				projections = append(projections, pr)
+			}
+			g, err := omnisdk.NewGraphWithProjections(nodes, wirings, projections, overrides...)
 			if err != nil {
 				return err
 			}
@@ -524,7 +583,19 @@ func main() {
 			}
 			a.Endpoint, a.Log, a.Tuning = endpoint, logw, t.facade()
 			a.InsecureSkipTLSVerify = insecureTLS
-			pl, err := omnisdk.NewGraphQuery(cmdArgs(cmd)[0], g, a)
+			if showCredentials {
+				a.Redaction = omnisdk.RedactNone()
+			}
+			registry := cmdArgs(cmd)[0]
+			if len(spec.Patches) > 0 {
+				if spec.DocCache == nil {
+					return fmt.Errorf("patches need a doc_cache: where the patched documents are kept")
+				}
+				if registry, err = omnisdk.EffectiveRegistry(registry, spec.Patches, *spec.DocCache); err != nil {
+					return err
+				}
+			}
+			pl, err := omnisdk.NewGraphSelectQuery(registry, g, a)
 			if err != nil {
 				return err
 			}
@@ -561,7 +632,7 @@ func main() {
 			if (a.Tuning == omnisdk.Tuning{}) {
 				a.Tuning = t.facade()
 			}
-			pl, err := omnisdk.NewFromCatalog(pos[0], pos[1], a)
+			pl, err := omnisdk.NewSelectFromCatalog(pos[0], pos[1], a)
 			if err != nil {
 				return err
 			}
@@ -785,4 +856,55 @@ func (t tune) facade() omnisdk.Tuning {
 		Limit:       t.limit,
 		Timeout:     60 * time.Second,
 	}
+}
+
+// exprJSON is one expression in a select list, written as exactly one of three things: a literal, a
+// field of the row, or a function over further expressions.
+type exprJSON struct {
+	Field   string          `json:"field,omitempty"`
+	Literal json.RawMessage `json:"literal,omitempty"`
+	Fn      string          `json:"fn,omitempty"`
+	Args    []exprJSON      `json:"args,omitempty"`
+}
+
+// selectJSON is an output column: the name it is emitted under, plus the expression inline.
+type selectJSON struct {
+	Out string `json:"out"`
+	exprJSON
+}
+
+// parseExpr builds one expression. Exactly one form must be present: a column that named two would
+// have to be resolved by a precedence rule nobody stated.
+func parseExpr(e exprJSON) (omnisdk.Expression, error) {
+	forms := 0
+	for _, present := range []bool{e.Field != "", e.Literal != nil, e.Fn != ""} {
+		if present {
+			forms++
+		}
+	}
+	switch {
+	case forms == 0:
+		return nil, fmt.Errorf(`expression needs one of "field", "literal" or "fn"`)
+	case forms > 1:
+		return nil, fmt.Errorf(`expression names more than one of "field", "literal", "fn"`)
+	}
+	switch {
+	case e.Field != "":
+		return omnisdk.NewField(e.Field), nil
+	case e.Literal != nil:
+		var v any
+		if err := json.Unmarshal(e.Literal, &v); err != nil {
+			return nil, fmt.Errorf("literal: %w", err)
+		}
+		return omnisdk.NewLiteral(v), nil
+	}
+	args := make([]omnisdk.Expression, 0, len(e.Args))
+	for i, a := range e.Args {
+		x, err := parseExpr(a)
+		if err != nil {
+			return nil, fmt.Errorf("%s argument %d: %w", e.Fn, i+1, err)
+		}
+		args = append(args, x)
+	}
+	return omnisdk.NewCall(e.Fn, args...), nil
 }

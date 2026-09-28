@@ -1,0 +1,37 @@
+openapi: 3.0.0
+info: {title: things, version: v1}
+servers:
+  - url: '{protocol}://{cluster_addr:^(?:[^.]+|[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+(?:\:[0-9]+)?)$}/'
+    variables:
+      protocol:
+        default: https
+      cluster_addr:
+        default: localhost
+paths:
+  /kube/items:
+    get:
+      operationId: list_items
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        id: {type: string}
+components:
+  x-stackQL-resources:
+    items:
+      id: kube.things.items
+      name: items
+      methods:
+        list:
+          operation: {$ref: '#/paths/~1kube~1items/get'}
+          response: {mediaType: application/json, openAPIDocKey: '200', objectKey: $.items}
+      sqlVerbs:
+        select: [{$ref: '#/components/x-stackQL-resources/items/methods/list'}]

@@ -31,11 +31,7 @@ type providerDoc struct {
 	Version  string                     `yaml:"version"`
 	Services map[string]providerService `yaml:"providerServices"`
 	Config   struct {
-		Auth struct {
-			Type              string `yaml:"type"`
-			CredentialsEnvVar string `yaml:"credentialsenvvar"`
-			KeyIDEnvVar       string `yaml:"keyIDenvvar"`
-		} `yaml:"auth"`
+		Auth authConfig `yaml:"auth"`
 	} `yaml:"config"`
 }
 
@@ -44,7 +40,9 @@ type providerService struct {
 	Name    string `yaml:"name"`
 	Title   string `yaml:"title"`
 	Version string `yaml:"version"`
-	Service struct {
+	// Preferred marks the entry to use where a provider lists one service at several versions.
+	Preferred bool `yaml:"preferred"`
+	Service   struct {
 		Ref string `yaml:"$ref"`
 	} `yaml:"service"`
 }
@@ -89,10 +87,48 @@ func (p *provider) Security() aot.Security {
 		return security{scheme: aot.SchemeServiceAccount, name: t}
 	case "azure_default", "oauth2", "client_credentials":
 		return security{scheme: aot.SchemeOAuthClientCredentials, name: t}
+	case "basic":
+		return security{scheme: aot.SchemeBasic, name: t}
+	case "bearer":
+		return security{scheme: aot.SchemeBearer, name: t}
+	case "custom", "api_key":
+		return security{scheme: aot.SchemeAPIKey, name: t}
 	default:
 		return security{name: t}
 	}
 }
+
+// authConfig is a provider's config.auth, as stackql documents write it.
+type authConfig struct {
+	Type               string      `yaml:"type"`
+	CredentialsEnvVar  string      `yaml:"credentialsenvvar"`
+	KeyIDEnvVar        string      `yaml:"keyIDenvvar"`
+	Name               string      `yaml:"name"`
+	Location           string      `yaml:"location"`
+	ValuePrefix        string      `yaml:"valuePrefix"`
+	UsernameVar        string      `yaml:"username_var"`
+	PasswordVar        string      `yaml:"password_var"`
+	ClientIDEnvVar     string      `yaml:"client_id_env_var"`
+	ClientSecretEnvVar string      `yaml:"client_secret_env_var"`
+	TokenURL           string      `yaml:"token_url"`
+	Scopes             []string    `yaml:"scopes"`
+	GrantType          string      `yaml:"grant_type"`
+	Successor          *authConfig `yaml:"successor"`
+}
+
+func (a *authConfig) defaults() *aot.AuthDefaults {
+	if a == nil {
+		return nil
+	}
+	return &aot.AuthDefaults{Type: a.Type, Name: a.Name, Location: a.Location, ValuePrefix: a.ValuePrefix,
+		CredentialsEnvVar: a.CredentialsEnvVar, UsernameEnvVar: a.UsernameVar, PasswordEnvVar: a.PasswordVar,
+		ClientIDEnvVar: a.ClientIDEnvVar, ClientSecretEnvVar: a.ClientSecretEnvVar,
+		TokenURL: strings.TrimSpace(a.TokenURL), Scopes: a.Scopes, GrantType: a.GrantType,
+		Successor: a.Successor.defaults()}
+}
+
+// AuthDefaults are the document's auth settings beyond its scheme.
+func (p *provider) AuthDefaults() aot.AuthDefaults { return *p.doc.Config.Auth.defaults() }
 
 func (p *provider) Credentials() aot.CredentialSource {
 	return credentials{keyID: p.doc.Config.Auth.KeyIDEnvVar, secret: p.doc.Config.Auth.CredentialsEnvVar}
@@ -104,6 +140,7 @@ func (s service) Name() string    { return s.s.Name }
 func (s service) Title() string   { return s.s.Title }
 func (s service) Version() string { return s.s.Version }
 func (s service) Ref() string     { return s.s.Service.Ref }
+func (s service) Preferred() bool { return s.s.Preferred }
 
 type credentials struct{ keyID, secret string }
 

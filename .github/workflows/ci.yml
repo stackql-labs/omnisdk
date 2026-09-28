@@ -27,14 +27,33 @@ jobs:
           go-version-file: go.mod
           cache: true
 
+      # Keyed on the fetch script, which carries the pinned registry commit: changing the pin
+      # changes the key, so a stale corpus cannot survive a repin.
+      - name: Cache provider-document corpus
+        id: corpus
+        uses: actions/cache@v4
+        with:
+          path: test/corpus/registry
+          key: corpus-${{ hashFiles('test/corpus/fetch.sh') }}
+
+      - name: Fetch provider-document corpus
+        if: steps.corpus.outputs.cache-hit != 'true'
+        run: ./test/corpus/fetch.sh
+
       - name: Build
         run: go build ./...
 
       - name: Vet
         run: go vet ./...
 
+      # OMNISDK_REQUIRE_CORPUS turns a missing corpus from a silent skip into a failure: the
+      # document-driven tests are the point of populating it, and a green run that skipped them
+      # says nothing. The timeout is raised because pkg/omnisdk alone runs ~10 minutes under -race,
+      # which is the default and would abort mid-suite.
       - name: Test (race + coverage)
-        run: go test -race -shuffle=on -covermode=atomic -coverprofile=coverage.out ./...
+        env:
+          OMNISDK_REQUIRE_CORPUS: "1"
+        run: go test -race -shuffle=on -timeout 40m -covermode=atomic -coverprofile=coverage.out ./...
 
   robot:
     name: robot (mock s3)

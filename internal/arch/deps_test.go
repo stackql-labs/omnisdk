@@ -40,6 +40,16 @@ func TestFacadeDependsOnStdlibOnly(t *testing.T) {
 	}
 }
 
+// query is what a front end builds. It must stay standard-library only, so a front end in another
+// language's toolchain depends on it and nothing else of the module.
+func TestQueryDependsOnStdlibOnly(t *testing.T) {
+	for _, pkg := range []string{"/pkg/query", "/pkg/sqlfn", "/pkg/cache"} {
+		if got := deps(t, module+pkg); len(got) > 0 {
+			t.Errorf("%s depends on %v, want stdlib only", pkg, got)
+		}
+	}
+}
+
 // These are disjoint from System-G: the executor calls them, never the reverse. They
 // may see the contracts and nothing else.
 func TestLeafImplementationsSeeContractsOnly(t *testing.T) {

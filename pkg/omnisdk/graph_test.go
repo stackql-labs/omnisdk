@@ -15,16 +15,23 @@ import (
 
 const corpus = "../../test/corpus/registry"
 
-// requireCorpus skips a test that needs the provider-document corpus.
+// requireCorpus skips a test that needs the provider-document corpus, or FAILS it where the corpus
+// is meant to be there.
 //
-// The corpus is a vendored copy of an external registry and is not tracked, so a clean clone does
-// not have it. Failing there reports a missing fixture as a broken build; skipping says what is
-// absent and why, and the test still runs everywhere the corpus is present.
+// The corpus is a vendored subset of an external registry and is not tracked, so a clean clone does
+// not have it: skipping says what is absent and why, rather than reporting a missing fixture as a
+// broken build. But a silent skip in CI is worse than either — it hides a regression behind a green
+// run — so CI sets OMNISDK_REQUIRE_CORPUS after populating it, and absence is then a failure.
 func requireCorpus(t *testing.T) {
 	t.Helper()
-	if _, err := os.Stat(corpus); err != nil {
-		t.Skipf("provider-document corpus absent at %s; see the developer guide for how to populate it", corpus)
+	if _, err := os.Stat(corpus); err == nil {
+		return
 	}
+	const how = "run ./test/corpus/fetch.sh (see the developer guide)"
+	if os.Getenv("OMNISDK_REQUIRE_CORPUS") != "" {
+		t.Fatalf("provider-document corpus absent at %s and OMNISDK_REQUIRE_CORPUS is set; %s", corpus, how)
+	}
+	t.Skipf("provider-document corpus absent at %s; %s", corpus, how)
 }
 
 // A document describes one provider's calls and does not state that a subnet belongs to a VPC. The
@@ -56,9 +63,9 @@ func TestGraphJoinsTwoExchangesTheDocumentDoesNotRelate(t *testing.T) {
 	// transform produces, and the engine now implements it. Row fields carry the SCHEMA's names —
 	// VpcId, not the wire's vpcId — because projection is what that transform does.
 	g, err := omnisdk.NewGraph(
-		[]string{vpcs, subnets},
-		[]omnisdk.Wiring{omnisdk.NewWiring(subnets,
-			[]omnisdk.Inbound{omnisdk.NewInbound(vpcs, "VpcId", "vpc_id")},
+		[]omnisdk.Node{omnisdk.NewNode("v", vpcs, nil), omnisdk.NewNode("s", subnets, nil)},
+		[]omnisdk.Wiring{omnisdk.NewWiring("s",
+			[]omnisdk.Inbound{omnisdk.NewInbound("v", "VpcId", "vpc_id")},
 			gotemplate.TypeJSON1,
 			`{"Filter.1.Name":"vpc-id","Filter.1.Value.1":"{{ .vpc_id }}"}`,
 			"Filter.1.Name", "Filter.1.Value.1",
@@ -68,7 +75,7 @@ func TestGraphJoinsTwoExchangesTheDocumentDoesNotRelate(t *testing.T) {
 		t.Fatalf("graph: %v", err)
 	}
 
-	pl, err := omnisdk.NewGraphQuery(corpus, g, omnisdk.Args{
+	pl, err := omnisdk.NewGraphSelectQuery(corpus, g, omnisdk.Args{
 		Endpoint: srv.URL,
 		Params:   map[string]string{"region": "us-east-1"},
 	})
@@ -103,13 +110,13 @@ func TestGraphJoinsTwoExchangesTheDocumentDoesNotRelate(t *testing.T) {
 	}
 }
 
-// An edge naming an exchange the query does not run is caught where it can name the address, not
-// as a missing binding at execution.
-func TestGraphRejectsAJoinOntoAnAbsentAddress(t *testing.T) {
+// An edge naming a node the query does not run is caught where it can name the alias, not as a
+// missing binding at execution.
+func TestGraphRejectsAJoinOntoAnAbsentAlias(t *testing.T) {
 	_, err := omnisdk.NewGraph(
-		[]string{"stackql_unstable_aws.ec2.vpcs"},
-		[]omnisdk.Wiring{omnisdk.NewWiring("elsewhere.ec2.subnets",
-			[]omnisdk.Inbound{omnisdk.NewInbound("stackql_unstable_aws.ec2.vpcs", "vpcId", "")}, "", "")},
+		[]omnisdk.Node{omnisdk.NewNode("v", "stackql_unstable_aws.ec2.vpcs", nil)},
+		[]omnisdk.Wiring{omnisdk.NewWiring("s",
+			[]omnisdk.Inbound{omnisdk.NewInbound("v", "vpcId", "")}, "", "")},
 	)
 	if err == nil {
 		t.Error("wiring onto an address the graph excludes was accepted")
