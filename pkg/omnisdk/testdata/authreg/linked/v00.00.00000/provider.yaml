@@ -1,0 +1,13 @@
+id: linked
+name: linked
+version: v00.00.00000
+providerServices:
+  things:
+    id: things:v00.00.00000
+    name: things
+    preferred: true
+    service:
+      $ref: linked/v00.00.00000/services/things.yaml
+config:
+  auth:
+    type: null_auth

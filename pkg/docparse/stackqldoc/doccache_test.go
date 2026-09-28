@@ -151,8 +151,8 @@ components:
 func TestServerURLDropsVariablePatterns(t *testing.T) {
 	for in, want := range map[string]string{
 		`{protocol}://{cluster_addr:^(?:[^.]+|[0-9]+\.[0-9]+(?:\:[0-9]+)?)$}/`: `{protocol}://{cluster_addr}/`,
-		`https://{host:[a-z]{2,4}}/v1`:                                          `https://{host}/v1`,
-		`https://api.example.com/{version}`:                                     `https://api.example.com/{version}`,
+		`https://{host:[a-z]{2,4}}/v1`:                                         `https://{host}/v1`,
+		`https://api.example.com/{version}`:                                    `https://api.example.com/{version}`,
 	} {
 		if got := stackqldoc.ServerURLForTest(in); got != want {
 			t.Errorf("serverURL(%q) = %q, want %q", in, got, want)

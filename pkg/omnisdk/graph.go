@@ -721,6 +721,11 @@ func NewGraphSelectQuery(dir string, g Graph, args Args) (Plan, error) {
 		if n.Outer() {
 			spec = leftOuter{ExchangeSpec: spec}
 		}
+		// A value a wiring delivers NULL or empty means nothing to ask about: the node has no match
+		// for that row, and no request is made — never one sent with the parameter blank.
+		if names := wiredInputs(g, alias); len(names) > 0 {
+			spec = guarded{ExchangeSpec: spec, names: names}
+		}
 		if attrs := emits[alias]; len(attrs) > 0 {
 			spec = tagged{ExchangeSpec: spec, alias: alias, attrs: attrs}
 		}
@@ -769,6 +774,25 @@ func tupleKeys(n Node) []string {
 		return nil
 	}
 	return slices.Sorted(maps.Keys(n.Tuples()[0]))
+}
+
+// wiredInputs are the request inputs a node's wiring delivers: its identity arrivals, or the inputs
+// its T_in provides.
+func wiredInputs(g Graph, alias string) []string {
+	w, ok := wiringFor(g, alias)
+	if !ok {
+		return nil
+	}
+	if t, _ := w.Via(); t != "" {
+		return w.Provides()
+	}
+	var out []string
+	for _, in := range w.Inbound() {
+		if !strings.HasPrefix(in.As(), "\x00") {
+			out = append(out, in.As())
+		}
+	}
+	return out
 }
 
 // requestWired reports whether anything wired into a node reaches its request. Values delivered only

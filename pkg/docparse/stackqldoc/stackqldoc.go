@@ -53,6 +53,14 @@ func Parse(b []byte) (Doc, error) {
 
 type document struct {
 	Servers []server `yaml:"servers"`
+	// Config is the document-wide stackql configuration; its pagination applies to every method
+	// that states none of its own.
+	Config struct {
+		Pagination struct {
+			RequestToken  tokenSpec `yaml:"requestToken"`
+			ResponseToken tokenSpec `yaml:"responseToken"`
+		} `yaml:"pagination"`
+	} `yaml:"x-stackQL-config"`
 	// A path item holds verbs alongside non-operation keys (an OpenAPI path-level `parameters`
 	// list, vendor extensions), so verbs are decoded on demand rather than assumed.
 	Paths      map[string]map[string]yaml.Node `yaml:"paths"`
@@ -66,6 +74,8 @@ type document struct {
 		Schemas map[string]yaml.Node `yaml:"schemas"`
 		// Parameters are shared input declarations an operation reaches by $ref.
 		Parameters map[string]pathParam `yaml:"parameters"`
+		// Responses are shared response declarations an operation reaches by $ref.
+		Responses map[string]opResponse `yaml:"responses"`
 	} `yaml:"components"`
 }
 
@@ -113,6 +123,8 @@ type method struct {
 		OverrideMediaType string        `yaml:"overrideMediaType"`
 		ObjectKey         string        `yaml:"objectKey"`
 		Transform         transformSpec `yaml:"transform"`
+		// OpenAPIDocKey names the response code whose schema the rows follow.
+		OpenAPIDocKey string `yaml:"openAPIDocKey"`
 	} `yaml:"response"`
 }
 
@@ -129,6 +141,10 @@ type tokenSpec struct {
 type pathOp struct {
 	OperationID string      `yaml:"operationId"`
 	Parameters  []pathParam `yaml:"parameters"`
+	// MsPageable is Microsoft's pagination declaration: the body property holding the next page's URL.
+	MsPageable *struct {
+		NextLinkName *string `yaml:"nextLinkName"`
+	} `yaml:"x-ms-pageable"`
 	// RequestBody says the operation takes one, and how it is written. The fields are the caller's
 	// to supply, so only the media type is read.
 	RequestBody struct {
@@ -137,11 +153,16 @@ type pathOp struct {
 	// Responses carry the declared response shape. Only the success response is read: an error
 	// response describes a failure, and projecting rows out of one would be reporting a fault as
 	// data.
-	Responses map[string]struct {
-		Content map[string]struct {
-			Schema yaml.Node `yaml:"schema"`
-		} `yaml:"content"`
-	} `yaml:"responses"`
+	Responses map[string]opResponse `yaml:"responses"`
+}
+
+// opResponse is a declared response: its content, or a $ref to a shared one under
+// components/responses (Microsoft Graph states every collection response that way).
+type opResponse struct {
+	Ref     string `yaml:"$ref"`
+	Content map[string]struct {
+		Schema yaml.Node `yaml:"schema"`
+	} `yaml:"content"`
 }
 
 // pathParam is an operation parameter as the document declares it.
@@ -346,6 +367,7 @@ func (d *document) build(name, verb, path string, op pathOp, m method) aot.AOTEx
 	// drop_double_underscore_params says they are NOT query parameters: with a form request they are
 	// the body that names the action. Stripping the marker prefix recovers the real call.
 	route, params := splitPseudoParams(path)
+	schema := d.responseSchema(op, m.Response.OpenAPIDocKey)
 
 	return &aotExchange{
 		name:   name,
@@ -365,10 +387,44 @@ func (d *document) build(name, verb, path string, op pathOp, m method) aot.AOTEx
 			override:   m.Response.OverrideMediaType,
 			objectKey:  m.Response.ObjectKey,
 			transform:  transformDecl(m.Response.Transform),
-			pagination: pagination{req: m.Config.Pagination.RequestToken, resp: m.Config.Pagination.ResponseToken},
-			schema:     d.responseSchema(op),
+			pagination: d.pagination(m, op, schema),
+			schema:     schema,
 		},
 	}
+}
+
+// pagination is how a method's results continue past the first page, as the document states it:
+// the method's own declaration; else the document's; else Microsoft's x-ms-pageable next link; else
+// the pageToken / nextPageToken pair a list method visibly declares (Google's). Every source is the
+// document — no provider is recognised by name.
+func (d *document) pagination(m method, op pathOp, schema aot.Schema) pagination {
+	if p := (pagination{req: m.Config.Pagination.RequestToken, resp: m.Config.Pagination.ResponseToken}); p.Declared() {
+		return p
+	}
+	if p := (pagination{req: d.Config.Pagination.RequestToken, resp: d.Config.Pagination.ResponseToken}); p.Declared() {
+		return p
+	}
+	if op.MsPageable != nil && op.MsPageable.NextLinkName != nil && *op.MsPageable.NextLinkName != "" {
+		return pagination{req: tokenSpec{Location: "request"}, resp: tokenSpec{Key: *op.MsPageable.NextLinkName, Location: "body"}}
+	}
+	for _, p := range op.Parameters {
+		switch {
+		case p.Name == "pageToken" && p.In == "query" && schema != nil:
+			if _, ok := schema.Property("nextPageToken"); ok {
+				return pagination{req: tokenSpec{Key: "pageToken", Location: "query"}, resp: tokenSpec{Key: "nextPageToken", Location: "body"}}
+			}
+		case p.Name == "Marker" || p.Name == "NextToken":
+			// AWS's query protocol pages by a Marker or NextToken parameter, echoed under the same
+			// name in the reply beside the rows (EC2 writes it nextToken). A reply without it is the
+			// last page, so a parameter that turns out not to page costs nothing.
+			loc := p.In
+			if loc == "" {
+				loc = "query"
+			}
+			return pagination{req: tokenSpec{Key: p.Name, Location: loc}, resp: tokenSpec{Key: p.Name, Location: "body"}}
+		}
+	}
+	return pagination{}
 }
 
 // bodyMediaType is how the operation writes its request body, empty where it declares none. A
@@ -389,14 +445,28 @@ func bodyMediaType(op pathOp) string {
 // responseSchema resolves an operation's declared success shape. A schema-driven transform has no
 // other instructions, so this is what makes one runnable — and its absence is why a document naming
 // such a transform silently yields nothing.
-func (d *document) responseSchema(op pathOp) aot.Schema {
+func (d *document) responseSchema(op pathOp, key string) aot.Schema {
 	components := map[string]*yaml.Node{}
 	for name := range d.Components.Schemas {
 		node := d.Components.Schemas[name]
 		components[name] = &node
 	}
-	for _, code := range []string{"200", "201", "202", "204", "default"} {
+	// The method names the response it reads; failing that, the first success response. A range
+	// (2XX) counts, as OpenAPI allows.
+	codes := []string{"200", "201", "202", "204", "2XX", "2xx", "default"}
+	if key != "" {
+		codes = append([]string{key}, codes...)
+	}
+	for _, code := range codes {
 		resp, ok := op.Responses[code]
+		if !ok {
+			continue
+		}
+		for hops := 0; resp.Ref != "" && hops < 8; hops++ {
+			if resp, ok = d.Components.Responses[lastSegment(resp.Ref)]; !ok {
+				break
+			}
+		}
 		if !ok {
 			continue
 		}

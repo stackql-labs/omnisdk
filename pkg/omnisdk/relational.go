@@ -688,3 +688,19 @@ func tupleSpec(name, alias string, tuples []map[string]any) plan.ExchangeSpec {
 		return staticOp{rows: rows}
 	}, nil)
 }
+
+// guarded skips a node's request for a row whose wired inputs are missing. The join sees no rows for
+// it: an inner join drops the row, a left join keeps it unmatched.
+type guarded struct {
+	plan.ExchangeSpec
+	names []string
+}
+
+func (g guarded) Make(bound map[string]any) facade.Operator {
+	for _, n := range g.names {
+		if v, ok := bound[n]; !ok || v == nil || v == "" {
+			return staticOp{}
+		}
+	}
+	return g.ExchangeSpec.Make(bound)
+}

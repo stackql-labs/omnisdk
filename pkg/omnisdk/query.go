@@ -2,6 +2,8 @@ package omnisdk
 
 import (
 	"fmt"
+	"github.com/stackql-labs/omnisdk/internal/system_g/exchange/docx"
+	"slices"
 	"strings"
 
 	"github.com/stackql-labs/omnisdk/internal/system_g/fn"
@@ -139,6 +141,14 @@ func (s docSignature) row() aot.Schema {
 			break
 		}
 		sch = next
+	}
+	// No declared key: the conventional $.items, where the schema has a list there.
+	if strings.TrimSpace(resp.ObjectKey()) == "" {
+		if list, ok := sch.Property(docx.DefaultObjectKey); ok {
+			if _, isList := list.Items(); isList {
+				sch = list
+			}
+		}
 	}
 	if items, ok := sch.Items(); ok {
 		sch = items
@@ -557,7 +567,13 @@ func (r *resolver) bindJoin(p query.Predicate) (bool, error) {
 	case rNeeds:
 		to, from = rc, l
 	default:
-		return false, nil
+		// Neither requires the value, but a side that takes it as a parameter must be sent it: its
+		// methods answer differently without it (ListAccessKeys without UserName lists only the
+		// caller's keys), so filtering what they return instead is silently wrong.
+		var ok bool
+		if to, from, ok = r.optionalEdge(l, rc); !ok {
+			return false, nil
+		}
 	}
 	if r.onTarget != "" && to.Qualifier() != r.onTarget {
 		return false, fmt.Errorf("omnisdk: %s: in a left join the preserved side %s cannot need a value from %s", describe(c), to.Qualifier(), r.onTarget)
@@ -642,6 +658,35 @@ func (r *resolver) bindComputed(c query.Compare, col query.Column, e query.Expr)
 		}
 	}
 	return true, nil
+}
+
+// optionalEdge directs an equality onto an optional parameter. Where one side takes it, the value
+// flows there; where both do, it flows into the relation joined later — the one the ON belongs to —
+// and, under a left join, into the joined side. Where neither takes it, it is not an edge.
+func (r *resolver) optionalEdge(l, rc query.Column) (to, from query.Column, ok bool) {
+	lTakes := accepts(r.tables[l.Qualifier()], l.Name())
+	rTakes := accepts(r.tables[rc.Qualifier()], rc.Name())
+	if r.onTarget != "" {
+		switch {
+		case l.Qualifier() == r.onTarget && lTakes:
+			return l, rc, true
+		case rc.Qualifier() == r.onTarget && rTakes:
+			return rc, l, true
+		}
+		return nil, nil, false
+	}
+	switch {
+	case lTakes && rTakes:
+		if slices.Index(r.order, l.Qualifier()) > slices.Index(r.order, rc.Qualifier()) {
+			return l, rc, true
+		}
+		return rc, l, true
+	case lTakes:
+		return l, rc, true
+	case rTakes:
+		return rc, l, true
+	}
+	return nil, nil, false
 }
 
 // filter adds a condition on the returned rows, with its columns qualified and pointed at the
@@ -819,7 +864,10 @@ func (r *resolver) build(sel []query.Output) (Resolution, error) {
 		}
 		cols = append(cols, r.computed[alias]...)
 		if len(cols) == 0 {
-			continue
+			// A node the query reads nothing from still has a select list — an empty one, spelled as
+			// a hidden constant — so the result carries exactly what was asked for and none of the
+			// inputs that seeded the row.
+			cols = []SelectColumn{NewSelectColumn(kept(""), NewLiteral(nil))}
 		}
 		p, err := NewProjection(alias, cols)
 		if err != nil {

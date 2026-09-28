@@ -108,6 +108,13 @@ type Auth struct {
 	Context string `json:"context,omitempty"`
 	// Successor is a further method applied after this one, e.g. a second API-key header.
 	Successor *Auth `json:"successor,omitempty"`
+
+	// Subject is the user a Google service account acts as through domain-wide delegation (the JWT
+	// "sub" claim) — required by the Admin SDK.
+	Subject string `json:"sub,omitempty"`
+	// Profile names the AWS shared-config profile to read when no keys are given; empty is
+	// AWS_PROFILE, else "default".
+	Profile string `json:"profile,omitempty"`
 }
 
 // TLS is a connection's transport security. CA, certificate and key each come from a file or from
@@ -1214,9 +1221,8 @@ func NewSelectFromCatalog(dir, address string, args Args) (Plan, error) {
 // supplying an identifier means asking for that one thing. A tie is ambiguous and says so rather than
 // guessing; nothing satisfiable says what each would have needed.
 func chooseExchange(candidates []aot.AOTExchange, inputs map[string]any) (aot.AOTExchange, error) {
-	var best aot.AOTExchange
+	var best []aot.AOTExchange
 	var bestScore int
-	var tie bool
 	var unmet []string
 	for _, ex := range candidates {
 		score, ok := 0, true
@@ -1236,18 +1242,36 @@ func chooseExchange(candidates []aot.AOTExchange, inputs map[string]any) (aot.AO
 		}
 		switch {
 		case best == nil || score > bestScore:
-			best, bestScore, tie = ex, score, false
+			best, bestScore = []aot.AOTExchange{ex}, score
 		case score == bestScore:
-			tie = true
+			best = append(best, ex)
+		}
+	}
+	if len(best) > 1 {
+		// A read that needs a request body — Azure's check_name_availability, bound to select beside
+		// list — needs content the query does not have. Where methods tie, the ones that do not are
+		// the reads.
+		var reads []aot.AOTExchange
+		for _, ex := range best {
+			if ex.Request().BodyMediaType() == "" {
+				reads = append(reads, ex)
+			}
+		}
+		if len(reads) > 0 {
+			best = reads
 		}
 	}
 	switch {
-	case best == nil:
+	case len(best) == 0:
 		return nil, fmt.Errorf("no satisfiable select method (%s)", strings.Join(unmet, "; "))
-	case tie:
-		return nil, fmt.Errorf("several select methods are satisfiable; supply a parameter that distinguishes them")
+	case len(best) > 1:
+		names := make([]string, len(best))
+		for i, ex := range best {
+			names[i] = ex.Name()
+		}
+		return nil, fmt.Errorf("several select methods are satisfiable (%s); supply a parameter that distinguishes them", strings.Join(names, ", "))
 	}
-	return best, nil
+	return best[0], nil
 }
 
 // docInputs are the caller's params as κ inputs.
@@ -1275,7 +1299,12 @@ func docOptions(args Args, sec aot.Security, oauth bool) ([]docx.Option, error) 
 	if args.Endpoint != "" {
 		opts = append(opts, docx.WithBaseURL(args.Endpoint))
 	}
-	if creds, err := awsCreds(args); err == nil {
+	// The shared-config profile is read only for a call that signs with it.
+	aws := awsKeys
+	if sec == nil || sec.Scheme() == aot.SchemeAWSSigV4 {
+		aws = awsCreds
+	}
+	if creds, err := aws(args); err == nil {
 		opts = append(opts, docx.WithAWSCredentials(creds))
 	}
 	switch tenant, clientID, clientSecret, err := azureNativeCreds(args); {
@@ -1283,17 +1312,54 @@ func docOptions(args Args, sec aot.Security, oauth bool) ([]docx.Option, error) 
 	case err == nil:
 		opts = append(opts, docx.WithAzureCredentials(tenant, clientID, clientSecret))
 	case sec != nil && sec.Scheme() == aot.SchemeOAuthClientCredentials:
-		return nil, fmt.Errorf("omnisdk: Azure credentials cannot be used: %w", err)
+		// No service principal: the credential an interactive user has is the Azure CLI's login,
+		// as Azure's own default credential chain would use.
+		tok, cliErr := auth.AzureCLIToken(azureManagementResource)
+		if cliErr != nil {
+			return nil, fmt.Errorf("omnisdk: Azure credentials cannot be used: %w; nor the Azure CLI: %w", err, cliErr)
+		}
+		opts = append(opts, docx.WithRequestTransform(auth.BearerMethod(tok).RequestTransform()))
 	}
-	switch creds, err := gcpCreds(args); {
+	switch opt, err := googleOption(args); {
 	case err == nil:
-		opts = append(opts, docx.WithGoogleCredentials(creds))
+		opts = append(opts, opt)
 	case sec != nil && sec.Scheme() == aot.SchemeServiceAccount:
 		// The document says this call is authenticated with a service account, so a credential that
 		// cannot be used is fatal — and says why, rather than surfacing later as "none supplied".
 		return nil, fmt.Errorf("omnisdk: Google credentials cannot be used: %w", err)
 	}
 	return opts, nil
+}
+
+// azureManagementResource is the audience of an Azure Resource Manager token.
+const azureManagementResource = "https://management.azure.com/"
+
+// googleOption is the credential a Google document authenticates with: a service-account key, or a
+// user's application-default login — whichever the first credential found holds. They are looked
+// for inline, then in GOOGLE_CREDENTIALS, then the GOOGLE_APPLICATION_CREDENTIALS file, then gcloud's
+// application-default file.
+func googleOption(args Args) (docx.Option, error) {
+	a := authOf(args)
+	raw, err := secret.Require("GCP credentials",
+		secret.Literal(a.Credentials),
+		secret.Env(orStr(a.CredentialsEnvVar, "GOOGLE_CREDENTIALS")),
+		secret.File(orStr(a.CredentialsFilePath, os.Getenv("GOOGLE_APPLICATION_CREDENTIALS"))),
+		secret.File(auth.GoogleADCFile())).Resolve()
+	if err != nil {
+		return nil, err
+	}
+	if u, ok := auth.ParseGoogleUser([]byte(raw)); ok {
+		if a.Subject != "" {
+			return nil, fmt.Errorf("a user credential cannot act as %s; delegation needs a service account", a.Subject)
+		}
+		return docx.WithGoogleUserCredentials(u.ClientID, u.ClientSecret, u.RefreshToken), nil
+	}
+	creds, err := sdk.ParseGCPCredentials([]byte(raw))
+	if err != nil {
+		return nil, err
+	}
+	creds.Subject = a.Subject
+	return docx.WithGoogleCredentials(creds), nil
 }
 
 // providerOptions are docOptions for a provider: its own credentials, its document's auth defaults
@@ -1320,6 +1386,9 @@ func providerOptions(args Args, p aot.Provider) ([]docx.Option, error) {
 		return nil, err
 	}
 	opts = append(append(base, opts...), docx.WithProviderSecurity(sec))
+	if sec.Scheme() == aot.SchemeServiceAccount && len(cfg.Scopes) > 0 {
+		opts = append(opts, docx.WithGoogleScopes(cfg.Scopes))
+	}
 	m, err := requestAuth(p, sec, cfg)
 	if err != nil {
 		return nil, err
@@ -1482,7 +1551,7 @@ func orStr(v, fallback string) string {
 
 // awsCreds resolves AWS SigV4 credentials from the Auth DTO: inline value, else the named env var
 // (defaulted to the canonical AWS_* var). SessionToken is optional (STS/assumed-role).
-func awsCreds(args Args) (sdk.Credentials, error) {
+func awsKeys(args Args) (sdk.Credentials, error) {
 	a := authOf(args)
 	id, err := secret.Require("AWS access key id",
 		secret.Literal(a.AccessKeyID), secret.Env(orStr(a.AccessKeyIDEnvVar, "AWS_ACCESS_KEY_ID"))).Resolve()
@@ -1496,6 +1565,20 @@ func awsCreds(args Args) (sdk.Credentials, error) {
 	}
 	tok := secret.Optional(secret.Literal(a.SessionToken), secret.Env(orStr(a.SessionTokenEnvVar, "AWS_SESSION_TOKEN")))
 	return sdk.Credentials{AccessKeyID: id, SecretAccessKey: key, SessionToken: tok}, nil
+}
+
+// awsCreds is the caller's keys, else the environment's, else the shared-config profile — the
+// order AWS's own tools use.
+func awsCreds(args Args) (sdk.Credentials, error) {
+	creds, err := awsKeys(args)
+	if err == nil {
+		return creds, nil
+	}
+	k, perr := auth.AWSProfile(orStr(authOf(args).Profile, os.Getenv("AWS_PROFILE")))
+	if perr != nil {
+		return sdk.Credentials{}, fmt.Errorf("%w; nor a shared-config profile: %w", err, perr)
+	}
+	return sdk.Credentials{AccessKeyID: k.AccessKeyID, SecretAccessKey: k.SecretAccessKey, SessionToken: k.SessionToken}, nil
 }
 
 // azureAuth builds the Azure storage-account config-driven auth from the Auth DTO. An explicit bearer
@@ -1605,7 +1688,12 @@ func gcpCreds(args Args) (sdk.GCPCredentials, error) {
 	if err != nil {
 		return sdk.GCPCredentials{}, err
 	}
-	return sdk.ParseGCPCredentials([]byte(raw))
+	creds, err := sdk.ParseGCPCredentials([]byte(raw))
+	if err != nil {
+		return sdk.GCPCredentials{}, err
+	}
+	creds.Subject = a.Subject
+	return creds, nil
 }
 
 type cannedPlan struct {

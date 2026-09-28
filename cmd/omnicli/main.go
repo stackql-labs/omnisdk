@@ -604,6 +604,27 @@ func main() {
 	}
 	root.AddCommand(docGraph)
 
+	// doc-lint: report incongruities in a registry's documents, one finding per line.
+	root.AddCommand(&cobra.Command{
+		Use:   "doc-lint <dir> [provider...]",
+		Short: "Report incongruities in provider documents (rows not located, unresolvable refs, indistinguishable methods)",
+		Args:  cobra.MinimumNArgs(1),
+		RunE: withSinks(func(cmd *cobra.Command, w, _ io.Writer) error {
+			args := cmdArgs(cmd)
+			findings, err := omnisdk.AnalyzeDocuments(args[0], args[1:]...)
+			if err != nil {
+				return err
+			}
+			enc := json.NewEncoder(w)
+			for _, f := range findings {
+				if err := enc.Encode(f); err != nil {
+					return err
+				}
+			}
+			return nil
+		}),
+	})
+
 	root.AddCommand(&cobra.Command{
 		Use:   "doc-run <dir> <address> [args-json]",
 		Short: `Run an addressed exchange, e.g. doc-run ~/.stackql/src stackql_unstable_google.storage.buckets '{"params":{"project":"p"}}'`,

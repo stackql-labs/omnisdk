@@ -41,7 +41,10 @@ type GCPCredentials struct {
 	ClientEmail string
 	TokenURI    string
 	ProjectID   string
-	key         *rsa.PrivateKey
+	// Subject is the user the service account acts as, through domain-wide delegation — the "sub"
+	// claim the Admin SDK requires. Empty acts as the service account itself.
+	Subject string
+	key     *rsa.PrivateKey
 }
 
 // ParseGCPCredentials parses a service-account JSON key (as written by gcloud).
@@ -78,13 +81,17 @@ func b64url(b []byte) string { return base64.RawURLEncoding.EncodeToString(b) }
 // signedJWT builds and RS256-signs the assertion for the jwt-bearer grant.
 func (c GCPCredentials) signedJWT(aud, scope string, now time.Time) (string, error) {
 	header, _ := json.Marshal(map[string]string{"alg": "RS256", "typ": "JWT"})
-	claims, _ := json.Marshal(map[string]any{
+	fields := map[string]any{
 		"iss":   c.ClientEmail,
 		"scope": scope,
 		"aud":   aud,
 		"iat":   now.Unix(),
 		"exp":   now.Add(time.Hour).Unix(),
-	})
+	}
+	if c.Subject != "" {
+		fields["sub"] = c.Subject
+	}
+	claims, _ := json.Marshal(fields)
 	input := b64url(header) + "." + b64url(claims)
 	sum := sha256.Sum256([]byte(input))
 	sig, err := rsa.SignPKCS1v15(rand.Reader, c.key, crypto.SHA256, sum[:])

@@ -55,6 +55,11 @@ type options struct {
 	clientCreds *clientCredentials
 	// client is the HTTP client this exchange's own requests use; nil is the run's.
 	client *http.Client
+	// googleUser is a user credential for a document declaring a service account: a refresh token
+	// rather than a key.
+	googleUser *googleUser
+	// googleScopes replace the default Google scope.
+	googleScopes []string
 	// ignoreResponse compiles an operation whose response the document does not type.
 	ignoreResponse bool
 	// wholeResponse emits the decoded body as one record rather than exploding a list out of it.
@@ -174,6 +179,20 @@ func WithClientCredentials(tokenURL string, scopes []string, clientID, clientSec
 	return func(o *options) {
 		o.clientCreds = &clientCredentials{tokenURL: tokenURL, scopes: scopes, clientID: clientID, clientSecr: clientSecret}
 	}
+}
+
+type googleUser struct{ clientID, clientSecret, refreshToken string }
+
+// WithGoogleUserCredentials authenticates a Google document with a user's refresh token — gcloud's
+// application-default login — in place of a service-account key.
+func WithGoogleUserCredentials(clientID, clientSecret, refreshToken string) Option {
+	return func(o *options) { o.googleUser = &googleUser{clientID, clientSecret, refreshToken} }
+}
+
+// WithGoogleScopes asks for these scopes instead of the default. The Admin SDK, for one, will not
+// accept cloud-platform.
+func WithGoogleScopes(scopes []string) Option {
+	return func(o *options) { o.googleScopes = scopes }
 }
 
 // WithHTTPClient sends this exchange's requests through c — a client carrying the TLS a cluster
@@ -414,6 +433,10 @@ func Spec(ex aot.AOTExchange, inputs map[string]any, reg dsl.Registry, opts ...O
 	hreq := httpx.Request{Method: req.Method(), URL: url}
 	if o.poll != nil {
 		hreq.Continuation = *o.poll
+	} else if c, ok := continuation(resp.Pagination()); ok {
+		// Every page is fetched, and each is emitted as it arrives: a list is never cut to its first
+		// page, and never waits for its last.
+		hreq.Continuation = c
 	}
 	if params := req.Params(); len(params) > 0 {
 		body := make(map[string]any, len(params))
@@ -537,7 +560,7 @@ func Spec(ex aot.AOTExchange, inputs map[string]any, reg dsl.Registry, opts ...O
 					ex.Name(), sec.Scheme(), sec.Name())
 			}
 		case aot.SchemeServiceAccount:
-			if o.gcpCreds == nil {
+			if o.gcpCreds == nil && o.googleUser == nil {
 				return nil, fmt.Errorf("docx: exchange %q declares %s (%q) but no credentials were supplied",
 					ex.Name(), sec.Scheme(), sec.Name())
 			}
@@ -557,7 +580,14 @@ func Spec(ex aot.AOTExchange, inputs map[string]any, reg dsl.Registry, opts ...O
 	var authInputs map[string]any
 	switch {
 	case sec.Scheme() == aot.SchemeServiceAccount && o.gcpCreds != nil && !o.noSign:
-		authSpec, assertion = sdk.GCPOAuthSpec(o.baseURL, *o.gcpCreds, googleScope)
+		scope := googleScope
+		if len(o.googleScopes) > 0 {
+			scope = strings.Join(o.googleScopes, " ")
+		}
+		authSpec, assertion = sdk.GCPOAuthSpec(o.baseURL, *o.gcpCreds, scope)
+	case sec.Scheme() == aot.SchemeServiceAccount && o.googleUser != nil && !o.noSign:
+		u := o.googleUser
+		authSpec, authInputs = sdk.RefreshTokenSpec(retarget(googleTokenURL, o.baseURL), u.clientID, u.clientSecret, u.refreshToken)
 	case sec.Scheme() == aot.SchemeOAuthClientCredentials && o.clientCreds != nil && !o.noSign:
 		c := o.clientCreds
 		authSpec, authInputs = sdk.ClientCredentialsSpec(retarget(c.tokenURL, o.baseURL), c.scopes, c.clientID, c.clientSecr)
@@ -591,9 +621,9 @@ func Spec(ex aot.AOTExchange, inputs map[string]any, reg dsl.Registry, opts ...O
 		case sec.Scheme() == aot.SchemeAWSSigV4:
 			// region is a bound input, so the signer is built per run, not per plan
 			reqT = append(reqT, awsv4.NewSigV4Transform(
-				awsv4.NewSigV4Signer(str(bound["region"]), service, o.creds, false)))
+				awsv4.NewSigV4Signer(str(bound["region"]), service, o.creds, signsPayload(service))))
 		}
-		send := httpx.Make(hreq, nil, reqT...)(bound)
+		send := httpx.Make(hreq, tokenDecoder(resp), reqT...)(bound)
 		// non-2xx fails loudly rather than looking like an empty result
 		checked := exchange.NewTransformExchange(0, send, httpx.NewRequireOK(), 1)
 		// the document's own program, moved from source to here — when it declares one
@@ -617,6 +647,42 @@ func Spec(ex aot.AOTExchange, inputs map[string]any, reg dsl.Registry, opts ...O
 		return compiled{spec: spec, auth: authSpec, assertion: assertion, authInputs: authInputs}, nil
 	}
 	return compiled{spec: spec}, nil
+}
+
+// continuation drives a document's pagination: a next URL (a Link header, or a body property such as
+// Microsoft's @odata.nextLink) followed as is, or a token read from the response and sent back as a
+// query parameter or body field.
+func continuation(p aot.Pagination) (httpx.Continuation, bool) {
+	if p == nil || !p.Declared() {
+		return httpx.Continuation{}, false
+	}
+	reqKey, reqLoc := p.RequestToken()
+	respKey, respLoc := p.ResponseToken()
+	switch {
+	case strings.EqualFold(respLoc, "header"):
+		return httpx.Continuation{Kind: httpx.ContLink, LinkHeader: respKey}, true
+	case respKey == "":
+		return httpx.Continuation{}, false
+	case reqKey == "" || strings.EqualFold(reqLoc, "request") || strings.EqualFold(reqLoc, "url"):
+		return httpx.Continuation{Kind: httpx.ContFollow, NextTokenPath: respKey}, true
+	}
+	return httpx.Continuation{Kind: httpx.ContPaginate, NextTokenPath: respKey, TokenParam: reqKey,
+		TokenInBody: strings.EqualFold(reqLoc, "body")}, true
+}
+
+// tokenDecoder reads a page's continuation token out of an XML body; JSON needs none.
+func tokenDecoder(resp aot.Response) facade.Transform {
+	if strings.Contains(resp.MediaType(), "xml") {
+		return transform.NewXMLToAgnostic()
+	}
+	return nil
+}
+
+// signsPayload reports whether a service requires the payload hash as a signed header. S3 refuses a
+// request without x-amz-content-sha256 ("Missing required header"); other services accept it but do
+// not ask.
+func signsPayload(service string) bool {
+	return service == "s3" || strings.HasPrefix(service, "s3-") || service == "s3express"
 }
 
 // withClient runs op's requests through c; nil leaves the run's client.
@@ -685,6 +751,9 @@ func (d dropKeys) Apply(in facade.Page) (facade.Record, error) {
 // The right answer is the scopes the operation declares; every Compute method names its own. Until
 // those are carried through the parse boundary, this is the one that works everywhere.
 const googleScope = "https://www.googleapis.com/auth/cloud-platform"
+
+// googleTokenURL is where a Google user credential's refresh token is exchanged.
+const googleTokenURL = "https://oauth2.googleapis.com/token"
 
 // program runs a declared body program over the raw response, replacing the payload with its output.
 // It is the only place a document's embedded language touches the engine.
@@ -766,6 +835,16 @@ func (t items) Apply(in facade.Page) (facade.Record, error) {
 		return nil, fmt.Errorf("docx: transformed body is not an agnostic document")
 	}
 	cur := doc
+	// No declared key: the rows are at the conventional $.items where the body has them there, and
+	// the body is the rows otherwise — a bare array, or a single object. A document varies the key
+	// only where its rows are elsewhere.
+	if len(t.steps) == 0 {
+		if m, ok := doc.(map[string]any); ok {
+			if list, ok := m[DefaultObjectKey].([]any); ok {
+				cur = list
+			}
+		}
+	}
 	for _, step := range t.steps {
 		if cur == nil {
 			break
@@ -798,6 +877,9 @@ func (t items) Apply(in facade.Page) (facade.Record, error) {
 		return docRecord([]any{}), nil // absent is an answer, not a failure
 	}
 }
+
+// DefaultObjectKey is where a list's rows are when its document declares no object key.
+const DefaultObjectKey = "items"
 
 func docRecord(list []any) facade.Record {
 	return record.NewRecord(map[string]facade.Value{facade.AnonymousPayload: value.NewDocValue(list)})

@@ -28,7 +28,8 @@ them must add the methods): `MethodSignature.ColumnTypes`, `ParamSignature.In`, 
 Additions, no change needed: `Args.AuthByProvider`, `Args.Functions`, `Auth.Location`,
 `Auth.Username`/`Password`/`UsernameEnvVar`/`PasswordEnvVar`, `ColumnType`, `EffectError` and the
 `ErrRejected`/`ErrOutcomeUnknown`/`ErrNotAttempted` sentinels, `query.NewInsertRows`, `pkg/sqlfn`,
-`Auth.TLS`/`Context`/`Successor`, auth type `kubeconfig`.
+`Auth.TLS`/`Context`/`Successor`/`Subject`/`Profile`, auth type `kubeconfig`. `AnalyzeDocuments` and `omnicli doc-lint`
+(package `pkg/docparse/doclint`: document analyzers by format).
 
 ### Behaviour changes
 
@@ -42,6 +43,14 @@ Additions, no change needed: `Args.AuthByProvider`, `Args.Functions`, `Auth.Loca
 | A document parameter declared by `$ref` is now a parameter; a `$ref` that resolves to nothing is an error. | Anyone whose query worked only because a required parameter was dropped. |
 | A document declaring `oauth2` with its own `token_url` exchanges tokens there, not at Azure's login endpoint; an unset `{{ .__env__X }}` in the URL is an error. | Callers of such providers who supplied `AZURE_*` credentials. |
 | A server URL's `{name:pattern}` variable is now bound as `{name}`. | Queries on such providers that failed to bind it. |
+| A join on a column the other relation takes as an optional parameter is now an edge (one request per left row), not a filter over an unscoped listing. | Joins such as `iam.users` to `iam.access_keys`: they now return every user's keys, and cost one request per user. |
+| A wired value that arrives NULL or empty sends no request: the row is unmatched (left join) or dropped (inner join). | Anyone who saw a request go out with a blank parameter. |
+| Methods tied on satisfied parameters now prefer those taking no request body; the error lists the tied methods. | Azure `storage_accounts` by `subscription_id` now uses `list`. |
+| Pagination is followed: the method's or document's declaration, Microsoft's `x-ms-pageable`, Google's `pageToken`/`nextPageToken`, AWS `Marker`/`NextToken`, and `Link` headers. | Every multi-page list, which previously returned its first page only. |
+| Responses declared by `$ref` to `components/responses`, or keyed `2XX`, now have columns. | Microsoft Graph (Entra ID) relations. |
+| A list declaring no `objectKey` reads its rows from `$.items` when the response has a list there (the whole body otherwise). | Relations whose rows came back as one envelope row, e.g. `googleadmin.directory.tokens`. |
+| S3 requests carry and sign `x-amz-content-sha256`. | All `aws.s3.*` relations. |
+| AWS credentials fall back to the shared-config profile (`AWS_PROFILE`, `Auth.Profile`, `credential_process`); Google to gcloud application-default credentials, including user logins; Azure `azure_default` to the Azure CLI. | Interactive users without keys in the environment. |
 
 ### CLI: `doc-graph` JSON
 

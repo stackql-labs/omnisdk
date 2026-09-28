@@ -12,6 +12,7 @@ import (
 
 	"gopkg.in/yaml.v3"
 
+	"github.com/stackql-labs/omnisdk/pkg/docparse/doclint"
 	"github.com/stackql-labs/omnisdk/pkg/docparse/stackqldoc"
 )
 
@@ -231,4 +232,20 @@ func publish(tmp, target string, fresh bool) error {
 		return errors.Join(fmt.Errorf("omnisdk: publish document view"), err)
 	}
 	return nil
+}
+
+// AnalyzeDocuments reports incongruities in the stackql documents under a registry root — rows not
+// where a query will look, references that resolve to nothing, methods no query can tell apart — for
+// the providers named, or all of them. It changes nothing; a finding is for correcting the document,
+// and a DocPatch corrects one caller's view meanwhile.
+func AnalyzeDocuments(dir string, providers ...string) ([]doclint.Finding, error) {
+	reg, err := stackqldoc.OpenRegistry(os.DirFS(dir), docCacheOption(dir))
+	if err != nil {
+		return nil, err
+	}
+	family, ok := doclint.For(doclint.Format)
+	if !ok {
+		return nil, fmt.Errorf("omnisdk: no analyzers for %s documents", doclint.Format)
+	}
+	return doclint.Run(reg, family, providers...), nil
 }

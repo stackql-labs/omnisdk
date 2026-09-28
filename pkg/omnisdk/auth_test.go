@@ -3,11 +3,15 @@ package omnisdk_test
 import (
 	"context"
 	"encoding/base64"
+	"encoding/json"
 	"encoding/pem"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"os"
+	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"testing"
@@ -250,5 +254,194 @@ func TestKubeconfigNeedsAContext(t *testing.T) {
 	})
 	if err == nil || !strings.Contains(err.Error(), "needs a context") {
 		t.Errorf("err = %v", err)
+	}
+}
+
+// signingKey is the access key id in a SigV4 Authorization header.
+func signingKey(authz string) string {
+	_, cred, _ := strings.Cut(authz, "Credential=")
+	k, _, _ := strings.Cut(cred, "/")
+	return k
+}
+
+func iamUsersOnce(t *testing.T, args omnisdk.Args) string {
+	t.Helper()
+	requireCorpus(t)
+	var authz string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		authz = r.Header.Get("Authorization")
+		w.Header().Set("Content-Type", "text/xml")
+		fmt.Fprint(w, `<ListUsersResponse><ListUsersResult><Users><member><UserName>a</UserName></member></Users></ListUsersResult></ListUsersResponse>`)
+	}))
+	defer srv.Close()
+	g, err := omnisdk.NewGraph([]omnisdk.Node{omnisdk.NewNode("u", iamUsers, nil)}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	args.Endpoint, args.Params = srv.URL, map[string]string{"region": "us-east-1"}
+	pl, err := omnisdk.NewGraphSelectQuery(corpus, g, args)
+	if err != nil {
+		t.Fatalf("plan: %v", err)
+	}
+	rows, err := pl.Open(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for rows.Next() {
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatalf("rows: %v", err)
+	}
+	rows.Close()
+	return signingKey(authz)
+}
+
+// With no keys in the environment, AWS signs with the shared-config profile: its static keys, or
+// what its credential_process prints.
+func TestAWSSharedConfigProfile(t *testing.T) {
+	dir := t.TempDir()
+	creds := filepath.Join(dir, "credentials")
+	cfg := filepath.Join(dir, "config")
+	if err := os.WriteFile(creds, []byte("[static]\naws_access_key_id = AKIASTATIC\naws_secret_access_key = s\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	proc := `echo '{"Version":1,"AccessKeyId":"AKIAPROC","SecretAccessKey":"s","SessionToken":"t"}'`
+	if err := os.WriteFile(cfg, []byte("[profile proc]\ncredential_process = "+proc+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("AWS_ACCESS_KEY_ID", "")
+	t.Setenv("AWS_SECRET_ACCESS_KEY", "")
+	t.Setenv("AWS_SHARED_CREDENTIALS_FILE", creds)
+	t.Setenv("AWS_CONFIG_FILE", cfg)
+
+	t.Setenv("AWS_PROFILE", "static")
+	if got := iamUsersOnce(t, omnisdk.Args{}); got != "AKIASTATIC" {
+		t.Errorf("AWS_PROFILE=static signed with %q", got)
+	}
+	if got := iamUsersOnce(t, omnisdk.Args{Auth: &omnisdk.Auth{Profile: "proc"}}); got != "AKIAPROC" {
+		t.Errorf("profile proc signed with %q", got)
+	}
+}
+
+// googleStub answers Google's token endpoint and a bucket list, recording the token request's form.
+func googleStub(t *testing.T) (*httptest.Server, *url.Values, *string) {
+	t.Helper()
+	var form url.Values
+	var bearer string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = r.ParseForm()
+		w.Header().Set("Content-Type", "application/json")
+		if strings.HasSuffix(r.URL.Path, "/token") {
+			form = r.PostForm
+			fmt.Fprint(w, `{"access_token":"g-tok","expires_in":3600}`)
+			return
+		}
+		bearer = r.Header.Get("Authorization")
+		fmt.Fprint(w, `{"items":[{"name":"b"}]}`)
+	}))
+	return srv, &form, &bearer
+}
+
+func bucketsOnce(t *testing.T, srv *httptest.Server, args omnisdk.Args) {
+	t.Helper()
+	requireCorpus(t)
+	g, err := omnisdk.NewGraph([]omnisdk.Node{omnisdk.NewNode("b", "stackql_unstable_google.storage.buckets", nil)}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	args.Endpoint, args.Params = srv.URL, map[string]string{"project": "demo"}
+	pl, err := omnisdk.NewGraphSelectQuery(corpus, g, args)
+	if err != nil {
+		t.Fatalf("plan: %v", err)
+	}
+	rows, err := pl.Open(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for rows.Next() {
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatalf("rows: %v", err)
+	}
+	rows.Close()
+}
+
+// gcloud's application-default user credential is exchanged by refresh token.
+func TestGoogleUserCredential(t *testing.T) {
+	t.Setenv("GOOGLE_CREDENTIALS", `{"type":"authorized_user","client_id":"cid","client_secret":"cs","refresh_token":"rt"}`)
+	srv, form, bearer := googleStub(t)
+	defer srv.Close()
+	bucketsOnce(t, srv, omnisdk.Args{})
+	if f := *form; f.Get("grant_type") != "refresh_token" || f.Get("refresh_token") != "rt" || f.Get("client_id") != "cid" {
+		t.Errorf("token request = %v", f)
+	}
+	if *bearer != "Bearer g-tok" {
+		t.Errorf("Authorization = %q", *bearer)
+	}
+}
+
+// A service account acting as a user carries "sub", and asks for the scopes the caller names.
+func TestGoogleDelegationSubjectAndScopes(t *testing.T) {
+	t.Setenv("GOOGLE_CREDENTIALS", serviceAccountKey(t))
+	srv, form, _ := googleStub(t)
+	defer srv.Close()
+	scope := "https://www.googleapis.com/auth/admin.directory.user.readonly"
+	bucketsOnce(t, srv, omnisdk.Args{Auth: &omnisdk.Auth{Subject: "admin@example.com", Scopes: []string{scope}}})
+	parts := strings.Split(form.Get("assertion"), ".")
+	if len(parts) != 3 {
+		t.Fatalf("assertion = %q", form.Get("assertion"))
+	}
+	raw, _ := base64.RawURLEncoding.DecodeString(parts[1])
+	var claims struct{ Sub, Scope string }
+	if err := json.Unmarshal(raw, &claims); err != nil {
+		t.Fatal(err)
+	}
+	if claims.Sub != "admin@example.com" || claims.Scope != scope {
+		t.Errorf("claims = %+v", claims)
+	}
+}
+
+// Without a service principal, an azure_default provider uses the Azure CLI's login.
+func TestAzureCLICredential(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("fake az is a shell script")
+	}
+	requireCorpus(t)
+	bin := t.TempDir()
+	script := "#!/bin/sh\necho '{\"accessToken\":\"az-tok\"}'\n"
+	if err := os.WriteFile(filepath.Join(bin, "az"), []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	for _, v := range []string{"AZURE_TENANT_ID", "AZURE_CLIENT_ID", "AZURE_CLIENT_SECRET"} {
+		t.Setenv(v, "")
+	}
+	var authz string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		authz = r.Header.Get("Authorization")
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprint(w, `{"value":[{"name":"acct"}]}`)
+	}))
+	defer srv.Close()
+	g, err := omnisdk.NewGraph([]omnisdk.Node{omnisdk.NewNode("a", "stackql_unstable_azure.storage.storage_accounts", nil)}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pl, err := omnisdk.NewGraphSelectQuery(corpus, g, omnisdk.Args{Endpoint: srv.URL, Params: map[string]string{"subscription_id": "sub"}})
+	if err != nil {
+		t.Fatalf("plan: %v", err)
+	}
+	rows, err := pl.Open(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for rows.Next() {
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatalf("rows: %v", err)
+	}
+	rows.Close()
+	if authz != "Bearer az-tok" {
+		t.Errorf("Authorization = %q", authz)
 	}
 }
