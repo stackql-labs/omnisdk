@@ -1,0 +1,30 @@
+# stackql → omnisdk: gaps for real queries
+
+Target: stackql sends the read side of every query to omnisdk as a `query.Unresolved`; omnisdk resolves
+it against the documents and returns an eager, unordered, unaggregated row stream. stackql applies
+ORDER BY, GROUP BY and aggregation.
+
+Joins: stackql supports only inner and left outer joins, and both work. A LEFT JOIN's ON is placed
+against the joined node (`leftJoin`): a constant its methods take is pushed down, an equality it
+needs is an edge into it, and anything else is a match condition run on its rows (`matched`), with
+other nodes' values delivered through its inbox and never sent. The node keeps the upstream rows it
+matches nothing for (`leftOuter`), and is still fetched once when only its conditions are wired. A
+preserved side that needs the joined side's value is refused.
+
+| # | Gap | Status | Implementation |
+|---|-----|--------|----------------|
+| 1 | Filters that can't bind (`<>`, `<`, `OR`, `NOT`, `Test`), and bindings the API may apply inexactly | Fixed | `Resolve` turns every unplaced condition into a graph filter, and re-checks a pushed-down binding wherever the row has that column. Filters run on each finished row with SQL three-valued logic, reading each column from its node's private key (`relational.go`: `filterTransform`). |
+| 2 | Joins neither side needs | Fixed | The equality becomes a filter over the engine's nested loop. A node with no wiring into it runs once per distinct input and is replayed from a per-run cache, streaming as its rows arrive (`replayed`). Each side is listed once. |
+| 3 | `IN` lists | Fixed | On a table's parameter: `NewFanoutNode` gets a no-network values exchange emitting one row per value, bound into the node. Query-wide (e.g. `region`): one values exchange runs first, so every node in a row sees the same value (`valuesSpec`). |
+| 4 | Computed values: functions on join keys; expressions reading several tables | Fixed | `column = f(other table)`: where the column's table needs the value, the producer computes `f` in its projection under a hidden name and the edge carries it; otherwise it is a filter. A function on the needing side cannot be inverted and never binds (`bindComputed`). An output reading several tables is computed on each finished row, from the columns each node keeps (`outputTransform`). |
+| 5a | Output is exactly the selected columns | Fixed | Where every node has a projection, egress keeps only the projected columns (`onlyColumns`). |
+| 5b | `SELECT *` expanded from the schema | Fixed | `query.NewStar(qualifier)` states `*` or `u.*`. `Resolve` expands it to the columns the table's methods declare, each named by its column. A table with no declared schema, or two expanded columns sharing a name (e.g. `*` over a self-join), is an error (`expand`). |
+| 5c | ORDER BY / GROUP BY columns emitted | Accepted: stackql | stackql's front end adds the columns it orders or groups by to the select list; omnisdk returns them like any other. Nothing needed in omnisdk. |
+| 6 | Naming: stackql handles → registry addresses | Not a gap | The caller supplies the correct resource handle — the registry address (`stackql_unstable_aws.iam.users`). omnisdk does not map or infer names. |
+| 7 | Queries that aren't one SELECT (CTEs, subqueries, UNION) | Accepted: stackql | stackql splits them into single queries, sends each, and combines the results. |
+| 8 | Mutations (INSERT/UPDATE/DELETE, with RETURNING) | Fixed | Same abstraction: `query.NewMutation` with a `Target` (verb, resource, assignments); RETURNING is its Select. `Resolve` places the target as a node running its verb's methods: a literal assignment is a parameter, a source column or a function of one is an edge (INSERT … SELECT runs once per source row), and WHERE on the target binds its parameters, `IN` fanning out. A condition the methods can't take is refused, since it could only be checked after the effect; so are sources wired into nothing. The node is never replayed and never retried, and a failure is reported as possibly applied (`effect`). An assignment's column resolves through a `pkg/namespace` built from the method's declared parameters and their locations; a name no parameter declares is a request-body field where the method takes a body (`body.x` qualifies it), placed per row by docx `WithBodyFields` (e.g. `INSERT INTO google.storage.buckets (project, name, location)`: `project` in the query, `name`/`location` in the JSON body). **Write-ahead intent, opt-in:** with `Args.Journal{State, RunID}` (both required), `effect` appends each effect to the same `facade.Journal` Converge uses (`<state>/journal/<run>.jsonl`), synced, before its request; a failed append means the request is never made. Keyed by alias + a hash of the bound inputs; exchange named `<address>:<verb>` as Converge names it. Without a journal, mutations run unjournaled. Recording `prior` for UPDATE/DELETE (a read before the effect) is not done. |
+| 9 | Redaction | Partly done | **Assumptions, agreed:** (a) anything obviously secret is hidden by default; (b) a power user can always reveal it — nothing is hidden inflexibly; (c) which names are secret is never a hardcoded list: credentials are whatever the auth scheme puts on the row, plus whatever the document marks (OpenAPI `format: password` / `writeOnly`); (d) anyone may declare more sensitive columns or params at any layer — document patch, query config, serving session — and declarations are additive; (e) the declaration is data (a DTO) so it can travel with a query to a server; (f) one policy governs both result rows and logs. **Built:** credentials derived from the auth expansion are dropped from graph results by default; `Args.Redaction` takes a policy (`DefaultRedaction`, `RedactNone`, `RedactAlso`), and `--show-credentials` reveals them in the CLI. **Not built:** the DTO form (`sensitive`, `reveal`), document markers, and applying the policy to logs, whose scrubber is still a separate regex. |
+
+## Deferred
+
+- Choosing a hash join vs a per-row lookup needs cardinality stats, which aren't collected.

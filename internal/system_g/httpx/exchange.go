@@ -328,10 +328,16 @@ func buildBody(b Body, bound map[string]any) (body []byte, contentType string) {
 	case EncodingJSON:
 		m := make(map[string]any, len(b.Params))
 		for k, v := range b.Params {
-			if s, ok := v.(string); ok {
-				m[k] = subst(s, bound)
-			} else {
+			s, ok := v.(string)
+			switch {
+			case !ok:
 				m[k] = v
+			case wholeParam(s) != "":
+				// A value that is one placeholder and nothing else takes the bound value as it is,
+				// so a boolean or a number stays one in the JSON rather than becoming its text.
+				m[k] = bound[wholeParam(s)]
+			default:
+				m[k] = subst(s, bound)
 			}
 		}
 		bs, _ := json.Marshal(m)
@@ -339,6 +345,14 @@ func buildBody(b Body, bound map[string]any) (body []byte, contentType string) {
 	default:
 		return nil, ""
 	}
+}
+
+// wholeParam is the name s consists of when s is exactly one placeholder, else "".
+func wholeParam(s string) string {
+	if m := reParam.FindStringSubmatchIndex(s); m != nil && m[0] == 0 && m[1] == len(s) {
+		return s[m[2]:m[3]]
+	}
+	return ""
 }
 
 // A parameter name may carry dots and hyphens: AWS's Query API indexes list parameters as

@@ -15,9 +15,12 @@ package docx
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
+	"net/http"
 	"strings"
+	"time"
 
 	"github.com/stackql-labs/omnisdk/internal/system_g/awsv4"
 	"github.com/stackql-labs/omnisdk/internal/system_g/bind"
@@ -48,6 +51,10 @@ type options struct {
 	gcpCreds *sdk.GCPCredentials
 	// azureCreds is the client-credentials triple for a document declaring OAuth2.
 	azureCreds *azureCredentials
+	// clientCreds is a client-credentials grant at a stated token endpoint; it wins over azureCreds.
+	clientCreds *clientCredentials
+	// client is the HTTP client this exchange's own requests use; nil is the run's.
+	client *http.Client
 	// ignoreResponse compiles an operation whose response the document does not type.
 	ignoreResponse bool
 	// wholeResponse emits the decoded body as one record rather than exploding a list out of it.
@@ -60,6 +67,10 @@ type options struct {
 	provided map[string]bool
 	// body is a document sent whole, for an operation that declares a request body.
 	body []byte
+	// bodyFields are values placed as fields of the request body, each bound per row.
+	bodyFields map[string]bool
+	// poll re-requests until a status matures; nil sends once.
+	poll *httpx.Continuation
 	// inbox names values T_in CONSUMES. They are bound — a producer emits each one — but never
 	// placed: they are raw material for the transform, not parameters the service has heard of.
 	inbox map[string]bool
@@ -150,6 +161,27 @@ func WithoutSigning() Option {
 // does.
 type azureCredentials struct{ tenant, clientID, clientSecret string }
 
+type clientCredentials struct {
+	tokenURL             string
+	scopes               []string
+	clientID, clientSecr string
+}
+
+// WithClientCredentials supplies an OAuth2 client-credentials grant at tokenURL, for a document
+// declaring OAuth2 with its own token endpoint. The endpoint is retargeted like any other URL when a
+// base URL is set.
+func WithClientCredentials(tokenURL string, scopes []string, clientID, clientSecret string) Option {
+	return func(o *options) {
+		o.clientCreds = &clientCredentials{tokenURL: tokenURL, scopes: scopes, clientID: clientID, clientSecr: clientSecret}
+	}
+}
+
+// WithHTTPClient sends this exchange's requests through c — a client carrying the TLS a cluster
+// needs (its CA, a client certificate), which another exchange in the same run must not share.
+func WithHTTPClient(c *http.Client) Option {
+	return func(o *options) { o.client = c }
+}
+
 // WithAzureCredentials supplies the client-credentials triple for documents that declare OAuth2. As
 // with SigV4 and service accounts, the document says a call is authenticated; whose identity it uses
 // stays an explicit caller decision.
@@ -187,6 +219,31 @@ func WithProvided(names ...string) Option {
 // what encoding; what goes in it is supplied whole.
 func WithBody(doc []byte) Option {
 	return func(o *options) { o.body = doc }
+}
+
+// WithPoll re-requests the call until the value at statusPath in its response equals done, waiting
+// interval between attempts and giving up after attempts. Only the final response is emitted. It is
+// for an operation whose answer is a status that matures: a create's long-running operation, polled
+// until it is DONE before anything reads what it made.
+func WithPoll(statusPath, done string, interval time.Duration, attempts int) Option {
+	return func(o *options) {
+		o.poll = &httpx.Continuation{Kind: httpx.ContPoll, StatusPath: statusPath, DoneValue: done,
+			Interval: interval, MaxAttempts: attempts}
+	}
+}
+
+// WithBodyFields places named values as fields of the request body, bound per row like any input.
+// It exists because a document states that an operation takes a body and in what encoding, but not
+// the body's fields: a caller writing one names them, and they go into the body rather than the query.
+func WithBodyFields(names ...string) Option {
+	return func(o *options) {
+		if o.bodyFields == nil {
+			o.bodyFields = map[string]bool{}
+		}
+		for _, n := range names {
+			o.bodyFields[n] = true
+		}
+	}
 }
 
 // WithInbox declares values the consumer's inbound transform consumes. They are bound so a producer
@@ -355,6 +412,9 @@ func Spec(ex aot.AOTExchange, inputs map[string]any, reg dsl.Registry, opts ...O
 
 	url := retarget(req.URL(), o.baseURL)
 	hreq := httpx.Request{Method: req.Method(), URL: url}
+	if o.poll != nil {
+		hreq.Continuation = *o.poll
+	}
 	if params := req.Params(); len(params) > 0 {
 		body := make(map[string]any, len(params))
 		for k, v := range params {
@@ -404,6 +464,21 @@ func Spec(ex aot.AOTExchange, inputs map[string]any, reg dsl.Registry, opts ...O
 			continue
 		}
 		bindings = withInput(bindings, p.Name())
+	}
+	// Body fields the caller names go into the body, in the encoding the document states for it.
+	for name := range o.bodyFields {
+		if placed[name] {
+			continue
+		}
+		if req.BodyMediaType() == "" {
+			return nil, fmt.Errorf("docx: exchange %q takes no request body, so %q has nowhere to go", ex.Name(), name)
+		}
+		if hreq.Body.Params == nil {
+			hreq.Body = httpx.Body{Encoding: bodyEncoding(req.BodyMediaType()), Params: map[string]any{}}
+		}
+		hreq.Body.Params[name] = "{" + name + "}"
+		placed[name] = true
+		bindings = withInput(bindings, name)
 	}
 	// A name the document does not declare is placed anyway when the caller asked for it. The caller
 	// is asserting the wire shape, exactly as an override asserts the response shape: AWS's Query API
@@ -467,7 +542,7 @@ func Spec(ex aot.AOTExchange, inputs map[string]any, reg dsl.Registry, opts ...O
 					ex.Name(), sec.Scheme(), sec.Name())
 			}
 		case aot.SchemeOAuthClientCredentials:
-			if o.azureCreds == nil {
+			if o.azureCreds == nil && o.clientCreds == nil {
 				return nil, fmt.Errorf("docx: exchange %q declares %s (%q) but no credentials were supplied",
 					ex.Name(), sec.Scheme(), sec.Name())
 			}
@@ -483,6 +558,9 @@ func Spec(ex aot.AOTExchange, inputs map[string]any, reg dsl.Registry, opts ...O
 	switch {
 	case sec.Scheme() == aot.SchemeServiceAccount && o.gcpCreds != nil && !o.noSign:
 		authSpec, assertion = sdk.GCPOAuthSpec(o.baseURL, *o.gcpCreds, googleScope)
+	case sec.Scheme() == aot.SchemeOAuthClientCredentials && o.clientCreds != nil && !o.noSign:
+		c := o.clientCreds
+		authSpec, authInputs = sdk.ClientCredentialsSpec(retarget(c.tokenURL, o.baseURL), c.scopes, c.clientID, c.clientSecr)
 	case sec.Scheme() == aot.SchemeOAuthClientCredentials && o.azureCreds != nil && !o.noSign:
 		// The same shape as a service account: the credential buys a token and every call carries
 		// it, so it is an exchange in the plan rather than a request transform. Only the grant
@@ -528,10 +606,10 @@ func Spec(ex aot.AOTExchange, inputs map[string]any, reg dsl.Registry, opts ...O
 			// A mutating call answers about ONE object, not a list. The document's objectKey
 			// describes where a SELECT finds its items, and applying it here explodes a reply that
 			// has no list — yielding zero rows for a call that plainly succeeded.
-			return decoded
+			return withClient(decoded, o.client)
 		}
 		listed := exchange.NewTransformExchange(0, decoded, itemsAt(rowPath), 1)
-		return exchange.NewExplodeRows(listed, 1)
+		return withClient(exchange.NewExplodeRows(listed, 1), o.client)
 		// INNER, not left-outer: this is a SELECT, and an empty result set is zero rows. A left-outer
 		// would emit one row of bare inputs, which reads as "one instance with no fields".
 	}, bind.NewInnerFlatten())
@@ -539,6 +617,23 @@ func Spec(ex aot.AOTExchange, inputs map[string]any, reg dsl.Registry, opts ...O
 		return compiled{spec: spec, auth: authSpec, assertion: assertion, authInputs: authInputs}, nil
 	}
 	return compiled{spec: spec}, nil
+}
+
+// withClient runs op's requests through c; nil leaves the run's client.
+func withClient(op facade.Operator, c *http.Client) facade.Operator {
+	if c == nil {
+		return op
+	}
+	return clientOp{op: op, c: c}
+}
+
+type clientOp struct {
+	op facade.Operator
+	c  *http.Client
+}
+
+func (o clientOp) Open(ctx context.Context) facade.Records {
+	return o.op.Open(httpx.WithClient(ctx, o.c))
 }
 
 // compiled carries an exchange plus the auth exchange it depends on, so PlanFor can wire both into

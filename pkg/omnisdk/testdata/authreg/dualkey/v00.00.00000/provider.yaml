@@ -1,0 +1,21 @@
+id: dualkey
+name: dualkey
+version: v00.00.00000
+providerServices:
+  things:
+    id: things:v00.00.00000
+    name: things
+    preferred: true
+    service:
+      $ref: dualkey/v00.00.00000/services/things.yaml
+config:
+  auth:
+    type: custom
+    location: header
+    name: DD-API-KEY
+    credentialsenvvar: TEST_DD_API_KEY
+    successor:
+      type: custom
+      location: header
+      name: DD-APPLICATION-KEY
+      credentialsenvvar: TEST_DD_APP_KEY

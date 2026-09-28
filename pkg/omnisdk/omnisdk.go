@@ -14,12 +14,17 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/stackql-labs/omnisdk/pkg/cache"
+	"github.com/stackql-labs/omnisdk/pkg/sqlfn"
 	"io"
 	"io/fs"
+	"net/http"
 	"os"
+	"path/filepath"
 	"regexp"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"google.golang.org/grpc"
@@ -85,6 +90,36 @@ type Auth struct {
 	ClientSecret       string   `json:"client_secret,omitempty"`
 	ClientIDEnvVar     string   `json:"client_id_env_var,omitempty"`     // AZURE_CLIENT_ID
 	ClientSecretEnvVar string   `json:"client_secret_env_var,omitempty"` // AZURE_CLIENT_SECRET
+
+	// Key placement (api_key / custom): "header" (default) or "query".
+	Location string `json:"location,omitempty"`
+
+	// Basic: username and password, inline or by env var; else Credentials* holding the pair
+	// base64-encoded, as stackql's basic credentials are.
+	Username       string `json:"username,omitempty"`
+	Password       string `json:"password,omitempty"`
+	UsernameEnvVar string `json:"username_var,omitempty"`
+	PasswordEnvVar string `json:"password_var,omitempty"`
+
+	// TLS the provider's connection needs: a CA to trust, a client certificate to present.
+	TLS *TLS `json:"tls,omitempty"`
+	// Context is the kubeconfig context to read (type kubeconfig). Required: which cluster's
+	// credentials to send is never the current context by default.
+	Context string `json:"context,omitempty"`
+	// Successor is a further method applied after this one, e.g. a second API-key header.
+	Successor *Auth `json:"successor,omitempty"`
+}
+
+// TLS is a connection's transport security. CA, certificate and key each come from a file or from
+// base64 PEM data; data wins.
+type TLS struct {
+	CACertFile         string `json:"ca_cert_file,omitempty"`
+	CACertData         string `json:"ca_cert_data,omitempty"`
+	ClientCertFile     string `json:"client_cert_file,omitempty"`
+	ClientCertData     string `json:"client_cert_data,omitempty"`
+	ClientKeyFile      string `json:"client_key_file,omitempty"`
+	ClientKeyData      string `json:"client_key_data,omitempty"`
+	InsecureSkipVerify bool   `json:"insecure_skip_verify,omitempty"`
 }
 
 func (a Auth) internal() auth.AuthStruct {
@@ -93,7 +128,27 @@ func (a Auth) internal() auth.AuthStruct {
 		CredentialsFilePath: a.CredentialsFilePath, ValuePrefix: a.ValuePrefix, Name: a.Name,
 		Scopes: a.Scopes, TokenURL: a.TokenURL, ClientID: a.ClientID, ClientSecret: a.ClientSecret,
 		ClientIDEnvVar: a.ClientIDEnvVar, ClientSecretEnvVar: a.ClientSecretEnvVar,
+		Location: a.Location, Username: a.Username, Password: a.Password,
+		UsernameEnvVar: a.UsernameEnvVar, PasswordEnvVar: a.PasswordEnvVar,
+		Context: a.Context, TLS: a.TLS.internal(), Successor: a.Successor.internalPtr(),
 	}
+}
+
+func (a *Auth) internalPtr() *auth.AuthStruct {
+	if a == nil {
+		return nil
+	}
+	s := a.internal()
+	return &s
+}
+
+func (t *TLS) internal() *auth.TLS {
+	if t == nil {
+		return nil
+	}
+	return &auth.TLS{CACertFile: t.CACertFile, CACertData: t.CACertData, ClientCertFile: t.ClientCertFile,
+		ClientCertData: t.ClientCertData, ClientKeyFile: t.ClientKeyFile, ClientKeyData: t.ClientKeyData,
+		InsecureSkipVerify: t.InsecureSkipVerify}
 }
 
 // Param describes one input a resource accepts (scope: project, org, region, …). Required params are
@@ -145,9 +200,23 @@ type Method struct {
 // Args are the inputs to run a resource: explicit scope Params, optional Auth (config-driven-auth
 // resources), an endpoint override, run Tuning, and an optional traffic log.
 type Args struct {
-	Params   map[string]string
-	Auth     *Auth
-	Endpoint string
+	Params map[string]string
+	// Journal opts a query's mutations into write-ahead intent: each effect is recorded, and on disk,
+	// before its request is sent. Nil runs them unjournaled. Reads ignore it.
+	Journal *Journal `json:"journal,omitempty"`
+	// AuthByProvider gives each provider its own credentials, keyed by provider name — namespaced
+	// ("stackql_unstable_github") or as its document declares it ("github"). A provider absent here
+	// uses Auth. Needed where one query reads several providers.
+	AuthByProvider map[string]*Auth `json:"auth_by_provider,omitempty"`
+	// Redaction decides which columns a result may not carry. Nil is DefaultRedaction: the values
+	// auth put on the row are dropped, everything else is kept. A power user who needs them sets
+	// RedactNone, or a policy of their own.
+	Redaction Redaction `json:"-"`
+	// Functions adds a caller's own SQL functions to the built-in catalogue for this query. A name the
+	// built-ins already use is an error.
+	Functions sqlfn.Catalog `json:"-"`
+	Auth      *Auth
+	Endpoint  string
 	// InsecureSkipTLSVerify accepts any certificate. It exists for mocks that serve a self-signed one,
 	// but it is not tied to Endpoint: a private CA or an intercepting proxy is a real reason to need it
 	// against a real host, and a flag that silently did nothing in that case would be worse than the
@@ -158,6 +227,45 @@ type Args struct {
 }
 
 func (a Args) param(name string) string { return a.Params[name] }
+
+// Redaction decides which columns leave in a result. credential is true for a value an auth
+// expansion put on the row — a signed assertion, a bearer token — whatever its name; which names
+// those are comes from the auth scheme, never a fixed list.
+type Redaction interface {
+	Drop(column string, credential bool) bool
+}
+
+// DefaultRedaction drops credentials and keeps everything else.
+func DefaultRedaction() Redaction {
+	return redactFunc(func(_ string, credential bool) bool { return credential })
+}
+
+// RedactNone keeps every column, credentials included: for a caller that needs the token, e.g. to
+// hand it on, and has taken responsibility for where the result goes.
+func RedactNone() Redaction { return redactFunc(func(string, bool) bool { return false }) }
+
+// RedactAlso drops the named columns as well as whatever base drops.
+func RedactAlso(base Redaction, columns ...string) Redaction {
+	named := make(map[string]bool, len(columns))
+	for _, c := range columns {
+		named[c] = true
+	}
+	return redactFunc(func(column string, credential bool) bool {
+		return named[column] || base.Drop(column, credential)
+	})
+}
+
+type redactFunc func(string, bool) bool
+
+func (f redactFunc) Drop(column string, credential bool) bool { return f(column, credential) }
+
+// Journal is where a query's write-ahead intent goes: the journal under State, the same one Converge
+// keeps, in RunID's file. Both are required — which run a record belongs to and where it lives are
+// scope, never defaulted — so recovery and unwind read a query's effects as they read a converge's.
+type Journal struct {
+	State string `json:"state"`
+	RunID string `json:"run_id"`
+}
 
 // UnmarshalJSON lets Endpoint be written either way a consumer would naturally write it: a URL
 // string, or the per-service object inline. Both land in the same string field the engine resolves,
@@ -933,7 +1041,7 @@ func NewFromDoc(doc []byte, resource string, args Args) (Plan, error) {
 	if err != nil {
 		return nil, err
 	}
-	opts, err := docOptions(args, nil)
+	opts, err := docOptions(args, nil, false)
 	if err != nil {
 		return nil, err
 	}
@@ -950,10 +1058,11 @@ func NewFromDoc(doc []byte, resource string, args Args) (Plan, error) {
 // registry and is ignored for a bundle.
 func openDocs(dir, address string) (aot.Catalog, error) {
 	fsys := os.DirFS(dir)
+	cached := docCacheOption(dir)
 	if _, err := fs.Stat(fsys, "provider.yaml"); err == nil {
-		return stackqldoc.Open(fsys)
+		return stackqldoc.Open(fsys, cached)
 	}
-	reg, err := stackqldoc.OpenRegistry(fsys)
+	reg, err := stackqldoc.OpenRegistry(fsys, cached)
 	if err != nil {
 		return nil, err
 	}
@@ -963,6 +1072,34 @@ func openDocs(dir, address string) (aot.Catalog, error) {
 			dir, len(reg.Providers()), firstOr(reg.Providers()))
 	}
 	return reg.Catalog(provider)
+}
+
+// documents is the process's parsed-document cache. Entries are keyed by the directory a document is
+// read from, so each client's patched view (EffectiveRegistry) is cached apart from every other and
+// from the base, and a rewritten file is parsed afresh.
+var (
+	documentsMu sync.RWMutex
+	documents   = cache.New[string, stackqldoc.Doc](cache.Config{})
+)
+
+// ConfigureDocumentCache replaces the parsed-document cache with one bounded by cfg; the zero Config
+// takes a quarter of the process's memory limit. MaxCost is in estimated bytes of parsed document.
+// Entries in the previous cache are dropped.
+func ConfigureDocumentCache(cfg cache.Config) {
+	documentsMu.Lock()
+	defer documentsMu.Unlock()
+	documents = cache.New[string, stackqldoc.Doc](cfg)
+}
+
+func docCacheOption(dir string) stackqldoc.Option {
+	documentsMu.RLock()
+	c := documents
+	documentsMu.RUnlock()
+	root, err := filepath.Abs(dir)
+	if err != nil {
+		root = dir
+	}
+	return stackqldoc.WithDocCache(c, root)
 }
 
 func firstOr(ss []string) string {
@@ -1038,9 +1175,9 @@ func DocMethods(dir, provider, service, resource string) ([]DocMethod, error) {
 	return out, nil
 }
 
-// NewFromCatalog plans one addressed exchange out of a provider bundle. Same Plan a catalog method
+// NewSelectFromCatalog plans one addressed exchange out of a provider bundle. Same Plan a catalog method
 // returns, so a consumer runs it identically.
-func NewFromCatalog(dir, address string, args Args) (Plan, error) {
+func NewSelectFromCatalog(dir, address string, args Args) (Plan, error) {
 	if err := checkEndpoint(args); err != nil {
 		return nil, err
 	}
@@ -1048,7 +1185,7 @@ func NewFromCatalog(dir, address string, args Args) (Plan, error) {
 	if err != nil {
 		return nil, err
 	}
-	candidates, err := c.Exchanges(address)
+	candidates, err := c.Operations(address, "select")
 	if err != nil {
 		return nil, err
 	}
@@ -1060,16 +1197,9 @@ func NewFromCatalog(dir, address string, args Args) (Plan, error) {
 	if err != nil {
 		return nil, err
 	}
-	var sec aot.Security
-	if p := c.Provider(); p != nil {
-		sec = p.Security()
-	}
-	opts, err := docOptions(args, sec)
+	opts, err := providerOptions(args, c.Provider())
 	if err != nil {
 		return nil, err
-	}
-	if p := c.Provider(); p != nil {
-		opts = append(opts, docx.WithProviderSecurity(p.Security()))
 	}
 	pl, err := docx.PlanFor(ex, docInputs(args), reg, opts...)
 	if err != nil {
@@ -1138,7 +1268,9 @@ func docInputs(args Args) map[string]any {
 // elsewhere is stale; ignoring failures entirely reports a key that is present but unusable as "no
 // credentials were supplied", which sends the reader hunting for an unset variable that is set. The
 // document's own declaration is what distinguishes the two.
-func docOptions(args Args, sec aot.Security) ([]docx.Option, error) {
+// oauth reports that the provider's OAuth grant is already settled (a token URL of its own), so
+// Azure's is not wanted.
+func docOptions(args Args, sec aot.Security, oauth bool) ([]docx.Option, error) {
 	var opts []docx.Option
 	if args.Endpoint != "" {
 		opts = append(opts, docx.WithBaseURL(args.Endpoint))
@@ -1147,6 +1279,7 @@ func docOptions(args Args, sec aot.Security) ([]docx.Option, error) {
 		opts = append(opts, docx.WithAWSCredentials(creds))
 	}
 	switch tenant, clientID, clientSecret, err := azureNativeCreds(args); {
+	case oauth:
 	case err == nil:
 		opts = append(opts, docx.WithAzureCredentials(tenant, clientID, clientSecret))
 	case sec != nil && sec.Scheme() == aot.SchemeOAuthClientCredentials:
@@ -1161,6 +1294,173 @@ func docOptions(args Args, sec aot.Security) ([]docx.Option, error) {
 		return nil, fmt.Errorf("omnisdk: Google credentials cannot be used: %w", err)
 	}
 	return opts, nil
+}
+
+// providerOptions are docOptions for a provider: its own credentials, its document's auth defaults
+// under them, and whatever its scheme applies — a header, a client certificate, a token exchange at
+// the endpoint the document names.
+func providerOptions(args Args, p aot.Provider) ([]docx.Option, error) {
+	if p == nil {
+		return docOptions(args, nil, false)
+	}
+	args = args.forProvider(p)
+	sec := p.Security()
+	cfg := effectiveAuth(args, p)
+	var opts []docx.Option
+	oauth := false
+	if sec.Scheme() == aot.SchemeOAuthClientCredentials && cfg.TokenURL != "" {
+		o, err := clientCredentials(p.Name(), cfg)
+		if err != nil {
+			return nil, err
+		}
+		opts, oauth = append(opts, o), true
+	}
+	base, err := docOptions(args, sec, oauth)
+	if err != nil {
+		return nil, err
+	}
+	opts = append(append(base, opts...), docx.WithProviderSecurity(sec))
+	m, err := requestAuth(p, sec, cfg)
+	if err != nil {
+		return nil, err
+	}
+	if m == nil {
+		return opts, nil
+	}
+	if t := m.RequestTransform(); t != nil {
+		opts = append(opts, docx.WithRequestTransform(t))
+	}
+	if tc, ok := m.(auth.TLSConfigurer); ok {
+		opts = append(opts, docx.WithHTTPClient(&http.Client{
+			Transport: &http.Transport{Proxy: http.ProxyFromEnvironment, TLSClientConfig: tc.TLSConfig()},
+		}))
+	}
+	return opts, nil
+}
+
+// forProvider is args with Auth replaced by the provider's own, where AuthByProvider has one.
+func (a Args) forProvider(p aot.Provider) Args {
+	if len(a.AuthByProvider) == 0 {
+		return a
+	}
+	for _, key := range []string{aot.DefaultProviderPrefix + p.Name(), p.Name()} {
+		if au, ok := a.AuthByProvider[key]; ok {
+			a.Auth = au
+			return a
+		}
+	}
+	return a
+}
+
+// effectiveAuth is the caller's auth for a provider over the document's defaults, field by field,
+// successors included.
+func effectiveAuth(args Args, p aot.Provider) auth.AuthStruct {
+	cfg := authOf(args).internal()
+	if c, ok := p.(aot.AuthConfigured); ok {
+		d := c.AuthDefaults()
+		overlay(&cfg, &d)
+	}
+	return cfg
+}
+
+func overlay(cfg *auth.AuthStruct, d *aot.AuthDefaults) {
+	if d == nil {
+		return
+	}
+	cfg.Name = orStr(cfg.Name, d.Name)
+	cfg.Location = orStr(cfg.Location, d.Location)
+	cfg.ValuePrefix = orStr(cfg.ValuePrefix, d.ValuePrefix)
+	if cfg.Credentials == "" && cfg.CredentialsFilePath == "" {
+		cfg.CredentialsEnvVar = orStr(cfg.CredentialsEnvVar, d.CredentialsEnvVar)
+	}
+	cfg.UsernameEnvVar = orStr(cfg.UsernameEnvVar, d.UsernameEnvVar)
+	cfg.PasswordEnvVar = orStr(cfg.PasswordEnvVar, d.PasswordEnvVar)
+	cfg.ClientIDEnvVar = orStr(cfg.ClientIDEnvVar, d.ClientIDEnvVar)
+	cfg.ClientSecretEnvVar = orStr(cfg.ClientSecretEnvVar, d.ClientSecretEnvVar)
+	cfg.TokenURL = orStr(cfg.TokenURL, d.TokenURL)
+	if len(cfg.Scopes) == 0 {
+		cfg.Scopes = d.Scopes
+	}
+	if d.Successor != nil {
+		if cfg.Successor == nil {
+			cfg.Successor = &auth.AuthStruct{Type: d.Successor.Type}
+		}
+		cfg.Successor.Type = orStr(cfg.Successor.Type, d.Successor.Type)
+		overlay(cfg.Successor, d.Successor)
+	}
+}
+
+// requestAuth is the Method for a provider authenticated by something sent with each request — basic,
+// a bearer token, an API key, a kubeconfig context, a client certificate — or nil for schemes that
+// sign or exchange a token, which docOptions handles. A document declaring one of these with no
+// credential available is an error naming what was looked for.
+func requestAuth(p aot.Provider, sec aot.Security, cfg auth.AuthStruct) (auth.Method, error) {
+	if cfg.Type == "" {
+		switch sec.Scheme() {
+		case aot.SchemeBasic:
+			cfg.Type = string(auth.KindBasic)
+		case aot.SchemeBearer:
+			cfg.Type = string(auth.KindBearer)
+		case aot.SchemeAPIKey:
+			cfg.Type = string(auth.KindCustom)
+		default:
+			if cfg.TLS == nil {
+				return nil, nil
+			}
+			cfg.Type = string(auth.KindNull) // TLS alone: a client certificate, a private CA
+		}
+	}
+	switch auth.Kind(cfg.Type) {
+	case auth.KindBasic, auth.KindBearer, auth.KindAPIKey, auth.KindCustom, auth.KindKubeconfig, auth.KindNull:
+	default:
+		return nil, nil
+	}
+	m, err := auth.New(cfg)
+	if err != nil {
+		return nil, fmt.Errorf("omnisdk: %s %s credentials cannot be used: %w", p.Name(), cfg.Type, err)
+	}
+	return m, nil
+}
+
+// clientCredentials is the client-credentials grant a document states by token URL, with the id and
+// secret resolved inline, else from the variables named, and the token URL's {{ .__env__NAME }}
+// references filled from the environment.
+func clientCredentials(provider string, cfg auth.AuthStruct) (docx.Option, error) {
+	id, err := secret.Require(provider+" client id",
+		secret.Literal(cfg.ClientID), secret.Env(cfg.ClientIDEnvVar)).Resolve()
+	if err != nil {
+		return nil, fmt.Errorf("omnisdk: %s oauth2 credentials cannot be used: %w", provider, err)
+	}
+	sec, err := secret.Require(provider+" client secret",
+		secret.Literal(cfg.ClientSecret), secret.Env(cfg.ClientSecretEnvVar)).Resolve()
+	if err != nil {
+		return nil, fmt.Errorf("omnisdk: %s oauth2 credentials cannot be used: %w", provider, err)
+	}
+	tokenURL, err := expandEnv(cfg.TokenURL)
+	if err != nil {
+		return nil, fmt.Errorf("omnisdk: %s token URL: %w", provider, err)
+	}
+	return docx.WithClientCredentials(tokenURL, cfg.Scopes, id, sec), nil
+}
+
+var envRef = regexp.MustCompile(`\{\{\s*\.__env__([A-Za-z_][A-Za-z0-9_]*)\s*\}\}`)
+
+// expandEnv fills {{ .__env__NAME }} from the environment. An unset variable is an error: a token
+// URL with a hole in it names a different endpoint, not a default one.
+func expandEnv(s string) (string, error) {
+	var missing []string
+	out := envRef.ReplaceAllStringFunc(s, func(m string) string {
+		name := envRef.FindStringSubmatch(m)[1]
+		v, ok := os.LookupEnv(name)
+		if !ok || v == "" {
+			missing = append(missing, name)
+		}
+		return v
+	})
+	if len(missing) > 0 {
+		return "", fmt.Errorf("unset environment variable(s) %v", missing)
+	}
+	return strings.Join(strings.Fields(out), ""), nil
 }
 
 // authOf returns args.Auth, or a zero Auth when none was supplied — so resolution always reads from a
@@ -1336,6 +1636,7 @@ func (c *cannedPlan) decorate(parent context.Context) (context.Context, context.
 	if c.args.InsecureSkipTLSVerify {
 		ctx = httpx.WithClient(ctx, httpx.InsecureClient())
 	}
+	ctx = withReplay(ctx)
 	ctx, abortCancel := abort.WithSignal(ctx)
 	ctx = abort.WithLimit(ctx, c.args.Tuning.Limit)
 	logw, closeLog := logSink(c.args.Log)

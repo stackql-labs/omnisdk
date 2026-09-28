@@ -1,0 +1,14 @@
+id: bearp
+name: bearp
+version: v00.00.00000
+providerServices:
+  things:
+    id: things:v00.00.00000
+    name: things
+    preferred: true
+    service:
+      $ref: bearp/v00.00.00000/services/things.yaml
+config:
+  auth:
+    type: bearer
+    credentialsenvvar: TEST_BEARER_TOKEN

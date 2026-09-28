@@ -1,0 +1,21 @@
+id: oauthp
+name: oauthp
+version: v00.00.00000
+providerServices:
+  things:
+    id: things:v00.00.00000
+    name: things
+    preferred: true
+    service:
+      $ref: oauthp/v00.00.00000/services/things.yaml
+config:
+  auth:
+    type: oauth2
+    client_id_env_var: TEST_OAUTHP_ID
+    client_secret_env_var: TEST_OAUTHP_SECRET
+    grant_type: client_credentials
+    token_url: >-
+      https://accounts.example.com/oidc/accounts/{{
+      .__env__TEST_ACCOUNT_ID }}/v1/token
+    scopes:
+      - all-apis
