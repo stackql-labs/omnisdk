@@ -8,7 +8,7 @@ the same functions. Both paths return the same `Plan`/`Rows` a single-method que
 consumer iterates one cursor shape whether it is reading or provisioning.
 
 **Auth and document location behave exactly as elsewhere.** The provider document declares the scheme
-— `aws_signing_v4`, `service_account`, `oauth2` — and the credential comes from `Args.Auth`, falling
+— `aws_signing_v4`, `service_account`, `oauth2` — and the credential comes from the provider's entry in `Args.AuthByProvider`, falling
 back to the canonical `AWS_*`, `AZURE_*` and `GOOGLE_*` variables. Only the credential a document
 actually declares is required, so a run touching AWS alone does not fail because a Google key
 elsewhere is stale; a credential that IS present but unusable says so rather than reporting as
@@ -40,7 +40,7 @@ if err != nil {
 }
 
 pl, err := omnisdk.NewGraphSelectQuery(registryRoot, g, omnisdk.Args{
-    Auth:   auth,                                        // nil falls back to the env
+    AuthByProvider: map[string]*omnisdk.Auth{"aws": awsAuth},    // per provider; absent falls back to the env
     Params: map[string]string{"region": "us-east-1"},    // scope
 })
 rows, err := pl.Open(ctx)
@@ -77,7 +77,7 @@ res := []omnisdk.ManagedResource{
 }
 
 pl, err := omnisdk.Converge(registryRoot, "scratch", stateDir, "" /* runID: timestamp */, res,
-    omnisdk.Args{Auth: auth, Params: map[string]string{"region": "us-east-1"}})
+    omnisdk.Args{AuthByProvider: map[string]*omnisdk.Auth{"aws": awsAuth}, Params: map[string]string{"region": "us-east-1"}})
 if err != nil {
     return err
 }
@@ -98,3 +98,68 @@ res, err := bp.Resources(map[string]string{
 ```
 
 `omnisdk.Blueprints()` lists them with the inputs each declares, which is what `iac-handles` prints.
+
+**3. SQL, already parsed** — what stackql sends. Describe each table, resolve, run:
+
+```go
+q, err := query.New(
+    []query.Join{
+        query.NewJoin(query.NewResource("u", "aws.iam.users"), query.Base),
+        query.NewJoin(query.NewResource("k", "aws.iam.access_keys"), query.Left,
+            query.NewEq(query.NewColumn("k", "UserName"), query.NewColumn("u", "UserName"))),
+    },
+    []query.Predicate{query.NewEq(query.NewColumn("", "region"), query.NewLiteral("us-east-1"))},
+    []query.Output{query.NewOutput("UserName", query.NewColumn("u", "UserName"))},
+)
+users, _ := omnisdk.DescribeTable(registryRoot, "stackql_unstable_aws.iam.users")
+keys, _ := omnisdk.DescribeTable(registryRoot, "stackql_unstable_aws.iam.access_keys")
+res, err := omnisdk.Resolve(q, map[string]omnisdk.Table{"u": users, "k": keys})
+pl, err := omnisdk.NewGraphSelectQuery(registryRoot, res.Graph(), omnisdk.Args{Params: res.Params()})
+```
+
+Join forms: `Inner` and `Left` send an `ON` value a table's methods take as a request per row;
+`Listed` never does — the table is listed once and matched on its rows; `Cross` is every pair.
+
+**4. UNION ALL** — several plans, one stream, one `Limit`; legs line up by column name:
+
+```go
+pl, err := omnisdk.UnionAll(awsPlan, googlePlan, azurePlan)
+```
+
+**5. Cycles** — a node wired to itself, bounded by a termination proved well-founded at planning:
+
+```go
+g, _ := omnisdk.NewGraph(
+    []omnisdk.Node{omnisdk.NewNode("f", folders, map[string]string{"parent": "root"})},
+    []omnisdk.Wiring{omnisdk.NewWiring("f", []omnisdk.Inbound{omnisdk.NewInbound("f", "id", "parent")}, "", "")},
+)
+g, err := omnisdk.WithTermination(g, "f", omnisdk.Rounds(10))
+```
+
+**6. Branches** — the first arm whose condition holds, once per row; gates say what runs on it:
+
+```go
+br, _ := omnisdk.NewBranch("pick",
+    omnisdk.NewArm("deep", query.NewEq(query.NewColumn("top", "id"), query.NewLiteral("a"))),
+    omnisdk.Otherwise("shallow"))
+g, err := omnisdk.WithBranch(g, br, omnisdk.NewGate("pick", "deep", "sub"))
+```
+
+**7. IaC as a graph** — recall, read, diff, branch, then the mutation the arm calls for:
+
+```go
+nodes := []omnisdk.Node{
+    omnisdk.NewRecallNode("r", "w1"),                                   // what the ledger knows
+    omnisdk.NewOuterNode(omnisdk.NewNode("live", widgets, nil), nil),   // read by identity
+    omnisdk.NewDiffNode("d", "w1", "live", "id", map[string]any{"size": "L"}),
+    omnisdk.NewMutationNode("create", widgets, "insert", nil, nil, map[string]any{"size": nil}),
+    omnisdk.NewMutationNode("update", widgets, "update", nil, nil, map[string]any{"size": nil}),
+}
+// Wire r.identity → live.id, d.size → create/update.size, d.identity → update.id; branch on
+// d.status (DiffAbsent → create, DiffDrift → update); then:
+pl, err := omnisdk.ConvergeGraph(registryRoot, "demo", stateDir, "", g,
+    []omnisdk.Managed{omnisdk.NewManaged("w1", []string{"create", "update"}, "id", "id")}, args)
+```
+
+Every mutation node belongs to a `Managed`. A failed run deletes what it created and reports what it
+left in place as `completed`. Gaps: [iac-gaps.md](iac-gaps.md).

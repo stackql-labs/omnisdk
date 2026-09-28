@@ -261,7 +261,7 @@ func gcpPrincipalType(prefix string) string {
 // GCPIAMPrincipalsPlan lists principals granted a role on a project, or on EVERY project under an org
 // — the same recursive descent the bucket audit uses, with IAM as the visitor.
 func GCPIAMPrincipalsPlan(endpoint string, creds GCPCredentials, project, org string) plan.Plan {
-	oauth, jwt := gcpOAuth(endpoint, creds, gcpCloudPlatformScope)
+	oauth, jwt := gcpOAuth(endpoint, creds, creds.Scope())
 	if org != "" {
 		specs := append([]plan.ExchangeSpec{oauth}, gcpOrgProjectSpecs(endpoint)...)
 		specs = append(specs, gcpIAMBindingsSpec(endpoint))

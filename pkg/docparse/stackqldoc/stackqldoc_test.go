@@ -71,16 +71,19 @@ func TestResponseTransformIsDeclaredNotApplied(t *testing.T) {
 	}
 }
 
-// Pagination is read from the document when it declares any; this operation declares none, and
-// reporting that faithfully is the point — an invented default would page a call that does not page.
-func TestPaginationIsDeclared(t *testing.T) {
+// Pagination is what the document states. This operation declares no pagination block, but it takes
+// the NextToken parameter AWS pages by, so it pages by that — the parameter is the document's own
+// statement; nothing is invented for a call that does not page.
+func TestPaginationFollowsTheDocument(t *testing.T) {
 	ex, err := load(t).Select("instances")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if p := ex.Response().Pagination(); p.Declared() {
-		k, loc := p.ResponseToken()
-		t.Fatalf("expected none declared, got %q/%q", k, loc)
+	p := ex.Response().Pagination()
+	reqKey, _ := p.RequestToken()
+	respKey, respLoc := p.ResponseToken()
+	if !p.Declared() || reqKey != "NextToken" || respKey != "NextToken" || respLoc != "body" {
+		t.Fatalf("pagination = %q → %q/%q, want NextToken both ways", reqKey, respKey, respLoc)
 	}
 }
 

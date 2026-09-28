@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"slices"
 	"strings"
 
 	"github.com/stackql-labs/omnisdk/internal/system_g/bind"
@@ -21,10 +22,10 @@ import (
 // one stage per downstream exchange. Each stage is a bind join (binding every β slot into that
 // node — so an attribute like an auth token declared from the root fans to all nodes) followed
 // by a flatten that merges the produced output back into the running row. Because the row
-// accumulates, any node can bind from any upstream, not just its immediate predecessor. This
-// handles any ACYCLIC DAG (diamonds, fan-in/out included). Cyclic plans (SCCs) are rejected up
-// front — fixpoint execution over a Tarjan condensation is future work, but a cycle must never be
-// silently dropped.
+// accumulates, any node can bind from any upstream, not just its immediate predecessor. Stages
+// follow the Tarjan condensation: an acyclic node is one stage, and a strongly connected component
+// is one stage that runs the cycle to a fixpoint under a termination policy proved well-founded
+// before the plan runs (see cycle.go).
 
 // Compose realises a plan as a staged pipeline in topological order: root, then a
 // bind-join + flatten + output-tap stage per downstream exchange, then the sink. The row
@@ -56,6 +57,7 @@ func ComposeRows(id int64, p Plan) facade.Operator {
 // composePipeline builds the staged bind-join pipeline (root → stages, egress-unshaped), shared by
 // Compose (byte terminal) and ComposeRows (row terminal). It stops before the terminal.
 func composePipeline(id int64, p Plan) (facade.Operator, error) {
+	p = controlled(p)
 	if err := Validate(p); err != nil {
 		return nil, err
 	}
@@ -63,39 +65,67 @@ func composePipeline(id int64, p Plan) (facade.Operator, error) {
 	for _, x := range p.Exchanges() {
 		byName[x.Name()] = x
 	}
-	order := topoOrder(p.Exchanges(), p.Betas())
-	if len(order) != len(byName) {
-		// Kahn's dropped nodes → a β dependency cycle. Reject, never silently omit them.
-		return nil, fmt.Errorf("plan: dependency cycle among exchanges (SCC execution not yet supported)")
+	comps := condense(p.Exchanges(), p.Betas(), p.Alphas())
+	// Every cycle is proved to stop before anything runs: a cycle whose termination is not
+	// well-founded, or that nothing outside it can start, is refused here rather than discovered
+	// mid-run.
+	specs := make([]facade.TerminationSpec, len(comps))
+	for i, c := range comps {
+		if !c.cyclic {
+			continue
+		}
+		spec, err := cycleSpec(p, c)
+		if err != nil {
+			return nil, err
+		}
+		specs[i] = spec
 	}
 
 	nid := id
 	// With κ inputs, the seed row is the inputs and every exchange is a stage; otherwise the
 	// first exchange is the root (its output need not be an agnostic row — e.g. raw pages).
 	var op facade.Operator
-	stages := order
+	stages := comps
 	if len(p.Inputs()) > 0 {
 		op = tap(&nid, seedOp{rec: bind.NewDocRecord(p.Inputs())}, "inputs")
-	} else if byName[order[0]].Flatten() != nil {
+	} else if comps[0].cyclic || byName[comps[0].members[0]].Flatten() != nil {
 		// The root DECLARES how its output merges into the running row — so it needs a row to merge
 		// INTO. Seed an empty one and run it as an ordinary stage. Made a bare root instead, its
 		// Flatten was silently dropped: whatever it declares in Out was never extracted, and every β
 		// edge reading that attribute bound nothing. That is how a client_credentials Auth root
 		// obtained a token and still issued unauthenticated requests — the provider's 401 was the
-		// first sign, three hops from the cause.
+		// first sign, three hops from the cause. A cycle at the root needs a row for the same reason.
 		op = tap(&nid, seedOp{rec: bind.NewDocRecord(map[string]any{})}, "inputs")
 	} else {
-		op = tap(&nid, byName[order[0]].Make(nil), order[0])
-		stages = order[1:]
+		name := comps[0].members[0]
+		op = tap(&nid, byName[name].Make(nil), name)
+		stages = comps[1:]
 	}
 
-	for _, name := range stages {
+	for _, c := range stages {
+		if c.cyclic {
+			spec := specs[slices.IndexFunc(comps, func(x component) bool { return x.members[0] == c.members[0] })]
+			stage, err := newCycleStage(p, byName, c, op, spec)
+			if err != nil {
+				return nil, err
+			}
+			op = tap(&nid, stage, strings.Join(c.members, "+"))
+			continue
+		}
+		name := c.members[0]
 		node := byName[name]
 		var bindings []bind.Binding
 		for _, attr := range node.In() {
-			if src, ok := betaSrc(p.Betas(), name, attr); ok {
-				bindings = append(bindings, bind.NewBinding(src, attr))
-			} else {
+			// An input may have several sources; any one satisfies it, the first with a value
+			// winning (see the join).
+			found := false
+			for _, e := range p.Betas() {
+				if e.To() == name && e.Tgt() == attr {
+					bindings = append(bindings, bind.NewBinding(e.Src(), attr))
+					found = true
+				}
+			}
+			if !found {
 				bindings = append(bindings, bind.NewBinding(attr, attr)) // κ/env by name
 			}
 		}
@@ -113,51 +143,14 @@ func composePipeline(id int64, p Plan) (facade.Operator, error) {
 	return op, nil
 }
 
-// topoOrder returns exchange names root-first by β dependency (Kahn's, declaration order).
-// Edges from a non-exchange (κ inputs, From "") are bindings, not ordering deps.
-func topoOrder(exchanges []ExchangeSpec, betas []BetaEdge) []string {
-	indeg := make(map[string]int)
-	names := make([]string, 0, len(exchanges))
-	for _, x := range exchanges {
-		if _, ok := indeg[x.Name()]; !ok {
-			indeg[x.Name()] = 0
-			names = append(names, x.Name())
-		}
+// Order is the order Compose runs a plan's exchanges in: components of the condensation in
+// dependency order, a cycle's members together in declaration order.
+func Order(exchanges []ExchangeSpec, betas []BetaEdge) []string {
+	var out []string
+	for _, c := range condense(exchanges, betas, nil) {
+		out = append(out, c.members...)
 	}
-	adj := make(map[string][]string)
-	edgeSeen := make(map[string]bool)
-	for _, e := range betas {
-		if _, ok := indeg[e.From()]; !ok {
-			continue
-		}
-		k := e.From() + "\x00" + e.To()
-		if edgeSeen[k] {
-			continue
-		}
-		edgeSeen[k] = true
-		adj[e.From()] = append(adj[e.From()], e.To())
-		indeg[e.To()]++
-	}
-
-	var queue []string
-	for _, n := range names {
-		if indeg[n] == 0 {
-			queue = append(queue, n)
-		}
-	}
-	order := make([]string, 0, len(names))
-	for len(queue) > 0 {
-		n := queue[0]
-		queue = queue[1:]
-		order = append(order, n)
-		for _, m := range adj[n] {
-			indeg[m]--
-			if indeg[m] == 0 {
-				queue = append(queue, m)
-			}
-		}
-	}
-	return order
+	return out
 }
 
 // Validate is the AOT correctness check: every declared input (In) of every exchange must be
@@ -233,9 +226,11 @@ func betaSrc(betas []BetaEdge, to, attr string) (string, bool) {
 	return "", false
 }
 
+// alphaInto is the timing annotation on the edges into to: the first α with a delay. Gates carry no
+// timing; they are applied by controlled.
 func alphaInto(alphas []AlphaEdge, to string) facade.Alpha {
 	for _, a := range alphas {
-		if a.To() == to {
+		if a.To() == to && a.Alpha() != nil && a.Alpha().Delay() > 0 {
 			return a.Alpha()
 		}
 	}

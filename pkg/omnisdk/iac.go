@@ -2,6 +2,7 @@ package omnisdk
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"maps"
 	"os"
@@ -17,6 +18,7 @@ import (
 	"github.com/stackql-labs/omnisdk/internal/ledger"
 	"github.com/stackql-labs/omnisdk/internal/merge"
 	"github.com/stackql-labs/omnisdk/internal/semantics"
+	"github.com/stackql-labs/omnisdk/internal/system_g/admit"
 	"github.com/stackql-labs/omnisdk/internal/system_g/exchange/docx"
 	"github.com/stackql-labs/omnisdk/internal/system_g/facade"
 	"github.com/stackql-labs/omnisdk/internal/unwind"
@@ -106,12 +108,12 @@ func (r resource) Inbound() []Arrival        { return r.inbound }
 func (r resource) Via() (string, string)     { return r.viaType, r.viaProgram }
 
 // Converge applies a set of resources as one collection, and is the whole IaC entry point: a client
-// issues the imperative and the system works out idempotence, ordering, locking and compensation.
+// issues the imperative and the system works out idempotence, ordering, concurrency and compensation.
 //
 //   - registry is the provider-document root. Every effect is compiled from the document that
 //     declares it, so a new service is a document plus its residue rather than Go code.
-//   - name is the collection: the ledger key prefix, the lease scope, and the correlation tag
-//     stamped on each object. It is the handle a later run uses to address the same resources.
+//   - name is the collection: the handle a later run uses to address the same resources, and the
+//     correlation tag stamped on each object.
 //   - state holds the ledger and run journals. Local disk only — O_EXCL and link are unreliable on a
 //     network share. One state directory holds many collections, separated by name.
 //   - runID names this run's journal; empty means a UTC timestamp.
@@ -136,7 +138,7 @@ func Converge(registry, name, state, runID string, resources []ManagedResource, 
 		runID = time.Now().UTC().Format("20060102T150405Z")
 	}
 	return &convergePlan{name: name, state: state, runID: runID, resources: resources,
-		effector: effector, semantics: sem, exchanges: exchanges, scope: args.Params}, nil
+		effector: effector, semantics: sem, exchanges: exchanges, scope: args.Params, tuning: args.Tuning}, nil
 }
 
 // providerWiring builds an effector per provider the resources name, and the semantics derived from
@@ -269,6 +271,8 @@ type convergePlan struct {
 	exchanges map[string]string
 	// scope is what the run supplies to every step — a region, a project, a subscription.
 	scope map[string]string
+	// tuning bounds the run: Parallelism keys converge at once, MaxPerHost requests per backend.
+	tuning Tuning
 }
 
 // leaseTTL bounds how long a dead run can hold the collection before another may break it.
@@ -284,7 +288,10 @@ func (p *convergePlan) Open(ctx context.Context) (Rows, error) {
 		return nil, err
 	}
 	runner := apply.New(log, journals, lease.NewLeaser(log, time.Now), merge.ThreeWay(),
-		p.effector, p.semantics, unwind.New(log, journals, p.semantics, p.effector), lease.All(), leaseTTL)
+		p.effector, p.semantics, unwind.New(log, journals, p.semantics, p.effector), lease.All(), leaseTTL,
+		orInt(p.tuning.Parallelism, apply.DefaultParallelism))
+	// Keys converging at once share each backend's request budget, as a query's requests do.
+	ctx = admit.WithAdmissions(ctx, admit.PerScope(orInt(p.tuning.MaxPerHost, 8)))
 
 	dslReg, err := dsl.NewRegistry(append(gotemplate.Evaluators(), schemaxml.New())...)
 	if err != nil {
@@ -324,6 +331,10 @@ func (p *convergePlan) Open(ctx context.Context) (Rows, error) {
 	}
 
 	res, err := runner.Apply(ctx, p.runID, p.name, steps)
+	if errors.Is(err, facade.ErrLeaseHeld) {
+		// How runs are kept apart is not the caller's business; that another is running is.
+		return nil, fmt.Errorf("omnisdk: collection %q is busy with another run", p.name)
+	}
 	if err != nil {
 		return nil, err
 	}

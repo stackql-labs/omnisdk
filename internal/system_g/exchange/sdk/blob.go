@@ -28,12 +28,7 @@ import (
 // are null (a provider may not surface one shallowly). key_management normalizes the encryption
 // key owner across clouds; the raw signals are kept alongside.
 
-const (
-	azureStorageAPI = "2023-01-01"
-	gcpStorageScope = "https://www.googleapis.com/auth/devstorage.read_only"
-	// org descent lists projects AND reads buckets, so it needs the broader read-only scope.
-	gcpCloudPlatformScope = "https://www.googleapis.com/auth/cloud-platform.read-only"
-)
+const azureStorageAPI = "2023-01-01"
 
 // BlobColumn describes one column of the uniform blob-audit row: its name, JSON-Schema scalar type,
 // whether it can be null (a provider may not surface an attribute shallowly), and an optional Format.
@@ -496,7 +491,7 @@ func NewGCPBlobEncryption(id int64, endpoint string, creds GCPCredentials, proje
 
 // GCPBlobPlan is the single-project GCP bucket audit as a plan.Plan (REST).
 func GCPBlobPlan(endpoint string, creds GCPCredentials, project string) plan.Plan {
-	oauth, jwt := gcpOAuth(endpoint, creds, gcpStorageScope)
+	oauth, jwt := gcpOAuth(endpoint, creds, creds.Scope())
 	specs := []plan.ExchangeSpec{oauth, gcpListBucketsSpec(endpoint)}
 	betas := []plan.BetaEdge{plan.NewBetaEdge("OAuth", "ListBuckets", "token", "token")}
 	inputs := map[string]any{"assertion": jwt, "project": project}
@@ -514,7 +509,7 @@ func NewGCPBlobEncryptionOrg(id int64, endpoint string, creds GCPCredentials, or
 
 // GCPBlobOrgPlan is the org-wide GCP bucket audit as a plan.Plan (REST folder→project descent).
 func GCPBlobOrgPlan(endpoint string, creds GCPCredentials, org string) plan.Plan {
-	oauth, jwt := gcpOAuth(endpoint, creds, gcpCloudPlatformScope)
+	oauth, jwt := gcpOAuth(endpoint, creds, creds.Scope())
 	specs := append([]plan.ExchangeSpec{oauth}, gcpOrgProjectSpecs(endpoint)...)
 	specs = append(specs, gcpListBucketsSpec(endpoint))
 	betas := []plan.BetaEdge{

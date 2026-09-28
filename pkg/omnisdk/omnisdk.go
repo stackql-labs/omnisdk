@@ -1,11 +1,20 @@
-// Package omnisdk is the public facade for consumers such as stackql. A resource is addressed by a
-// PATH; a consumer can list resources (optionally regex-filtered), get one's metadata (required
-// params + response schema), then run it — New(path, args) returns a Plan whose Open streams rows.
-// The system_g engine stays internal; this package exposes only its own DTOs.
+// Package omnisdk is the public facade for consumers such as stackql. The system_g engine stays
+// internal; this package exposes only its own DTOs and interfaces.
 //
-// Today the catalog is hand-authored from what we know about each case. The future state infers the
-// same metadata (params, schema, auth) from provider documents — behind this exact interface, so
-// consumers do not change. Transport (REST vs gRPC) is an internal detail, never surfaced here.
+// Queries are planned from provider documents and return a Plan whose Open streams Rows:
+//
+//   - Resolve turns a query.Unresolved — SQL already parsed — into a Graph, choosing each table's
+//     method and placing each condition as a request parameter, an edge or a row filter.
+//   - NewGraph declares a graph directly: nodes, wirings, projections, outer and matched joins,
+//     cycles (WithTermination) and branches (WithBranch). NewGraphSelectQuery plans it.
+//   - UnionAll runs several plans as one stream.
+//   - New runs a hand-authored catalog method by path.
+//
+// IaC: Converge applies a flat set of resources; ConvergeGraph runs a graph whose mutations are
+// recorded in a ledger, held per collection and compensated on failure.
+//
+// Credentials are per provider (Args.AuthByProvider), falling back to each document's defaults and
+// the environment.
 package omnisdk
 
 import (
@@ -22,6 +31,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"sort"
 	"strings"
 	"sync"
@@ -35,6 +45,7 @@ import (
 	"github.com/stackql-labs/omnisdk/internal/system_g/admit"
 	"github.com/stackql-labs/omnisdk/internal/system_g/auth"
 	"github.com/stackql-labs/omnisdk/internal/system_g/bind"
+	"github.com/stackql-labs/omnisdk/internal/system_g/buffer"
 	"github.com/stackql-labs/omnisdk/internal/system_g/endpoint"
 	"github.com/stackql-labs/omnisdk/internal/system_g/exchange/docx"
 	"github.com/stackql-labs/omnisdk/internal/system_g/exchange/sdk"
@@ -108,6 +119,13 @@ type Auth struct {
 	Context string `json:"context,omitempty"`
 	// Successor is a further method applied after this one, e.g. a second API-key header.
 	Successor *Auth `json:"successor,omitempty"`
+
+	// Subject is the user a Google service account acts as through domain-wide delegation (the JWT
+	// "sub" claim) — required by the Admin SDK.
+	Subject string `json:"sub,omitempty"`
+	// Profile names the AWS shared-config profile to read when no keys are given; empty is
+	// AWS_PROFILE, else "default".
+	Profile string `json:"profile,omitempty"`
 }
 
 // TLS is a connection's transport security. CA, certificate and key each come from a file or from
@@ -204,10 +222,15 @@ type Args struct {
 	// Journal opts a query's mutations into write-ahead intent: each effect is recorded, and on disk,
 	// before its request is sent. Nil runs them unjournaled. Reads ignore it.
 	Journal *Journal `json:"journal,omitempty"`
-	// AuthByProvider gives each provider its own credentials, keyed by provider name — namespaced
-	// ("stackql_unstable_github") or as its document declares it ("github"). A provider absent here
-	// uses Auth. Needed where one query reads several providers.
+	// AuthByProvider is each provider's credentials, keyed by provider name — namespaced
+	// ("stackql_unstable_github") or as its document declares it ("github"). A credential belongs to
+	// one provider: a provider absent here authenticates from its document's defaults and the
+	// environment, never with another provider's entry.
 	AuthByProvider map[string]*Auth `json:"auth_by_provider,omitempty"`
+	// cred is the entry for the provider being resolved, set by withCredential; authOf reads it.
+	cred *Auth
+	// managed is the converging run a graph is planned for, nil for a query.
+	managed *managedRun
 	// Redaction decides which columns a result may not carry. Nil is DefaultRedaction: the values
 	// auth put on the row are dropped, everything else is kept. A power user who needs them sets
 	// RedactNone, or a policy of their own.
@@ -215,7 +238,6 @@ type Args struct {
 	// Functions adds a caller's own SQL functions to the built-in catalogue for this query. A name the
 	// built-ins already use is an error.
 	Functions sqlfn.Catalog `json:"-"`
-	Auth      *Auth
 	Endpoint  string
 	// InsecureSkipTLSVerify accepts any certificate. It exists for mocks that serve a self-signed one,
 	// but it is not tied to Endpoint: a private CA or an intercepting proxy is a real reason to need it
@@ -296,12 +318,20 @@ func (a *Args) UnmarshalJSON(data []byte) error {
 
 // Tuning are the run knobs; a zero value uses sensible defaults.
 type Tuning struct {
+	// Parallelism bounds concurrent work: a query's fan-out, and the keys an IaC run converges at
+	// once. Zero is the default, 16.
 	Parallelism int
 	MaxPerHost  int
 	RetryTries  int
 	RetryRate   float64
 	Limit       int
 	Timeout     time.Duration
+	// RowsAhead is how many rows each stage may produce before its reader takes them, and PagesAhead
+	// how many responses a request may fetch ahead. They bound memory by the reader's pace rather than
+	// the result's size. Zero is the default (1024 rows, 2 pages); negative is unbounded, which never
+	// waits on a slow reader and holds whatever it has not read.
+	RowsAhead  int
+	PagesAhead int
 }
 
 // Row is one result record; Rows is a forward-only cursor over them (the caller owns its lifecycle).
@@ -471,6 +501,8 @@ type methodDef struct {
 	Method
 	// build plans this method's single query graph. Set on a leaf method; nil on a composite.
 	build func(args Args) (plan.Plan, error)
+	// provider is whose credentials a leaf method authenticates with — its key in Args.AuthByProvider.
+	provider string
 	// members, when non-empty, makes this a COMPOSITE method: its plan is the FOREST of these member
 	// methods' plans, merged into ONE cursor. A composite is defined BY REFERENCE to its legs, so it
 	// cannot drift from them — adding a provider is one entry here, not a new hand-rolled plan.
@@ -553,6 +585,7 @@ var methods = map[string]methodDef{
 			Params:   []Param{{Name: "region", Required: true, Description: "AWS region"}},
 			Schema:   blobSchema,
 		},
+		provider: "aws",
 		build: func(args Args) (plan.Plan, error) {
 			creds, err := awsCreds(args)
 			if err != nil {
@@ -569,6 +602,7 @@ var methods = map[string]methodDef{
 			Params:   nil, // scope is the SP's reach; auth carries the identity
 			Schema:   blobSchema,
 		},
+		provider: "azure",
 		build: func(args Args) (plan.Plan, error) {
 			a, err := azureAuth(args, endpoint.AzureMgmt)
 			if err != nil {
@@ -591,6 +625,7 @@ var methods = map[string]methodDef{
 			ExactlyOne: [][]string{{"google_project", "google_org"}}, // one project or a whole org, never both
 			Schema:     blobSchema,
 		},
+		provider: "google",
 		build: func(args Args) (plan.Plan, error) {
 			project, org := args.param("google_project"), args.param("google_org")
 			creds, err := gcpCreds(args)
@@ -648,6 +683,7 @@ var methods = map[string]methodDef{
 			Params:   []Param{{Name: "region", Required: true, Description: "AWS region to sign with (IAM is global; SigV4 still scopes to a region)"}},
 			Schema:   principalSchema,
 		},
+		provider: "aws",
 		build: func(args Args) (plan.Plan, error) {
 			creds, err := awsCreds(args)
 			if err != nil {
@@ -664,6 +700,7 @@ var methods = map[string]methodDef{
 			Params:   nil, // the tenant is the credentials' own; nothing to choose
 			Schema:   principalSchema,
 		},
+		provider: "azure",
 		build: func(args Args) (plan.Plan, error) {
 			// Same client-credentials exchange as the ARM audit — only the SCOPE differs, and that is
 			// derived from the service rather than configured.
@@ -686,6 +723,7 @@ var methods = map[string]methodDef{
 			ExactlyOne: [][]string{{"google_project", "google_org"}},
 			Schema:     principalSchema,
 		},
+		provider: "aws",
 		build: func(args Args) (plan.Plan, error) {
 			creds, err := gcpCreds(args)
 			if err != nil {
@@ -702,6 +740,7 @@ var methods = map[string]methodDef{
 			Params:   []Param{{Name: "region", Required: true, Description: "AWS region to sign with"}},
 			Schema:   principalSchema,
 		},
+		provider: "aws",
 		build: func(args Args) (plan.Plan, error) {
 			creds, err := awsCreds(args)
 			if err != nil {
@@ -718,6 +757,7 @@ var methods = map[string]methodDef{
 			Params:   nil,
 			Schema:   principalSchema,
 		},
+		provider: "azure",
 		build: func(args Args) (plan.Plan, error) {
 			a, err := azureAuth(args, endpoint.AzureGraph)
 			if err != nil {
@@ -766,6 +806,7 @@ var methods = map[string]methodDef{
 			Params:   []Param{{Name: "region", Required: true, Description: "AWS region"}},
 			Schema:   s3ListSchema,
 		},
+		provider: "aws",
 		build: func(args Args) (plan.Plan, error) {
 			creds, err := awsCreds(args)
 			if err != nil {
@@ -782,6 +823,7 @@ var methods = map[string]methodDef{
 			Params:   []Param{{Name: "region", Required: true, Description: "AWS region"}},
 			Schema:   genericObjectSc,
 		},
+		provider: "aws",
 		build: func(args Args) (plan.Plan, error) {
 			creds, err := awsCreds(args)
 			if err != nil {
@@ -802,6 +844,7 @@ var methods = map[string]methodDef{
 			},
 			Schema: awsNetSchema,
 		},
+		provider: "aws",
 		build: func(args Args) (plan.Plan, error) {
 			creds, err := awsCreds(args)
 			if err != nil {
@@ -821,6 +864,7 @@ var methods = map[string]methodDef{
 			},
 			Schema: gcpNetSchema,
 		},
+		provider: "azure",
 		build: func(args Args) (plan.Plan, error) {
 			creds, err := gcpCreds(args)
 			if err != nil {
@@ -841,6 +885,7 @@ var methods = map[string]methodDef{
 			Params:   nil, // scope is the SP's reach; identity from AZURE_* env
 			Schema:   subnetSchema,
 		},
+		provider: "azure",
 		build: func(args Args) (plan.Plan, error) {
 			tenant, clientID, clientSecret, err := azureNativeCreds(args)
 			if err != nil {
@@ -987,7 +1032,7 @@ func buildPlans(method string, args Args, seen map[string]bool) ([]plan.Plan, er
 		}
 	}
 	if len(def.members) == 0 {
-		pl, err := def.build(args)
+		pl, err := def.build(args.withCredential(def.provider))
 		if err != nil {
 			return nil, err
 		}
@@ -1033,7 +1078,10 @@ func checkEndpoint(args Args) error {
 // document supplies the call, and the declared auth scheme is applied implicitly. This is the same
 // Plan a catalog method returns, so a consumer runs it identically — the difference is only where the
 // metadata came from, which is the whole point of the document path.
-func NewFromDoc(doc []byte, resource string, args Args) (Plan, error) {
+//
+// provider names whose credentials the call uses — its key in Args.AuthByProvider. A document alone does not
+// say which provider it belongs to.
+func NewFromDoc(doc []byte, provider, resource string, args Args) (Plan, error) {
 	if err := checkEndpoint(args); err != nil {
 		return nil, err
 	}
@@ -1041,6 +1089,7 @@ func NewFromDoc(doc []byte, resource string, args Args) (Plan, error) {
 	if err != nil {
 		return nil, err
 	}
+	args = args.withCredential(provider)
 	opts, err := docOptions(args, nil, false)
 	if err != nil {
 		return nil, err
@@ -1214,9 +1263,8 @@ func NewSelectFromCatalog(dir, address string, args Args) (Plan, error) {
 // supplying an identifier means asking for that one thing. A tie is ambiguous and says so rather than
 // guessing; nothing satisfiable says what each would have needed.
 func chooseExchange(candidates []aot.AOTExchange, inputs map[string]any) (aot.AOTExchange, error) {
-	var best aot.AOTExchange
+	var best []aot.AOTExchange
 	var bestScore int
-	var tie bool
 	var unmet []string
 	for _, ex := range candidates {
 		score, ok := 0, true
@@ -1236,18 +1284,36 @@ func chooseExchange(candidates []aot.AOTExchange, inputs map[string]any) (aot.AO
 		}
 		switch {
 		case best == nil || score > bestScore:
-			best, bestScore, tie = ex, score, false
+			best, bestScore = []aot.AOTExchange{ex}, score
 		case score == bestScore:
-			tie = true
+			best = append(best, ex)
+		}
+	}
+	if len(best) > 1 {
+		// A read that needs a request body — Azure's check_name_availability, bound to select beside
+		// list — needs content the query does not have. Where methods tie, the ones that do not are
+		// the reads.
+		var reads []aot.AOTExchange
+		for _, ex := range best {
+			if ex.Request().BodyMediaType() == "" {
+				reads = append(reads, ex)
+			}
+		}
+		if len(reads) > 0 {
+			best = reads
 		}
 	}
 	switch {
-	case best == nil:
+	case len(best) == 0:
 		return nil, fmt.Errorf("no satisfiable select method (%s)", strings.Join(unmet, "; "))
-	case tie:
-		return nil, fmt.Errorf("several select methods are satisfiable; supply a parameter that distinguishes them")
+	case len(best) > 1:
+		names := make([]string, len(best))
+		for i, ex := range best {
+			names[i] = ex.Name()
+		}
+		return nil, fmt.Errorf("several select methods are satisfiable (%s); supply a parameter that distinguishes them", strings.Join(names, ", "))
 	}
-	return best, nil
+	return best[0], nil
 }
 
 // docInputs are the caller's params as κ inputs.
@@ -1275,25 +1341,86 @@ func docOptions(args Args, sec aot.Security, oauth bool) ([]docx.Option, error) 
 	if args.Endpoint != "" {
 		opts = append(opts, docx.WithBaseURL(args.Endpoint))
 	}
-	if creds, err := awsCreds(args); err == nil {
-		opts = append(opts, docx.WithAWSCredentials(creds))
+	// Only the credential the document declares is read: a Google document never runs an AWS
+	// credential_process, and an Azure one never parses a Google key. Without a known scheme — a bare
+	// document, whose scheme is not known until it compiles — each is offered where it resolves, and
+	// the document takes the one it declares.
+	if sec == nil {
+		if creds, err := awsKeys(args); err == nil {
+			opts = append(opts, docx.WithAWSCredentials(creds))
+		}
+		if tenant, clientID, clientSecret, err := azureNativeCreds(args); err == nil {
+			opts = append(opts, docx.WithAzureCredentials(tenant, clientID, clientSecret))
+		}
+		if opt, err := googleOption(args); err == nil {
+			opts = append(opts, opt)
+		}
+		return opts, nil
 	}
-	switch tenant, clientID, clientSecret, err := azureNativeCreds(args); {
-	case oauth:
-	case err == nil:
-		opts = append(opts, docx.WithAzureCredentials(tenant, clientID, clientSecret))
-	case sec != nil && sec.Scheme() == aot.SchemeOAuthClientCredentials:
-		return nil, fmt.Errorf("omnisdk: Azure credentials cannot be used: %w", err)
-	}
-	switch creds, err := gcpCreds(args); {
-	case err == nil:
-		opts = append(opts, docx.WithGoogleCredentials(creds))
-	case sec != nil && sec.Scheme() == aot.SchemeServiceAccount:
-		// The document says this call is authenticated with a service account, so a credential that
-		// cannot be used is fatal — and says why, rather than surfacing later as "none supplied".
-		return nil, fmt.Errorf("omnisdk: Google credentials cannot be used: %w", err)
+	switch sec.Scheme() {
+	case aot.SchemeAWSSigV4:
+		// Unusable keys are reported where the request is signed, which names the provider.
+		if creds, err := awsCreds(args); err == nil {
+			opts = append(opts, docx.WithAWSCredentials(creds))
+		}
+	case aot.SchemeOAuthClientCredentials:
+		if oauth {
+			break // the token exchange the document names carries its own client credentials
+		}
+		tenant, clientID, clientSecret, err := azureNativeCreds(args)
+		if err == nil {
+			opts = append(opts, docx.WithAzureCredentials(tenant, clientID, clientSecret))
+			break
+		}
+		// No service principal: the credential an interactive user has is the Azure CLI's login,
+		// as Azure's own default credential chain would use.
+		tok, cliErr := auth.AzureCLIToken(azureManagementResource)
+		if cliErr != nil {
+			return nil, fmt.Errorf("omnisdk: Azure credentials cannot be used: %w; nor the Azure CLI: %w", err, cliErr)
+		}
+		opts = append(opts, docx.WithRequestTransform(auth.BearerMethod(tok).RequestTransform()))
+	case aot.SchemeServiceAccount:
+		opt, err := googleOption(args)
+		if err != nil {
+			// The document says this call is authenticated with a service account, so a credential
+			// that cannot be used is fatal — and says why, rather than surfacing later as "none
+			// supplied".
+			return nil, fmt.Errorf("omnisdk: Google credentials cannot be used: %w", err)
+		}
+		opts = append(opts, opt)
 	}
 	return opts, nil
+}
+
+// azureManagementResource is the audience of an Azure Resource Manager token.
+const azureManagementResource = "https://management.azure.com/"
+
+// googleOption is the credential a Google document authenticates with: a service-account key, or a
+// user's application-default login — whichever the first credential found holds. They are looked
+// for inline, then in GOOGLE_CREDENTIALS, then the GOOGLE_APPLICATION_CREDENTIALS file, then gcloud's
+// application-default file.
+func googleOption(args Args) (docx.Option, error) {
+	a := authOf(args)
+	raw, err := secret.Require("GCP credentials",
+		secret.Literal(a.Credentials),
+		secret.Env(orStr(a.CredentialsEnvVar, "GOOGLE_CREDENTIALS")),
+		secret.File(orStr(a.CredentialsFilePath, os.Getenv("GOOGLE_APPLICATION_CREDENTIALS"))),
+		secret.File(auth.GoogleADCFile())).Resolve()
+	if err != nil {
+		return nil, err
+	}
+	if u, ok := auth.ParseGoogleUser([]byte(raw)); ok {
+		if a.Subject != "" {
+			return nil, fmt.Errorf("a user credential cannot act as %s; delegation needs a service account", a.Subject)
+		}
+		return docx.WithGoogleUserCredentials(u.ClientID, u.ClientSecret, u.RefreshToken), nil
+	}
+	creds, err := sdk.ParseGCPCredentials([]byte(raw))
+	if err != nil {
+		return nil, err
+	}
+	creds.Subject = a.Subject
+	return docx.WithGoogleCredentials(creds), nil
 }
 
 // providerOptions are docOptions for a provider: its own credentials, its document's auth defaults
@@ -1320,6 +1447,9 @@ func providerOptions(args Args, p aot.Provider) ([]docx.Option, error) {
 		return nil, err
 	}
 	opts = append(append(base, opts...), docx.WithProviderSecurity(sec))
+	if sec.Scheme() == aot.SchemeServiceAccount && len(cfg.Scopes) > 0 {
+		opts = append(opts, docx.WithGoogleScopes(cfg.Scopes))
+	}
 	m, err := requestAuth(p, sec, cfg)
 	if err != nil {
 		return nil, err
@@ -1338,15 +1468,20 @@ func providerOptions(args Args, p aot.Provider) ([]docx.Option, error) {
 	return opts, nil
 }
 
-// forProvider is args with Auth replaced by the provider's own, where AuthByProvider has one.
+// forProvider is args resolved for a document's provider.
 func (a Args) forProvider(p aot.Provider) Args {
-	if len(a.AuthByProvider) == 0 {
-		return a
-	}
-	for _, key := range []string{aot.DefaultProviderPrefix + p.Name(), p.Name()} {
-		if au, ok := a.AuthByProvider[key]; ok {
-			a.Auth = au
-			return a
+	return a.withCredential(aot.DefaultProviderPrefix+p.Name(), p.Name())
+}
+
+// withCredential is args resolved for one provider, known by any of names: its entry in
+// AuthByProvider, or
+// none. Every credential is read through this, so nothing reaches a provider it was not given for.
+func (a Args) withCredential(names ...string) Args {
+	a.cred = nil
+	for _, n := range names {
+		if au, ok := a.AuthByProvider[n]; ok && au != nil {
+			a.cred = au
+			break
 		}
 	}
 	return a
@@ -1463,11 +1598,12 @@ func expandEnv(s string) (string, error) {
 	return strings.Join(strings.Fields(out), ""), nil
 }
 
-// authOf returns args.Auth, or a zero Auth when none was supplied — so resolution always reads from a
-// struct and every field falls back to its canonical env var / file.
+// authOf returns the credential resolved for the provider at hand, or a zero Auth when it was given
+// none — so resolution always reads from a struct and every field falls back to its canonical env var
+// / file.
 func authOf(args Args) Auth {
-	if args.Auth != nil {
-		return *args.Auth
+	if args.cred != nil {
+		return *args.cred
 	}
 	return Auth{}
 }
@@ -1482,7 +1618,7 @@ func orStr(v, fallback string) string {
 
 // awsCreds resolves AWS SigV4 credentials from the Auth DTO: inline value, else the named env var
 // (defaulted to the canonical AWS_* var). SessionToken is optional (STS/assumed-role).
-func awsCreds(args Args) (sdk.Credentials, error) {
+func awsKeys(args Args) (sdk.Credentials, error) {
 	a := authOf(args)
 	id, err := secret.Require("AWS access key id",
 		secret.Literal(a.AccessKeyID), secret.Env(orStr(a.AccessKeyIDEnvVar, "AWS_ACCESS_KEY_ID"))).Resolve()
@@ -1496,6 +1632,20 @@ func awsCreds(args Args) (sdk.Credentials, error) {
 	}
 	tok := secret.Optional(secret.Literal(a.SessionToken), secret.Env(orStr(a.SessionTokenEnvVar, "AWS_SESSION_TOKEN")))
 	return sdk.Credentials{AccessKeyID: id, SecretAccessKey: key, SessionToken: tok}, nil
+}
+
+// awsCreds is the caller's keys, else the environment's, else the shared-config profile — the
+// order AWS's own tools use.
+func awsCreds(args Args) (sdk.Credentials, error) {
+	creds, err := awsKeys(args)
+	if err == nil {
+		return creds, nil
+	}
+	k, perr := auth.AWSProfile(orStr(authOf(args).Profile, os.Getenv("AWS_PROFILE")))
+	if perr != nil {
+		return sdk.Credentials{}, fmt.Errorf("%w; nor a shared-config profile: %w", err, perr)
+	}
+	return sdk.Credentials{AccessKeyID: k.AccessKeyID, SecretAccessKey: k.SecretAccessKey, SessionToken: k.SessionToken}, nil
 }
 
 // azureAuth builds the Azure storage-account config-driven auth from the Auth DTO. An explicit bearer
@@ -1605,7 +1755,13 @@ func gcpCreds(args Args) (sdk.GCPCredentials, error) {
 	if err != nil {
 		return sdk.GCPCredentials{}, err
 	}
-	return sdk.ParseGCPCredentials([]byte(raw))
+	creds, err := sdk.ParseGCPCredentials([]byte(raw))
+	if err != nil {
+		return sdk.GCPCredentials{}, err
+	}
+	creds.Subject = a.Subject
+	creds.Scopes = a.Scopes
+	return creds, nil
 }
 
 type cannedPlan struct {
@@ -1620,7 +1776,7 @@ func (c *cannedPlan) Open(parent context.Context) (Rows, error) {
 	// The engine runs on runCtx (cancelled by abort/limit/timeout to stop PRODUCERS). The cursor is
 	// read on the caller's ctx, so already-buffered rows are drained even after an internal abort —
 	// abort means "stop producing", not "discard produced rows".
-	return &rows{recs: op.Open(runCtx), read: parent, cancel: cancel, echo: c.echo}, nil
+	return newRows(op.Open(runCtx), parent, cancel, c.echo), nil
 }
 
 // decorate carries the run policies (retry, admission, fan-out, abort, result budget, trace) and an
@@ -1637,6 +1793,7 @@ func (c *cannedPlan) decorate(parent context.Context) (context.Context, context.
 		ctx = httpx.WithClient(ctx, httpx.InsecureClient())
 	}
 	ctx = withReplay(ctx)
+	ctx = buffer.WithAhead(ctx, c.args.Tuning.RowsAhead, c.args.Tuning.PagesAhead)
 	ctx, abortCancel := abort.WithSignal(ctx)
 	ctx = abort.WithLimit(ctx, c.args.Tuning.Limit)
 	logw, closeLog := logSink(c.args.Log)
@@ -1677,7 +1834,7 @@ func (m *mergedPlan) Open(parent context.Context) (Rows, error) {
 	// Engine on runCtx (abort/limit stop PRODUCERS); cursor read on parent so a limit-abort drains the
 	// already-produced rows rather than discarding them (mirrors cannedPlan.Open).
 	op := plan.MergeComposeRows(1, m.plans...)
-	return &rows{recs: op.Open(runCtx), read: parent, cancel: cancel, echo: m.echo}, nil
+	return newRows(op.Open(runCtx), parent, cancel, m.echo), nil
 }
 
 type rows struct {
@@ -1685,6 +1842,16 @@ type rows struct {
 	read   context.Context
 	cancel context.CancelFunc
 	echo   map[string]any
+}
+
+// newRows is the cursor over a run. A cursor dropped without Close would leave the run parked on a
+// reader that never comes back — its producers bounded, its requests open — so once the cursor is
+// unreachable the run is cancelled, exactly as Close would. The cleanup holds only cancel, never the
+// cursor, so it cannot keep the cursor alive.
+func newRows(recs facade.Records, read context.Context, cancel context.CancelFunc, echo map[string]any) *rows {
+	r := &rows{recs: recs, read: read, cancel: cancel, echo: echo}
+	runtime.AddCleanup(r, func(cancel context.CancelFunc) { cancel() }, cancel)
+	return r
 }
 
 func (r *rows) Next() bool { return r.recs.Next(r.read) }
@@ -1741,4 +1908,28 @@ func quoteAll(names []string) string {
 		out[i] = "'" + n + "'"
 	}
 	return strings.Join(out, ", ")
+}
+
+// UnionAll is several planned queries as one: UNION ALL. Every leg's rows arrive in one stream, legs
+// running concurrently, in no defined order; the first leg to fail fails the whole. Legs line up by
+// column name — name each leg's columns alike, with a projection. One budget covers the union:
+// Tuning.Limit and the run's other policies come from the first leg's Args. Credentials do not:
+// each leg authenticates as it was planned.
+func UnionAll(plans ...Plan) (Plan, error) {
+	if len(plans) == 0 {
+		return nil, fmt.Errorf("omnisdk: a union needs at least one query")
+	}
+	legs := make([]plan.Plan, 0, len(plans))
+	var args Args
+	for i, p := range plans {
+		c, ok := p.(*cannedPlan)
+		if !ok {
+			return nil, fmt.Errorf("omnisdk: union leg %d is not a query plan", i+1)
+		}
+		if i == 0 {
+			args = c.args
+		}
+		legs = append(legs, c.plan)
+	}
+	return &mergedPlan{plans: legs, args: args}, nil
 }

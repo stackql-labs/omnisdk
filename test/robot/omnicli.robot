@@ -100,7 +100,7 @@ Generic Run Command Deserializes JSON Args
 Auth Flows From The DTO
     [Documentation]    Credentials injected THROUGH the Auth DTO (inline values), with NO cred env vars
     ...    set — proving a consumer (stackql) can pass secrets per-request. Resolution is inline → env → file.
-    ${result}=    Run Process    ${BINARY}    run    aws.s3.buckets.list    {"params":{"region":"us-east-1"},"auth":{"access_key_id":"AK","secret_access_key":"SK"}}    --endpoint    ${ENDPOINT}    --out    ${OUT}
+    ${result}=    Run Process    ${BINARY}    run    aws.s3.buckets.list    {"params":{"region":"us-east-1"},"auth_by_provider":{"aws":{"access_key_id":"AK","secret_access_key":"SK"}}}    --endpoint    ${ENDPOINT}    --out    ${OUT}
     ...    env:AWS_ACCESS_KEY_ID=${EMPTY}    env:AWS_SECRET_ACCESS_KEY=${EMPTY}
     ...    stdout=${OUTDIR}/auth-dto.out    stderr=${OUTDIR}/auth-dto.err
     Should Be Equal As Integers    ${result.rc}    0    omnicli failed: ${result.stderr}

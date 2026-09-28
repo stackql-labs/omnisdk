@@ -45,6 +45,9 @@ type Plan interface {
 	Inputs() map[string]any
 	Egress() []facade.Transform
 	Encoder() facade.Encoder
+	// Terminations bound the plan's cycles, keyed by exchange name: a cycle runs under the spec of
+	// any member that names one. A cycle none of whose members does is refused before it runs.
+	Terminations() map[string]facade.TerminationSpec
 }
 
 type exchangeSpec struct {
@@ -126,6 +129,20 @@ func (p planData) Alphas() []AlphaEdge        { return p.alphas }
 func (p planData) Inputs() map[string]any     { return p.inputs }
 func (p planData) Egress() []facade.Transform { return p.egress }
 func (p planData) Encoder() facade.Encoder    { return p.encoder }
+
+func (p planData) Terminations() map[string]facade.TerminationSpec { return nil }
+
+// WithTerminations is p with its cycles bounded by specs, keyed by exchange name.
+func WithTerminations(p Plan, specs map[string]facade.TerminationSpec) Plan {
+	return terminated{Plan: p, specs: specs}
+}
+
+type terminated struct {
+	Plan
+	specs map[string]facade.TerminationSpec
+}
+
+func (t terminated) Terminations() map[string]facade.TerminationSpec { return t.specs }
 
 // WithProject returns spec with t applied to every record it emits, the result exploded back into
 // one record per row. Like WithInbound it wraps Make, so it must be attached AFTER anything that
