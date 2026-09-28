@@ -94,7 +94,9 @@ func rowSchemaOf(schema Schema, listProperty string) (Schema, error) {
 
 // unwrapEnvelope strips the protocol's outer wrapper. AWS's query and ec2 protocols wrap every reply
 // in an <ActionResponse> element that names the call rather than the data, and a row lives beneath
-// it; rest-xml has no such wrapper.
+// it; rest-xml has no such wrapper. The query protocol (IAM, STS) nests once more, in an
+// <ActionResult> beside <ResponseMetadata> — matched by the action's own name, never by guessing
+// which sibling holds the data.
 func unwrapEnvelope(body map[string]any, protocol string) map[string]any {
 	switch protocol {
 	case "rest-xml":
@@ -103,10 +105,17 @@ func unwrapEnvelope(body map[string]any, protocol string) map[string]any {
 	if len(body) != 1 {
 		return body
 	}
-	for _, v := range body {
-		if inner, ok := v.(map[string]any); ok {
-			return inner
+	for k, v := range body {
+		inner, ok := v.(map[string]any)
+		if !ok {
+			return body
 		}
+		if action, ok := strings.CutSuffix(k, "Response"); ok {
+			if result, ok := inner[action+"Result"].(map[string]any); ok {
+				return result
+			}
+		}
+		return inner
 	}
 	return body
 }
@@ -183,13 +192,17 @@ func findListMember(payload map[string]any, row Schema) (string, []any) {
 }
 
 // itemsOf reads a member as a list. XML has no arrays, so a set is either <x><item>…</item></x> with
-// one item decoded as an object, or several decoded as a slice.
+// one item decoded as an object, or several decoded as a slice. The ec2 protocol names the element
+// <item>; the query protocol names it <member>.
 func itemsOf(v any) []any {
 	m, ok := v.(map[string]any)
 	if !ok {
 		return nil
 	}
 	inner, ok := m["item"]
+	if !ok {
+		inner, ok = m["member"]
+	}
 	if !ok {
 		return nil
 	}

@@ -44,7 +44,49 @@ const (
 	// for a bearer token. Azure declares it, and so does any provider whose documents say oauth2
 	// without naming a dialect.
 	SchemeOAuthClientCredentials Scheme = "oauth2.client_credentials"
+	// SchemeBasic is HTTP basic auth: a username and password, or a pre-encoded pair.
+	SchemeBasic Scheme = "http.basic"
+	// SchemeBearer is a static bearer token in the Authorization header.
+	SchemeBearer Scheme = "http.bearer"
+	// SchemeAPIKey is a key sent in a named header or query parameter.
+	SchemeAPIKey Scheme = "api_key"
 )
+
+// TypedSchema is implemented by a Schema that knows its declared type: OpenAPI's type ("string",
+// "integer", "number", "boolean", "object", "array") and format ("int64", "date-time", …). Either is
+// empty where the document declares none.
+type TypedSchema interface {
+	Type() string
+	Format() string
+}
+
+// AuthDefaults is what a provider document says about authenticating beyond its scheme: where a key
+// goes, what prefixes it, and which environment variables hold the credentials. A caller's own
+// settings take precedence field by field; these fill what the caller left empty.
+type AuthDefaults struct {
+	Type              string
+	Name              string // header or query parameter carrying a key
+	Location          string // "header" (default) or "query"
+	ValuePrefix       string
+	CredentialsEnvVar string
+	UsernameEnvVar    string
+	PasswordEnvVar    string
+	// OAuth2 client credentials: where the id and secret are found, the token endpoint, and the
+	// scopes asked for. TokenURL may reference the environment as {{ .__env__NAME }}.
+	ClientIDEnvVar     string
+	ClientSecretEnvVar string
+	TokenURL           string
+	Scopes             []string
+	GrantType          string
+	// Successor is a further scheme applied after this one — a second header, for an API that
+	// wants two keys.
+	Successor *AuthDefaults
+}
+
+// AuthConfigured is implemented by a Provider whose document states AuthDefaults.
+type AuthConfigured interface {
+	AuthDefaults() AuthDefaults
+}
 
 // Security is the declared authentication for a call.
 type Security interface {
@@ -214,10 +256,6 @@ type Catalog interface {
 	// lists them. That order is the selection rule: a verb fans out — a resource may declare several
 	// inserts — and the caller's inputs decide which applies, by matching signatures down the list.
 	Operations(path, verb string) ([]AOTExchange, error)
-	// Exchanges returns EVERY exchange a resource's SELECT names. A document may bind several — a
-	// get by id and a list by scope are both SELECT — and which one runs depends on what the caller
-	// supplied, so the choice cannot be made here.
-	Exchanges(path string) ([]AOTExchange, error)
 }
 
 // Method is one operation a resource declares, and the SQL verb (if any) the document maps it to.
