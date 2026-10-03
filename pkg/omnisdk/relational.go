@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"strconv"
 	"strings"
 	"sync"
@@ -239,14 +240,15 @@ func engineExpr(e query.Expr, column func(query.Column) fn.Expr) (fn.Expr, error
 }
 
 // compareValues orders two values: numerically where both read as numbers, otherwise as text.
-// A missing value compares with nothing.
+// A missing value compares with nothing. NaN is not a number here: it orders against nothing, so
+// read as one it would equal every number.
 func compareValues(a, b any) (int, bool) {
 	if a == nil || b == nil {
 		return 0, false
 	}
 	as, bs := fmt.Sprint(a), fmt.Sprint(b)
-	if af, err := strconv.ParseFloat(as, 64); err == nil {
-		if bf, err := strconv.ParseFloat(bs, 64); err == nil {
+	if af, ok := number(as); ok {
+		if bf, ok := number(bs); ok {
 			switch {
 			case af < bf:
 				return -1, true
@@ -263,6 +265,12 @@ func compareValues(a, b any) (int, bool) {
 		return 1, true
 	}
 	return 0, true
+}
+
+// number reads s as a number compareValues orders by.
+func number(s string) (float64, bool) {
+	f, err := strconv.ParseFloat(s, 64)
+	return f, err == nil && !math.IsNaN(f)
 }
 
 // valuesSpec is an exchange that makes no request: it emits one row per combination of
@@ -315,15 +323,68 @@ func (s staticOp) Open(ctx context.Context) facade.Records {
 // replayed runs a node once per distinct input and replays its rows to every later caller in the
 // same run. A node nothing is wired into binds the same inputs for every upstream row, so without
 // this a join neither side needs would re-list it once per row of the other.
-type replayed struct{ plan.ExchangeSpec }
+//
+// With a probe, a caller reads only the rows whose column equals the value it was bound with — a
+// hash join, built as the rows arrive, so the listing still streams.
+//
+// A node that runs first, solo, is never asked twice for the same rows, and streams unrecorded.
+type replayed struct {
+	plan.ExchangeSpec
+	probe *probe
+	solo  *bool
+}
 
 func (r replayed) Make(bound map[string]any) facade.Operator {
-	return replayOp{spec: r.ExchangeSpec, bound: bound}
+	if r.solo != nil && *r.solo {
+		return r.ExchangeSpec.Make(bound)
+	}
+	return replayOp{spec: r.ExchangeSpec, bound: bound, probe: r.probe}
+}
+
+// probe is an equality a node's rows are looked up by: its own column, and the inbox key carrying
+// the upstream value.
+type probe struct{ column, by string }
+
+// probeOf finds an equality between a column of alias and a column of another node among on.
+func probeOf(alias string, on []query.Predicate) *probe {
+	for _, p := range on {
+		c, ok := p.(query.Compare)
+		if !ok || c.Op() != query.Eq {
+			continue
+		}
+		l, lok := c.Left().(query.Column)
+		r, rok := c.Right().(query.Column)
+		switch {
+		case !lok || !rok:
+		case l.Qualifier() == alias && r.Qualifier() != alias:
+			return &probe{column: l.Name(), by: hidden(r.Qualifier(), r.Name())}
+		case r.Qualifier() == alias && l.Qualifier() != alias:
+			return &probe{column: r.Name(), by: hidden(l.Qualifier(), l.Name())}
+		}
+	}
+	return nil
+}
+
+// joinKey is a value's identity under compareValues' equality: numbers by value, anything else by
+// its text. Two values are equal there exactly when their keys are; a missing value has none.
+func joinKey(v any) (string, bool) {
+	if v == nil {
+		return "", false
+	}
+	s := fmt.Sprint(v)
+	if f, ok := number(s); ok {
+		if f == 0 {
+			f = 0 // -0 equals 0
+		}
+		return "n" + strconv.FormatFloat(f, 'g', -1, 64), true
+	}
+	return "s" + s, true
 }
 
 type replayOp struct {
 	spec  plan.ExchangeSpec
 	bound map[string]any
+	probe *probe
 }
 
 func (o replayOp) Open(ctx context.Context) facade.Records {
@@ -340,9 +401,18 @@ func (o replayOp) Open(ctx context.Context) facade.Records {
 	if store == nil || err != nil {
 		return o.spec.Make(o.bound).Open(ctx)
 	}
-	return store.entry(o.spec.Name()+"\x00"+string(key), func() facade.Records {
+	e := store.entry(o.spec.Name()+"\x00"+string(key), func() facade.Records {
 		return o.spec.Make(o.bound).Open(ctx)
-	}).reader()
+	})
+	if o.probe == nil {
+		return e.reader()
+	}
+	k, ok := joinKey(o.bound[o.probe.by])
+	if !ok {
+		// NULL equals nothing.
+		return staticOp{}.Open(ctx)
+	}
+	return &probeReader{e: e, column: o.probe.column, key: k}
 }
 
 type replayKey struct{}
@@ -379,6 +449,40 @@ type replayEntry struct {
 	recs []facade.Record
 	done bool
 	err  error
+	// index maps a column to the positions of the rows holding each key, built up to indexed[column]
+	// on demand. unkeyed are rows that are not documents, which a match condition passes through.
+	index      map[string]map[string][]int
+	indexed    map[string]int
+	unkeyed    []int
+	unkeyedTil int
+}
+
+// catchUp extends column's index over the rows recorded since it last ran. Callers hold mu.
+func (e *replayEntry) catchUp(column string) map[string][]int {
+	if e.index == nil {
+		e.index, e.indexed = map[string]map[string][]int{}, map[string]int{}
+	}
+	idx, ok := e.index[column]
+	if !ok {
+		idx = map[string][]int{}
+		e.index[column] = idx
+	}
+	for ; e.unkeyedTil < len(e.recs); e.unkeyedTil++ {
+		if _, ok := bind.DocMap(e.recs[e.unkeyedTil]); !ok {
+			e.unkeyed = append(e.unkeyed, e.unkeyedTil)
+		}
+	}
+	for i := e.indexed[column]; i < len(e.recs); i++ {
+		row, ok := bind.DocMap(e.recs[i])
+		if !ok {
+			continue
+		}
+		if k, ok := joinKey(row[column]); ok {
+			idx[k] = append(idx[k], i)
+		}
+	}
+	e.indexed[column] = len(e.recs)
+	return idx
 }
 
 func (e *replayEntry) record(open func() facade.Records) {
@@ -435,6 +539,60 @@ func (r *replayReader) Err() error {
 }
 
 func (r *replayReader) Close() error { return nil }
+
+// probeReader streams the recorded rows whose column has key, in arrival order, waiting for more
+// until the recording is done.
+type probeReader struct {
+	e      *replayEntry
+	column string
+	key    string
+	i, j   int // next position in the key's rows, and in the unkeyed rows
+	cur    facade.Record
+}
+
+func (r *probeReader) Next(ctx context.Context) bool {
+	e := r.e
+	stop := context.AfterFunc(ctx, func() {
+		e.mu.Lock()
+		e.cond.Broadcast()
+		e.mu.Unlock()
+	})
+	defer stop()
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	for ctx.Err() == nil {
+		hits := e.catchUp(r.column)[r.key]
+		next := -1
+		if r.i < len(hits) {
+			next = hits[r.i]
+		}
+		if r.j < len(e.unkeyed) && (next < 0 || e.unkeyed[r.j] < next) {
+			r.cur = e.recs[e.unkeyed[r.j]]
+			r.j++
+			return true
+		}
+		if next >= 0 {
+			r.cur = e.recs[next]
+			r.i++
+			return true
+		}
+		if e.done {
+			return false
+		}
+		e.cond.Wait()
+	}
+	return false
+}
+
+func (r *probeReader) Record() facade.Record { return r.cur }
+
+func (r *probeReader) Err() error {
+	r.e.mu.Lock()
+	defer r.e.mu.Unlock()
+	return r.e.err
+}
+
+func (r *probeReader) Close() error { return nil }
 
 // outputTransform computes the columns that read several nodes, on the finished row.
 type outputTransform struct {

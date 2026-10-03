@@ -28,7 +28,7 @@ func (e explodeRows) Open(ctx context.Context) facade.Records {
 	if n < 1 {
 		n = 1
 	}
-	buf := buffer.NewBuffer(n, 1024, 0)
+	buf := buffer.NewBuffer(n, 1024, buffer.Ahead(n, 1024))
 	in := e.upstream.Open(ctx)
 	go func() {
 		var cerr error

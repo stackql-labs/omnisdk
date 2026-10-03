@@ -79,6 +79,13 @@ func NewOuterNode(n Node, on []query.Predicate) Node {
 		fanout: n.Fanout(), body: n.Body(), tuples: n.Tuples(), outer: true, on: on}
 }
 
+// innerOn gives n match conditions without keeping unmatched upstream rows: an inner join's ON
+// placed on its node, so an equality can probe the node's rows rather than filter every pair.
+func innerOn(n Node, on []query.Predicate) Node {
+	return node{alias: n.Alias(), address: n.Address(), verb: n.Verb(), params: n.Params(),
+		fanout: n.Fanout(), body: n.Body(), tuples: n.Tuples(), outer: n.Outer(), on: on}
+}
+
 // NewTupleNode makes n run once per tuple, each binding its keys together.
 func NewTupleNode(n Node, tuples []map[string]any) Node {
 	return node{alias: n.Alias(), address: n.Address(), verb: n.Verb(), params: n.Params(),
@@ -524,6 +531,7 @@ func NewGraphSelectQuery(dir string, g Graph, args Args) (Plan, error) {
 	// never leave in a result. Which names they are is whatever each auth expansion declares.
 	plumbing := map[string]bool{}
 	planned := make(map[string]string, len(g.Nodes()))
+	solos := map[string]*bool{}
 	taken := map[string]string{}
 	// A query-wide fanout runs first and merges one value per row, so every node in that row binds
 	// the same value by name. Each node compiles as though the value were supplied, which it is.
@@ -711,7 +719,9 @@ func NewGraphSelectQuery(dir string, g Graph, args Args) (Plan, error) {
 		case mutating:
 			spec = effect{ExchangeSpec: spec, alias: alias, verb: n.Verb(), exchange: exchangeOf(addr, n.Verb()), journal: wal}
 		case !consumer:
-			spec = replayed{ExchangeSpec: spec}
+			solo := new(bool)
+			solos[name] = solo
+			spec = replayed{ExchangeSpec: spec, probe: probeOf(alias, n.On()), solo: solo}
 		}
 		// Match conditions run on this node's rows, so the join sees only matches and keeps an
 		// upstream row that has none.
@@ -736,6 +746,18 @@ func NewGraphSelectQuery(dir string, g Graph, args Args) (Plan, error) {
 		for _, in := range w.Inbound() {
 			betas = append(betas, plan.NewBetaEdge(planned[in.From()], planned[w.To()], hidden(in.From(), in.Src()), in.As()))
 		}
+	}
+	// The first node to run is opened once per distinct set of inputs: only a token exchange or a
+	// list of values runs before it, and neither repeats an identical request. Recording its rows
+	// for replay would hold the whole result in memory for nothing, so it streams instead.
+	for _, x := range plan.Order(specs, betas) {
+		if x == queryValues || strings.HasSuffix(x, "_auth") || strings.HasSuffix(x, "_values") {
+			continue
+		}
+		if solo, ok := solos[x]; ok {
+			*solo = true
+		}
+		break
 	}
 
 	return &cannedPlan{plan: plan.NewPlan(specs, betas, nil, inputs, egress(g, fns, redactor{policy: args.Redaction, credentials: plumbing}), nil), args: args}, nil

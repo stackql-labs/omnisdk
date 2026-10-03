@@ -113,6 +113,9 @@ func composePipeline(id int64, p Plan) (facade.Operator, error) {
 	return op, nil
 }
 
+// Order is the order Compose runs a plan's exchanges in.
+func Order(exchanges []ExchangeSpec, betas []BetaEdge) []string { return topoOrder(exchanges, betas) }
+
 // topoOrder returns exchange names root-first by β dependency (Kahn's, declaration order).
 // Edges from a non-exchange (κ inputs, From "") are bindings, not ordering deps.
 func topoOrder(exchanges []ExchangeSpec, betas []BetaEdge) []string {

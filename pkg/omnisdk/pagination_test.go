@@ -5,11 +5,17 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"os/exec"
+	"runtime"
+	"strconv"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/stackql-labs/omnisdk/pkg/omnisdk"
+	"github.com/stackql-labs/omnisdk/pkg/query"
 )
 
 // countRows plans one node against dir and counts what it returns.
@@ -171,5 +177,116 @@ func TestPaginationByAWSMarker(t *testing.T) {
 	n := countRows(t, corpus, iamUsers, omnisdk.Args{Endpoint: srv.URL, Params: map[string]string{"region": "us-east-1"}})
 	if n != 2 {
 		t.Errorf("rows = %d, want both pages", n)
+	}
+}
+
+// Memory is bounded by a page, not by the result: a query resolved as stackql resolves it streams
+// several times the bound through the caller while the heap stays under it.
+//
+// It measures in a fresh process: in a shared one, what earlier tests left behind is collected
+// during the stream and swamps what the stream itself holds.
+func TestResolvedQueryStreamsInBoundedMemory(t *testing.T) {
+	if testing.Short() {
+		t.Skip("streams ~50MB")
+	}
+	requireCorpus(t)
+	if os.Getenv("OMNISDK_MEMTEST") == "" {
+		cmd := exec.Command(os.Args[0], "-test.run=^TestResolvedQueryStreamsInBoundedMemory$", "-test.v")
+		cmd.Env = append(os.Environ(), "OMNISDK_MEMTEST=1")
+		out, err := cmd.CombinedOutput()
+		t.Logf("%s", out)
+		if err != nil {
+			t.Fatalf("measuring process: %v", err)
+		}
+		return
+	}
+	t.Setenv("GOOGLE_CREDENTIALS", serviceAccountKey(t))
+	const pages, perPage, bound = 100, 500, 16 << 20
+	pad := strings.Repeat("x", 1024)
+	var served atomic.Int64
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if strings.HasSuffix(r.URL.Path, "/token") {
+			fmt.Fprint(w, `{"access_token":"tok"}`)
+			return
+		}
+		page, _ := strconv.Atoi(r.URL.Query().Get("pageToken"))
+		var b strings.Builder
+		b.WriteString(`{"items":[`)
+		for i := 0; i < perPage; i++ {
+			if i > 0 {
+				b.WriteByte(',')
+			}
+			fmt.Fprintf(&b, `{"name":"b-%d-%d","location":%q}`, page, i, pad)
+		}
+		b.WriteString(`]`)
+		if page+1 < pages {
+			fmt.Fprintf(&b, `,"nextPageToken":"%d"`, page+1)
+		}
+		b.WriteString(`}`)
+		served.Add(int64(b.Len()))
+		fmt.Fprint(w, b.String())
+	}))
+	defer srv.Close()
+
+	tbl, err := omnisdk.DescribeTable(corpus, "stackql_unstable_google.storage.buckets")
+	if err != nil {
+		t.Fatal(err)
+	}
+	q, err := query.New(
+		[]query.Join{query.NewJoin(query.NewResource("b", "google.storage.buckets"), query.Base)},
+		[]query.Predicate{query.NewEq(query.NewColumn("", "project"), query.NewLiteral("demo"))},
+		[]query.Output{
+			query.NewOutput("name", query.NewColumn("b", "name")),
+			query.NewOutput("location", query.NewColumn("b", "location")),
+		},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	res, err := omnisdk.Resolve(q, map[string]omnisdk.Table{"b": tbl})
+	if err != nil {
+		t.Fatal(err)
+	}
+	pl, err := omnisdk.NewGraphSelectQuery(corpus, res.Graph(), omnisdk.Args{Endpoint: srv.URL, Params: res.Params()})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	heap := func() uint64 {
+		runtime.GC()
+		var m runtime.MemStats
+		runtime.ReadMemStats(&m)
+		return m.HeapAlloc
+	}
+	base := heap()
+	rows, err := pl.Open(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rows.Close()
+	var n int
+	var peak uint64
+	for rows.Next() {
+		n++
+		if n%perPage == 0 {
+			if h := heap(); h > peak {
+				peak = h
+			}
+		}
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatal(err)
+	}
+	if n != pages*perPage {
+		t.Fatalf("rows = %d, want %d", n, pages*perPage)
+	}
+	if served.Load() < 3*bound {
+		t.Fatalf("served %d bytes; too little to prove a %d-byte bound", served.Load(), bound)
+	}
+	grew := int64(peak) - int64(base)
+	t.Logf("served %d MB, heap grew at most %d MB", served.Load()>>20, grew>>20)
+	if grew > bound {
+		t.Errorf("heap grew %d MB streaming %d MB: rows are being held", grew>>20, served.Load()>>20)
 	}
 }

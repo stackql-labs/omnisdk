@@ -275,6 +275,11 @@ func TestCreatePollThenGet(t *testing.T) {
 		t.Errorf("RedactNone dropped the token: %v", kept[0])
 	}
 	opPolls = 0
+	back := runCreatePoll(t, view, g, omnisdk.Args{Endpoint: srv.URL, Redaction: omnisdk.DefaultRedaction()})
+	if _, ok := back[0]["token"]; ok {
+		t.Errorf("DefaultRedaction kept the token: %v", back[0])
+	}
+	opPolls = 0
 	less := runCreatePoll(t, view, g, omnisdk.Args{Endpoint: srv.URL,
 		Redaction: omnisdk.RedactAlso(omnisdk.DefaultRedaction(), "targetLink")})
 	if _, ok := less[0]["targetLink"]; ok {

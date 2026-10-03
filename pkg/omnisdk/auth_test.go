@@ -17,6 +17,7 @@ import (
 	"testing"
 
 	"github.com/stackql-labs/omnisdk/pkg/omnisdk"
+	"github.com/stackql-labs/omnisdk/pkg/query"
 )
 
 const authRegistry = "testdata/authreg"
@@ -401,6 +402,27 @@ func TestGoogleDelegationSubjectAndScopes(t *testing.T) {
 	}
 }
 
+// With no scopes named by the caller or the document, a service account asks for cloud-platform,
+// as any-sdk does.
+func TestGoogleDefaultScopeIsCloudPlatform(t *testing.T) {
+	t.Setenv("GOOGLE_CREDENTIALS", serviceAccountKey(t))
+	srv, form, _ := googleStub(t)
+	defer srv.Close()
+	bucketsOnce(t, srv, omnisdk.Args{})
+	parts := strings.Split(form.Get("assertion"), ".")
+	if len(parts) != 3 {
+		t.Fatalf("assertion = %q", form.Get("assertion"))
+	}
+	raw, _ := base64.RawURLEncoding.DecodeString(parts[1])
+	var claims struct{ Scope string }
+	if err := json.Unmarshal(raw, &claims); err != nil {
+		t.Fatal(err)
+	}
+	if claims.Scope != "https://www.googleapis.com/auth/cloud-platform" {
+		t.Errorf("scope = %q", claims.Scope)
+	}
+}
+
 // Without a service principal, an azure_default provider uses the Azure CLI's login.
 func TestAzureCLICredential(t *testing.T) {
 	if runtime.GOOS == "windows" {
@@ -443,5 +465,60 @@ func TestAzureCLICredential(t *testing.T) {
 	rows.Close()
 	if authz != "Bearer az-tok" {
 		t.Errorf("Authorization = %q", authz)
+	}
+}
+
+// On the path stackql takes — Resolve, then run — every node has a select list, so a row carries
+// only table columns. Credentials are not columns: they stay out of the result under every
+// redaction policy, not only the default.
+func TestResolvedQueryNeverCarriesCredentials(t *testing.T) {
+	requireCorpus(t)
+	t.Setenv("GOOGLE_CREDENTIALS", serviceAccountKey(t))
+	srv, _, _ := googleStub(t)
+	defer srv.Close()
+	tbl, err := omnisdk.DescribeTable(corpus, "stackql_unstable_google.storage.buckets")
+	if err != nil {
+		t.Fatal(err)
+	}
+	q, err := query.New(
+		[]query.Join{query.NewJoin(query.NewResource("b", "google.storage.buckets"), query.Base)},
+		[]query.Predicate{query.NewEq(query.NewColumn("", "project"), query.NewLiteral("demo"))},
+		[]query.Output{query.NewOutput("", query.NewStar(""))},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	res, err := omnisdk.Resolve(q, map[string]omnisdk.Table{"b": tbl})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for name, policy := range map[string]omnisdk.Redaction{
+		"unset": nil, "default": omnisdk.DefaultRedaction(), "none": omnisdk.RedactNone(),
+	} {
+		pl, err := omnisdk.NewGraphSelectQuery(corpus, res.Graph(),
+			omnisdk.Args{Endpoint: srv.URL, Params: res.Params(), Redaction: policy})
+		if err != nil {
+			t.Fatalf("%s: plan: %v", name, err)
+		}
+		rows, err := pl.Open(context.Background())
+		if err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		n := 0
+		for rows.Next() {
+			n++
+			for _, k := range []string{"token", "assertion", "access_token"} {
+				if _, leaked := rows.Row()[k]; leaked {
+					t.Errorf("%s: row carries %q", name, k)
+				}
+			}
+		}
+		if err := rows.Err(); err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		rows.Close()
+		if n != 1 {
+			t.Errorf("%s: %d rows, want 1", name, n)
+		}
 	}
 }

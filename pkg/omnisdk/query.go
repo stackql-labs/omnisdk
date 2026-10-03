@@ -217,8 +217,19 @@ func Resolve(q query.Unresolved, tables map[string]Table) (Resolution, error) {
 			rest = append(rest, p)
 		}
 	}
+	var unbound []query.Predicate
 	for _, p := range rest {
 		placed, err := r.bindJoin(p)
+		if err != nil {
+			return nil, err
+		}
+		if !placed {
+			unbound = append(unbound, p)
+		}
+	}
+	// Equi-joins go after every edge is known, so the one each adds cannot close a cycle.
+	for _, p := range unbound {
+		placed, err := r.hashJoin(p)
 		if err != nil {
 			return nil, err
 		}
@@ -594,6 +605,63 @@ func (r *resolver) bindJoin(p query.Predicate) (bool, error) {
 	return true, nil
 }
 
+// hashJoin places an inner equality between two tables that neither needs as a match condition on
+// the later one: the earlier side's value reaches it through the inbox and is never sent, and the
+// later side, listed once, is probed by that value rather than scanned once per upstream row.
+// Unplaced, the equality is a filter over every combination of the two.
+func (r *resolver) hashJoin(p query.Predicate) (bool, error) {
+	c, ok := p.(query.Compare)
+	if !ok || c.Op() != query.Eq || r.mutating != "" {
+		return false, nil
+	}
+	l, lok := c.Left().(query.Column)
+	rc, rok := c.Right().(query.Column)
+	if !lok || !rok {
+		return false, nil
+	}
+	var err error
+	if l, err = r.qualify(l); err != nil {
+		return false, fmt.Errorf("omnisdk: %s: %w", describe(c), err)
+	}
+	if rc, err = r.qualify(rc); err != nil {
+		return false, fmt.Errorf("omnisdk: %s: %w", describe(c), err)
+	}
+	a, b := l.Qualifier(), rc.Qualifier()
+	if a == b {
+		return false, nil
+	}
+	if slices.Index(r.order, a) > slices.Index(r.order, b) {
+		a, b = b, a
+	}
+	_, aOuter := r.outer[a]
+	_, bOuter := r.outer[b]
+	if aOuter || bOuter || r.reaches(b, a) {
+		return false, nil
+	}
+	r.onTarget = b
+	defer func() { r.onTarget = "" }()
+	return true, r.filter(p)
+}
+
+// reaches reports whether a value from one table travels, directly or through others, to another.
+func (r *resolver) reaches(from, to string) bool {
+	seen := map[string]bool{}
+	var walk func(at string) bool
+	walk = func(at string) bool {
+		if seen[at] {
+			return false
+		}
+		seen[at] = true
+		for _, a := range r.arrivals[at] {
+			if a.from == from || walk(a.from) {
+				return true
+			}
+		}
+		return false
+	}
+	return walk(to)
+}
+
 // leftJoin places a left join's ON against its node. A constant its methods take is pushed down, an
 // equality it needs is an edge into it, and anything else is a match condition on its rows: all of
 // them narrow what matches, and none drops an upstream row. The preserved side needing a value from
@@ -850,6 +918,8 @@ func (r *resolver) build(sel []query.Output) (Resolution, error) {
 		n := NewMutationNode(alias, r.tables[alias].Address(), verb, r.nodeParams[alias], r.fanout[alias], body)
 		if _, left := r.outer[alias]; left {
 			n = NewOuterNode(n, r.on[alias])
+		} else if on := r.on[alias]; len(on) > 0 {
+			n = innerOn(n, on)
 		}
 		if alias == r.mutating && len(r.tuples) > 0 {
 			n = NewTupleNode(n, r.tuples)

@@ -742,14 +742,11 @@ func (d dropKeys) Apply(in facade.Page) (facade.Record, error) {
 	return record.NewRecord(map[string]facade.Value{facade.AnonymousPayload: value.NewDocValue(out)}), nil
 }
 
-// googleScope is the read scope a document-compiled Google call requests. The documents do not state
-// one, and cloud-platform.read-only is the least that serves a SELECT.
-// googleScope is what the token exchange asks for. cloud-platform.read-only reads most APIs but
-// Compute rejects it outright — ACCESS_TOKEN_SCOPE_INSUFFICIENT, whatever roles the identity holds —
-// so the broad scope is requested and the identity's own roles remain the limit on what it can do.
-//
-// The right answer is the scopes the operation declares; every Compute method names its own. Until
-// those are carried through the parse boundary, this is the one that works everywhere.
+// googleScope is what the token exchange asks for when the caller names no scopes, as any-sdk does.
+// cloud-platform.read-only reads most APIs but Compute rejects it outright —
+// ACCESS_TOKEN_SCOPE_INSUFFICIENT, whatever roles the identity holds — so the broad scope is
+// requested and the identity's own roles remain the limit on what it can do. WithGoogleScopes
+// replaces it.
 const googleScope = "https://www.googleapis.com/auth/cloud-platform"
 
 // googleTokenURL is where a Google user credential's refresh token is exchanged.

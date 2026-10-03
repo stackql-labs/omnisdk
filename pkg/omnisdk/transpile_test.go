@@ -454,6 +454,37 @@ func TestJoinNeitherSideNeeds(t *testing.T) {
 	}
 }
 
+// The same join is a probe of b by a's value, not a filter over every pair: no row filter remains,
+// and b carries the equality as its match condition.
+func TestJoinNeitherSideNeedsIsAProbe(t *testing.T) {
+	requireCorpus(t)
+	tbl, err := omnisdk.DescribeTable(corpus, "stackql_unstable_aws.iam.users")
+	if err != nil {
+		t.Fatal(err)
+	}
+	q := mustQuery(t,
+		[]query.Join{
+			query.NewJoin(query.NewResource("a", "aws.iam.users"), query.Base),
+			query.NewJoin(query.NewResource("b", "aws.iam.users"), query.Inner,
+				query.NewEq(query.NewColumn("a", "UserId"), query.NewColumn("b", "UserId"))),
+		},
+		[]query.Predicate{query.NewEq(query.NewColumn("", "region"), query.NewLiteral("us-east-1"))},
+		[]query.Output{query.NewOutput("a", query.NewColumn("a", "UserName"))},
+	)
+	res, err := omnisdk.Resolve(q, map[string]omnisdk.Table{"a": tbl, "b": tbl})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if f := res.Graph().Filters(); len(f) != 0 {
+		t.Errorf("filters = %v, want none", f)
+	}
+	for _, n := range res.Graph().Nodes() {
+		if want := map[string]int{"a": 0, "b": 1}[n.Alias()]; len(n.On()) != want {
+			t.Errorf("%s: %d match conditions, want %d", n.Alias(), len(n.On()), want)
+		}
+	}
+}
+
 // SELECT u.UserName FROM aws.iam.users u WHERE region = 'us-east-1' AND u.UserName IN ('alice', 'bob')
 // UserName is a parameter of get_user, so the table runs once per name rather than listing.
 func TestInListOnATableParameterFansOut(t *testing.T) {

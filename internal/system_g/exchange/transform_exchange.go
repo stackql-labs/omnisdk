@@ -64,7 +64,7 @@ func (e *transformExchange) Open(ctx context.Context) facade.Records {
 	if readers < 1 {
 		readers = 1
 	}
-	buf := buffer.NewBuffer(readers, 1024, 0)
+	buf := buffer.NewBuffer(readers, 1024, buffer.Ahead(readers, 1024))
 	in := e.upstream.Open(ctx)
 	go func() {
 		var cerr error

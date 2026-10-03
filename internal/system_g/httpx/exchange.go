@@ -56,8 +56,12 @@ type op struct {
 	lastHeader http.Header
 }
 
+// pagesAhead is how many responses a request fetches before its reader takes them: enough to overlap
+// the next page's round trip with reading this one, few enough that a slow reader stops the paging.
+const pagesAhead = 2
+
 func (o *op) Open(ctx context.Context) facade.Records {
-	buf := buffer.NewBuffer(1, 1024, 0)
+	buf := buffer.NewBuffer(1, 1024, pagesAhead)
 	go func() {
 		var cerr error
 		defer func() { buf.Complete(cerr) }()

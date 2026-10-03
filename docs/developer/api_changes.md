@@ -51,6 +51,9 @@ Additions, no change needed: `Args.AuthByProvider`, `Args.Functions`, `Auth.Loca
 | A list declaring no `objectKey` reads its rows from `$.items` when the response has a list there (the whole body otherwise). | Relations whose rows came back as one envelope row, e.g. `googleadmin.directory.tokens`. |
 | S3 requests carry and sign `x-amz-content-sha256`. | All `aws.s3.*` relations. |
 | AWS credentials fall back to the shared-config profile (`AWS_PROFILE`, `Auth.Profile`, `credential_process`); Google to gcloud application-default credentials, including user logins; Azure `azure_default` to the Azure CLI. | Interactive users without keys in the environment. |
+| Rows are produced at most a bounded distance ahead of the reader; a slow reader holds the run back rather than growing memory. A run whose `Rows` are neither read to the end nor closed stays parked instead of finishing in the background. | Anyone who abandons `Rows` without `Close`. |
+| An inner join on an equality neither table takes as a parameter runs as a hash probe: the later table is listed once and looked up by the earlier one's value, not filtered over every pair. | No change in rows; joins over large tables cost far less. |
+| `NaN` is compared as text, not as a number. It equalled every number. | Filters or joins comparing a value spelled `NaN`. |
 
 ### CLI: `doc-graph` JSON
 
