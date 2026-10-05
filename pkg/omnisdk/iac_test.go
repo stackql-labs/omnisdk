@@ -5,11 +5,14 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 
+	"github.com/stackql-labs/omnisdk/internal/lease"
+	"github.com/stackql-labs/omnisdk/internal/ledger"
 	"github.com/stackql-labs/omnisdk/pkg/omnisdk"
 )
 
@@ -342,5 +345,35 @@ func TestConvergeParallelismIsTunable(t *testing.T) {
 	}
 	if got := peak(1); got != 1 {
 		t.Errorf("parallelism 1: %d creates in flight at once, want 1", got)
+	}
+}
+
+// A run that finds its collection in use says so, and nothing about how runs are kept apart.
+func TestConvergeOnABusyCollection(t *testing.T) {
+	requireCorpus(t)
+	t.Setenv("AWS_ACCESS_KEY_ID", "AKIATEST")
+	t.Setenv("AWS_SECRET_ACCESS_KEY", "secret")
+	state := t.TempDir()
+	log, err := ledger.NewFile(filepath.Join(state, "ledger"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := lease.NewLeaser(log, time.Now).Acquire(context.Background(), "busy", lease.All(), "other", time.Minute); err != nil {
+		t.Fatal(err)
+	}
+	var seen []string
+	srv := fakeEC2(t, &seen, &map[string]string{})
+	defer srv.Close()
+	pl, err := omnisdk.Converge(corpus, "busy", state, "run", render(t, map[string]string{
+		"region": "us-east-1", "vpc_cidr": "10.0.0.0/16", "subnet_cidr": "10.0.1.0/24"}), awsArgs(srv))
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = pl.Open(context.Background())
+	if err == nil || err.Error() != `omnisdk: collection "busy" is busy with another run` {
+		t.Errorf("err = %v", err)
+	}
+	if len(seen) != 0 {
+		t.Errorf("calls = %v, want none", seen)
 	}
 }

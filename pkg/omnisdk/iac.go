@@ -2,6 +2,7 @@ package omnisdk
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"maps"
 	"os"
@@ -107,12 +108,12 @@ func (r resource) Inbound() []Arrival        { return r.inbound }
 func (r resource) Via() (string, string)     { return r.viaType, r.viaProgram }
 
 // Converge applies a set of resources as one collection, and is the whole IaC entry point: a client
-// issues the imperative and the system works out idempotence, ordering, locking and compensation.
+// issues the imperative and the system works out idempotence, ordering, concurrency and compensation.
 //
 //   - registry is the provider-document root. Every effect is compiled from the document that
 //     declares it, so a new service is a document plus its residue rather than Go code.
-//   - name is the collection: the ledger key prefix, the lease scope, and the correlation tag
-//     stamped on each object. It is the handle a later run uses to address the same resources.
+//   - name is the collection: the handle a later run uses to address the same resources, and the
+//     correlation tag stamped on each object.
 //   - state holds the ledger and run journals. Local disk only — O_EXCL and link are unreliable on a
 //     network share. One state directory holds many collections, separated by name.
 //   - runID names this run's journal; empty means a UTC timestamp.
@@ -330,6 +331,10 @@ func (p *convergePlan) Open(ctx context.Context) (Rows, error) {
 	}
 
 	res, err := runner.Apply(ctx, p.runID, p.name, steps)
+	if errors.Is(err, facade.ErrLeaseHeld) {
+		// How runs are kept apart is not the caller's business; that another is running is.
+		return nil, fmt.Errorf("omnisdk: collection %q is busy with another run", p.name)
+	}
 	if err != nil {
 		return nil, err
 	}

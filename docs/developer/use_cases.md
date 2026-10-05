@@ -68,8 +68,8 @@ against unchanged intent issues no API calls at all.
 Every effect is compiled from the provider document that declares it, so `--registry` names the
 document root and a new service is a document rather than code.
 
-`--name` is the collection — the ledger key prefix, the lease scope, and the correlation tag stamped
-on each object. `--state` is where that ledger lives; one state directory holds many collections.
+`--name` is the collection — the handle a later run uses to address the same resources, and the
+correlation tag stamped on each object. `--state` is where that ledger lives; one state directory holds many collections.
 Neither is defaulted: both decide which resources a run applies to.
 
 ```bash
@@ -86,8 +86,7 @@ Neither is defaulted: both decide which resources a run applies to.
 ```
 
 Run it again and it converges: the ledger says both keys are live, a live read agrees, and no create
-is issued. The run still takes the lease and writes no journal, which is what a no-op looks like on
-disk.
+is issued, and no journal is written.
 
 State lands under `cicd/work/iac-state` (gitignored), one file per key version — nothing is
 overwritten in place:
