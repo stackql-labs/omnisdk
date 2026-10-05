@@ -37,7 +37,7 @@ func (t *logTap) Open(ctx context.Context) facade.Records {
 	if readers < 1 {
 		readers = 1
 	}
-	buf := buffer.NewBuffer(readers, 1024, buffer.Ahead(readers, 1024))
+	buf := buffer.NewBuffer(readers, 1024, buffer.Ahead(readers, buffer.RowsAhead(ctx)))
 	w := trace.Writer(ctx)
 	in := t.upstream.Open(ctx)
 	go func() {

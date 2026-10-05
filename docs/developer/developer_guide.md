@@ -559,7 +559,7 @@ whatever the documents weighed. Execution holds no documents at all.
 
 ## Generic DTO command
 
-`run <method-path> '<args-json>'` — the JSON deserializes straight into `omnisdk.Args` via Go's intrinsic `encoding/json` (`{"params":{…},"auth":{…},"endpoint":"…","tuning":{…}}`, field names case-insensitive). `--out`/`--log` and any tuning flags still apply; the JSON may also carry `endpoint`/`tuning`. Discover a method's params first with `./build/omnicli method <path>`.
+`run <method-path> '<args-json>'` — the JSON deserializes straight into `omnisdk.Args` via Go's intrinsic `encoding/json` (`{"params":{…},"auth_by_provider":{"<provider>":{…}},"endpoint":"…","tuning":{…}}`, field names case-insensitive). `--out`/`--log` and any tuning flags still apply; the JSON may also carry `endpoint`/`tuning`. Discover a method's params first with `./build/omnicli method <path>`.
 
 **Auth** flows entirely from the `auth` object and defaults to the canonical env vars, so it's optional. Each credential resolves **inline value → named env var → file**, and each env-var/file name defaults to the provider's canonical variable — so omit `auth` to use the standard environment, or inject secrets per-request inline: AWS `{"access_key_id":"…","secret_access_key":"…","session_token":"…"}`, GCP `{"credentials":"<SA JSON>"}` or `{"credentialsfilepath":"/path/key.json"}`, Azure `{"tenant":"…","client_id":"…","client_secret":"…"}` (or `{"type":"bearer","credentials":"<token>"}`). To point at a non-canonical env var instead of a value, use the `*_env_var` fields (e.g. `"access_key_id_env_var":"MY_AWS_KEY"`).
 
@@ -590,7 +590,7 @@ _now="$(date +%s)" && ./build/omnicli run aws.s3.buckets.list \
 
 # 5) Azure storage accounts with config-driven auth carried IN the DTO (no --auth flag).
 _now="$(date +%s)" && ./build/omnicli run azure.storage.containers.list \
-  '{"auth":{"type":"client_credentials","token_url":"https://login.microsoftonline.com/'"${AZURE_TENANT_ID}"'/oauth2/v2.0/token","client_id_env_var":"AZURE_CLIENT_ID","client_secret_env_var":"AZURE_CLIENT_SECRET","scopes":["https://management.azure.com/.default"]}}' \
+  '{"auth_by_provider":{"azure":{"type":"client_credentials","token_url":"https://login.microsoftonline.com/'"${AZURE_TENANT_ID}"'/oauth2/v2.0/token","client_id_env_var":"AZURE_CLIENT_ID","client_secret_env_var":"AZURE_CLIENT_SECRET","scopes":["https://management.azure.com/.default"]}}}' \
   --out "./cicd/out/dto-azure-cc-${_now}.jsonl"
 
 # 6) The CROSS-CLOUD COMPOSITE as one method: AWS + Azure + GCP in a single select. Params are the

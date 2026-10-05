@@ -8,7 +8,7 @@ the same functions. Both paths return the same `Plan`/`Rows` a single-method que
 consumer iterates one cursor shape whether it is reading or provisioning.
 
 **Auth and document location behave exactly as elsewhere.** The provider document declares the scheme
-— `aws_signing_v4`, `service_account`, `oauth2` — and the credential comes from `Args.Auth`, falling
+— `aws_signing_v4`, `service_account`, `oauth2` — and the credential comes from the provider's entry in `Args.AuthByProvider`, falling
 back to the canonical `AWS_*`, `AZURE_*` and `GOOGLE_*` variables. Only the credential a document
 actually declares is required, so a run touching AWS alone does not fail because a Google key
 elsewhere is stale; a credential that IS present but unusable says so rather than reporting as
@@ -40,7 +40,7 @@ if err != nil {
 }
 
 pl, err := omnisdk.NewGraphSelectQuery(registryRoot, g, omnisdk.Args{
-    Auth:   auth,                                        // nil falls back to the env
+    AuthByProvider: map[string]*omnisdk.Auth{"aws": awsAuth},    // per provider; absent falls back to the env
     Params: map[string]string{"region": "us-east-1"},    // scope
 })
 rows, err := pl.Open(ctx)
@@ -77,7 +77,7 @@ res := []omnisdk.ManagedResource{
 }
 
 pl, err := omnisdk.Converge(registryRoot, "scratch", stateDir, "" /* runID: timestamp */, res,
-    omnisdk.Args{Auth: auth, Params: map[string]string{"region": "us-east-1"}})
+    omnisdk.Args{AuthByProvider: map[string]*omnisdk.Auth{"aws": awsAuth}, Params: map[string]string{"region": "us-east-1"}})
 if err != nil {
     return err
 }

@@ -48,6 +48,50 @@ type buffer struct {
 	cursors  []int // per-reader next-index-to-read
 }
 
+// Defaults for how far producers run ahead of their readers, in records: a row stage holds a chunk,
+// a request holds enough responses to overlap the next page's round trip with reading this one.
+const (
+	DefaultRowsAhead  = 1024
+	DefaultPagesAhead = 2
+)
+
+type aheadKey struct{}
+
+type ahead struct{ rows, pages int }
+
+// WithAhead carries a run's read-ahead onto ctx: rows for a stage of records, pages for a request's
+// responses. Zero is the default; negative is unbounded, which trades memory for never waiting on a
+// slow reader.
+func WithAhead(ctx context.Context, rows, pages int) context.Context {
+	return context.WithValue(ctx, aheadKey{}, ahead{rows: resolveAhead(rows, DefaultRowsAhead), pages: resolveAhead(pages, DefaultPagesAhead)})
+}
+
+func resolveAhead(n, def int) int {
+	switch {
+	case n == 0:
+		return def
+	case n < 0:
+		return 0
+	}
+	return n
+}
+
+// RowsAhead is the capacity of a row stage under ctx; 0 is unbounded.
+func RowsAhead(ctx context.Context) int {
+	if a, ok := ctx.Value(aheadKey{}).(ahead); ok {
+		return a.rows
+	}
+	return DefaultRowsAhead
+}
+
+// PagesAhead is the capacity of a request's responses under ctx; 0 is unbounded.
+func PagesAhead(ctx context.Context) int {
+	if a, ok := ctx.Value(aheadKey{}).(ahead); ok {
+		return a.pages
+	}
+	return DefaultPagesAhead
+}
+
 // Ahead is the capacity a stage with readers runs under: n records produced ahead of a lone reader,
 // so memory follows the slowest consumer rather than the size of the result. With several readers it
 // is unbounded: they may drain one after another, and a bound would park the producer on a reader

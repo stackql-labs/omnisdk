@@ -290,3 +290,123 @@ func TestResolvedQueryStreamsInBoundedMemory(t *testing.T) {
 		t.Errorf("heap grew %d MB streaming %d MB: rows are being held", grew>>20, served.Load()>>20)
 	}
 }
+
+// Read-ahead is the caller's: bounded, a reader that stops after one row stops the paging a few
+// pages on; unbounded, every page is fetched whether or not anyone reads it.
+func TestReadAheadIsTunable(t *testing.T) {
+	requireCorpus(t)
+	t.Setenv("GOOGLE_CREDENTIALS", serviceAccountKey(t))
+	const pages = 200
+	fetched := func(tuning omnisdk.Tuning) int64 {
+		var served atomic.Int64
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			if strings.HasSuffix(r.URL.Path, "/token") {
+				fmt.Fprint(w, `{"access_token":"tok"}`)
+				return
+			}
+			page, _ := strconv.Atoi(r.URL.Query().Get("pageToken"))
+			served.Add(1)
+			if page+1 < pages {
+				fmt.Fprintf(w, `{"items":[{"name":"b-%d"}],"nextPageToken":"%d"}`, page, page+1)
+				return
+			}
+			fmt.Fprintf(w, `{"items":[{"name":"b-%d"}]}`, page)
+		}))
+		defer srv.Close()
+		g, err := omnisdk.NewGraph([]omnisdk.Node{omnisdk.NewNode("b", "stackql_unstable_google.storage.buckets", nil)}, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		pl, err := omnisdk.NewGraphSelectQuery(corpus, g, omnisdk.Args{Endpoint: srv.URL,
+			Params: map[string]string{"project": "demo"}, Tuning: tuning})
+		if err != nil {
+			t.Fatal(err)
+		}
+		rows, err := pl.Open(context.Background())
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer rows.Close()
+		if !rows.Next() {
+			t.Fatalf("no first row: %v", rows.Err())
+		}
+		// Let the producers run as far ahead as they are allowed.
+		deadline := time.Now().Add(3 * time.Second)
+		for last := int64(-1); time.Now().Before(deadline); time.Sleep(100 * time.Millisecond) {
+			n := served.Load()
+			if n == last || n == pages {
+				break
+			}
+			last = n
+		}
+		return served.Load()
+	}
+	if n := fetched(omnisdk.Tuning{RowsAhead: 1, PagesAhead: 1}); n > pages/4 {
+		t.Errorf("bounded: fetched %d of %d pages for one row read", n, pages)
+	}
+	if n := fetched(omnisdk.Tuning{RowsAhead: -1, PagesAhead: -1}); n != pages {
+		t.Errorf("unbounded: fetched %d of %d pages", n, pages)
+	}
+}
+
+// A cursor dropped without Close does not leave its run parked: once the cursor is collected, the run
+// is cancelled, and the page request it had in flight is abandoned.
+func TestDroppedRowsCancelTheRun(t *testing.T) {
+	requireCorpus(t)
+	t.Setenv("GOOGLE_CREDENTIALS", serviceAccountKey(t))
+	cancelled := make(chan struct{}, 1)
+	stop := make(chan struct{})
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case strings.HasSuffix(r.URL.Path, "/token"):
+			fmt.Fprint(w, `{"access_token":"tok"}`)
+		case r.URL.Query().Get("pageToken") == "":
+			fmt.Fprint(w, `{"items":[{"name":"a"}],"nextPageToken":"p2"}`)
+		default:
+			// The second page never answers; only the run being cancelled ends this request.
+			select {
+			case <-r.Context().Done():
+				cancelled <- struct{}{}
+			case <-stop:
+			}
+		}
+	}))
+	defer srv.Close()
+	defer close(stop)
+
+	readOneAndDrop(t, srv.URL)
+	deadline := time.After(10 * time.Second)
+	for {
+		runtime.GC()
+		select {
+		case <-cancelled:
+			return
+		case <-deadline:
+			t.Fatal("the run outlived its dropped cursor")
+		case <-time.After(50 * time.Millisecond):
+		}
+	}
+}
+
+// readOneAndDrop opens a run, reads one row and returns without closing it, so nothing refers to the
+// cursor afterwards.
+func readOneAndDrop(t *testing.T, endpoint string) {
+	t.Helper()
+	g, err := omnisdk.NewGraph([]omnisdk.Node{omnisdk.NewNode("b", "stackql_unstable_google.storage.buckets", nil)}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pl, err := omnisdk.NewGraphSelectQuery(corpus, g, omnisdk.Args{Endpoint: endpoint, Params: map[string]string{"project": "demo"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	rows, err := pl.Open(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !rows.Next() {
+		t.Fatalf("no first row: %v", rows.Err())
+	}
+}

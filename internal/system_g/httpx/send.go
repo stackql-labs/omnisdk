@@ -74,7 +74,7 @@ func (e *sendExchange) WriteTo(w io.Writer) (int64, error) {
 }
 
 func (e *sendExchange) Open(ctx context.Context) facade.Records {
-	buf := buffer.NewBuffer(e.getReaderCount(), 1024, buffer.Ahead(e.getReaderCount(), pagesAhead))
+	buf := buffer.NewBuffer(e.getReaderCount(), 1024, buffer.Ahead(e.getReaderCount(), buffer.PagesAhead(ctx)))
 	in := e.upstream.Open(ctx)
 	go func() {
 		var cerr error

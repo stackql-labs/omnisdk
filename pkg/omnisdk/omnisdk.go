@@ -22,6 +22,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"sort"
 	"strings"
 	"sync"
@@ -35,6 +36,7 @@ import (
 	"github.com/stackql-labs/omnisdk/internal/system_g/admit"
 	"github.com/stackql-labs/omnisdk/internal/system_g/auth"
 	"github.com/stackql-labs/omnisdk/internal/system_g/bind"
+	"github.com/stackql-labs/omnisdk/internal/system_g/buffer"
 	"github.com/stackql-labs/omnisdk/internal/system_g/endpoint"
 	"github.com/stackql-labs/omnisdk/internal/system_g/exchange/docx"
 	"github.com/stackql-labs/omnisdk/internal/system_g/exchange/sdk"
@@ -211,10 +213,13 @@ type Args struct {
 	// Journal opts a query's mutations into write-ahead intent: each effect is recorded, and on disk,
 	// before its request is sent. Nil runs them unjournaled. Reads ignore it.
 	Journal *Journal `json:"journal,omitempty"`
-	// AuthByProvider gives each provider its own credentials, keyed by provider name — namespaced
-	// ("stackql_unstable_github") or as its document declares it ("github"). A provider absent here
-	// uses Auth. Needed where one query reads several providers.
+	// AuthByProvider is each provider's credentials, keyed by provider name — namespaced
+	// ("stackql_unstable_github") or as its document declares it ("github"). A credential belongs to
+	// one provider: a provider absent here authenticates from its document's defaults and the
+	// environment, never with another provider's entry.
 	AuthByProvider map[string]*Auth `json:"auth_by_provider,omitempty"`
+	// cred is the entry for the provider being resolved, set by withCredential; authOf reads it.
+	cred *Auth
 	// Redaction decides which columns a result may not carry. Nil is DefaultRedaction: the values
 	// auth put on the row are dropped, everything else is kept. A power user who needs them sets
 	// RedactNone, or a policy of their own.
@@ -222,7 +227,6 @@ type Args struct {
 	// Functions adds a caller's own SQL functions to the built-in catalogue for this query. A name the
 	// built-ins already use is an error.
 	Functions sqlfn.Catalog `json:"-"`
-	Auth      *Auth
 	Endpoint  string
 	// InsecureSkipTLSVerify accepts any certificate. It exists for mocks that serve a self-signed one,
 	// but it is not tied to Endpoint: a private CA or an intercepting proxy is a real reason to need it
@@ -309,6 +313,12 @@ type Tuning struct {
 	RetryRate   float64
 	Limit       int
 	Timeout     time.Duration
+	// RowsAhead is how many rows each stage may produce before its reader takes them, and PagesAhead
+	// how many responses a request may fetch ahead. They bound memory by the reader's pace rather than
+	// the result's size. Zero is the default (1024 rows, 2 pages); negative is unbounded, which never
+	// waits on a slow reader and holds whatever it has not read.
+	RowsAhead  int
+	PagesAhead int
 }
 
 // Row is one result record; Rows is a forward-only cursor over them (the caller owns its lifecycle).
@@ -478,6 +488,8 @@ type methodDef struct {
 	Method
 	// build plans this method's single query graph. Set on a leaf method; nil on a composite.
 	build func(args Args) (plan.Plan, error)
+	// provider is whose credentials a leaf method authenticates with — its key in Args.AuthByProvider.
+	provider string
 	// members, when non-empty, makes this a COMPOSITE method: its plan is the FOREST of these member
 	// methods' plans, merged into ONE cursor. A composite is defined BY REFERENCE to its legs, so it
 	// cannot drift from them — adding a provider is one entry here, not a new hand-rolled plan.
@@ -560,6 +572,7 @@ var methods = map[string]methodDef{
 			Params:   []Param{{Name: "region", Required: true, Description: "AWS region"}},
 			Schema:   blobSchema,
 		},
+		provider: "aws",
 		build: func(args Args) (plan.Plan, error) {
 			creds, err := awsCreds(args)
 			if err != nil {
@@ -576,6 +589,7 @@ var methods = map[string]methodDef{
 			Params:   nil, // scope is the SP's reach; auth carries the identity
 			Schema:   blobSchema,
 		},
+		provider: "azure",
 		build: func(args Args) (plan.Plan, error) {
 			a, err := azureAuth(args, endpoint.AzureMgmt)
 			if err != nil {
@@ -598,6 +612,7 @@ var methods = map[string]methodDef{
 			ExactlyOne: [][]string{{"google_project", "google_org"}}, // one project or a whole org, never both
 			Schema:     blobSchema,
 		},
+		provider: "google",
 		build: func(args Args) (plan.Plan, error) {
 			project, org := args.param("google_project"), args.param("google_org")
 			creds, err := gcpCreds(args)
@@ -655,6 +670,7 @@ var methods = map[string]methodDef{
 			Params:   []Param{{Name: "region", Required: true, Description: "AWS region to sign with (IAM is global; SigV4 still scopes to a region)"}},
 			Schema:   principalSchema,
 		},
+		provider: "aws",
 		build: func(args Args) (plan.Plan, error) {
 			creds, err := awsCreds(args)
 			if err != nil {
@@ -671,6 +687,7 @@ var methods = map[string]methodDef{
 			Params:   nil, // the tenant is the credentials' own; nothing to choose
 			Schema:   principalSchema,
 		},
+		provider: "azure",
 		build: func(args Args) (plan.Plan, error) {
 			// Same client-credentials exchange as the ARM audit — only the SCOPE differs, and that is
 			// derived from the service rather than configured.
@@ -693,6 +710,7 @@ var methods = map[string]methodDef{
 			ExactlyOne: [][]string{{"google_project", "google_org"}},
 			Schema:     principalSchema,
 		},
+		provider: "aws",
 		build: func(args Args) (plan.Plan, error) {
 			creds, err := gcpCreds(args)
 			if err != nil {
@@ -709,6 +727,7 @@ var methods = map[string]methodDef{
 			Params:   []Param{{Name: "region", Required: true, Description: "AWS region to sign with"}},
 			Schema:   principalSchema,
 		},
+		provider: "aws",
 		build: func(args Args) (plan.Plan, error) {
 			creds, err := awsCreds(args)
 			if err != nil {
@@ -725,6 +744,7 @@ var methods = map[string]methodDef{
 			Params:   nil,
 			Schema:   principalSchema,
 		},
+		provider: "azure",
 		build: func(args Args) (plan.Plan, error) {
 			a, err := azureAuth(args, endpoint.AzureGraph)
 			if err != nil {
@@ -773,6 +793,7 @@ var methods = map[string]methodDef{
 			Params:   []Param{{Name: "region", Required: true, Description: "AWS region"}},
 			Schema:   s3ListSchema,
 		},
+		provider: "aws",
 		build: func(args Args) (plan.Plan, error) {
 			creds, err := awsCreds(args)
 			if err != nil {
@@ -789,6 +810,7 @@ var methods = map[string]methodDef{
 			Params:   []Param{{Name: "region", Required: true, Description: "AWS region"}},
 			Schema:   genericObjectSc,
 		},
+		provider: "aws",
 		build: func(args Args) (plan.Plan, error) {
 			creds, err := awsCreds(args)
 			if err != nil {
@@ -809,6 +831,7 @@ var methods = map[string]methodDef{
 			},
 			Schema: awsNetSchema,
 		},
+		provider: "aws",
 		build: func(args Args) (plan.Plan, error) {
 			creds, err := awsCreds(args)
 			if err != nil {
@@ -828,6 +851,7 @@ var methods = map[string]methodDef{
 			},
 			Schema: gcpNetSchema,
 		},
+		provider: "azure",
 		build: func(args Args) (plan.Plan, error) {
 			creds, err := gcpCreds(args)
 			if err != nil {
@@ -848,6 +872,7 @@ var methods = map[string]methodDef{
 			Params:   nil, // scope is the SP's reach; identity from AZURE_* env
 			Schema:   subnetSchema,
 		},
+		provider: "azure",
 		build: func(args Args) (plan.Plan, error) {
 			tenant, clientID, clientSecret, err := azureNativeCreds(args)
 			if err != nil {
@@ -994,7 +1019,7 @@ func buildPlans(method string, args Args, seen map[string]bool) ([]plan.Plan, er
 		}
 	}
 	if len(def.members) == 0 {
-		pl, err := def.build(args)
+		pl, err := def.build(args.withCredential(def.provider))
 		if err != nil {
 			return nil, err
 		}
@@ -1040,7 +1065,10 @@ func checkEndpoint(args Args) error {
 // document supplies the call, and the declared auth scheme is applied implicitly. This is the same
 // Plan a catalog method returns, so a consumer runs it identically — the difference is only where the
 // metadata came from, which is the whole point of the document path.
-func NewFromDoc(doc []byte, resource string, args Args) (Plan, error) {
+//
+// provider names whose credentials the call uses — its key in Args.AuthByProvider. A document alone does not
+// say which provider it belongs to.
+func NewFromDoc(doc []byte, provider, resource string, args Args) (Plan, error) {
 	if err := checkEndpoint(args); err != nil {
 		return nil, err
 	}
@@ -1048,6 +1076,7 @@ func NewFromDoc(doc []byte, resource string, args Args) (Plan, error) {
 	if err != nil {
 		return nil, err
 	}
+	args = args.withCredential(provider)
 	opts, err := docOptions(args, nil, false)
 	if err != nil {
 		return nil, err
@@ -1407,15 +1436,20 @@ func providerOptions(args Args, p aot.Provider) ([]docx.Option, error) {
 	return opts, nil
 }
 
-// forProvider is args with Auth replaced by the provider's own, where AuthByProvider has one.
+// forProvider is args resolved for a document's provider.
 func (a Args) forProvider(p aot.Provider) Args {
-	if len(a.AuthByProvider) == 0 {
-		return a
-	}
-	for _, key := range []string{aot.DefaultProviderPrefix + p.Name(), p.Name()} {
-		if au, ok := a.AuthByProvider[key]; ok {
-			a.Auth = au
-			return a
+	return a.withCredential(aot.DefaultProviderPrefix+p.Name(), p.Name())
+}
+
+// withCredential is args resolved for one provider, known by any of names: its entry in
+// AuthByProvider, or
+// none. Every credential is read through this, so nothing reaches a provider it was not given for.
+func (a Args) withCredential(names ...string) Args {
+	a.cred = nil
+	for _, n := range names {
+		if au, ok := a.AuthByProvider[n]; ok && au != nil {
+			a.cred = au
+			break
 		}
 	}
 	return a
@@ -1532,11 +1566,12 @@ func expandEnv(s string) (string, error) {
 	return strings.Join(strings.Fields(out), ""), nil
 }
 
-// authOf returns args.Auth, or a zero Auth when none was supplied — so resolution always reads from a
-// struct and every field falls back to its canonical env var / file.
+// authOf returns the credential resolved for the provider at hand, or a zero Auth when it was given
+// none — so resolution always reads from a struct and every field falls back to its canonical env var
+// / file.
 func authOf(args Args) Auth {
-	if args.Auth != nil {
-		return *args.Auth
+	if args.cred != nil {
+		return *args.cred
 	}
 	return Auth{}
 }
@@ -1708,7 +1743,7 @@ func (c *cannedPlan) Open(parent context.Context) (Rows, error) {
 	// The engine runs on runCtx (cancelled by abort/limit/timeout to stop PRODUCERS). The cursor is
 	// read on the caller's ctx, so already-buffered rows are drained even after an internal abort —
 	// abort means "stop producing", not "discard produced rows".
-	return &rows{recs: op.Open(runCtx), read: parent, cancel: cancel, echo: c.echo}, nil
+	return newRows(op.Open(runCtx), parent, cancel, c.echo), nil
 }
 
 // decorate carries the run policies (retry, admission, fan-out, abort, result budget, trace) and an
@@ -1725,6 +1760,7 @@ func (c *cannedPlan) decorate(parent context.Context) (context.Context, context.
 		ctx = httpx.WithClient(ctx, httpx.InsecureClient())
 	}
 	ctx = withReplay(ctx)
+	ctx = buffer.WithAhead(ctx, c.args.Tuning.RowsAhead, c.args.Tuning.PagesAhead)
 	ctx, abortCancel := abort.WithSignal(ctx)
 	ctx = abort.WithLimit(ctx, c.args.Tuning.Limit)
 	logw, closeLog := logSink(c.args.Log)
@@ -1765,7 +1801,7 @@ func (m *mergedPlan) Open(parent context.Context) (Rows, error) {
 	// Engine on runCtx (abort/limit stop PRODUCERS); cursor read on parent so a limit-abort drains the
 	// already-produced rows rather than discarding them (mirrors cannedPlan.Open).
 	op := plan.MergeComposeRows(1, m.plans...)
-	return &rows{recs: op.Open(runCtx), read: parent, cancel: cancel, echo: m.echo}, nil
+	return newRows(op.Open(runCtx), parent, cancel, m.echo), nil
 }
 
 type rows struct {
@@ -1773,6 +1809,16 @@ type rows struct {
 	read   context.Context
 	cancel context.CancelFunc
 	echo   map[string]any
+}
+
+// newRows is the cursor over a run. A cursor dropped without Close would leave the run parked on a
+// reader that never comes back — its producers bounded, its requests open — so once the cursor is
+// unreachable the run is cancelled, exactly as Close would. The cleanup holds only cancel, never the
+// cursor, so it cannot keep the cursor alive.
+func newRows(recs facade.Records, read context.Context, cancel context.CancelFunc, echo map[string]any) *rows {
+	r := &rows{recs: recs, read: read, cancel: cancel, echo: echo}
+	runtime.AddCleanup(r, func(cancel context.CancelFunc) { cancel() }, cancel)
+	return r
 }
 
 func (r *rows) Next() bool { return r.recs.Next(r.read) }

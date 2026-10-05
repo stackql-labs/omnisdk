@@ -23,8 +23,8 @@ import (
 const authRegistry = "testdata/authreg"
 
 // One query reads three providers, each authenticated its own way with its own credentials: basic
-// from the environment variables its document names, a bearer token and a header key from
-// AuthByProvider — which wins over the query-wide Auth.
+// from the environment variables its document names, a bearer token and a header key from each
+// provider's entry in Auth.
 func TestEachProviderAuthenticatesItsOwnWay(t *testing.T) {
 	t.Setenv("TEST_BASIC_USER", "alice")
 	t.Setenv("TEST_BASIC_PASS", "s3cret")
@@ -49,7 +49,6 @@ func TestEachProviderAuthenticatesItsOwnWay(t *testing.T) {
 	}
 	pl, err := omnisdk.NewGraphSelectQuery(authRegistry, g, omnisdk.Args{
 		Endpoint: srv.URL,
-		Auth:     &omnisdk.Auth{Credentials: "query-wide"},
 		AuthByProvider: map[string]*omnisdk.Auth{
 			"stackql_unstable_bearp": {Credentials: "tok-b"},
 			"keyed":                  {Credentials: "key-k"},
@@ -79,6 +78,60 @@ func TestEachProviderAuthenticatesItsOwnWay(t *testing.T) {
 	}
 	if got := seen["keyed"].Get("x-api-key"); got != "key-k" {
 		t.Errorf("custom: x-api-key = %q", got)
+	}
+}
+
+// A credential is given to one provider and reaches no other: a provider with no entry of its own
+// authenticates from its document's defaults, and with none there it is refused, never handed a
+// neighbour's credential.
+func TestCredentialReachesOnlyItsProvider(t *testing.T) {
+	t.Setenv("TEST_API_KEY", "key-from-env")
+	t.Setenv("TEST_BEARER_TOKEN", "")
+	var mu sync.Mutex
+	seen := map[string]http.Header{}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		seen[strings.Split(strings.Trim(r.URL.Path, "/"), "/")[0]] = r.Header.Clone()
+		mu.Unlock()
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprint(w, `{"items":[{"id":"1"}]}`)
+	}))
+	defer srv.Close()
+	both, err := omnisdk.NewGraph([]omnisdk.Node{
+		omnisdk.NewNode("t", "stackql_unstable_bearp.things.items", nil),
+		omnisdk.NewNode("k", "stackql_unstable_keyed.things.items", nil),
+	}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pl, err := omnisdk.NewGraphSelectQuery(authRegistry, both, omnisdk.Args{Endpoint: srv.URL,
+		AuthByProvider: map[string]*omnisdk.Auth{"bearp": {Credentials: "tok-b"}}})
+	if err != nil {
+		t.Fatalf("plan: %v", err)
+	}
+	rows, err := pl.Open(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for rows.Next() {
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatalf("rows: %v", err)
+	}
+	rows.Close()
+	if got := seen["keyed"].Get("x-api-key"); got != "key-from-env" {
+		t.Errorf("keyed: x-api-key = %q, want its own document's credential", got)
+	}
+
+	// Given only the other provider's credential, bearp has none of its own and is refused.
+	solo, err := omnisdk.NewGraph([]omnisdk.Node{omnisdk.NewNode("t", "stackql_unstable_bearp.things.items", nil)}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = omnisdk.NewGraphSelectQuery(authRegistry, solo, omnisdk.Args{Endpoint: srv.URL,
+		AuthByProvider: map[string]*omnisdk.Auth{"keyed": {Credentials: "key-k"}}})
+	if err == nil || !strings.Contains(err.Error(), "bearp bearer credentials cannot be used") {
+		t.Errorf("err = %v, want bearp refused rather than sent keyed's credential", err)
 	}
 }
 
@@ -236,8 +289,8 @@ func TestKubeconfigContext(t *testing.T) {
 				"\n    certificate-authority-data: " + ca + "\nusers:\n- name: u\n  user:\n" + user +
 				"contexts:\n- name: ctx\n  context: {cluster: c, user: u}\n"
 			runNodes(t, omnisdk.Args{
-				Params: map[string]string{"protocol": "https", "cluster_addr": host},
-				Auth:   &omnisdk.Auth{Type: "kubeconfig", Credentials: kubeconfig, Context: "ctx"},
+				Params:         map[string]string{"protocol": "https", "cluster_addr": host},
+				AuthByProvider: map[string]*omnisdk.Auth{"kube": {Type: "kubeconfig", Credentials: kubeconfig, Context: "ctx"}},
 			}, omnisdk.NewNode("k", "stackql_unstable_kube.things.items", nil))
 			if got := rc.reqs["kube"].Header.Get("Authorization"); got != "Bearer kube-tok" {
 				t.Errorf("Authorization = %q", got)
@@ -250,8 +303,8 @@ func TestKubeconfigContext(t *testing.T) {
 func TestKubeconfigNeedsAContext(t *testing.T) {
 	g, _ := omnisdk.NewGraph([]omnisdk.Node{omnisdk.NewNode("k", "stackql_unstable_kube.things.items", nil)}, nil)
 	_, err := omnisdk.NewGraphSelectQuery(authRegistry, g, omnisdk.Args{
-		Params: map[string]string{"cluster_addr": "x"},
-		Auth:   &omnisdk.Auth{Type: "kubeconfig", Credentials: "apiVersion: v1"},
+		Params:         map[string]string{"cluster_addr": "x"},
+		AuthByProvider: map[string]*omnisdk.Auth{"kube": {Type: "kubeconfig", Credentials: "apiVersion: v1"}},
 	})
 	if err == nil || !strings.Contains(err.Error(), "needs a context") {
 		t.Errorf("err = %v", err)
@@ -319,7 +372,7 @@ func TestAWSSharedConfigProfile(t *testing.T) {
 	if got := iamUsersOnce(t, omnisdk.Args{}); got != "AKIASTATIC" {
 		t.Errorf("AWS_PROFILE=static signed with %q", got)
 	}
-	if got := iamUsersOnce(t, omnisdk.Args{Auth: &omnisdk.Auth{Profile: "proc"}}); got != "AKIAPROC" {
+	if got := iamUsersOnce(t, omnisdk.Args{AuthByProvider: map[string]*omnisdk.Auth{"aws": {Profile: "proc"}}}); got != "AKIAPROC" {
 		t.Errorf("profile proc signed with %q", got)
 	}
 }
@@ -387,7 +440,7 @@ func TestGoogleDelegationSubjectAndScopes(t *testing.T) {
 	srv, form, _ := googleStub(t)
 	defer srv.Close()
 	scope := "https://www.googleapis.com/auth/admin.directory.user.readonly"
-	bucketsOnce(t, srv, omnisdk.Args{Auth: &omnisdk.Auth{Subject: "admin@example.com", Scopes: []string{scope}}})
+	bucketsOnce(t, srv, omnisdk.Args{AuthByProvider: map[string]*omnisdk.Auth{"google": {Subject: "admin@example.com", Scopes: []string{scope}}}})
 	parts := strings.Split(form.Get("assertion"), ".")
 	if len(parts) != 3 {
 		t.Fatalf("assertion = %q", form.Get("assertion"))

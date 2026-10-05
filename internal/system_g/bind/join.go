@@ -155,7 +155,7 @@ func (e *bindJoinExchange) WriteTo(w io.Writer) (int64, error) {
 // schedule.Run); rows carry no cross-row dependency, so emission order is not preserved. First error
 // cancels in-flight rows and is returned after they drain.
 func (e *bindJoinExchange) Open(ctx context.Context) facade.Records {
-	buf := buffer.NewBuffer(e.getReaderCount(), 1024, buffer.Ahead(e.getReaderCount(), 1024))
+	buf := buffer.NewBuffer(e.getReaderCount(), 1024, buffer.Ahead(e.getReaderCount(), buffer.RowsAhead(ctx)))
 	outer := e.outer.Open(ctx)
 	go func() {
 		var cerr error

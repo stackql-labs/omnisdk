@@ -44,7 +44,7 @@ type egressOp struct {
 }
 
 func (e egressOp) Open(ctx context.Context) facade.Records {
-	buf := buffer.NewBuffer(1, 1024, 1024)
+	buf := buffer.NewBuffer(1, 1024, buffer.RowsAhead(ctx))
 	in := e.upstream.Open(ctx)
 	go func() {
 		var cerr error
@@ -74,7 +74,7 @@ func (e egressOp) Open(ctx context.Context) facade.Records {
 type mergeRows struct{ ops []facade.Operator }
 
 func (m mergeRows) Open(parent context.Context) facade.Records {
-	buf := buffer.NewBuffer(1, 1024, 1024)
+	buf := buffer.NewBuffer(1, 1024, buffer.RowsAhead(parent))
 	ctx, cancel := context.WithCancel(parent)
 	go func() {
 		var (

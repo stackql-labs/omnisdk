@@ -45,6 +45,8 @@ func main() {
 	pf.IntVar(&t.retryTries, "retry-tries", 4, "total attempts per request incl. the first (ephemeral failures)")
 	pf.Float64Var(&t.retryRate, "retry-rate", 20, "max aggregate retries per second across the run")
 	pf.IntVar(&t.limit, "limit", 0, "stop cleanly after N output records (0 = unlimited)")
+	pf.IntVar(&t.rowsAhead, "rows-ahead", 0, "rows a stage may produce before its reader takes them (0 = default 1024, negative = unbounded)")
+	pf.IntVar(&t.pagesAhead, "pages-ahead", 0, "responses a request may fetch ahead of its reader (0 = default 2, negative = unbounded)")
 	pf.StringVar(&awsRegion, "aws-region", "", "AWS region (required for AWS commands; scope, not read from env)")
 
 	// streamRows opens a planned query and encodes each row as JSONL. Shared by the single-method and
@@ -310,7 +312,7 @@ func main() {
 		Short: "Azure blob-container audit with config-driven auth (--auth JSON: client_credentials | bearer)",
 		RunE: runFacade("azure.storage.containers.list", func(cmd *cobra.Command) (omnisdk.Args, error) {
 			a, err := loadFacadeAuth(mustFlag(cmd, "auth"))
-			return omnisdk.Args{Auth: &a}, err
+			return omnisdk.Args{AuthByProvider: map[string]*omnisdk.Auth{"azure": &a}}, err
 		}),
 	}
 	azAuth.Flags().String("auth", "", "auth config as JSON, or @file (required)")
@@ -359,12 +361,12 @@ func main() {
 
 	// ---- document-driven: no catalog entry, the provider doc IS the metadata ---
 	docCmd := &cobra.Command{
-		Use:   "doc-select <doc.yaml> <resource>",
-		Short: "Run a resource's SELECT straight from a stackql provider document (e.g. doc-select ec2.yaml instances)",
-		Args:  cobra.ExactArgs(2),
+		Use:   "doc-select <provider> <doc.yaml> <resource>",
+		Short: "Run a resource's SELECT straight from a stackql provider document (e.g. doc-select aws ec2.yaml instances)",
+		Args:  cobra.ExactArgs(3),
 		RunE: withSinks(func(cmd *cobra.Command, w, logw io.Writer) error {
 			pos := cmd.Flags().Args()
-			doc, err := os.ReadFile(pos[0])
+			doc, err := os.ReadFile(pos[1])
 			if err != nil {
 				return err
 			}
@@ -374,7 +376,7 @@ func main() {
 				Log:      logw,
 				Tuning:   t.facade(),
 			}
-			pl, err := omnisdk.NewFromDoc(doc, pos[1], a)
+			pl, err := omnisdk.NewFromDoc(doc, pos[0], pos[2], a)
 			if err != nil {
 				return err
 			}
@@ -865,6 +867,8 @@ type tune struct {
 	retryTries  int
 	retryRate   float64
 	limit       int
+	rowsAhead   int
+	pagesAhead  int
 }
 
 // facade maps the CLI knobs onto the public facade's Tuning.
@@ -876,6 +880,8 @@ func (t tune) facade() omnisdk.Tuning {
 		RetryRate:   t.retryRate,
 		Limit:       t.limit,
 		Timeout:     60 * time.Second,
+		RowsAhead:   t.rowsAhead,
+		PagesAhead:  t.pagesAhead,
 	}
 }
 

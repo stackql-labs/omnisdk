@@ -222,14 +222,15 @@ whether it is reading or provisioning.
 
 **Auth is identical to every other call.** `Args` carries it, resolved exactly as a query resolves
 it: the provider document declares the scheme — `aws_signing_v4`, `service_account`, `oauth2` — and
-the credential comes from `Args.Auth`, falling back to the canonical environment variables. A
+the credential comes from the provider's entry in `Args.AuthByProvider`, falling back to the canonical environment variables. A
 provisioning run signs, or exchanges a token, by the same code path a read does, so a consumer that
 can already query a provider can already provision against it.
 
 ```go
 omnisdk.Converge(registry, name, state, runID, res, omnisdk.Args{
-    // Auth is optional: nil falls back to the canonical AWS_*, AZURE_* and GOOGLE_* variables.
-    Auth:   &omnisdk.Auth{AccessKeyID: "...", SecretAccessKey: "..."},
+    // Auth is per provider and optional: a provider absent here falls back to the canonical AWS_*,
+    // AZURE_* and GOOGLE_* variables. One provider's credential never reaches another.
+    AuthByProvider: map[string]*omnisdk.Auth{"aws": {AccessKeyID: "...", SecretAccessKey: "..."}},
     Params: map[string]string{"region": "us-east-1"},   // scope: required, never inferred
 })
 ```

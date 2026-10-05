@@ -69,8 +69,8 @@ func TestFacadeCatalogAndRun(t *testing.T) {
 	t.Setenv("OMNISDK_TEST_TOK", "mock-token")
 
 	pl, err := omnisdk.New("azure.storage.containers.list", omnisdk.Args{
-		Endpoint: srv.URL,
-		Auth:     &omnisdk.Auth{Type: "bearer", CredentialsEnvVar: "OMNISDK_TEST_TOK"},
+		Endpoint:       srv.URL,
+		AuthByProvider: map[string]*omnisdk.Auth{"azure": {Type: "bearer", CredentialsEnvVar: "OMNISDK_TEST_TOK"}},
 	})
 	if err != nil {
 		t.Fatal(err)
