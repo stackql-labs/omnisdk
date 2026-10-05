@@ -17,6 +17,7 @@ import (
 	"github.com/stackql-labs/omnisdk/internal/ledger"
 	"github.com/stackql-labs/omnisdk/internal/merge"
 	"github.com/stackql-labs/omnisdk/internal/semantics"
+	"github.com/stackql-labs/omnisdk/internal/system_g/admit"
 	"github.com/stackql-labs/omnisdk/internal/system_g/exchange/docx"
 	"github.com/stackql-labs/omnisdk/internal/system_g/facade"
 	"github.com/stackql-labs/omnisdk/internal/unwind"
@@ -136,7 +137,7 @@ func Converge(registry, name, state, runID string, resources []ManagedResource, 
 		runID = time.Now().UTC().Format("20060102T150405Z")
 	}
 	return &convergePlan{name: name, state: state, runID: runID, resources: resources,
-		effector: effector, semantics: sem, exchanges: exchanges, scope: args.Params}, nil
+		effector: effector, semantics: sem, exchanges: exchanges, scope: args.Params, tuning: args.Tuning}, nil
 }
 
 // providerWiring builds an effector per provider the resources name, and the semantics derived from
@@ -269,6 +270,8 @@ type convergePlan struct {
 	exchanges map[string]string
 	// scope is what the run supplies to every step — a region, a project, a subscription.
 	scope map[string]string
+	// tuning bounds the run: Parallelism keys converge at once, MaxPerHost requests per backend.
+	tuning Tuning
 }
 
 // leaseTTL bounds how long a dead run can hold the collection before another may break it.
@@ -284,7 +287,10 @@ func (p *convergePlan) Open(ctx context.Context) (Rows, error) {
 		return nil, err
 	}
 	runner := apply.New(log, journals, lease.NewLeaser(log, time.Now), merge.ThreeWay(),
-		p.effector, p.semantics, unwind.New(log, journals, p.semantics, p.effector), lease.All(), leaseTTL)
+		p.effector, p.semantics, unwind.New(log, journals, p.semantics, p.effector), lease.All(), leaseTTL,
+		orInt(p.tuning.Parallelism, apply.DefaultParallelism))
+	// Keys converging at once share each backend's request budget, as a query's requests do.
+	ctx = admit.WithAdmissions(ctx, admit.PerScope(orInt(p.tuning.MaxPerHost, 8)))
 
 	dslReg, err := dsl.NewRegistry(append(gotemplate.Evaluators(), schemaxml.New())...)
 	if err != nil {

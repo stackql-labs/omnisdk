@@ -6,7 +6,9 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/stackql-labs/omnisdk/pkg/omnisdk"
 )
@@ -266,5 +268,79 @@ func TestSameBlueprintUnderTwoNames(t *testing.T) {
 	// Two collections, two independent sets of resources — the second did not adopt the first's.
 	if n := strings.Count(strings.Join(seen, " "), "CreateVpc"); n != 2 {
 		t.Errorf("CreateVpc issued %d times, want one per collection", n)
+	}
+}
+
+// Tuning.Parallelism is how many keys an IaC run converges at once: independent VPCs go out
+// together up to it, and never beyond.
+func TestConvergeParallelismIsTunable(t *testing.T) {
+	requireCorpus(t)
+	t.Setenv("AWS_ACCESS_KEY_ID", "AKIATEST")
+	t.Setenv("AWS_SECRET_ACCESS_KEY", "secret")
+	peak := func(parallelism int) int {
+		var mu sync.Mutex
+		cond := sync.NewCond(&mu)
+		inflight, most, n := 0, 0, 0
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			_ = r.ParseForm()
+			w.Header().Set("Content-Type", "text/xml")
+			switch act := param(r, "Action"); act {
+			case "DescribeVpcs":
+				fmt.Fprint(w, `<DescribeVpcsResponse><vpcSet></vpcSet></DescribeVpcsResponse>`)
+			case "CreateVpc":
+				mu.Lock()
+				inflight++
+				most = max(most, inflight)
+				cond.Broadcast()
+				deadline := time.Now().Add(500 * time.Millisecond)
+				for inflight < 3 && time.Now().Before(deadline) {
+					stop := time.AfterFunc(10*time.Millisecond, cond.Broadcast)
+					cond.Wait()
+					stop.Stop()
+				}
+				n++
+				id := fmt.Sprintf("vpc-%03d", n)
+				inflight--
+				mu.Unlock()
+				fmt.Fprintf(w, `<CreateVpcResponse><vpc><vpcId>%s</vpcId></vpc></CreateVpcResponse>`, id)
+			default:
+				http.Error(w, "unexpected "+act, http.StatusBadRequest)
+			}
+		}))
+		defer srv.Close()
+		var res []omnisdk.ManagedResource
+		for _, k := range []string{"a", "b", "c"} {
+			res = append(res, omnisdk.NewResource("aws/ec2/vpc-"+k, "aws", "ec2.vpcs",
+				[]byte(`{"CidrBlock":"10.0.0.0/16"}`), map[string]string{"TagSpecification.1.ResourceType": "vpc",
+					"TagSpecification.1.Tag.1.Key": "omnisdk:key"},
+				nil, "", "", "line_items.VpcId", "VpcId", "TagSpecification.1.Tag.1.Value"))
+		}
+		args := awsArgs(srv)
+		args.Tuning.Parallelism = parallelism
+		pl, err := omnisdk.Converge(corpus, "par", t.TempDir(), "run", res, args)
+		if err != nil {
+			t.Fatal(err)
+		}
+		rows, err := pl.Open(context.Background())
+		if err != nil {
+			t.Fatal(err)
+		}
+		applied := 0
+		for rows.Next() {
+			if rows.Row()["status"] == "applied" {
+				applied++
+			}
+		}
+		rows.Close()
+		if applied != 3 {
+			t.Fatalf("parallelism %d: %d applied, want 3", parallelism, applied)
+		}
+		return most
+	}
+	if got := peak(3); got != 3 {
+		t.Errorf("parallelism 3: %d creates in flight at once, want 3", got)
+	}
+	if got := peak(1); got != 1 {
+		t.Errorf("parallelism 1: %d creates in flight at once, want 1", got)
 	}
 }

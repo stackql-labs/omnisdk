@@ -307,6 +307,8 @@ func (a *Args) UnmarshalJSON(data []byte) error {
 
 // Tuning are the run knobs; a zero value uses sensible defaults.
 type Tuning struct {
+	// Parallelism bounds concurrent work: a query's fan-out, and the keys an IaC run converges at
+	// once. Zero is the default, 16.
 	Parallelism int
 	MaxPerHost  int
 	RetryTries  int

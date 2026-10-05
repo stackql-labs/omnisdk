@@ -16,6 +16,8 @@ import (
 	"errors"
 	"fmt"
 	"maps"
+	"slices"
+	"strings"
 	"time"
 
 	"github.com/stackql-labs/omnisdk/internal/system_g/bind"
@@ -79,10 +81,16 @@ type runner struct {
 	unwinder  unwind.Unwinder
 	keys      facade.KeySet
 	ttl       time.Duration
+	// parallelism bounds how many keys converge at once.
+	parallelism int
 }
 
+// DefaultParallelism is how many keys converge at once when the caller does not say.
+const DefaultParallelism = 16
+
 // New wires a Runner. keys is the lease's key set — v1 passes everything, and narrowing it later
-// is configuration rather than a rewrite.
+// is configuration rather than a rewrite. parallelism bounds how many keys converge at once; zero or
+// less is DefaultParallelism.
 func New(
 	log facade.Ledger,
 	journals facade.Journals,
@@ -93,11 +101,20 @@ func New(
 	u unwind.Unwinder,
 	keys facade.KeySet,
 	ttl time.Duration,
+	parallelism int,
 ) Runner {
-	return &runner{log: log, journals: journals, leaser: leaser, merge: m, effect: effect, semantics: sem, unwinder: u, keys: keys, ttl: ttl}
+	if parallelism <= 0 {
+		parallelism = DefaultParallelism
+	}
+	return &runner{log: log, journals: journals, leaser: leaser, merge: m, effect: effect, semantics: sem, unwinder: u,
+		keys: keys, ttl: ttl, parallelism: parallelism}
 }
 
 func (r *runner) Apply(ctx context.Context, runID, scope string, steps []Step) (Result, error) {
+	deps, err := dependencies(steps)
+	if err != nil {
+		return Result{}, err
+	}
 	// The candidate set is declared before planning, so the lease is taken up front. Read-validate
 	// -write would be correct too, but optimistic validation starves long transactions, and an IaC
 	// apply is a long transaction.
@@ -112,24 +129,137 @@ func (r *runner) Apply(ctx context.Context, runID, scope string, steps []Step) (
 		return Result{}, err
 	}
 
-	var res Result
-	for _, s := range steps {
-		if err := r.step(ctx, j, s); err != nil {
-			res.Failed, res.Err = s.Key, err
-			// Forward recovery is preferred where it is reachable, because compensation is lossy —
-			// billing events, sent notifications, consumed ids and deleted data do not come back.
-			// Choosing between them is the caller's policy, so the outcome is reported rather than
-			// decided here.
-			out, unwindErr := r.unwinder.Unwind(ctx, runID)
-			if unwindErr != nil {
-				return res, errors.Join(err, unwindErr)
-			}
-			res.Unwound = &out
-			return res, nil
-		}
-		res.Applied = append(res.Applied, s.Key)
+	res := r.converge(ctx, j, steps, deps)
+	if res.Err == nil {
+		return res, nil
 	}
+	// Forward recovery is preferred where it is reachable, because compensation is lossy — billing
+	// events, sent notifications, consumed ids and deleted data do not come back. Choosing between
+	// them is the caller's policy, so the outcome is reported rather than decided here.
+	out, unwindErr := r.unwinder.Unwind(ctx, runID)
+	if unwindErr != nil {
+		return res, errors.Join(res.Err, unwindErr)
+	}
+	res.Unwound = &out
 	return res, nil
+}
+
+// converge runs every step once the keys it reads from are live, up to parallelism at a time. A key
+// with nothing between it and another runs alongside it: a run waits on its dependencies, not on its
+// declaration order.
+//
+// The first failure stops new steps from starting. Steps already in flight finish rather than being
+// cancelled — an effect abandoned mid-call has an unknown outcome — and everything that landed is then
+// in the journal for the unwind.
+func (r *runner) converge(ctx context.Context, j facade.Journal, steps []Step, deps map[int][]int) Result {
+	waiting := make([]int, len(steps)) // unfinished dependencies per step
+	after := make(map[int][]int)       // steps that depend on each step
+	var ready []int
+	for i := range steps {
+		waiting[i] = len(deps[i])
+		for _, d := range deps[i] {
+			after[d] = append(after[d], i)
+		}
+		if waiting[i] == 0 {
+			ready = append(ready, i)
+		}
+	}
+
+	type done struct {
+		i   int
+		err error
+	}
+	finished := make(chan done)
+	var res Result
+	var errs []error
+	running := 0
+	for len(ready) > 0 || running > 0 {
+		for len(ready) > 0 && running < r.parallelism && res.Err == nil && len(errs) == 0 {
+			i := ready[0]
+			ready = ready[1:]
+			running++
+			go func() { finished <- done{i, r.step(ctx, j, steps[i])} }()
+		}
+		if running == 0 {
+			break // a failure has stopped new steps, and nothing is left in flight
+		}
+		d := <-finished
+		running--
+		if d.err != nil {
+			if len(errs) == 0 {
+				res.Failed = steps[d.i].Key
+			}
+			errs = append(errs, fmt.Errorf("%s: %w", steps[d.i].Key, d.err))
+			continue
+		}
+		res.Applied = append(res.Applied, steps[d.i].Key)
+		for _, n := range after[d.i] {
+			if waiting[n]--; waiting[n] == 0 {
+				ready = append(ready, n)
+			}
+		}
+	}
+	if len(errs) == 1 {
+		res.Err = errors.Unwrap(errs[0])
+	} else if len(errs) > 1 {
+		res.Err = errors.Join(errs...)
+	}
+	return res
+}
+
+// dependencies maps each step to the steps whose keys it reads from. An arrival from a key outside
+// the run is not a dependency: it must already be live, which bind checks. A cycle is refused before
+// anything is taken or sent.
+func dependencies(steps []Step) (map[int][]int, error) {
+	index := make(map[facade.LedgerKey]int, len(steps))
+	for i, s := range steps {
+		if _, dup := index[s.Key]; dup {
+			return nil, fmt.Errorf("apply: %s appears twice", s.Key)
+		}
+		index[s.Key] = i
+	}
+	deps := make(map[int][]int, len(steps))
+	for i, s := range steps {
+		for _, in := range s.Inbound {
+			if d, ok := index[in.From]; ok && !slices.Contains(deps[i], d) {
+				deps[i] = append(deps[i], d)
+			}
+		}
+	}
+	// Kahn's: whatever never becomes ready is on a cycle.
+	waiting := make([]int, len(steps))
+	after := map[int][]int{}
+	var queue []int
+	for i := range steps {
+		waiting[i] = len(deps[i])
+		for _, d := range deps[i] {
+			after[d] = append(after[d], i)
+		}
+		if waiting[i] == 0 {
+			queue = append(queue, i)
+		}
+	}
+	seen := 0
+	for len(queue) > 0 {
+		i := queue[0]
+		queue = queue[1:]
+		seen++
+		for _, n := range after[i] {
+			if waiting[n]--; waiting[n] == 0 {
+				queue = append(queue, n)
+			}
+		}
+	}
+	if seen != len(steps) {
+		var cyclic []string
+		for i, w := range waiting {
+			if w > 0 {
+				cyclic = append(cyclic, string(steps[i].Key))
+			}
+		}
+		return nil, fmt.Errorf("apply: dependency cycle among %s", strings.Join(cyclic, ", "))
+	}
+	return deps, nil
 }
 
 // adopt writes an entry for an object the target already holds. Intent and identity are recorded in

@@ -29,6 +29,7 @@ Migrating from `v0.1.3-alpha05`, the version stackql consumes, to the current tr
 | AWS credentials fall back to the shared-config profile (`AWS_PROFILE`, `Auth.Profile`, `credential_process`); Google to gcloud application-default credentials, including user logins; Azure `azure_default` to the Azure CLI. | Interactive users without keys in the environment. |
 | Rows are produced at most a bounded distance ahead of the reader (`Tuning.RowsAhead`, default 1024; `Tuning.PagesAhead`, default 2; negative is unbounded). A slow reader holds the run back rather than growing memory. | A caller that abandons `Rows` without `Close`: the run waits rather than finishing in the background, and is cancelled once the cursor is garbage-collected. |
 | Hand-authored Google methods ask for `Auth.Scopes`, defaulting to `cloud-platform`; each asked for a fixed read-only scope. A document reads only the credential its scheme declares. | Callers of `gcp.*`/`google.*` methods relying on a read-only token; the identity's roles still limit what it can do. |
+| `Converge` runs keys as a dependency graph: a key starts once the keys it reads from are live, and up to `Tuning.Parallelism` (default 16) converge at once, sharing `Tuning.MaxPerHost`. Declaration order no longer matters; a dependency cycle is refused before anything is sent. The first failure stops new keys; keys in flight finish, then the run unwinds. | IaC callers who relied on declaration order, or on one key at a time. |
 | `NaN` compares as text, not as a number; it equalled every number. | Filters or joins comparing a value spelled `NaN`. |
 
 ## CLI
@@ -38,3 +39,4 @@ Migrating from `v0.1.3-alpha05`, the version stackql consumes, to the current tr
 | `doc-select <doc> <resource>` | `doc-select <provider> <doc> <resource>` |
 | `"auth": {…}` in args JSON | `"auth_by_provider": {"<provider>": {…}}` |
 | — | `--rows-ahead`, `--pages-ahead`, `doc-lint <dir> [provider...]` |
+| `--parallelism` bounds query fan-out | It also bounds IaC keys converging at once. `iac-apply` takes `tuning` from its spec, the flags filling what the spec leaves unset. |

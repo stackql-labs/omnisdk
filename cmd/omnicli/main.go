@@ -40,7 +40,7 @@ func main() {
 	pf.StringVar(&endpoint, "endpoint", "", "endpoint override, path-style (e.g. http://localhost:8085); default real cloud")
 	pf.BoolVar(&showCredentials, "show-credentials", false, "keep auth values (assertion, bearer token) in doc-graph results; dropped by default")
 	pf.BoolVar(&insecureTLS, "tls-skip-verify", false, "accept a self-signed certificate; only applies with --endpoint")
-	pf.IntVar(&t.parallelism, "parallelism", 16, "max concurrent fan-out units (bind-join inners)")
+	pf.IntVar(&t.parallelism, "parallelism", 16, "max concurrent fan-out units: bind-join inners, and IaC keys converging at once")
 	pf.IntVar(&t.perHost, "max-per-host", 8, "max concurrent requests per backend host")
 	pf.IntVar(&t.retryTries, "retry-tries", 4, "total attempts per request incl. the first (ephemeral failures)")
 	pf.Float64Var(&t.retryRate, "retry-rate", 20, "max aggregate retries per second across the run")
@@ -216,8 +216,17 @@ func main() {
 			if _, given := a.Params["region"]; !given && awsRegion != "" {
 				a.Params["region"] = awsRegion
 			}
-			a.Endpoint, a.Log, a.Tuning = endpoint, logw, t.facade()
-			a.InsecureSkipTLSVerify = insecureTLS
+			a.Log = logw
+			if a.Endpoint == "" {
+				a.Endpoint = endpoint
+			}
+			if !a.InsecureSkipTLSVerify {
+				a.InsecureSkipTLSVerify = insecureTLS
+			}
+			// The spec's own tuning wins; the flags apply where it says nothing, as for run.
+			if (a.Tuning == omnisdk.Tuning{}) {
+				a.Tuning = t.facade()
+			}
 			pl, err := omnisdk.Converge(cmdArgs(cmd)[0], spec.Name, spec.State, spec.RunID, resources, a)
 			if err != nil {
 				return err

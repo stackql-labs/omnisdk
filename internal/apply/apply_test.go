@@ -124,7 +124,7 @@ func fixture(t *testing.T, tgt *target) (apply.Runner, facade.Ledger) {
 	}
 	leaser := lease.NewLeaser(log, time.Now)
 	u := unwind.New(log, js, sem, tgt)
-	return apply.New(log, js, leaser, merge.ThreeWay(), tgt, sem, u, lease.All(), time.Minute), log
+	return apply.New(log, js, leaser, merge.ThreeWay(), tgt, sem, u, lease.All(), time.Minute, 0), log
 }
 
 func TestApplyLandsEveryStep(t *testing.T) {
@@ -257,7 +257,7 @@ func TestConcurrentRunIsRefusedTheLease(t *testing.T) {
 		t.Fatalf("journals: %v", err)
 	}
 	sem, _ := semantics.New(nil)
-	r := apply.New(log, js, leaser, merge.ThreeWay(), tgt, sem, unwind.New(log, js, sem, tgt), lease.All(), time.Minute)
+	r := apply.New(log, js, leaser, merge.ThreeWay(), tgt, sem, unwind.New(log, js, sem, tgt), lease.All(), time.Minute, 0)
 
 	if _, err := r.Apply(ctx, "run-1", "scope", []apply.Step{
 		{Key: "vpc", Exchange: "CreateVpc", Desired: []byte(`{}`)},
