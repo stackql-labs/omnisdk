@@ -601,3 +601,86 @@ func TestResolvedQueryNeverCarriesCredentials(t *testing.T) {
 		}
 	}
 }
+
+// One query reads AWS, Google and Azure, and every request carries its own provider's credential:
+// AWS signed with AWS keys, Google with the token its service account bought, Azure with the token
+// its service principal bought. None carries another's.
+func TestOneQueryAcrossThreeClouds(t *testing.T) {
+	requireCorpus(t)
+	t.Setenv("AWS_ACCESS_KEY_ID", "AKIATEST")
+	t.Setenv("AWS_SECRET_ACCESS_KEY", "secret")
+	t.Setenv("GOOGLE_CREDENTIALS", serviceAccountKey(t))
+	t.Setenv("AZURE_TENANT_ID", "tenant")
+	t.Setenv("AZURE_CLIENT_ID", "client")
+	t.Setenv("AZURE_CLIENT_SECRET", "az-secret")
+	var mu sync.Mutex
+	authz := map[string]string{}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = r.ParseForm()
+		mu.Lock()
+		defer mu.Unlock()
+		switch {
+		case strings.Contains(r.URL.Path, "/oauth2/"):
+			w.Header().Set("Content-Type", "application/json")
+			fmt.Fprint(w, `{"access_token":"az-tok","expires_in":3600}`)
+		case strings.HasSuffix(r.URL.Path, "/token"):
+			w.Header().Set("Content-Type", "application/json")
+			fmt.Fprint(w, `{"access_token":"g-tok","expires_in":3600}`)
+		case r.Form.Get("Action") == "ListUsers" || r.URL.Query().Get("Action") == "ListUsers":
+			authz["aws"] = r.Header.Get("Authorization")
+			w.Header().Set("Content-Type", "text/xml")
+			fmt.Fprint(w, `<ListUsersResponse><ListUsersResult><Users>`+
+				`<member><UserName>alice</UserName></member><member><UserName>bob</UserName></member>`+
+				`</Users></ListUsersResult></ListUsersResponse>`)
+		case strings.Contains(r.URL.Path, "virtualNetworks"):
+			authz["azure"] = r.Header.Get("Authorization")
+			w.Header().Set("Content-Type", "application/json")
+			fmt.Fprint(w, `{"value":[{"name":"vnet-1"}]}`)
+		case strings.Contains(r.URL.Path, "/b"):
+			authz["google"] = r.Header.Get("Authorization")
+			w.Header().Set("Content-Type", "application/json")
+			fmt.Fprint(w, `{"items":[{"name":"bucket-1"}]}`)
+		default:
+			http.Error(w, "unexpected "+r.Method+" "+r.URL.String(), http.StatusNotFound)
+		}
+	}))
+	defer srv.Close()
+
+	g, err := omnisdk.NewGraph([]omnisdk.Node{
+		omnisdk.NewNode("u", "stackql_unstable_aws.iam.users", nil),
+		omnisdk.NewNode("b", "stackql_unstable_google.storage.buckets", nil),
+		omnisdk.NewNode("v", "stackql_unstable_azure.network.virtual_networks", nil),
+	}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pl, err := omnisdk.NewGraphSelectQuery(corpus, g, omnisdk.Args{Endpoint: srv.URL, Params: map[string]string{
+		"region": "us-east-1", "project": "demo", "subscription_id": "sub"}})
+	if err != nil {
+		t.Fatalf("plan: %v", err)
+	}
+	rows, err := pl.Open(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	n := 0
+	for rows.Next() {
+		n++
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatalf("rows: %v", err)
+	}
+	rows.Close()
+	if n != 2 {
+		t.Errorf("rows = %d, want 2 users × 1 bucket × 1 vnet", n)
+	}
+	if got := authz["aws"]; !strings.HasPrefix(got, "AWS4-HMAC-SHA256 Credential=AKIATEST/") {
+		t.Errorf("aws: Authorization = %q", got)
+	}
+	if got := authz["google"]; got != "Bearer g-tok" {
+		t.Errorf("google: Authorization = %q", got)
+	}
+	if got := authz["azure"]; got != "Bearer az-tok" {
+		t.Errorf("azure: Authorization = %q", got)
+	}
+}
