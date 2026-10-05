@@ -38,7 +38,7 @@ func TestGCPSignedJWT(t *testing.T) {
 	if err != nil {
 		t.Fatalf("parse creds: %v", err)
 	}
-	jwt, err := creds.signedJWT("https://oauth2.googleapis.com/token", gcpComputeScope, time.Unix(1000, 0))
+	jwt, err := creds.signedJWT("https://oauth2.googleapis.com/token", testScope, time.Unix(1000, 0))
 	if err != nil {
 		t.Fatalf("sign: %v", err)
 	}
@@ -64,8 +64,10 @@ func TestGCPSignedJWT(t *testing.T) {
 	if err := json.Unmarshal(raw, &claims); err != nil {
 		t.Fatalf("claims json: %v", err)
 	}
-	if claims.Iss != "svc@proj.iam.gserviceaccount.com" || claims.Scope != gcpComputeScope ||
+	if claims.Iss != "svc@proj.iam.gserviceaccount.com" || claims.Scope != testScope ||
 		claims.Aud != "https://oauth2.googleapis.com/token" || claims.Exp <= claims.Iat {
 		t.Errorf("claims = %+v", claims)
 	}
 }
+
+const testScope = "https://www.googleapis.com/auth/compute"

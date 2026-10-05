@@ -531,13 +531,7 @@ That third one is the clearest case for `T_in` living on the consumer: `Subnets_
 inputs, one of which is derived from a different field of the same producer. A per-edge transform
 could not express it.
 
-> **Verified:** all three compose — `TestGuideGraphsCompose` builds each graph published here and
-> fails on the errors that used to reach a reader instead: an input nothing supplies, two documents
-> whose methods share a name, an auth exchange never wired in. The AWS case is additionally executed
-> against a stand-in EC2 (`TestGraphJoinsTwoExchangesTheDocumentDoesNotRelate`).
->
-> Google and Azure have not been run against a live provider, so their row paths and field names come
-> from the documents rather than from observed responses.
+`TestGuideGraphsCompose` builds each graph published here.
 
 
 ### Memory

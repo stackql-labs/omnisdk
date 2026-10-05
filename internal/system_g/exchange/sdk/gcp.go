@@ -11,6 +11,7 @@ import (
 	"encoding/pem"
 	"fmt"
 	"io"
+	"strings"
 	"time"
 
 	"github.com/stackql-labs/omnisdk/internal/system_g/bind"
@@ -27,7 +28,6 @@ import (
 // the canonical httpx/plan constructors.
 
 const (
-	gcpComputeScope = "https://www.googleapis.com/auth/compute"
 	gcpSubnetCidr   = "10.0.0.0/24"
 	gcpPollInterval = 1 * time.Second
 	gcpPollAttempts = 60
@@ -44,7 +44,21 @@ type GCPCredentials struct {
 	// Subject is the user the service account acts as, through domain-wide delegation — the "sub"
 	// claim the Admin SDK requires. Empty acts as the service account itself.
 	Subject string
-	key     *rsa.PrivateKey
+	// Scopes are what the token is asked for; empty is GCPDefaultScope.
+	Scopes []string
+	key    *rsa.PrivateKey
+}
+
+// GCPDefaultScope is what a token asks for when the caller names no scopes, as any-sdk does: the
+// broad scope, leaving the identity's own roles as the limit on what it can do.
+const GCPDefaultScope = "https://www.googleapis.com/auth/cloud-platform"
+
+// Scope is the space-separated scope a token for these credentials asks for.
+func (c GCPCredentials) Scope() string {
+	if len(c.Scopes) == 0 {
+		return GCPDefaultScope
+	}
+	return strings.Join(c.Scopes, " ")
 }
 
 // ParseGCPCredentials parses a service-account JSON key (as written by gcloud).
@@ -143,7 +157,7 @@ func GCPProvisionPlan(id int64, region string, creds GCPCredentials, endpoint, p
 
 	tokenURL := gcpTokenURL(endpoint, creds)
 	base := gcpComputeBase(endpoint)
-	jwt, _ := creds.signedJWT(tokenURL, gcpComputeScope, time.Now())
+	jwt, _ := creds.signedJWT(tokenURL, creds.Scope(), time.Now())
 
 	oauth := httpx.Request{
 		Method: "POST", URL: tokenURL,

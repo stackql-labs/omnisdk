@@ -28,6 +28,7 @@ Migrating from `v0.1.3-alpha05`, the version stackql consumes, to the current tr
 | S3 requests carry and sign `x-amz-content-sha256`. | All `aws.s3.*` relations. |
 | AWS credentials fall back to the shared-config profile (`AWS_PROFILE`, `Auth.Profile`, `credential_process`); Google to gcloud application-default credentials, including user logins; Azure `azure_default` to the Azure CLI. | Interactive users without keys in the environment. |
 | Rows are produced at most a bounded distance ahead of the reader (`Tuning.RowsAhead`, default 1024; `Tuning.PagesAhead`, default 2; negative is unbounded). A slow reader holds the run back rather than growing memory. | A caller that abandons `Rows` without `Close`: the run waits rather than finishing in the background, and is cancelled once the cursor is garbage-collected. |
+| Hand-authored Google methods ask for `Auth.Scopes`, defaulting to `cloud-platform`; each asked for a fixed read-only scope. A document reads only the credential its scheme declares. | Callers of `gcp.*`/`google.*` methods relying on a read-only token; the identity's roles still limit what it can do. |
 | `NaN` compares as text, not as a number; it equalled every number. | Filters or joins comparing a value spelled `NaN`. |
 
 ## CLI

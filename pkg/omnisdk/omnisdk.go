@@ -1328,19 +1328,37 @@ func docOptions(args Args, sec aot.Security, oauth bool) ([]docx.Option, error) 
 	if args.Endpoint != "" {
 		opts = append(opts, docx.WithBaseURL(args.Endpoint))
 	}
-	// The shared-config profile is read only for a call that signs with it.
-	aws := awsKeys
-	if sec == nil || sec.Scheme() == aot.SchemeAWSSigV4 {
-		aws = awsCreds
+	// Only the credential the document declares is read: a Google document never runs an AWS
+	// credential_process, and an Azure one never parses a Google key. Without a known scheme — a bare
+	// document, whose scheme is not known until it compiles — each is offered where it resolves, and
+	// the document takes the one it declares.
+	if sec == nil {
+		if creds, err := awsKeys(args); err == nil {
+			opts = append(opts, docx.WithAWSCredentials(creds))
+		}
+		if tenant, clientID, clientSecret, err := azureNativeCreds(args); err == nil {
+			opts = append(opts, docx.WithAzureCredentials(tenant, clientID, clientSecret))
+		}
+		if opt, err := googleOption(args); err == nil {
+			opts = append(opts, opt)
+		}
+		return opts, nil
 	}
-	if creds, err := aws(args); err == nil {
-		opts = append(opts, docx.WithAWSCredentials(creds))
-	}
-	switch tenant, clientID, clientSecret, err := azureNativeCreds(args); {
-	case oauth:
-	case err == nil:
-		opts = append(opts, docx.WithAzureCredentials(tenant, clientID, clientSecret))
-	case sec != nil && sec.Scheme() == aot.SchemeOAuthClientCredentials:
+	switch sec.Scheme() {
+	case aot.SchemeAWSSigV4:
+		// Unusable keys are reported where the request is signed, which names the provider.
+		if creds, err := awsCreds(args); err == nil {
+			opts = append(opts, docx.WithAWSCredentials(creds))
+		}
+	case aot.SchemeOAuthClientCredentials:
+		if oauth {
+			break // the token exchange the document names carries its own client credentials
+		}
+		tenant, clientID, clientSecret, err := azureNativeCreds(args)
+		if err == nil {
+			opts = append(opts, docx.WithAzureCredentials(tenant, clientID, clientSecret))
+			break
+		}
 		// No service principal: the credential an interactive user has is the Azure CLI's login,
 		// as Azure's own default credential chain would use.
 		tok, cliErr := auth.AzureCLIToken(azureManagementResource)
@@ -1348,14 +1366,15 @@ func docOptions(args Args, sec aot.Security, oauth bool) ([]docx.Option, error) 
 			return nil, fmt.Errorf("omnisdk: Azure credentials cannot be used: %w; nor the Azure CLI: %w", err, cliErr)
 		}
 		opts = append(opts, docx.WithRequestTransform(auth.BearerMethod(tok).RequestTransform()))
-	}
-	switch opt, err := googleOption(args); {
-	case err == nil:
+	case aot.SchemeServiceAccount:
+		opt, err := googleOption(args)
+		if err != nil {
+			// The document says this call is authenticated with a service account, so a credential
+			// that cannot be used is fatal — and says why, rather than surfacing later as "none
+			// supplied".
+			return nil, fmt.Errorf("omnisdk: Google credentials cannot be used: %w", err)
+		}
 		opts = append(opts, opt)
-	case sec != nil && sec.Scheme() == aot.SchemeServiceAccount:
-		// The document says this call is authenticated with a service account, so a credential that
-		// cannot be used is fatal — and says why, rather than surfacing later as "none supplied".
-		return nil, fmt.Errorf("omnisdk: Google credentials cannot be used: %w", err)
 	}
 	return opts, nil
 }
@@ -1728,6 +1747,7 @@ func gcpCreds(args Args) (sdk.GCPCredentials, error) {
 		return sdk.GCPCredentials{}, err
 	}
 	creds.Subject = a.Subject
+	creds.Scopes = a.Scopes
 	return creds, nil
 }
 

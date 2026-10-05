@@ -377,6 +377,32 @@ func TestAWSSharedConfigProfile(t *testing.T) {
 	}
 }
 
+// A document reads only the credential it declares: a Google query never runs the AWS profile's
+// credential_process, nor looks for Azure's service principal.
+func TestOnlyTheDeclaredCredentialIsRead(t *testing.T) {
+	dir := t.TempDir()
+	marker := filepath.Join(dir, "ran")
+	cfg := filepath.Join(dir, "config")
+	proc := `sh -c 'touch ` + marker + `; echo {"Version":1,"AccessKeyId":"A","SecretAccessKey":"s"}'`
+	if err := os.WriteFile(cfg, []byte("[profile proc]\ncredential_process = "+proc+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("AWS_ACCESS_KEY_ID", "")
+	t.Setenv("AWS_SECRET_ACCESS_KEY", "")
+	t.Setenv("AWS_CONFIG_FILE", cfg)
+	t.Setenv("AWS_PROFILE", "proc")
+	t.Setenv("GOOGLE_CREDENTIALS", serviceAccountKey(t))
+	srv, _, bearer := googleStub(t)
+	defer srv.Close()
+	bucketsOnce(t, srv, omnisdk.Args{})
+	if *bearer != "Bearer g-tok" {
+		t.Errorf("Authorization = %q", *bearer)
+	}
+	if _, err := os.Stat(marker); err == nil {
+		t.Error("a Google query ran the AWS credential_process")
+	}
+}
+
 // googleStub answers Google's token endpoint and a bucket list, recording the token request's form.
 func googleStub(t *testing.T) (*httptest.Server, *url.Values, *string) {
 	t.Helper()

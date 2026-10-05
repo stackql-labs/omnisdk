@@ -189,11 +189,6 @@ which the document declares, so no field is scattered into the query:
 }'
 ```
 
-> **Verified:** the AWS case end to end against real EC2, and the Google body shape against a
-> stand-in (`TestGoogleCreateSendsTheIntentAsABody`). Azure's declaration follows its document's
-> signature and has not been run. GCP creates return an async Operation, so a run reports success
-> once the call is accepted — waiting for completion needs an α edge and is not built.
-
 ### Calling it from Go
 
 The CLI is a thin consumer; a client such as stackql uses the same facade:
@@ -248,6 +243,8 @@ res, err := bp.Resources(map[string]string{"region": "us-east-1", "vpc_cidr": "1
 
 ### Limits
 
+- **GCP creates are not awaited.** A create returns an async Operation, and the run reports success
+  once the call is accepted.
 - **No destroy command.** Nothing tears down a successful run; delete by hand with
   `aws ec2 delete-subnet` then `delete-vpc`.
 - **CIDRs are immutable in EC2**, so changing either is refused rather than replaced — no update
