@@ -8,10 +8,11 @@ Migrating from `v0.1.3-alpha05`, the version stackql consumes, to the current tr
 |------------------|-----|---------------|
 | `Args.Auth *Auth` | removed | Put the credential under its provider in `Args.AuthByProvider`: `AuthByProvider: map[string]*omnisdk.Auth{"aws": a}`. A key is the namespaced name (`stackql_unstable_github`) or the document's (`github`); hand-authored methods use `aws`, `azure` (Entra included) and `google`. There is no query-wide credential: a provider with no entry authenticates from its document's defaults and the environment, never with another provider's entry. JSON `"auth"` is gone; use `"auth_by_provider": {"<provider>": {…}}`. |
 | `NewFromDoc(doc, resource, args)` | `NewFromDoc(doc, provider, resource, args)` | Name the provider whose credentials the call uses; a document alone does not say. |
+| `Graph` interface | Gains `Terminations()` | Only a caller that implements `Graph` must add it; graphs from `NewGraph` are unaffected. |
 
 ## Additions
 
-`Tuning.RowsAhead`, `Tuning.PagesAhead`, `Auth.Profile`, `Auth.Subject`, `AnalyzeDocuments`, package
+`Termination` with `Rounds`, `Records`, `Within`, `AnyOf`, `AllOf`, and `WithTermination`; `Tuning.RowsAhead`, `Tuning.PagesAhead`, `Auth.Profile`, `Auth.Subject`, `AnalyzeDocuments`, package
 `pkg/docparse/doclint`.
 
 ## Behaviour changes
@@ -30,6 +31,7 @@ Migrating from `v0.1.3-alpha05`, the version stackql consumes, to the current tr
 | Rows are produced at most a bounded distance ahead of the reader (`Tuning.RowsAhead`, default 1024; `Tuning.PagesAhead`, default 2; negative is unbounded). A slow reader holds the run back rather than growing memory. | A caller that abandons `Rows` without `Close`: the run waits rather than finishing in the background, and is cancelled once the cursor is garbage-collected. |
 | Hand-authored Google methods ask for `Auth.Scopes`, defaulting to `cloud-platform`; each asked for a fixed read-only scope. A document reads only the credential its scheme declares. | Callers of `gcp.*`/`google.*` methods relying on a read-only token; the identity's roles still limit what it can do. |
 | `Converge` runs keys as a dependency graph: a key starts once the keys it reads from are live, and up to `Tuning.Parallelism` (default 16) converge at once, sharing `Tuning.MaxPerHost`. Declaration order no longer matters; a dependency cycle is refused before anything is sent. The first failure stops new keys; keys in flight finish, then the run unwinds. | IaC callers who relied on declaration order, or on one key at a time. |
+| A node may be wired to itself, and nodes to each other: the cycle runs to a fixpoint under a termination checked well-founded at planning. A param and an arrival from the node's own cycle may share a name — the param is the first value. A cycle without a well-founded termination is refused before any request. | Graphs that relied on a self-wiring being rejected. |
 | `NaN` compares as text, not as a number; it equalled every number. | Filters or joins comparing a value spelled `NaN`. |
 
 ## CLI
@@ -38,5 +40,5 @@ Migrating from `v0.1.3-alpha05`, the version stackql consumes, to the current tr
 |------------------|-----|
 | `doc-select <doc> <resource>` | `doc-select <provider> <doc> <resource>` |
 | `"auth": {…}` in args JSON | `"auth_by_provider": {"<provider>": {…}}` |
-| — | `--rows-ahead`, `--pages-ahead`, `doc-lint <dir> [provider...]` |
+| — | `--rows-ahead`, `--pages-ahead`, `doc-lint <dir> [provider...]`; `doc-graph` node `terminate` (`rounds`, `records`, `within`) |
 | `--parallelism` bounds query fan-out | It also bounds IaC keys converging at once. `iac-apply` takes `tuning` from its spec, the flags filling what the spec leaves unset. |

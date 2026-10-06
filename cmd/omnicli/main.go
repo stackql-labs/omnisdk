@@ -490,6 +490,12 @@ func main() {
 					Params  map[string]string `json:"params,omitempty"`
 					Verb    string            `json:"verb,omitempty"`
 					Body    map[string]any    `json:"body,omitempty"`
+					// Terminate bounds the cycle through this node; any bound reached stops it.
+					Terminate *struct {
+						Rounds  int    `json:"rounds,omitempty"`
+						Records int    `json:"records,omitempty"`
+						Within  string `json:"within,omitempty"`
+					} `json:"terminate,omitempty"`
 				} `json:"nodes"`
 				Wirings []struct {
 					To      string `json:"to"`
@@ -581,6 +587,32 @@ func main() {
 			g, err := omnisdk.NewGraphWithProjections(nodes, wirings, projections, overrides...)
 			if err != nil {
 				return err
+			}
+			for _, n := range spec.Nodes {
+				if n.Terminate == nil {
+					continue
+				}
+				var bounds []omnisdk.Termination
+				if n.Terminate.Rounds != 0 {
+					bounds = append(bounds, omnisdk.Rounds(n.Terminate.Rounds))
+				}
+				if n.Terminate.Records != 0 {
+					bounds = append(bounds, omnisdk.Records(n.Terminate.Records))
+				}
+				if n.Terminate.Within != "" {
+					d, err := time.ParseDuration(n.Terminate.Within)
+					if err != nil {
+						return fmt.Errorf("terminate on %s: within: %w", n.Alias, err)
+					}
+					bounds = append(bounds, omnisdk.Within(d))
+				}
+				alias := n.Alias
+				if alias == "" {
+					alias = n.Address
+				}
+				if g, err = omnisdk.WithTermination(g, alias, omnisdk.AnyOf(bounds...)); err != nil {
+					return err
+				}
 			}
 			a := omnisdk.Args{}
 			if spec.Args != nil {

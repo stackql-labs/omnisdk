@@ -95,7 +95,7 @@ func (s *scc) Open(ctx context.Context) facade.Records {
 	if readers < 1 {
 		readers = 1
 	}
-	buf := buffer.NewBuffer(readers, 1024, 0)
+	buf := buffer.NewBuffer(readers, 1024, buffer.Ahead(readers, buffer.RowsAhead(ctx)))
 
 	go func() {
 		var cerr error

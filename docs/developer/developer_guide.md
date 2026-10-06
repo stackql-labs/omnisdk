@@ -533,6 +533,30 @@ could not express it.
 
 `TestGuideGraphsCompose` builds each graph published here.
 
+### Cycles
+
+A node wired to itself, or nodes wired to each other, form a cycle. The plan condenses it and runs it
+to a fixpoint: the members a value from outside can start run first, then each round sends every new
+row along the cycle's own edges, until a round finds nothing new or the cycle's termination stops it.
+
+Every cycle needs a termination, and it must be well-founded — a bound on rounds, rows or time. "Stop
+when nothing new arrives" alone is not: a cycle that finds something new every round never stops.
+Both are checked when the query is planned, before any request.
+
+A crawl of a folder tree, the first parent a constant and each child the parent of the next request:
+
+```bash
+./build/omnicli doc-graph $R '{
+  "nodes": [{"alias": "f", "address": "<provider>.<service>.folders",
+             "params": {"parent": "root"}, "terminate": {"rounds": 10}}],
+  "wirings": [{"to": "f", "inbound": [{"from": "f", "src": "id", "as": "parent"}]}]
+}'
+```
+
+`terminate` takes `rounds`, `records` and `within` (a duration); the first reached stops the cycle.
+From Go, `omnisdk.WithTermination(g, alias, omnisdk.Rounds(10))`, with `Records`, `Within`, `AnyOf`
+and `AllOf` alongside.
+
 
 ### Memory
 

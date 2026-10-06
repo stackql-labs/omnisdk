@@ -275,6 +275,9 @@ type Graph interface {
 	Fanout() map[string][]string
 	// Outputs are columns computed on each finished row, from several nodes' columns.
 	Outputs() []query.Output
+	// Terminations bound the graph's cycles, keyed by alias: a cycle runs under the termination of
+	// any node in it that has one, and a cycle with none is refused when the query is planned.
+	Terminations() map[string]Termination
 }
 
 // RowOps is what a graph does to rows beyond running its nodes: the filters every returned row
@@ -360,9 +363,6 @@ func NewGraphWithFilters(nodes []Node, wirings []Wiring, projections []Projectio
 			if !known[in.From()] {
 				return nil, fmt.Errorf("omnisdk: %s expects a value from %q, which the graph does not include", w.To(), in.From())
 			}
-			if in.From() == w.To() {
-				return nil, fmt.Errorf("omnisdk: %s expects a value from itself; a self-join is two nodes", w.To())
-			}
 			if in.Src() == "" {
 				return nil, fmt.Errorf("omnisdk: %s declares an arrival from %s with no source attribute", w.To(), in.From())
 			}
@@ -417,9 +417,34 @@ type graph struct {
 	filters     []query.Predicate
 	fanout      map[string][]string
 	outputs     []query.Output
+	terminate   map[string]Termination
 }
 
 func (g graph) Outputs() []query.Output { return g.outputs }
+
+func (g graph) Terminations() map[string]Termination { return g.terminate }
+
+// WithTermination is g with the cycle through alias bounded by t. A node wired to itself, or to
+// nodes that wire back to it, forms a cycle; this is what stops it.
+func WithTermination(g Graph, alias string, t Termination) (Graph, error) {
+	if t == nil {
+		return nil, fmt.Errorf("omnisdk: termination for %q is nil", alias)
+	}
+	gr, ok := g.(graph)
+	if !ok {
+		return nil, fmt.Errorf("omnisdk: WithTermination needs a graph built by NewGraph")
+	}
+	if !slices.ContainsFunc(gr.nodes, func(n Node) bool { return n.Alias() == alias }) {
+		return nil, fmt.Errorf("omnisdk: termination targets %q, which the graph does not include", alias)
+	}
+	terminate := maps.Clone(gr.terminate)
+	if terminate == nil {
+		terminate = map[string]Termination{}
+	}
+	terminate[alias] = t
+	gr.terminate = terminate
+	return gr, nil
+}
 
 func (g graph) Fanout() map[string][]string { return g.fanout }
 func (g graph) Filters() []query.Predicate  { return g.filters }
@@ -570,7 +595,9 @@ func NewGraphSelectQuery(dir string, g Graph, args Args) (Plan, error) {
 			local[k] = v
 		}
 		for k, v := range n.Params() {
-			if contains(bound[alias], k) || contains(provided[alias], k) {
+			// In a cycle, a param and an arrival from the cycle are one input over time: the param is
+			// its first value, and each round supplies the next.
+			if (contains(bound[alias], k) && !cyclicArrival(g, alias, k)) || contains(provided[alias], k) {
 				return nil, fmt.Errorf("omnisdk: %s: %q is both a param and a wired input", alias, k)
 			}
 			if _, multi := n.Fanout()[k]; multi {
@@ -760,7 +787,70 @@ func NewGraphSelectQuery(dir string, g Graph, args Args) (Plan, error) {
 		break
 	}
 
-	return &cannedPlan{plan: plan.NewPlan(specs, betas, nil, inputs, egress(g, fns, redactor{policy: args.Redaction, credentials: plumbing}), nil), args: args}, nil
+	pl := plan.NewPlan(specs, betas, nil, inputs, egress(g, fns, redactor{policy: args.Redaction, credentials: plumbing}), nil)
+	if ts := g.Terminations(); len(ts) > 0 {
+		specs := make(map[string]facade.TerminationSpec, len(ts))
+		for alias, t := range ts {
+			specs[planned[alias]] = t.spec()
+		}
+		pl = plan.WithTerminations(pl, specs)
+	}
+	if err := plan.CheckCycles(pl); err != nil {
+		// The plan names its exchanges; the caller named aliases.
+		msg := err.Error()
+		aliases := slices.Collect(maps.Keys(planned))
+		// Longest first, so one plan name that extends another is replaced whole.
+		slices.SortFunc(aliases, func(a, b string) int { return len(planned[b]) - len(planned[a]) })
+		for _, alias := range aliases {
+			msg = strings.ReplaceAll(msg, planned[alias], alias)
+		}
+		return nil, fmt.Errorf("omnisdk: %s", strings.TrimPrefix(msg, "plan: "))
+	}
+	return &cannedPlan{plan: pl, args: args}, nil
+}
+
+// cyclicArrival reports whether every value arriving at alias as name comes from alias's own cycle:
+// from alias itself, or from a node alias's values reach.
+func cyclicArrival(g Graph, alias, name string) bool {
+	feeds := map[string][]string{}
+	for _, w := range g.Wirings() {
+		for _, in := range w.Inbound() {
+			feeds[in.From()] = append(feeds[in.From()], w.To())
+		}
+	}
+	reaches := func(from, to string) bool {
+		seen := map[string]bool{}
+		stack := []string{from}
+		for len(stack) > 0 {
+			at := stack[len(stack)-1]
+			stack = stack[:len(stack)-1]
+			for _, next := range feeds[at] {
+				if next == to {
+					return true
+				}
+				if !seen[next] {
+					seen[next] = true
+					stack = append(stack, next)
+				}
+			}
+		}
+		return false
+	}
+	w, ok := wiringFor(g, alias)
+	if !ok {
+		return false
+	}
+	any := false
+	for _, in := range w.Inbound() {
+		if in.As() != name {
+			continue
+		}
+		if in.From() != alias && !reaches(alias, in.From()) {
+			return false
+		}
+		any = true
+	}
+	return any
 }
 
 // openJournal opens the write-ahead journal a query's mutations record into, where the caller opted

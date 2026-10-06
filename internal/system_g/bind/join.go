@@ -58,6 +58,12 @@ type bindJoinExchange struct {
 	inbound  facade.Transform
 }
 
+// ApplyInbound runs T_in over an assembled inbox, for an executor other than the join that binds an
+// exchange's inputs — a condensed cycle binds each round's inputs itself.
+func ApplyInbound(t facade.Transform, bound map[string]any) (map[string]any, error) {
+	return applyInbound(t, bound)
+}
+
 // applyInbound runs T_in over the assembled inbox and returns the consumer's inputs. The transform
 // sees the whole inbox, so it can build one input from several — an identifier from one producer
 // wrapped into a filter expression the consumer's API actually accepts.
