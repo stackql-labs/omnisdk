@@ -582,6 +582,31 @@ An arm with no `when` takes every row left and must be last. Inside a cycle a ga
 run its branch caused, so a poll loop exits through a branch: gate the poll on the pending arm and the
 detail read on the done arm. From Go: `NewBranch`, `NewArm`, `Otherwise`, `NewGate`, `WithBranch`.
 
+### UNION ALL (`doc-union`)
+
+Several `doc-graph` specs as one stream: each leg runs concurrently, legs line up by column name, and
+one `--limit` covers the whole union. Each leg authenticates with its own provider's credentials. From
+Go: `omnisdk.UnionAll(plans...)`.
+
+Network name and region across all three clouds — one AWS region, one Google project, one Azure
+subscription:
+
+```bash
+source cicd/vol/vendor-secrets/secrets.sh
+./build/omnicli doc-union test/corpus/registry \
+ '{"nodes":[{"alias":"n","address":"stackql_unstable_aws.ec2.vpcs"}],
+   "projections":[{"alias":"n","select":[{"out":"name","field":"VpcId"},{"out":"region","literal":"'"${_AWS_REGION}"'"}]}],
+   "args":{"params":{"region":"'"${_AWS_REGION}"'"}}}' \
+ '{"nodes":[{"alias":"n","address":"stackql_unstable_google.compute.networks"}],
+   "projections":[{"alias":"n","select":[{"out":"name","field":"name"},{"out":"region","literal":"global"}]}],
+   "args":{"params":{"project":"'"${_GOOGLE_PROJECT_ID}"'"}}}' \
+ '{"nodes":[{"alias":"n","address":"stackql_unstable_azure.network.virtual_networks"}],
+   "projections":[{"alias":"n","select":[{"out":"name","field":"name"},{"out":"region","field":"location"}]}],
+   "args":{"params":{"subscription_id":"'"${AZURE_SUBSCRIPTION_ID}"'"}}}'
+```
+
+A VPC's name lives in its tags, so the AWS leg reports its id; Google networks are global.
+
 
 ### Memory
 
