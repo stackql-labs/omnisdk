@@ -1900,3 +1900,27 @@ func quoteAll(names []string) string {
 	}
 	return strings.Join(out, ", ")
 }
+
+// UnionAll is several planned queries as one: UNION ALL. Every leg's rows arrive in one stream, legs
+// running concurrently, in no defined order; the first leg to fail fails the whole. Legs line up by
+// column name — name each leg's columns alike, with a projection. One budget covers the union:
+// Tuning.Limit and the run's other policies come from the first leg's Args. Credentials do not:
+// each leg authenticates as it was planned.
+func UnionAll(plans ...Plan) (Plan, error) {
+	if len(plans) == 0 {
+		return nil, fmt.Errorf("omnisdk: a union needs at least one query")
+	}
+	legs := make([]plan.Plan, 0, len(plans))
+	var args Args
+	for i, p := range plans {
+		c, ok := p.(*cannedPlan)
+		if !ok {
+			return nil, fmt.Errorf("omnisdk: union leg %d is not a query plan", i+1)
+		}
+		if i == 0 {
+			args = c.args
+		}
+		legs = append(legs, c.plan)
+	}
+	return &mergedPlan{plans: legs, args: args}, nil
+}

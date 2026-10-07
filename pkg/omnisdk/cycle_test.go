@@ -121,3 +121,48 @@ func TestCycleWithoutAWellFoundedTerminationIsRefused(t *testing.T) {
 		t.Errorf("%d requests sent for refused plans", calls.Load())
 	}
 }
+
+// UNION ALL: every leg's rows in one stream, and one Limit across them.
+func TestUnionAll(t *testing.T) {
+	var calls atomic.Int64
+	srv := treeServer(t, map[string][]string{"x": {"a", "b"}, "y": {"c"}}, &calls)
+	defer srv.Close()
+	leg := func(parent string, limit int) omnisdk.Plan {
+		g, err := omnisdk.NewGraph([]omnisdk.Node{omnisdk.NewNode("f", folders, map[string]string{"parent": parent})}, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		pl, err := omnisdk.NewGraphSelectQuery(authRegistry, g, omnisdk.Args{Endpoint: srv.URL, Tuning: omnisdk.Tuning{Limit: limit}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return pl
+	}
+	run := func(pl omnisdk.Plan) []string {
+		rows, err := pl.Open(context.Background())
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer rows.Close()
+		var ids []string
+		for rows.Next() {
+			ids = append(ids, rows.Row()["id"].(string))
+		}
+		if err := rows.Err(); err != nil {
+			t.Fatal(err)
+		}
+		slices.Sort(ids)
+		return ids
+	}
+	all, err := omnisdk.UnionAll(leg("x", 0), leg("y", 0))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.Join(run(all), ","); got != "a,b,c" {
+		t.Errorf("union = %s, want a,b,c", got)
+	}
+	capped, _ := omnisdk.UnionAll(leg("x", 2), leg("y", 0))
+	if got := run(capped); len(got) != 2 {
+		t.Errorf("union under limit 2 = %v", got)
+	}
+}

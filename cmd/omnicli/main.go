@@ -479,209 +479,213 @@ func main() {
 	// doc-run: run one address out of a bundle.
 	// A document describes one provider and cannot state a relationship spanning two, or one its
 	// author simply left out. doc-graph lets the query say what the documents do not.
+	// graphPlan plans one doc-graph spec against registry: the shared parsing behind doc-graph and
+	// doc-union.
+	graphPlan := func(registry, raw string, logw io.Writer) (omnisdk.Plan, error) {
+		var spec struct {
+			Nodes []struct {
+				Alias   string            `json:"alias"`
+				Address string            `json:"address"`
+				Params  map[string]string `json:"params,omitempty"`
+				Verb    string            `json:"verb,omitempty"`
+				Body    map[string]any    `json:"body,omitempty"`
+				// Terminate bounds the cycle through this node; any bound reached stops it.
+				Terminate *struct {
+					Rounds  int    `json:"rounds,omitempty"`
+					Records int    `json:"records,omitempty"`
+					Within  string `json:"within,omitempty"`
+				} `json:"terminate,omitempty"`
+			} `json:"nodes"`
+			Wirings []struct {
+				To      string `json:"to"`
+				Inbound []struct {
+					From string `json:"from"`
+					Src  string `json:"src"`
+					As   string `json:"as,omitempty"`
+				} `json:"inbound"`
+				ViaType  string   `json:"via_type,omitempty"`
+				Via      string   `json:"via,omitempty"`
+				Provides []string `json:"provides,omitempty"`
+			} `json:"wirings"`
+			Overrides []struct {
+				Address     string `json:"address"`
+				ObjectKey   string `json:"object_key,omitempty"`
+				MediaType   string `json:"media_type,omitempty"`
+				ProgramType string `json:"program_type,omitempty"`
+				Program     string `json:"program,omitempty"`
+				Poll        *struct {
+					StatusPath  string `json:"status_path"`
+					Done        string `json:"done"`
+					Interval    string `json:"interval"`
+					MaxAttempts int    `json:"max_attempts"`
+				} `json:"poll,omitempty"`
+			} `json:"overrides,omitempty"`
+			Patches  []omnisdk.DocPatch `json:"patches,omitempty"`
+			Branches []struct {
+				Alias string `json:"alias"`
+				Arms  []struct {
+					Label string `json:"label"`
+					// When compares a node's column with a value; absent takes every row left.
+					When *struct {
+						Left  string `json:"left"` // "<alias>.<column>"
+						Op    string `json:"op"`   // = <> < <= > >=
+						Right any    `json:"right"`
+					} `json:"when,omitempty"`
+				} `json:"arms"`
+				Gates []struct {
+					Arm string `json:"arm"`
+					To  string `json:"to"`
+				} `json:"gates"`
+			} `json:"branches,omitempty"`
+			DocCache    *omnisdk.DocCache `json:"doc_cache,omitempty"`
+			Projections []struct {
+				Alias  string       `json:"alias"`
+				Select []selectJSON `json:"select"`
+			} `json:"projections,omitempty"`
+			Args *omnisdk.Args `json:"args,omitempty"`
+		}
+		if err := json.Unmarshal([]byte(raw), &spec); err != nil {
+			return nil, fmt.Errorf("graph json: %w", err)
+		}
+		nodes := make([]omnisdk.Node, 0, len(spec.Nodes))
+		for _, n := range spec.Nodes {
+			verb := n.Verb
+			if verb == "" {
+				verb = "select"
+			}
+			nodes = append(nodes, omnisdk.NewMutationNode(n.Alias, n.Address, verb, n.Params, nil, n.Body))
+		}
+		wirings := make([]omnisdk.Wiring, 0, len(spec.Wirings))
+		for _, wr := range spec.Wirings {
+			in := make([]omnisdk.Inbound, 0, len(wr.Inbound))
+			for _, i := range wr.Inbound {
+				in = append(in, omnisdk.NewInbound(i.From, i.Src, i.As))
+			}
+			wirings = append(wirings, omnisdk.NewWiring(wr.To, in, wr.ViaType, wr.Via, wr.Provides...))
+		}
+		overrides := make([]omnisdk.Override, 0, len(spec.Overrides))
+		for _, o := range spec.Overrides {
+			if o.Poll == nil {
+				overrides = append(overrides, omnisdk.NewOverride(o.Address, o.ObjectKey, o.MediaType, o.ProgramType, o.Program))
+				continue
+			}
+			if o.ObjectKey != "" || o.MediaType != "" || o.ProgramType != "" {
+				return nil, fmt.Errorf("override on %s: a poll is its own entry; state the correction in another", o.Address)
+			}
+			interval, err := time.ParseDuration(o.Poll.Interval)
+			if err != nil {
+				return nil, fmt.Errorf("override on %s: poll interval: %w", o.Address, err)
+			}
+			po, err := omnisdk.NewPollOverride(o.Address, omnisdk.Poll{StatusPath: o.Poll.StatusPath, Done: o.Poll.Done,
+				Interval: interval, MaxAttempts: o.Poll.MaxAttempts})
+			if err != nil {
+				return nil, err
+			}
+			overrides = append(overrides, po)
+		}
+		projections := make([]omnisdk.Projection, 0, len(spec.Projections))
+		for _, p := range spec.Projections {
+			cols := make([]omnisdk.SelectColumn, 0, len(p.Select))
+			for _, c := range p.Select {
+				e, err := parseExpr(c.exprJSON)
+				if err != nil {
+					return nil, fmt.Errorf("projection on %s, column %q: %w", p.Alias, c.Out, err)
+				}
+				cols = append(cols, omnisdk.NewSelectColumn(c.Out, e))
+			}
+			pr, err := omnisdk.NewProjection(p.Alias, cols)
+			if err != nil {
+				return nil, err
+			}
+			projections = append(projections, pr)
+		}
+		g, err := omnisdk.NewGraphWithProjections(nodes, wirings, projections, overrides...)
+		if err != nil {
+			return nil, err
+		}
+		for _, b := range spec.Branches {
+			var arms []omnisdk.Arm
+			for _, a := range b.Arms {
+				if a.When == nil {
+					arms = append(arms, omnisdk.Otherwise(a.Label))
+					continue
+				}
+				q, col, ok := strings.Cut(a.When.Left, ".")
+				if !ok {
+					return nil, fmt.Errorf("branch %s, arm %s: left %q must be <alias>.<column>", b.Alias, a.Label, a.When.Left)
+				}
+				arms = append(arms, omnisdk.NewArm(a.Label, query.NewCompare(query.CompareOp(a.When.Op),
+					query.NewColumn(q, col), query.NewLiteral(a.When.Right))))
+			}
+			br, err := omnisdk.NewBranch(b.Alias, arms...)
+			if err != nil {
+				return nil, err
+			}
+			var gates []omnisdk.Gate
+			for _, gt := range b.Gates {
+				gates = append(gates, omnisdk.NewGate(b.Alias, gt.Arm, gt.To))
+			}
+			if g, err = omnisdk.WithBranch(g, br, gates...); err != nil {
+				return nil, err
+			}
+		}
+		for _, n := range spec.Nodes {
+			if n.Terminate == nil {
+				continue
+			}
+			var bounds []omnisdk.Termination
+			if n.Terminate.Rounds != 0 {
+				bounds = append(bounds, omnisdk.Rounds(n.Terminate.Rounds))
+			}
+			if n.Terminate.Records != 0 {
+				bounds = append(bounds, omnisdk.Records(n.Terminate.Records))
+			}
+			if n.Terminate.Within != "" {
+				d, err := time.ParseDuration(n.Terminate.Within)
+				if err != nil {
+					return nil, fmt.Errorf("terminate on %s: within: %w", n.Alias, err)
+				}
+				bounds = append(bounds, omnisdk.Within(d))
+			}
+			alias := n.Alias
+			if alias == "" {
+				alias = n.Address
+			}
+			if g, err = omnisdk.WithTermination(g, alias, omnisdk.AnyOf(bounds...)); err != nil {
+				return nil, err
+			}
+		}
+		a := omnisdk.Args{}
+		if spec.Args != nil {
+			a = *spec.Args
+		}
+		if a.Params == nil {
+			a.Params = map[string]string{}
+		}
+		if _, given := a.Params["region"]; !given && awsRegion != "" {
+			a.Params["region"] = awsRegion
+		}
+		a.Endpoint, a.Log, a.Tuning = endpoint, logw, t.facade()
+		a.InsecureSkipTLSVerify = insecureTLS
+		if showCredentials {
+			a.Redaction = omnisdk.RedactNone()
+		}
+		if len(spec.Patches) > 0 {
+			if spec.DocCache == nil {
+				return nil, fmt.Errorf("patches need a doc_cache: where the patched documents are kept")
+			}
+			if registry, err = omnisdk.EffectiveRegistry(registry, spec.Patches, *spec.DocCache); err != nil {
+				return nil, err
+			}
+		}
+		return omnisdk.NewGraphSelectQuery(registry, g, a)
+	}
 	docGraph := &cobra.Command{
 		Use:   "doc-graph <dir> <graph-json>",
 		Short: "Run several document exchanges joined by β edges the caller declares",
 		Args:  cobra.ExactArgs(2),
 		RunE: withSinks(func(cmd *cobra.Command, w, logw io.Writer) error {
-			var spec struct {
-				Nodes []struct {
-					Alias   string            `json:"alias"`
-					Address string            `json:"address"`
-					Params  map[string]string `json:"params,omitempty"`
-					Verb    string            `json:"verb,omitempty"`
-					Body    map[string]any    `json:"body,omitempty"`
-					// Terminate bounds the cycle through this node; any bound reached stops it.
-					Terminate *struct {
-						Rounds  int    `json:"rounds,omitempty"`
-						Records int    `json:"records,omitempty"`
-						Within  string `json:"within,omitempty"`
-					} `json:"terminate,omitempty"`
-				} `json:"nodes"`
-				Wirings []struct {
-					To      string `json:"to"`
-					Inbound []struct {
-						From string `json:"from"`
-						Src  string `json:"src"`
-						As   string `json:"as,omitempty"`
-					} `json:"inbound"`
-					ViaType  string   `json:"via_type,omitempty"`
-					Via      string   `json:"via,omitempty"`
-					Provides []string `json:"provides,omitempty"`
-				} `json:"wirings"`
-				Overrides []struct {
-					Address     string `json:"address"`
-					ObjectKey   string `json:"object_key,omitempty"`
-					MediaType   string `json:"media_type,omitempty"`
-					ProgramType string `json:"program_type,omitempty"`
-					Program     string `json:"program,omitempty"`
-					Poll        *struct {
-						StatusPath  string `json:"status_path"`
-						Done        string `json:"done"`
-						Interval    string `json:"interval"`
-						MaxAttempts int    `json:"max_attempts"`
-					} `json:"poll,omitempty"`
-				} `json:"overrides,omitempty"`
-				Patches  []omnisdk.DocPatch `json:"patches,omitempty"`
-				Branches []struct {
-					Alias string `json:"alias"`
-					Arms  []struct {
-						Label string `json:"label"`
-						// When compares a node's column with a value; absent takes every row left.
-						When *struct {
-							Left  string `json:"left"` // "<alias>.<column>"
-							Op    string `json:"op"`   // = <> < <= > >=
-							Right any    `json:"right"`
-						} `json:"when,omitempty"`
-					} `json:"arms"`
-					Gates []struct {
-						Arm string `json:"arm"`
-						To  string `json:"to"`
-					} `json:"gates"`
-				} `json:"branches,omitempty"`
-				DocCache    *omnisdk.DocCache `json:"doc_cache,omitempty"`
-				Projections []struct {
-					Alias  string       `json:"alias"`
-					Select []selectJSON `json:"select"`
-				} `json:"projections,omitempty"`
-				Args *omnisdk.Args `json:"args,omitempty"`
-			}
-			if err := json.Unmarshal([]byte(cmdArgs(cmd)[1]), &spec); err != nil {
-				return fmt.Errorf("graph json: %w", err)
-			}
-			nodes := make([]omnisdk.Node, 0, len(spec.Nodes))
-			for _, n := range spec.Nodes {
-				verb := n.Verb
-				if verb == "" {
-					verb = "select"
-				}
-				nodes = append(nodes, omnisdk.NewMutationNode(n.Alias, n.Address, verb, n.Params, nil, n.Body))
-			}
-			wirings := make([]omnisdk.Wiring, 0, len(spec.Wirings))
-			for _, wr := range spec.Wirings {
-				in := make([]omnisdk.Inbound, 0, len(wr.Inbound))
-				for _, i := range wr.Inbound {
-					in = append(in, omnisdk.NewInbound(i.From, i.Src, i.As))
-				}
-				wirings = append(wirings, omnisdk.NewWiring(wr.To, in, wr.ViaType, wr.Via, wr.Provides...))
-			}
-			overrides := make([]omnisdk.Override, 0, len(spec.Overrides))
-			for _, o := range spec.Overrides {
-				if o.Poll == nil {
-					overrides = append(overrides, omnisdk.NewOverride(o.Address, o.ObjectKey, o.MediaType, o.ProgramType, o.Program))
-					continue
-				}
-				if o.ObjectKey != "" || o.MediaType != "" || o.ProgramType != "" {
-					return fmt.Errorf("override on %s: a poll is its own entry; state the correction in another", o.Address)
-				}
-				interval, err := time.ParseDuration(o.Poll.Interval)
-				if err != nil {
-					return fmt.Errorf("override on %s: poll interval: %w", o.Address, err)
-				}
-				po, err := omnisdk.NewPollOverride(o.Address, omnisdk.Poll{StatusPath: o.Poll.StatusPath, Done: o.Poll.Done,
-					Interval: interval, MaxAttempts: o.Poll.MaxAttempts})
-				if err != nil {
-					return err
-				}
-				overrides = append(overrides, po)
-			}
-			projections := make([]omnisdk.Projection, 0, len(spec.Projections))
-			for _, p := range spec.Projections {
-				cols := make([]omnisdk.SelectColumn, 0, len(p.Select))
-				for _, c := range p.Select {
-					e, err := parseExpr(c.exprJSON)
-					if err != nil {
-						return fmt.Errorf("projection on %s, column %q: %w", p.Alias, c.Out, err)
-					}
-					cols = append(cols, omnisdk.NewSelectColumn(c.Out, e))
-				}
-				pr, err := omnisdk.NewProjection(p.Alias, cols)
-				if err != nil {
-					return err
-				}
-				projections = append(projections, pr)
-			}
-			g, err := omnisdk.NewGraphWithProjections(nodes, wirings, projections, overrides...)
-			if err != nil {
-				return err
-			}
-			for _, b := range spec.Branches {
-				var arms []omnisdk.Arm
-				for _, a := range b.Arms {
-					if a.When == nil {
-						arms = append(arms, omnisdk.Otherwise(a.Label))
-						continue
-					}
-					q, col, ok := strings.Cut(a.When.Left, ".")
-					if !ok {
-						return fmt.Errorf("branch %s, arm %s: left %q must be <alias>.<column>", b.Alias, a.Label, a.When.Left)
-					}
-					arms = append(arms, omnisdk.NewArm(a.Label, query.NewCompare(query.CompareOp(a.When.Op),
-						query.NewColumn(q, col), query.NewLiteral(a.When.Right))))
-				}
-				br, err := omnisdk.NewBranch(b.Alias, arms...)
-				if err != nil {
-					return err
-				}
-				var gates []omnisdk.Gate
-				for _, gt := range b.Gates {
-					gates = append(gates, omnisdk.NewGate(b.Alias, gt.Arm, gt.To))
-				}
-				if g, err = omnisdk.WithBranch(g, br, gates...); err != nil {
-					return err
-				}
-			}
-			for _, n := range spec.Nodes {
-				if n.Terminate == nil {
-					continue
-				}
-				var bounds []omnisdk.Termination
-				if n.Terminate.Rounds != 0 {
-					bounds = append(bounds, omnisdk.Rounds(n.Terminate.Rounds))
-				}
-				if n.Terminate.Records != 0 {
-					bounds = append(bounds, omnisdk.Records(n.Terminate.Records))
-				}
-				if n.Terminate.Within != "" {
-					d, err := time.ParseDuration(n.Terminate.Within)
-					if err != nil {
-						return fmt.Errorf("terminate on %s: within: %w", n.Alias, err)
-					}
-					bounds = append(bounds, omnisdk.Within(d))
-				}
-				alias := n.Alias
-				if alias == "" {
-					alias = n.Address
-				}
-				if g, err = omnisdk.WithTermination(g, alias, omnisdk.AnyOf(bounds...)); err != nil {
-					return err
-				}
-			}
-			a := omnisdk.Args{}
-			if spec.Args != nil {
-				a = *spec.Args
-			}
-			if a.Params == nil {
-				a.Params = map[string]string{}
-			}
-			if _, given := a.Params["region"]; !given && awsRegion != "" {
-				a.Params["region"] = awsRegion
-			}
-			a.Endpoint, a.Log, a.Tuning = endpoint, logw, t.facade()
-			a.InsecureSkipTLSVerify = insecureTLS
-			if showCredentials {
-				a.Redaction = omnisdk.RedactNone()
-			}
-			registry := cmdArgs(cmd)[0]
-			if len(spec.Patches) > 0 {
-				if spec.DocCache == nil {
-					return fmt.Errorf("patches need a doc_cache: where the patched documents are kept")
-				}
-				if registry, err = omnisdk.EffectiveRegistry(registry, spec.Patches, *spec.DocCache); err != nil {
-					return err
-				}
-			}
-			pl, err := omnisdk.NewGraphSelectQuery(registry, g, a)
+			pl, err := graphPlan(cmdArgs(cmd)[0], cmdArgs(cmd)[1], logw)
 			if err != nil {
 				return err
 			}
@@ -689,6 +693,29 @@ func main() {
 		}),
 	}
 	root.AddCommand(docGraph)
+
+	// doc-union: several doc-graph specs as one UNION ALL, each leg naming its columns alike.
+	root.AddCommand(&cobra.Command{
+		Use:   "doc-union <dir> <graph-json> <graph-json>...",
+		Short: "UNION ALL of several doc-graph specs: every leg's rows in one stream",
+		Args:  cobra.MinimumNArgs(3),
+		RunE: withSinks(func(cmd *cobra.Command, w, logw io.Writer) error {
+			args := cmdArgs(cmd)
+			var legs []omnisdk.Plan
+			for i, raw := range args[1:] {
+				pl, err := graphPlan(args[0], raw, logw)
+				if err != nil {
+					return fmt.Errorf("leg %d: %w", i+1, err)
+				}
+				legs = append(legs, pl)
+			}
+			pl, err := omnisdk.UnionAll(legs...)
+			if err != nil {
+				return err
+			}
+			return streamRows(pl, w)
+		}),
+	})
 
 	// doc-lint: report incongruities in a registry's documents, one finding per line.
 	root.AddCommand(&cobra.Command{
