@@ -276,6 +276,9 @@ type Alpha interface {
 	Component
 	// Delay is the timing annotation: traversal of this edge waits this long (0 = none).
 	Delay() time.Duration
+	// On is the event that fires the edge: a branch's arm, for a gate. Empty fires on every arrival.
+	// A node with gates runs only for a row on which one of them fired.
+	On() string
 }
 
 // FormClass is the system-wide class of side effect an exchange enacts (§saga, F).

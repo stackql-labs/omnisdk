@@ -20,6 +20,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/stackql-labs/omnisdk/pkg/omnisdk"
+	"github.com/stackql-labs/omnisdk/pkg/query"
 )
 
 func main() {
@@ -521,8 +522,24 @@ func main() {
 						MaxAttempts int    `json:"max_attempts"`
 					} `json:"poll,omitempty"`
 				} `json:"overrides,omitempty"`
-				Patches     []omnisdk.DocPatch `json:"patches,omitempty"`
-				DocCache    *omnisdk.DocCache  `json:"doc_cache,omitempty"`
+				Patches  []omnisdk.DocPatch `json:"patches,omitempty"`
+				Branches []struct {
+					Alias string `json:"alias"`
+					Arms  []struct {
+						Label string `json:"label"`
+						// When compares a node's column with a value; absent takes every row left.
+						When *struct {
+							Left  string `json:"left"` // "<alias>.<column>"
+							Op    string `json:"op"`   // = <> < <= > >=
+							Right any    `json:"right"`
+						} `json:"when,omitempty"`
+					} `json:"arms"`
+					Gates []struct {
+						Arm string `json:"arm"`
+						To  string `json:"to"`
+					} `json:"gates"`
+				} `json:"branches,omitempty"`
+				DocCache    *omnisdk.DocCache `json:"doc_cache,omitempty"`
 				Projections []struct {
 					Alias  string       `json:"alias"`
 					Select []selectJSON `json:"select"`
@@ -587,6 +604,32 @@ func main() {
 			g, err := omnisdk.NewGraphWithProjections(nodes, wirings, projections, overrides...)
 			if err != nil {
 				return err
+			}
+			for _, b := range spec.Branches {
+				var arms []omnisdk.Arm
+				for _, a := range b.Arms {
+					if a.When == nil {
+						arms = append(arms, omnisdk.Otherwise(a.Label))
+						continue
+					}
+					q, col, ok := strings.Cut(a.When.Left, ".")
+					if !ok {
+						return fmt.Errorf("branch %s, arm %s: left %q must be <alias>.<column>", b.Alias, a.Label, a.When.Left)
+					}
+					arms = append(arms, omnisdk.NewArm(a.Label, query.NewCompare(query.CompareOp(a.When.Op),
+						query.NewColumn(q, col), query.NewLiteral(a.When.Right))))
+				}
+				br, err := omnisdk.NewBranch(b.Alias, arms...)
+				if err != nil {
+					return err
+				}
+				var gates []omnisdk.Gate
+				for _, gt := range b.Gates {
+					gates = append(gates, omnisdk.NewGate(b.Alias, gt.Arm, gt.To))
+				}
+				if g, err = omnisdk.WithBranch(g, br, gates...); err != nil {
+					return err
+				}
 			}
 			for _, n := range spec.Nodes {
 				if n.Terminate == nil {

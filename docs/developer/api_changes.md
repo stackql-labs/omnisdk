@@ -8,11 +8,11 @@ Migrating from `v0.1.3-alpha05`, the version stackql consumes, to the current tr
 |------------------|-----|---------------|
 | `Args.Auth *Auth` | removed | Put the credential under its provider in `Args.AuthByProvider`: `AuthByProvider: map[string]*omnisdk.Auth{"aws": a}`. A key is the namespaced name (`stackql_unstable_github`) or the document's (`github`); hand-authored methods use `aws`, `azure` (Entra included) and `google`. There is no query-wide credential: a provider with no entry authenticates from its document's defaults and the environment, never with another provider's entry. JSON `"auth"` is gone; use `"auth_by_provider": {"<provider>": {…}}`. |
 | `NewFromDoc(doc, resource, args)` | `NewFromDoc(doc, provider, resource, args)` | Name the provider whose credentials the call uses; a document alone does not say. |
-| `Graph` interface | Gains `Terminations()` | Only a caller that implements `Graph` must add it; graphs from `NewGraph` are unaffected. |
+| `Graph` interface | Gains `Terminations()`, `Branches()`, `Gates()` | Only a caller that implements `Graph` must add it; graphs from `NewGraph` are unaffected. |
 
 ## Additions
 
-`Termination` with `Rounds`, `Records`, `Within`, `AnyOf`, `AllOf`, and `WithTermination`; `Tuning.RowsAhead`, `Tuning.PagesAhead`, `Auth.Profile`, `Auth.Subject`, `AnalyzeDocuments`, package
+`Branch`, `Arm`, `Gate` with `NewBranch`, `NewArm`, `Otherwise`, `NewGate`, `WithBranch`; `Termination` with `Rounds`, `Records`, `Within`, `AnyOf`, `AllOf`, and `WithTermination`; `Tuning.RowsAhead`, `Tuning.PagesAhead`, `Auth.Profile`, `Auth.Subject`, `AnalyzeDocuments`, package
 `pkg/docparse/doclint`.
 
 ## Behaviour changes
@@ -40,5 +40,5 @@ Migrating from `v0.1.3-alpha05`, the version stackql consumes, to the current tr
 |------------------|-----|
 | `doc-select <doc> <resource>` | `doc-select <provider> <doc> <resource>` |
 | `"auth": {…}` in args JSON | `"auth_by_provider": {"<provider>": {…}}` |
-| — | `--rows-ahead`, `--pages-ahead`, `doc-lint <dir> [provider...]`; `doc-graph` node `terminate` (`rounds`, `records`, `within`) |
+| — | `--rows-ahead`, `--pages-ahead`, `doc-lint <dir> [provider...]`; `doc-graph` node `terminate` (`rounds`, `records`, `within`) and `branches` |
 | `--parallelism` bounds query fan-out | It also bounds IaC keys converging at once. `iac-apply` takes `tuning` from its spec, the flags filling what the spec leaves unset. |

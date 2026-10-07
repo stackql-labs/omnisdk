@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"slices"
 	"strings"
 	"sync"
@@ -26,11 +27,15 @@ type component struct {
 	cyclic  bool
 }
 
-// condense is Tarjan's condensation of the exchanges over their β dependencies, ordered so every
+// condense is Tarjan's condensation of the exchanges over their dependencies — β, and α, which
+// orders a node after another whose effect it depends on with no value passing — ordered so every
 // component follows the components it reads from (Kahn's, declaration order breaking ties). Members
 // of a component keep declaration order. Edges from a κ input (From "") are bindings, not
 // dependencies.
-func condense(exchanges []ExchangeSpec, betas []BetaEdge) []component {
+func condense(exchanges []ExchangeSpec, betas []BetaEdge, alphas []AlphaEdge) []component {
+	for _, a := range alphas {
+		betas = append(betas, NewBetaEdge(a.From(), a.To(), "", ""))
+	}
 	var names []string
 	pos := map[string]int{}
 	for _, x := range exchanges {
@@ -161,11 +166,12 @@ func cycleSpec(p Plan, c component) (facade.TerminationSpec, error) {
 // well-founded termination and an entry. It is what Compose checks first, exposed so a planner can
 // refuse a plan when it is made rather than when it is opened.
 func CheckCycles(p Plan) error {
+	p = controlled(p)
 	byName := make(map[string]ExchangeSpec, len(p.Exchanges()))
 	for _, x := range p.Exchanges() {
 		byName[x.Name()] = x
 	}
-	for _, c := range condense(p.Exchanges(), p.Betas()) {
+	for _, c := range condense(p.Exchanges(), p.Betas(), p.Alphas()) {
 		if !c.cyclic {
 			continue
 		}
@@ -228,9 +234,13 @@ func newCycleStage(p Plan, byName map[string]ExchangeSpec, c component, upstream
 	return s, nil
 }
 
-// startable reports whether every input of m can be had from outside the cycle.
+// startable reports whether every input of m can be had from outside the cycle. A gate from a
+// branch inside the cycle is no obstacle: on the cycle's first run nothing inside it has chosen yet.
 func (s *cycleStage) startable(m string) bool {
 	for _, attr := range s.members[m].In() {
+		if _, inner := s.innerGate(m, attr); inner {
+			continue
+		}
 		fromCycle, fromOutside := false, false
 		for _, e := range s.betas {
 			if e.To() != m || e.Tgt() != attr {
@@ -247,6 +257,16 @@ func (s *cycleStage) startable(m string) bool {
 		}
 	}
 	return true
+}
+
+// innerGate is the gate into m whose choice arrives as attr from a branch inside the cycle.
+func (s *cycleStage) innerGate(m, attr string) (AlphaEdge, bool) {
+	for _, a := range s.alphas {
+		if a.To() == m && a.Alpha() != nil && a.Alpha().On() != "" && ControlKey(a.From()) == attr && s.in[a.From()] {
+			return a, true
+		}
+	}
+	return nil, false
 }
 
 // value is m's input attr on base when its run was caused by from ("" for an entry's first run): the
@@ -354,6 +374,19 @@ func (s *cycleStage) invoke(ctx context.Context, m string, base map[string]any, 
 	x := s.members[m]
 	bound := make(map[string]any, len(x.In()))
 	for _, attr := range x.In() {
+		if g, inner := s.innerGate(m, attr); inner {
+			// A choice is an event: it fires the run it caused and no other. The cycle's first run
+			// has no choice to wait for.
+			switch from {
+			case "":
+				bound[attr] = g.Alpha().On()
+			case g.From():
+				bound[attr] = base[attr]
+			default:
+				bound[attr] = ""
+			}
+			continue
+		}
 		bound[attr] = s.value(base, m, attr, from)
 	}
 	if t := x.Inbound(); t != nil {
@@ -381,6 +414,11 @@ func (s *cycleStage) invoke(ctx context.Context, m string, base map[string]any, 
 		if !ok {
 			continue
 		}
+		// A member whose gates did not fire derives nothing: inside a cycle, passing the row through
+		// would hand the next round a record that is only the last one again.
+		if o[skippedKey] == true {
+			continue
+		}
 		rec, err := flat.Apply(bind.NewDocRecord(map[string]any{bind.KeyInput: base, bind.KeyOutput: o}))
 		if err != nil {
 			return nil, err
@@ -389,6 +427,8 @@ func (s *cycleStage) invoke(ctx context.Context, m string, base map[string]any, 
 		if !ok || merged == nil {
 			continue
 		}
+		// A flatten may hand back its input; tagging must not write into a row another record shares.
+		merged = maps.Clone(merged)
 		merged[memberKey] = m
 		out = append(out, bind.NewDocRecord(merged))
 	}

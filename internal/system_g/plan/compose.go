@@ -57,6 +57,7 @@ func ComposeRows(id int64, p Plan) facade.Operator {
 // composePipeline builds the staged bind-join pipeline (root → stages, egress-unshaped), shared by
 // Compose (byte terminal) and ComposeRows (row terminal). It stops before the terminal.
 func composePipeline(id int64, p Plan) (facade.Operator, error) {
+	p = controlled(p)
 	if err := Validate(p); err != nil {
 		return nil, err
 	}
@@ -64,7 +65,7 @@ func composePipeline(id int64, p Plan) (facade.Operator, error) {
 	for _, x := range p.Exchanges() {
 		byName[x.Name()] = x
 	}
-	comps := condense(p.Exchanges(), p.Betas())
+	comps := condense(p.Exchanges(), p.Betas(), p.Alphas())
 	// Every cycle is proved to stop before anything runs: a cycle whose termination is not
 	// well-founded, or that nothing outside it can start, is refused here rather than discovered
 	// mid-run.
@@ -146,7 +147,7 @@ func composePipeline(id int64, p Plan) (facade.Operator, error) {
 // dependency order, a cycle's members together in declaration order.
 func Order(exchanges []ExchangeSpec, betas []BetaEdge) []string {
 	var out []string
-	for _, c := range condense(exchanges, betas) {
+	for _, c := range condense(exchanges, betas, nil) {
 		out = append(out, c.members...)
 	}
 	return out
@@ -225,9 +226,11 @@ func betaSrc(betas []BetaEdge, to, attr string) (string, bool) {
 	return "", false
 }
 
+// alphaInto is the timing annotation on the edges into to: the first α with a delay. Gates carry no
+// timing; they are applied by controlled.
 func alphaInto(alphas []AlphaEdge, to string) facade.Alpha {
 	for _, a := range alphas {
-		if a.To() == to {
+		if a.To() == to && a.Alpha() != nil && a.Alpha().Delay() > 0 {
 			return a.Alpha()
 		}
 	}

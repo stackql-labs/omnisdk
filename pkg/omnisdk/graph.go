@@ -279,6 +279,9 @@ type Graph interface {
 	// Terminations bound the graph's cycles, keyed by alias: a cycle runs under the termination of
 	// any node in it that has one, and a cycle with none is refused when the query is planned.
 	Terminations() map[string]Termination
+	// Branches choose a way for each row; Gates say which nodes run on which arm.
+	Branches() []Branch
+	Gates() []Gate
 }
 
 // RowOps is what a graph does to rows beyond running its nodes: the filters every returned row
@@ -419,11 +422,15 @@ type graph struct {
 	fanout      map[string][]string
 	outputs     []query.Output
 	terminate   map[string]Termination
+	branches    []Branch
+	gates       []Gate
 }
 
 func (g graph) Outputs() []query.Output { return g.outputs }
 
 func (g graph) Terminations() map[string]Termination { return g.terminate }
+func (g graph) Branches() []Branch                   { return g.branches }
+func (g graph) Gates() []Gate                        { return g.gates }
 
 // WithTermination is g with the cycle through alias bounded by t. A node wired to itself, or to
 // nodes that wire back to it, forms a cycle; this is what stops it.
@@ -542,6 +549,13 @@ func NewGraphSelectQuery(dir string, g Graph, args Args) (Plan, error) {
 	reads := append([]query.Predicate(nil), g.Filters()...)
 	for _, o := range g.Outputs() {
 		reads = append(reads, query.NewTest(o.Expr()))
+	}
+	for _, b := range g.Branches() {
+		for _, a := range b.Arms() {
+			if a.When() != nil {
+				reads = append(reads, a.When())
+			}
+		}
 	}
 	for _, f := range reads {
 		for _, c := range predicateColumns(f) {
@@ -788,7 +802,35 @@ func NewGraphSelectQuery(dir string, g Graph, args Args) (Plan, error) {
 		break
 	}
 
-	pl := plan.NewPlan(specs, betas, nil, inputs, egress(g, fns, redactor{policy: args.Redaction, credentials: plumbing}), nil)
+	// Branches choose after the nodes they read; gates are α edges from the chosen arm to the nodes
+	// that run on it.
+	var alphas []plan.AlphaEdge
+	for _, b := range g.Branches() {
+		name := "branch__" + planName(b.Alias())
+		if other, clash := taken[name]; clash {
+			return nil, fmt.Errorf("omnisdk: branch %q and %q name the same plan exchange %q", b.Alias(), other, name)
+		}
+		taken[name] = b.Alias()
+		planned[b.Alias()] = name
+		var in []string
+		for _, a := range b.Arms() {
+			if a.When() == nil {
+				continue
+			}
+			for _, c := range predicateColumns(a.When()) {
+				key := hidden(c.Qualifier(), c.Name())
+				if !slices.Contains(in, key) {
+					in = append(in, key)
+					betas = append(betas, plan.NewBetaEdge(planned[c.Qualifier()], name, key, key))
+				}
+			}
+		}
+		specs = append(specs, plan.NewBranchSpec(name, in, chooser(b, fns)))
+	}
+	for _, x := range g.Gates() {
+		alphas = append(alphas, plan.NewAlphaEdge(planned[x.Branch()], planned[x.To()], bind.NewGateEdge(x.Arm())))
+	}
+	pl := plan.NewPlan(specs, betas, alphas, inputs, egress(g, fns, redactor{policy: args.Redaction, credentials: plumbing}), nil)
 	if ts := g.Terminations(); len(ts) > 0 {
 		specs := make(map[string]facade.TerminationSpec, len(ts))
 		for alias, t := range ts {
@@ -906,6 +948,28 @@ func wiredInputs(g Graph, alias string) []string {
 		}
 	}
 	return out
+}
+
+// chooser is b's choice for one row: the first arm whose condition holds there, an Otherwise arm
+// taking what is left. A condition that is unknown — a comparison with a missing value — does not
+// hold, as in SQL. No arm holding chooses nothing, and no gate fires.
+func chooser(b Branch, fns facade.FnRegistry) func(map[string]any) (string, error) {
+	f := filterTransform{fns: fns}
+	return func(bound map[string]any) (string, error) {
+		for _, a := range b.Arms() {
+			if a.When() == nil {
+				return a.Label(), nil
+			}
+			t, err := f.eval(a.When(), bound)
+			if err != nil {
+				return "", fmt.Errorf("omnisdk: branch %q, arm %q: %w", b.Alias(), a.Label(), err)
+			}
+			if t == isTrue {
+				return a.Label(), nil
+			}
+		}
+		return "", nil
+	}
 }
 
 // requiredOf is those of names ex requires: the inputs whose absence leaves nothing to ask.

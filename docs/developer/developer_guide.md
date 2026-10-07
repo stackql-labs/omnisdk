@@ -557,6 +557,31 @@ A crawl of a folder tree, the first parent a constant and each child the parent 
 From Go, `omnisdk.WithTermination(g, alias, omnisdk.Rounds(10))`, with `Records`, `Within`, `AnyOf`
 and `AllOf` alongside.
 
+### Branches
+
+A branch chooses, once per row, the first arm whose condition holds — if, else if, else — and makes
+no request. Gates say which nodes run on which arm; a node gated from several arms runs when any of
+them is chosen. A node whose gates did not fire makes no request, and the row passes through it
+untouched. Gates are control, not data: an empty value never decides which way a row goes.
+
+List a folder's children only where the folder is `a`:
+
+```bash
+./build/omnicli doc-graph $R '{
+  "nodes": [{"alias": "top", "address": "<provider>.<service>.folders", "params": {"parent": "root"}},
+            {"alias": "sub", "address": "<provider>.<service>.folders"}],
+  "wirings": [{"to": "sub", "inbound": [{"from": "top", "src": "id", "as": "parent"}]}],
+  "branches": [{"alias": "pick",
+                "arms": [{"label": "deep", "when": {"left": "top.id", "op": "=", "right": "a"}},
+                         {"label": "shallow"}],
+                "gates": [{"arm": "deep", "to": "sub"}]}]
+}'
+```
+
+An arm with no `when` takes every row left and must be last. Inside a cycle a gate fires only on the
+run its branch caused, so a poll loop exits through a branch: gate the poll on the pending arm and the
+detail read on the done arm. From Go: `NewBranch`, `NewArm`, `Otherwise`, `NewGate`, `WithBranch`.
+
 
 ### Memory
 
