@@ -2,6 +2,7 @@ package omnisdk_test
 
 import (
 	"context"
+	"fmt"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -11,6 +12,7 @@ import (
 	"testing"
 
 	"github.com/stackql-labs/omnisdk/pkg/omnisdk"
+	"github.com/stackql-labs/omnisdk/pkg/query"
 )
 
 // treeServer answers the children of a folder.
@@ -165,4 +167,54 @@ func TestUnionAll(t *testing.T) {
 	if got := run(capped); len(got) != 2 {
 		t.Errorf("union under limit 2 = %v", got)
 	}
+}
+
+// A left join needs only its ON: the other node's column reaches the joined node without a wiring.
+func TestLeftJoinByOnAlone(t *testing.T) {
+	var calls atomic.Int64
+	srv := treeServer(t, map[string][]string{"x": {"a", "b"}, "y": {"b"}}, &calls)
+	defer srv.Close()
+	g, err := omnisdk.NewGraphWithProjections(
+		[]omnisdk.Node{
+			omnisdk.NewNode("l", folders, map[string]string{"parent": "x"}),
+			omnisdk.NewOuterNode(omnisdk.NewNode("r", folders, map[string]string{"parent": "y"}),
+				[]query.Predicate{query.NewEq(query.NewColumn("r", "rid"), query.NewColumn("l", "lid"))}),
+		}, nil,
+		[]omnisdk.Projection{
+			mustProjection(t, "l", omnisdk.NewSelectColumn("lid", omnisdk.NewField("id"))),
+			mustProjection(t, "r", omnisdk.NewSelectColumn("rid", omnisdk.NewField("id"))),
+		})
+	if err != nil {
+		t.Fatal(err)
+	}
+	pl, err := omnisdk.NewGraphSelectQuery(authRegistry, g, omnisdk.Args{Endpoint: srv.URL})
+	if err != nil {
+		t.Fatal(err)
+	}
+	rows, err := pl.Open(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rows.Close()
+	var got []string
+	for rows.Next() {
+		r := rows.Row()
+		got = append(got, fmt.Sprintf("%v/%v", r["lid"], r["rid"]))
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatal(err)
+	}
+	slices.Sort(got)
+	if strings.Join(got, ",") != "a/<nil>,b/b" {
+		t.Errorf("rows = %v, want a unmatched and b matched", got)
+	}
+}
+
+func mustProjection(t *testing.T, alias string, cols ...omnisdk.SelectColumn) omnisdk.Projection {
+	t.Helper()
+	p, err := omnisdk.NewProjection(alias, cols)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return p
 }

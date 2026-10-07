@@ -910,7 +910,7 @@ func TestLeftJoinKeepsTheUnmatched(t *testing.T) {
 		},
 	)
 	rows, _ := runQuery(t, q)
-	if want := []string{"PolicyName=alice-policy,UserName=alice", "UserName=bob"}; !reflect.DeepEqual(rows, want) {
+	if want := []string{"PolicyName=<nil>,UserName=bob", "PolicyName=alice-policy,UserName=alice"}; !reflect.DeepEqual(rows, want) {
 		t.Errorf("rows = %v, want %v", rows, want)
 	}
 }
@@ -933,7 +933,7 @@ func TestLeftJoinConditionDecidesTheMatch(t *testing.T) {
 		},
 	)
 	rows, made := runQuery(t, q)
-	if want := []string{"a=alice,b=alice", "a=bob"}; !reflect.DeepEqual(rows, want) {
+	if want := []string{"a=alice,b=alice", "a=bob,b=<nil>"}; !reflect.DeepEqual(rows, want) {
 		t.Errorf("rows = %v, want %v", rows, want)
 	}
 	if want := []string{"ListUsers|us-east-1", "ListUsers|us-east-1"}; !reflect.DeepEqual(made, want) {
@@ -1104,7 +1104,7 @@ func TestLeftJoinSendsNothingForAMissingValue(t *testing.T) {
 		},
 	)
 	rows, made := runQuery(t, q)
-	if want := []string{"AccessKeyId=key-alice,UserName=alice", "UserName=bob"}; !reflect.DeepEqual(rows, want) {
+	if want := []string{"AccessKeyId=<nil>,UserName=bob", "AccessKeyId=key-alice,UserName=alice"}; !reflect.DeepEqual(rows, want) {
 		t.Errorf("rows = %v, want %v", rows, want)
 	}
 	var lastUsed []string

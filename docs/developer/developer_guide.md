@@ -607,6 +607,53 @@ source cicd/vol/vendor-secrets/secrets.sh
 
 A VPC's name lives in its tags, so the AWS leg reports its id; Google networks are global.
 
+### LEFT JOIN across clouds
+
+A node marked `outer` keeps every upstream row it matches nothing for, its columns absent; `on` says
+what a match is — this node's column against a literal (`right`) or another node's column
+(`right_col`). The other node's column reaches the joined one without a wiring.
+
+AWS VPCs, each with the Google network and Azure virtual network of the same name, where one exists:
+
+```bash
+source cicd/vol/vendor-secrets/secrets.sh
+./build/omnicli doc-graph test/corpus/registry '{
+ "nodes":[
+  {"alias":"a","address":"stackql_unstable_aws.ec2.vpcs"},
+  {"alias":"g","address":"stackql_unstable_google.compute.networks","outer":true,
+   "on":[{"left":"g.g_name","op":"=","right_col":"a.name"}]},
+  {"alias":"z","address":"stackql_unstable_azure.network.virtual_networks","outer":true,
+   "on":[{"left":"z.z_name","op":"=","right_col":"a.name"}]}],
+ "projections":[
+  {"alias":"a","select":[{"out":"name","field":"VpcId"},{"out":"aws_region","literal":"'"${_AWS_REGION}"'"}]},
+  {"alias":"g","select":[{"out":"g_name","field":"name"}]},
+  {"alias":"z","select":[{"out":"z_name","field":"name"},{"out":"z_region","field":"location"}]}],
+ "args":{"params":{"region":"'"${_AWS_REGION}"'","project":"'"${_GOOGLE_PROJECT_ID}"'",
+                   "subscription_id":"'"${AZURE_SUBSCRIPTION_ID}"'"}}
+}'
+```
+
+```bash
+source cicd/vol/vendor-secrets/secrets.sh
+./build/omnicli doc-graph test/corpus/registry '{
+ "nodes":[
+  {"alias":"a","address":"stackql_unstable_aws.ec2.vpcs"},
+  {"alias":"g","address":"stackql_unstable_google.compute.networks","outer":true,
+   "on":[{"left":"g.g_name","op":"=","right_col":"a.name"}]},
+  {"alias":"z","address":"stackql_unstable_azure.network.virtual_networks","outer":true,
+   "on":[{"left":"z.z_name","op":"=","right_col":"a.name"}]}],
+ "projections":[
+  {"alias":"a","select":[{"out":"aws_name","field":"VpcId"},{"out":"aws_region","literal":"'"${_AWS_REGION}"'"}]},
+  {"alias":"g","select":[{"out":"g_name","field":"name"}]},
+  {"alias":"z","select":[{"out":"z_name","field":"name"},{"out":"z_region","field":"location"}]}],
+ "args":{"params":{"region":"'"${_AWS_REGION}"'","project":"'"${_GOOGLE_PROJECT_ID}"'",
+                   "subscription_id":"'"${AZURE_SUBSCRIPTION_ID}"'"}}
+}'
+```
+
+The Google and Azure listings are each fetched once, not once per VPC: nothing they are asked for
+depends on the VPC, so the join runs over their rows.
+
 
 ### Memory
 

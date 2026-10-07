@@ -489,6 +489,15 @@ func main() {
 				Params  map[string]string `json:"params,omitempty"`
 				Verb    string            `json:"verb,omitempty"`
 				Body    map[string]any    `json:"body,omitempty"`
+				// Outer keeps each upstream row this node matches nothing for — a LEFT JOIN — and On
+				// is what a match is: this node's column compared with a literal or another node's.
+				Outer bool `json:"outer,omitempty"`
+				On    []struct {
+					Left     string `json:"left"`                // "<alias>.<column>"
+					Op       string `json:"op"`                  // = <> < <= > >=
+					Right    any    `json:"right,omitempty"`     // a literal
+					RightCol string `json:"right_col,omitempty"` // or "<alias>.<column>"
+				} `json:"on,omitempty"`
 				// Terminate bounds the cycle through this node; any bound reached stops it.
 				Terminate *struct {
 					Rounds  int    `json:"rounds,omitempty"`
@@ -553,7 +562,28 @@ func main() {
 			if verb == "" {
 				verb = "select"
 			}
-			nodes = append(nodes, omnisdk.NewMutationNode(n.Alias, n.Address, verb, n.Params, nil, n.Body))
+			node := omnisdk.NewMutationNode(n.Alias, n.Address, verb, n.Params, nil, n.Body)
+			if n.Outer || len(n.On) > 0 {
+				if !n.Outer {
+					return nil, fmt.Errorf("node %s: on needs outer; an inner match is a wiring", n.Alias)
+				}
+				var on []query.Predicate
+				for _, c := range n.On {
+					left, err := columnRef(c.Left)
+					if err != nil {
+						return nil, fmt.Errorf("node %s, on: %w", n.Alias, err)
+					}
+					var right query.Expr = query.NewLiteral(c.Right)
+					if c.RightCol != "" {
+						if right, err = columnRef(c.RightCol); err != nil {
+							return nil, fmt.Errorf("node %s, on: %w", n.Alias, err)
+						}
+					}
+					on = append(on, query.NewCompare(query.CompareOp(c.Op), left, right))
+				}
+				node = omnisdk.NewOuterNode(node, on)
+			}
+			nodes = append(nodes, node)
 		}
 		wirings := make([]omnisdk.Wiring, 0, len(spec.Wirings))
 		for _, wr := range spec.Wirings {
@@ -1045,4 +1075,13 @@ func parseExpr(e exprJSON) (omnisdk.Expression, error) {
 		args = append(args, x)
 	}
 	return omnisdk.NewCall(e.Fn, args...), nil
+}
+
+// columnRef parses "<alias>.<column>".
+func columnRef(s string) (query.Column, error) {
+	q, c, ok := strings.Cut(s, ".")
+	if !ok || q == "" || c == "" {
+		return nil, fmt.Errorf("%q must be <alias>.<column>", s)
+	}
+	return query.NewColumn(q, c), nil
 }

@@ -32,6 +32,8 @@ Migrating from `v0.1.3-alpha05`, the version stackql consumes, to the current tr
 | Hand-authored Google methods ask for `Auth.Scopes`, defaulting to `cloud-platform`; each asked for a fixed read-only scope. A document reads only the credential its scheme declares. | Callers of `gcp.*`/`google.*` methods relying on a read-only token; the identity's roles still limit what it can do. |
 | `Converge` runs keys as a dependency graph: a key starts once the keys it reads from are live, and up to `Tuning.Parallelism` (default 16) converge at once, sharing `Tuning.MaxPerHost`. Declaration order no longer matters; a dependency cycle is refused before anything is sent. The first failure stops new keys; keys in flight finish, then the run unwinds. | IaC callers who relied on declaration order, or on one key at a time. |
 | A node may be wired to itself, and nodes to each other: the cycle runs to a fixpoint under a termination checked well-founded at planning. A param and an arrival from the node's own cycle may share a name — the param is the first value. A cycle without a well-founded termination is refused before any request. | Graphs that relied on a self-wiring being rejected. |
+| A node's `On` may read another node's column with no wiring: the graph delivers it. | Graphs that wired those columns by hand still work. |
+| When every node has a projection, a row holds every projected column, NULL where it has no value — the unmatched side of a left join. | Anyone testing an unmatched column for absence rather than NULL. |
 | `NaN` compares as text, not as a number; it equalled every number. | Filters or joins comparing a value spelled `NaN`. |
 
 ## CLI
@@ -40,5 +42,5 @@ Migrating from `v0.1.3-alpha05`, the version stackql consumes, to the current tr
 |------------------|-----|
 | `doc-select <doc> <resource>` | `doc-select <provider> <doc> <resource>` |
 | `"auth": {…}` in args JSON | `"auth_by_provider": {"<provider>": {…}}` |
-| — | `--rows-ahead`, `--pages-ahead`, `doc-lint <dir> [provider...]`; `doc-graph` node `terminate` (`rounds`, `records`, `within`) and `branches`; `doc-union` |
+| — | `--rows-ahead`, `--pages-ahead`, `doc-lint <dir> [provider...]`; `doc-graph` node `terminate` (`rounds`, `records`, `within`) and `branches`, node `outer` and `on`; `doc-union` |
 | `--parallelism` bounds query fan-out | It also bounds IaC keys converging at once. `iac-apply` takes `tuning` from its spec, the flags filling what the spec leaves unset. |

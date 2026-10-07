@@ -410,7 +410,53 @@ func NewGraphWithFilters(nodes []Node, wirings []Wiring, projections []Projectio
 			return nil, fmt.Errorf("omnisdk: query-wide %q has no values", k)
 		}
 	}
+	wirings, err := deliverOn(nodes, wirings, known)
+	if err != nil {
+		return nil, err
+	}
 	return graph{nodes: nodes, wirings: wirings, overrides: overrides, projections: projections, filters: filters, fanout: fanout, outputs: outputs}, nil
+}
+
+// deliverOn wires every column a node's match conditions read from another node into that node's
+// inbox, under the other node's private key, where the conditions look for it. It is never sent: a
+// left join's ON reads it, as a filter would, and the caller states only the ON.
+func deliverOn(nodes []Node, wirings []Wiring, known map[string]bool) ([]Wiring, error) {
+	out := slices.Clone(wirings)
+	for _, n := range nodes {
+		var add []Inbound
+		for _, p := range n.On() {
+			for _, c := range predicateColumns(p) {
+				if c.Qualifier() == n.Alias() {
+					continue
+				}
+				if !known[c.Qualifier()] {
+					return nil, fmt.Errorf("omnisdk: %s matches on %s.%s, which the graph does not include", n.Alias(), c.Qualifier(), c.Name())
+				}
+				as := hidden(c.Qualifier(), c.Name())
+				if !slices.ContainsFunc(add, func(i Inbound) bool { return i.As() == as }) {
+					add = append(add, NewInbound(c.Qualifier(), c.Name(), as))
+				}
+			}
+		}
+		if len(add) == 0 {
+			continue
+		}
+		i := slices.IndexFunc(out, func(w Wiring) bool { return w.To() == n.Alias() })
+		if i < 0 {
+			out = append(out, NewWiring(n.Alias(), add, "", ""))
+			continue
+		}
+		w := out[i]
+		in := slices.Clone(w.Inbound())
+		for _, a := range add {
+			if !slices.ContainsFunc(in, func(x Inbound) bool { return x.As() == a.As() }) {
+				in = append(in, a)
+			}
+		}
+		typ, prog := w.Via()
+		out[i] = NewWiring(w.To(), in, typ, prog, w.Provides()...)
+	}
+	return out, nil
 }
 
 type graph struct {
@@ -1098,7 +1144,8 @@ func (d redactor) Apply(in facade.Page) (facade.Record, error) {
 	return bind.NewDocRecord(out), nil
 }
 
-// onlyColumns drops every column not named.
+// onlyColumns is the row as selected: every column named, NULL where the row has no value — the
+// unmatched side of a left join — and nothing else.
 type onlyColumns map[string]bool
 
 func (o onlyColumns) Apply(in facade.Page) (facade.Record, error) {
@@ -1110,9 +1157,10 @@ func (o onlyColumns) Apply(in facade.Page) (facade.Record, error) {
 		return nil, fmt.Errorf("omnisdk: egress received a %T, not a record", in)
 	}
 	out := make(map[string]any, len(o))
-	for k, v := range row {
-		if o[k] {
-			out[k] = v
+	for k := range o {
+		// A column kept only for an edge or a filter is not part of what was selected.
+		if !strings.HasPrefix(k, "\x00") {
+			out[k] = row[k]
 		}
 	}
 	return bind.NewDocRecord(out), nil
