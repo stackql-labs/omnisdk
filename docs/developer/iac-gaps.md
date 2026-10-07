@@ -88,7 +88,7 @@ can carry any column, fan out, and poll; an IaC dependency cannot.
 - **`Converge` is not expressed through it.** The flat-list entry point still runs its own
   create-or-refuse step; section 1 applies to it, not to `ConvergeGraph`.
 - **Compensation reverses creates only.** A failed run deletes what it created, addressed by
-  `AddressedBy`; an update or delete it made is reported outstanding.
+  `AddressedBy`; an update or delete it made stays done, and is reported as completed.
 - **One object per managed key.** A mutation node that runs for several rows writes every row to the
   same ledger key.
 - **No correlation stamp.** Nothing links a created object back to its key, so losing the ledger

@@ -444,16 +444,16 @@ func (p *convergeGraphPlan) Open(ctx context.Context) (Rows, error) {
 	if runErr == nil {
 		return &sliceRows{rows: out, i: -1}, nil
 	}
-	compensated, outstanding := p.compensate(ctx, run)
+	compensated, completed := p.compensate(ctx, run)
 	out = append(out, Row{"status": "failed", "error": runErr.Error(),
-		"compensated": keyStrings(compensated), "outstanding": keyStrings(outstanding)})
+		"compensated": keyStrings(compensated), "completed": keyStrings(completed)})
 	return &sliceRows{rows: out, i: -1}, nil
 }
 
 // compensate reverses what the run did, latest first: a create is deleted through its resource's
 // document, addressed by the identity it minted. A provider refusing a delete — a dependent still
 // there — is retried on the next pass, until a pass makes no progress. An update or delete is not
-// reversed, and is reported outstanding.
+// reversed: it completed, and is reported so.
 func (p *convergeGraphPlan) compensate(ctx context.Context, run *managedRun) (done, left []facade.LedgerKey) {
 	run.mu.Lock()
 	pending := slices.Clone(run.applied)
