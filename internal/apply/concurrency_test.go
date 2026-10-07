@@ -39,7 +39,7 @@ func (g *gated) Effect(ctx context.Context, exchange string, k facade.LedgerKey,
 	g.inflight++
 	g.peak = max(g.peak, g.inflight)
 	g.cond.Broadcast()
-	deadline := time.Now().Add(500 * time.Millisecond)
+	deadline := time.Now().Add(5 * time.Second)
 	for g.inflight < g.want && time.Now().Before(deadline) {
 		stop := time.AfterFunc(10*time.Millisecond, g.cond.Broadcast)
 		g.cond.Wait()
@@ -106,7 +106,7 @@ func TestIndependentKeysConvergeTogether(t *testing.T) {
 // Parallelism bounds how many converge at once, and every key still lands.
 func TestParallelismBoundsKeysInFlight(t *testing.T) {
 	tgt := newTarget()
-	g := newGated(tgt, 6)
+	g := newGated(tgt, 2)
 	res, err := runnerWith(t, tgt, g, 2).Apply(context.Background(), "run", "scope", vpcs("a", "b", "c", "d", "e", "f"))
 	if err != nil || !res.Complete() || len(res.Applied) != 6 {
 		t.Fatalf("res = %+v, err = %v", res, err)
@@ -149,12 +149,12 @@ func TestDependencyCycleIsRefused(t *testing.T) {
 }
 
 // A failure stops new keys from starting; one already in flight finishes, and everything attempted is
-// compensated.
+// compensated. b is held until a has failed, so a's failure is seen while b is still in flight.
 func TestFailureStopsNewKeysAndUnwindsWhatLanded(t *testing.T) {
 	tgt := newTarget()
 	tgt.failOn = "a"
-	g := newGated(tgt, 2)
-	res, err := runnerWith(t, tgt, g, 2).Apply(context.Background(), "run", "scope", vpcs("a", "b", "c"))
+	eff := &failFirst{target: tgt, aDone: make(chan struct{})}
+	res, err := runnerWith(t, tgt, eff, 2).Apply(context.Background(), "run", "scope", vpcs("a", "b", "c"))
 	if err != nil {
 		t.Fatalf("apply: %v", err)
 	}
@@ -174,4 +174,23 @@ func TestFailureStopsNewKeysAndUnwindsWhatLanded(t *testing.T) {
 	if !res.Unwound.Complete() || !got["a"] || !got["b"] || got["c"] {
 		t.Errorf("unwound = %+v, want a and b compensated, c untouched", res.Unwound)
 	}
+}
+
+// failFirst holds b's create until a's has returned, and a moment longer, so the run has seen a fail
+// before b finishes.
+type failFirst struct {
+	*target
+	aDone chan struct{}
+	once  sync.Once
+}
+
+func (f *failFirst) Effect(ctx context.Context, exchange string, k facade.LedgerKey, in facade.EffectInput) ([]byte, error) {
+	switch {
+	case k == "a" && strings.HasPrefix(exchange, "Create"):
+		defer f.once.Do(func() { close(f.aDone) })
+	case k == "b" && strings.HasPrefix(exchange, "Create"):
+		<-f.aDone
+		time.Sleep(100 * time.Millisecond)
+	}
+	return f.target.Effect(ctx, exchange, k, in)
 }

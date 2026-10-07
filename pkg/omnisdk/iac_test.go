@@ -295,8 +295,8 @@ func TestConvergeParallelismIsTunable(t *testing.T) {
 				inflight++
 				most = max(most, inflight)
 				cond.Broadcast()
-				deadline := time.Now().Add(500 * time.Millisecond)
-				for inflight < 3 && time.Now().Before(deadline) {
+				deadline := time.Now().Add(5 * time.Second)
+				for inflight < min(3, parallelism) && time.Now().Before(deadline) {
 					stop := time.AfterFunc(10*time.Millisecond, cond.Broadcast)
 					cond.Wait()
 					stop.Stop()
