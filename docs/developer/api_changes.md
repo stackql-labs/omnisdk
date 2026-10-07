@@ -12,7 +12,7 @@ Migrating from `v0.1.3-alpha05`, the version stackql consumes, to the current tr
 
 ## Additions
 
-`UnionAll`; `ConvergeGraph`, `NewRecallNode`, `NewDiffNode`, `Managed`/`NewManaged`, `DiffAbsent`/`DiffMatch`/`DiffDrift`; `Branch`, `Arm`, `Gate` with `NewBranch`, `NewArm`, `Otherwise`, `NewGate`, `WithBranch`; `Termination` with `Rounds`, `Records`, `Within`, `AnyOf`, `AllOf`, and `WithTermination`; `Tuning.RowsAhead`, `Tuning.PagesAhead`, `Auth.Profile`, `Auth.Subject`, `AnalyzeDocuments`, package
+`query.Cross` and `query.Listed` join forms, `NewMatchedNode`; `UnionAll`; `ConvergeGraph`, `NewRecallNode`, `NewDiffNode`, `Managed`/`NewManaged`, `DiffAbsent`/`DiffMatch`/`DiffDrift`; `Branch`, `Arm`, `Gate` with `NewBranch`, `NewArm`, `Otherwise`, `NewGate`, `WithBranch`; `Termination` with `Rounds`, `Records`, `Within`, `AnyOf`, `AllOf`, and `WithTermination`; `Tuning.RowsAhead`, `Tuning.PagesAhead`, `Auth.Profile`, `Auth.Subject`, `AnalyzeDocuments`, package
 `pkg/docparse/doclint`.
 
 ## Behaviour changes
@@ -42,5 +42,5 @@ Migrating from `v0.1.3-alpha05`, the version stackql consumes, to the current tr
 |------------------|-----|
 | `doc-select <doc> <resource>` | `doc-select <provider> <doc> <resource>` |
 | `"auth": {…}` in args JSON | `"auth_by_provider": {"<provider>": {…}}` |
-| — | `--rows-ahead`, `--pages-ahead`, `doc-lint <dir> [provider...]`; `doc-graph` node `terminate` (`rounds`, `records`, `within`) and `branches`, node `outer` and `on`; `doc-union` |
+| — | `--rows-ahead`, `--pages-ahead`, `doc-lint <dir> [provider...]`; `doc-graph` node `terminate` (`rounds`, `records`, `within`) and `branches`, node `outer` and `on` (`on` alone is a listed inner join); `doc-union` |
 | `--parallelism` bounds query fan-out | It also bounds IaC keys converging at once. `iac-apply` takes `tuning` from its spec, the flags filling what the spec leaves unset. |

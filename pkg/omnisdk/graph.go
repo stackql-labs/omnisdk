@@ -80,6 +80,11 @@ func NewOuterNode(n Node, on []query.Predicate) Node {
 		fanout: n.Fanout(), body: n.Body(), tuples: n.Tuples(), outer: true, on: on}
 }
 
+// NewMatchedNode makes n an inner join matched on its rows by on: a row before it survives only
+// with a match, and nothing in on is sent as a parameter — n is listed once and looked up. It is the
+// graph form of query.Listed.
+func NewMatchedNode(n Node, on []query.Predicate) Node { return innerOn(n, on) }
+
 // innerOn gives n match conditions without keeping unmatched upstream rows: an inner join's ON
 // placed on its node, so an equality can probe the node's rows rather than filter every pair.
 func innerOn(n Node, on []query.Predicate) Node {

@@ -1235,3 +1235,55 @@ func TestDefaultObjectKeyIsItems(t *testing.T) {
 		}
 	}
 }
+
+// users u LISTED JOIN access_keys k ON k.UserName = u.UserName — the same join as above, forced to
+// list: one ListAccessKeys with no UserName, matched on its rows, where Inner sends one per user. The
+// listing here answers for the caller only, so nothing matches — the risk the caller took on.
+func TestListedJoinListsOnce(t *testing.T) {
+	q := mustQuery(t,
+		[]query.Join{
+			query.NewJoin(users("u"), query.Base),
+			query.NewJoin(query.NewResource("k", "aws.iam.access_keys"), query.Listed,
+				query.NewEq(query.NewColumn("k", "UserName"), query.NewColumn("u", "UserName"))),
+		},
+		[]query.Predicate{regionEq()},
+		[]query.Output{
+			query.NewOutput("UserName", query.NewColumn("u", "UserName")),
+			query.NewOutput("AccessKeyId", query.NewColumn("k", "AccessKeyId")),
+		},
+	)
+	rows, made := runQuery(t, q)
+	if want := []string{"ListAccessKeys|us-east-1|", "ListUsers|us-east-1"}; !reflect.DeepEqual(made, want) {
+		t.Errorf("calls = %v, want one listing of each", made)
+	}
+	if len(rows) != 0 {
+		t.Errorf("rows = %v, want none: the caller-only listing matches no user", rows)
+	}
+}
+
+// users a CROSS JOIN users b: every pair, each reference listed once.
+func TestCrossJoin(t *testing.T) {
+	q := mustQuery(t,
+		[]query.Join{
+			query.NewJoin(users("a"), query.Base),
+			query.NewJoin(users("b"), query.Cross),
+		},
+		[]query.Predicate{regionEq()},
+		[]query.Output{
+			query.NewOutput("a", query.NewColumn("a", "UserName")),
+			query.NewOutput("b", query.NewColumn("b", "UserName")),
+		},
+	)
+	rows, made := runQuery(t, q)
+	if want := []string{"a=alice,b=alice", "a=alice,b=bob", "a=bob,b=alice", "a=bob,b=bob"}; !reflect.DeepEqual(rows, want) {
+		t.Errorf("rows = %v, want every pair", rows)
+	}
+	if want := []string{"ListUsers|us-east-1", "ListUsers|us-east-1"}; !reflect.DeepEqual(made, want) {
+		t.Errorf("calls = %v, want one listing per reference", made)
+	}
+	if _, err := query.New([]query.Join{query.NewJoin(users("a"), query.Base),
+		query.NewJoin(users("b"), query.Cross, query.NewEq(query.NewColumn("a", "UserName"), query.NewColumn("b", "UserName")))},
+		nil, nil); err == nil {
+		t.Error("a cross join with an ON was accepted")
+	}
+}

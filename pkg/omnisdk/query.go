@@ -181,7 +181,7 @@ func Resolve(q query.Unresolved, tables map[string]Table) (Resolution, error) {
 		fanout: map[string]map[string][]string{}, wide: map[string][]string{}, arrivals: map[string][]arrival{}, retain: map[string][]string{},
 		computed: map[string][]SelectColumn{}, body: map[string]any{},
 		outer: map[string][]query.Predicate{}, on: map[string][]query.Predicate{}}
-	var conjuncts []query.Predicate
+	var conjuncts, listed []query.Predicate
 	for _, j := range q.From() {
 		alias := j.Resource().Alias()
 		t, ok := tables[alias]
@@ -190,10 +190,17 @@ func Resolve(q query.Unresolved, tables map[string]Table) (Resolution, error) {
 		}
 		r.tables[alias] = t
 		r.order = append(r.order, alias)
-		if j.Form() == query.Left {
+		switch j.Form() {
+		case query.Left:
 			// A left join's ON decides what matches, not what survives: it is placed against the
 			// joined node, after the rest.
 			r.outer[alias] = j.On()
+			continue
+		case query.Cross:
+			continue
+		case query.Listed:
+			// Matched on the rows, never sent: placed once every edge is known.
+			listed = append(listed, j.On()...)
 			continue
 		}
 		// Under an inner join ON and WHERE are the same filter.
@@ -227,7 +234,9 @@ func Resolve(q query.Unresolved, tables map[string]Table) (Resolution, error) {
 			unbound = append(unbound, p)
 		}
 	}
-	// Equi-joins go after every edge is known, so the one each adds cannot close a cycle.
+	// Equi-joins go after every edge is known, so the one each adds cannot close a cycle. A listed
+	// join's ON is among them, whatever its methods take.
+	unbound = append(unbound, listed...)
 	for _, p := range unbound {
 		placed, err := r.hashJoin(p)
 		if err != nil {

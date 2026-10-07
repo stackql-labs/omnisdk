@@ -489,8 +489,9 @@ func main() {
 				Params  map[string]string `json:"params,omitempty"`
 				Verb    string            `json:"verb,omitempty"`
 				Body    map[string]any    `json:"body,omitempty"`
-				// Outer keeps each upstream row this node matches nothing for — a LEFT JOIN — and On
-				// is what a match is: this node's column compared with a literal or another node's.
+				// On is what a match is: this node's column compared with a literal or another node's,
+				// matched on this node's rows, never sent. Outer keeps each upstream row it matches
+				// nothing for — a LEFT JOIN; without it, unmatched rows are dropped — an inner join.
 				Outer bool `json:"outer,omitempty"`
 				On    []struct {
 					Left     string `json:"left"`                // "<alias>.<column>"
@@ -564,9 +565,6 @@ func main() {
 			}
 			node := omnisdk.NewMutationNode(n.Alias, n.Address, verb, n.Params, nil, n.Body)
 			if n.Outer || len(n.On) > 0 {
-				if !n.Outer {
-					return nil, fmt.Errorf("node %s: on needs outer; an inner match is a wiring", n.Alias)
-				}
 				var on []query.Predicate
 				for _, c := range n.On {
 					left, err := columnRef(c.Left)
@@ -581,7 +579,11 @@ func main() {
 					}
 					on = append(on, query.NewCompare(query.CompareOp(c.Op), left, right))
 				}
-				node = omnisdk.NewOuterNode(node, on)
+				if n.Outer {
+					node = omnisdk.NewOuterNode(node, on)
+				} else {
+					node = omnisdk.NewMatchedNode(node, on) // listed once, matched on its rows
+				}
 			}
 			nodes = append(nodes, node)
 		}

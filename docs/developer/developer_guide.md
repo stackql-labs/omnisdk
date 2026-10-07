@@ -639,9 +639,9 @@ source cicd/vol/vendor-secrets/secrets.sh
  "nodes":[
   {"alias":"a","address":"stackql_unstable_aws.ec2.vpcs"},
   {"alias":"g","address":"stackql_unstable_google.compute.networks","outer":true,
-   "on":[{"left":"g.g_name","op":"=","right_col":"a.name"}]},
+   "on":[{"left":"g.g_name","op":"=","right_col":"a.aws_name"}]},
   {"alias":"z","address":"stackql_unstable_azure.network.virtual_networks","outer":true,
-   "on":[{"left":"z.z_name","op":"=","right_col":"a.name"}]}],
+   "on":[{"left":"z.z_name","op":"=","right_col":"a.aws_name"}]}],
  "projections":[
   {"alias":"a","select":[{"out":"aws_name","field":"VpcId"},{"out":"aws_region","literal":"'"${_AWS_REGION}"'"}]},
   {"alias":"g","select":[{"out":"g_name","field":"name"}]},
@@ -653,6 +653,54 @@ source cicd/vol/vendor-secrets/secrets.sh
 
 The Google and Azure listings are each fetched once, not once per VPC: nothing they are asked for
 depends on the VPC, so the join runs over their rows.
+
+### Cross and listed joins
+
+Two more ways to combine listings, each listing every table once:
+
+- **Cross** — every row paired with every row: nodes with no wiring and no `on`. One empty listing
+  empties the product; mark it `outer` to keep the rest. In SQL, `query.Cross`.
+- **Listed** — an inner join matched on the rows: `on` without `outer`. A row survives only with a
+  match, and nothing in `on` is sent as a parameter, even where the joined table's methods take it —
+  so a listing is used where an inner join would ask once per row. In SQL, `query.Listed`; from Go,
+  `omnisdk.NewMatchedNode`.
+
+Every combination of VPC, Google network and Azure virtual network:
+
+```bash
+source cicd/vol/vendor-secrets/secrets.sh
+./build/omnicli doc-graph test/corpus/registry '{
+ "nodes":[
+  {"alias":"a","address":"stackql_unstable_aws.ec2.vpcs"},
+  {"alias":"g","address":"stackql_unstable_google.compute.networks"},
+  {"alias":"z","address":"stackql_unstable_azure.network.virtual_networks"}],
+ "projections":[
+  {"alias":"a","select":[{"out":"aws_name","field":"VpcId"},{"out":"aws_region","literal":"'"${_AWS_REGION}"'"}]},
+  {"alias":"g","select":[{"out":"g_name","field":"name"}]},
+  {"alias":"z","select":[{"out":"z_name","field":"name"},{"out":"z_region","field":"location"}]}],
+ "args":{"params":{"region":"'"${_AWS_REGION}"'","project":"'"${_GOOGLE_PROJECT_ID}"'",
+                   "subscription_id":"'"${AZURE_SUBSCRIPTION_ID}"'"}}
+}'
+```
+
+Only the networks named alike in all three clouds:
+
+```bash
+./build/omnicli doc-graph test/corpus/registry '{
+ "nodes":[
+  {"alias":"a","address":"stackql_unstable_aws.ec2.vpcs"},
+  {"alias":"g","address":"stackql_unstable_google.compute.networks",
+   "on":[{"left":"g.g_name","op":"=","right_col":"a.aws_name"}]},
+  {"alias":"z","address":"stackql_unstable_azure.network.virtual_networks",
+   "on":[{"left":"z.z_name","op":"=","right_col":"a.aws_name"}]}],
+ "projections":[
+  {"alias":"a","select":[{"out":"aws_name","field":"VpcId"},{"out":"aws_region","literal":"'"${_AWS_REGION}"'"}]},
+  {"alias":"g","select":[{"out":"g_name","field":"name"}]},
+  {"alias":"z","select":[{"out":"z_name","field":"name"},{"out":"z_region","field":"location"}]}],
+ "args":{"params":{"region":"'"${_AWS_REGION}"'","project":"'"${_GOOGLE_PROJECT_ID}"'",
+                   "subscription_id":"'"${AZURE_SUBSCRIPTION_ID}"'"}}
+}'
+```
 
 
 ### Memory
