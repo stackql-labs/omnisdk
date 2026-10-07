@@ -115,9 +115,16 @@ func composePipeline(id int64, p Plan) (facade.Operator, error) {
 		node := byName[name]
 		var bindings []bind.Binding
 		for _, attr := range node.In() {
-			if src, ok := betaSrc(p.Betas(), name, attr); ok {
-				bindings = append(bindings, bind.NewBinding(src, attr))
-			} else {
+			// An input may have several sources; any one satisfies it, the first with a value
+			// winning (see the join).
+			found := false
+			for _, e := range p.Betas() {
+				if e.To() == name && e.Tgt() == attr {
+					bindings = append(bindings, bind.NewBinding(e.Src(), attr))
+					found = true
+				}
+			}
+			if !found {
 				bindings = append(bindings, bind.NewBinding(attr, attr)) // κ/env by name
 			}
 		}

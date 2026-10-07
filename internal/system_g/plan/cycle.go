@@ -249,26 +249,31 @@ func (s *cycleStage) startable(m string) bool {
 	return true
 }
 
-// source is where m's input attr is read from when its run was caused by from ("" for an entry's
-// first run): the edge from that member, else the edge from outside the cycle, else a κ input of the
-// same name.
-func (s *cycleStage) source(m, attr, from string) string {
-	var outside string
+// value is m's input attr on base when its run was caused by from ("" for an entry's first run): the
+// edge from that member, else the first edge from outside the cycle carrying a value, else a κ input
+// of the same name.
+func (s *cycleStage) value(base map[string]any, m, attr, from string) any {
+	var outside []string
 	for _, e := range s.betas {
 		if e.To() != m || e.Tgt() != attr {
 			continue
 		}
 		if from != "" && e.From() == from {
-			return e.Src()
+			return base[e.Src()]
 		}
-		if !s.in[e.From()] && outside == "" {
-			outside = e.Src()
+		if !s.in[e.From()] {
+			outside = append(outside, e.Src())
 		}
 	}
-	if outside != "" {
-		return outside
+	for _, src := range outside {
+		if v := base[src]; !emptyValue(v) {
+			return v
+		}
 	}
-	return attr
+	if len(outside) > 0 {
+		return base[outside[0]]
+	}
+	return base[attr]
 }
 
 func (s *cycleStage) Open(ctx context.Context) facade.Records {
@@ -349,7 +354,7 @@ func (s *cycleStage) invoke(ctx context.Context, m string, base map[string]any, 
 	x := s.members[m]
 	bound := make(map[string]any, len(x.In()))
 	for _, attr := range x.In() {
-		bound[attr] = base[s.source(m, attr, from)]
+		bound[attr] = s.value(base, m, attr, from)
 	}
 	if t := x.Inbound(); t != nil {
 		shaped, err := bind.ApplyInbound(t, bound)

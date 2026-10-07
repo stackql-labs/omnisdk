@@ -208,6 +208,11 @@ func (o *op) do(ctx context.Context, token, overrideURL string) (int, []byte, st
 		u = subst(o.req.URL, o.bound)
 		q := url.Values{}
 		for k, v := range o.req.Query {
+			// A parameter that is one input with no value is not sent: an optional input nothing
+			// supplied is absent from the request, never present and blank.
+			if name := wholeParam(v); name != "" && str(o.bound[name]) == "" {
+				continue
+			}
 			q.Set(subst(k, o.bound), subst(v, o.bound))
 		}
 		if token != "" && o.req.Continuation.TokenParam != "" {

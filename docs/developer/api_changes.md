@@ -20,7 +20,7 @@ Migrating from `v0.1.3-alpha05`, the version stackql consumes, to the current tr
 | Change | Who is affected |
 |--------|-----------------|
 | A join on a column the other relation takes as an optional parameter is an edge (one request per left row), not a filter over an unscoped listing. | Joins such as `iam.users` to `iam.access_keys`: they return every user's keys, and cost one request per user. |
-| A wired value that arrives NULL or empty sends no request: the row is unmatched (left join) or dropped (inner join). | Anyone who saw a request go out with a blank parameter. |
+| An input with several sources is satisfied by any one, the first with a value winning. A required input with no value sends no request: the row is unmatched (left join) or dropped (inner join). An optional input with no value is left off the request, never sent blank. | Anyone who saw a request go out with a blank parameter, or relied on an empty optional input skipping the request. |
 | An inner join on an equality neither table takes as a parameter runs as a hash probe: the later table is listed once and looked up by the earlier one's value, not filtered over every pair. | No change in rows; joins over large tables cost far less. |
 | Methods tied on satisfied parameters prefer those taking no request body; the error lists the tied methods. | Azure `storage_accounts` by `subscription_id` uses `list`. |
 | Pagination is followed: the method's or document's declaration, Microsoft's `x-ms-pageable`, Google's `pageToken`/`nextPageToken`, AWS `Marker`/`NextToken`, and `Link` headers. | Every multi-page list, which returned its first page only. |

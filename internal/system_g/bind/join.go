@@ -202,8 +202,13 @@ func (e *bindJoinExchange) Open(ctx context.Context) facade.Records {
 			if !ok {
 				continue
 			}
+			// An input with several sources is satisfied by any one of them: the first carrying a
+			// value wins, and a later source never blanks it.
 			bound := make(map[string]any, len(e.bindings))
 			for _, b := range e.bindings {
+				if cur, set := bound[b.Tgt()]; set && !emptyValue(cur) {
+					continue
+				}
 				bound[b.Tgt()] = row[b.Src()]
 			}
 			// T_in (§T): the assembled inbox becomes the consumer's inputs. It runs once every
@@ -312,4 +317,13 @@ func mergeMaps(a, b map[string]any) map[string]any {
 		out[k] = v
 	}
 	return out
+}
+
+// emptyValue is a value that satisfies nothing: absent, null or the empty string.
+func emptyValue(v any) bool {
+	if v == nil {
+		return true
+	}
+	s, ok := v.(string)
+	return ok && s == ""
 }

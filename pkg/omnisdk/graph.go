@@ -16,6 +16,7 @@ import (
 	"github.com/stackql-labs/omnisdk/internal/system_g/fn"
 	"github.com/stackql-labs/omnisdk/internal/system_g/plan"
 	"github.com/stackql-labs/omnisdk/internal/system_g/transform"
+	"github.com/stackql-labs/omnisdk/pkg/docparse/aot"
 	"github.com/stackql-labs/omnisdk/pkg/docparse/dsl"
 	"github.com/stackql-labs/omnisdk/pkg/docparse/dsl/gotemplate"
 	"github.com/stackql-labs/omnisdk/pkg/docparse/dsl/schemaxml"
@@ -758,9 +759,9 @@ func NewGraphSelectQuery(dir string, g Graph, args Args) (Plan, error) {
 		if n.Outer() {
 			spec = leftOuter{ExchangeSpec: spec}
 		}
-		// A value a wiring delivers NULL or empty means nothing to ask about: the node has no match
-		// for that row, and no request is made — never one sent with the parameter blank.
-		if names := wiredInputs(g, alias); len(names) > 0 {
+		// A required input with no value means nothing to ask about: the node has no match for that
+		// row, and no request is made. An optional input with no value is simply not sent.
+		if names := requiredOf(ex, wiredInputs(g, alias)); len(names) > 0 {
 			spec = guarded{ExchangeSpec: spec, names: names}
 		}
 		if attrs := emits[alias]; len(attrs) > 0 {
@@ -902,6 +903,23 @@ func wiredInputs(g Graph, alias string) []string {
 	for _, in := range w.Inbound() {
 		if !strings.HasPrefix(in.As(), "\x00") {
 			out = append(out, in.As())
+		}
+	}
+	return out
+}
+
+// requiredOf is those of names ex requires: the inputs whose absence leaves nothing to ask.
+func requiredOf(ex aot.AOTExchange, names []string) []string {
+	required := map[string]bool{}
+	for _, p := range ex.Request().Parameters() {
+		if p.Required() {
+			required[p.Name()] = true
+		}
+	}
+	var out []string
+	for _, n := range names {
+		if required[n] && !slices.Contains(out, n) {
+			out = append(out, n)
 		}
 	}
 	return out
