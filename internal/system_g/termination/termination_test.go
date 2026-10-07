@@ -118,3 +118,48 @@ func TestNestedComposition(t *testing.T) {
 		t.Error("nested Any with elapsed deadline = false, want true")
 	}
 }
+
+// A spec is well-founded exactly when its stop rests on a positive bound; "any" needs one such
+// alternative, "all" needs every condition to be one.
+func TestSpecWellFounded(t *testing.T) {
+	for _, c := range []struct {
+		name string
+		spec facade.TerminationSpec
+		ok   bool
+	}{
+		{"rounds", termination.Rounds(3), true},
+		{"zero rounds", termination.Rounds(0), false},
+		{"records", termination.Records(10), true},
+		{"negative records", termination.Records(-1), false},
+		{"within", termination.Within(time.Second), true},
+		{"zero within", termination.Within(0), false},
+		{"any with one bound", termination.AnyOf(termination.Rounds(0), termination.Within(time.Second)), true},
+		{"any with none", termination.AnyOf(termination.Rounds(0), termination.Records(0)), false},
+		{"empty any", termination.AnyOf(), false},
+		{"all bounded", termination.AllOf(termination.Rounds(2), termination.Records(5)), true},
+		{"all with one unbounded", termination.AllOf(termination.Rounds(2), termination.Records(0)), false},
+		{"empty all", termination.AllOf(), false},
+	} {
+		if err := c.spec.WellFounded(); (err == nil) != c.ok {
+			t.Errorf("%s: WellFounded = %v, want ok=%v", c.name, err, c.ok)
+		}
+	}
+}
+
+// A spec's policy stops where it says: rounds by round, records by emitted, within by the clock from
+// the loop's own start.
+func TestSpecPolicy(t *testing.T) {
+	now := time.Now()
+	if p := termination.Rounds(2).Policy(now); p.Stop(facade.Progress{Round: 1}) || !p.Stop(facade.Progress{Round: 2}) {
+		t.Error("rounds(2)")
+	}
+	if p := termination.Records(3).Policy(now); p.Stop(facade.Progress{Emitted: 2}) || !p.Stop(facade.Progress{Emitted: 3}) {
+		t.Error("records(3)")
+	}
+	if p := termination.Within(time.Hour).Policy(now.Add(-2 * time.Hour)); !p.Stop(facade.Progress{}) {
+		t.Error("within counts from the loop's start")
+	}
+	if p := termination.AnyOf(termination.Rounds(0), termination.Rounds(5)).Policy(now); p.Stop(facade.Progress{Round: 0}) {
+		t.Error("an unbounded alternative must not stop the loop before it starts")
+	}
+}

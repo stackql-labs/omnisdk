@@ -98,6 +98,19 @@ type TerminationPolicy interface {
 	Stop(p Progress) bool
 }
 
+// TerminationSpec is a termination policy as data, so its soundness is decided before anything runs.
+// A loop that executes needs a spec whose WellFounded is nil: its stop rests on a measure with no
+// infinite descending chain — rounds, records, elapsed time — never on "stop when done", which a
+// loop deriving something new every round never reaches.
+type TerminationSpec interface {
+	// WellFounded is nil when the spec provably stops every loop it governs, and otherwise says why
+	// it does not.
+	WellFounded() error
+	// Policy is the spec's runtime form for one loop starting at start: a deadline counts from the
+	// loop, not from when the plan was made.
+	Policy(start time.Time) TerminationPolicy
+}
+
 // Attempt is the outcome of one try of a potentially-ephemeral operation, handed to a
 // RetryPolicy to decide the next move. A read-only value (DTO), not a behaviour.
 type Attempt struct {
@@ -263,6 +276,9 @@ type Alpha interface {
 	Component
 	// Delay is the timing annotation: traversal of this edge waits this long (0 = none).
 	Delay() time.Duration
+	// On is the event that fires the edge: a branch's arm, for a gate. Empty fires on every arrival.
+	// A node with gates runs only for a row on which one of them fired.
+	On() string
 }
 
 // FormClass is the system-wide class of side effect an exchange enacts (§saga, F).

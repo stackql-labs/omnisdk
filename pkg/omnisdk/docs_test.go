@@ -20,11 +20,11 @@ import (
 
 const networks = "stackql_unstable_google.compute.networks"
 
-// networksHaveARowPath gives compute.networks.list the row path its document omits.
+// networksHaveARowPath points compute.networks.list at a row path other than the default $.items.
 var networksHaveARowPath = omnisdk.DocPatch{
 	Service: "stackql_unstable_google.compute",
 	Merge: json.RawMessage(`{"components":{"x-stackQL-resources":{"networks":{"methods":{"list":` +
-		`{"response":{"objectKey":"$.items"}}}}}}}`),
+		`{"response":{"objectKey":"$.extra"}}}}}}}`),
 }
 
 // countNetworks lists networks from dir against a stub answering two, and counts the rows.
@@ -36,7 +36,7 @@ func countNetworks(t *testing.T, dir string) int {
 			fmt.Fprint(w, `{"access_token":"tok","expires_in":3600}`)
 			return
 		}
-		fmt.Fprint(w, `{"kind":"compute#networkList","items":[{"name":"n1"},{"name":"n2"}]}`)
+		fmt.Fprint(w, `{"kind":"compute#networkList","items":[{"name":"n1"},{"name":"n2"}],"extra":[{"name":"x"}]}`)
 	}))
 	defer srv.Close()
 	g, err := omnisdk.NewGraph([]omnisdk.Node{omnisdk.NewNode("n", networks, nil)}, nil)
@@ -82,11 +82,11 @@ func TestPatchedViewIsTheCallersAlone(t *testing.T) {
 	if err != nil {
 		t.Fatalf("view: %v", err)
 	}
-	if got := countNetworks(t, view); got != 2 {
-		t.Errorf("patched view: %d rows, want one per network", got)
+	if got := countNetworks(t, view); got != 1 {
+		t.Errorf("patched view: %d rows, want the one at $.extra", got)
 	}
-	if got := countNetworks(t, corpus); got != 1 {
-		t.Errorf("base: %d rows, want the unpatched document's single envelope", got)
+	if got := countNetworks(t, corpus); got != 2 {
+		t.Errorf("base: %d rows, want the two at the default $.items", got)
 	}
 	if fileSum(t, baseDoc) != before {
 		t.Error("the base document changed")
@@ -273,6 +273,11 @@ func TestCreatePollThenGet(t *testing.T) {
 	kept := runCreatePoll(t, view, g, omnisdk.Args{Endpoint: srv.URL, Redaction: omnisdk.RedactNone()})
 	if kept[0]["token"] != "tok" {
 		t.Errorf("RedactNone dropped the token: %v", kept[0])
+	}
+	opPolls = 0
+	back := runCreatePoll(t, view, g, omnisdk.Args{Endpoint: srv.URL, Redaction: omnisdk.DefaultRedaction()})
+	if _, ok := back[0]["token"]; ok {
+		t.Errorf("DefaultRedaction kept the token: %v", back[0])
 	}
 	opPolls = 0
 	less := runCreatePoll(t, view, g, omnisdk.Args{Endpoint: srv.URL,

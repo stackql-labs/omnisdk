@@ -140,8 +140,10 @@ func newRowsOutput(upstream facade.Operator, transforms []facade.Transform) faca
 	return &rowsOutput{upstream: upstream, transforms: transforms}
 }
 
+// Open bounds the rows produced ahead of the consumer by the run's read-ahead. Unbounded, a consumer
+// slower than the network holds the whole result in memory; bounded, the producer waits.
 func (e *rowsOutput) Open(ctx context.Context) facade.Records {
-	buf := buffer.NewBuffer(1, 1024, 0)
+	buf := buffer.NewBuffer(1, 1024, buffer.RowsAhead(ctx))
 	in := e.upstream.Open(ctx)
 	go func() {
 		var cerr error

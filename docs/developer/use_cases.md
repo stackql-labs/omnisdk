@@ -2,7 +2,7 @@
 # Use cases
 
 
-Broadly, the reuisite setup for excret and build here is identical to [the developer guide](/docs/developer/developer_guide.md).  We will repeat some things for easy of copy paste, but not all, refere developer guide in all cases for full clarity on build and auth.
+Broadly, the requisite setup for excret and build here is identical to [the developer guide](/docs/developer/developer_guide.md).  We will repeat some things for easy of copy paste, but not all, refere developer guide in all cases for full clarity on build and auth.
 
 ```bash
 go build -o build/omnicli ./cmd/omnicli
@@ -68,8 +68,8 @@ against unchanged intent issues no API calls at all.
 Every effect is compiled from the provider document that declares it, so `--registry` names the
 document root and a new service is a document rather than code.
 
-`--name` is the collection — the ledger key prefix, the lease scope, and the correlation tag stamped
-on each object. `--state` is where that ledger lives; one state directory holds many collections.
+`--name` is the collection — the handle a later run uses to address the same resources, and the
+correlation tag stamped on each object. `--state` is where that ledger lives; one state directory holds many collections.
 Neither is defaulted: both decide which resources a run applies to.
 
 ```bash
@@ -86,8 +86,7 @@ Neither is defaulted: both decide which resources a run applies to.
 ```
 
 Run it again and it converges: the ledger says both keys are live, a live read agrees, and no create
-is issued. The run still takes the lease and writes no journal, which is what a no-op looks like on
-disk.
+is issued, and no journal is written.
 
 State lands under `cicd/work/iac-state` (gitignored), one file per key version — nothing is
 overwritten in place:
@@ -189,11 +188,6 @@ which the document declares, so no field is scattered into the query:
 }'
 ```
 
-> **Verified:** the AWS case end to end against real EC2, and the Google body shape against a
-> stand-in (`TestGoogleCreateSendsTheIntentAsABody`). Azure's declaration follows its document's
-> signature and has not been run. GCP creates return an async Operation, so a run reports success
-> once the call is accepted — waiting for completion needs an α edge and is not built.
-
 ### Calling it from Go
 
 The CLI is a thin consumer; a client such as stackql uses the same facade:
@@ -222,14 +216,15 @@ whether it is reading or provisioning.
 
 **Auth is identical to every other call.** `Args` carries it, resolved exactly as a query resolves
 it: the provider document declares the scheme — `aws_signing_v4`, `service_account`, `oauth2` — and
-the credential comes from `Args.Auth`, falling back to the canonical environment variables. A
+the credential comes from the provider's entry in `Args.AuthByProvider`, falling back to the canonical environment variables. A
 provisioning run signs, or exchanges a token, by the same code path a read does, so a consumer that
 can already query a provider can already provision against it.
 
 ```go
 omnisdk.Converge(registry, name, state, runID, res, omnisdk.Args{
-    // Auth is optional: nil falls back to the canonical AWS_*, AZURE_* and GOOGLE_* variables.
-    Auth:   &omnisdk.Auth{AccessKeyID: "...", SecretAccessKey: "..."},
+    // Auth is per provider and optional: a provider absent here falls back to the canonical AWS_*,
+    // AZURE_* and GOOGLE_* variables. One provider's credential never reaches another.
+    AuthByProvider: map[string]*omnisdk.Auth{"aws": {AccessKeyID: "...", SecretAccessKey: "..."}},
     Params: map[string]string{"region": "us-east-1"},   // scope: required, never inferred
 })
 ```
@@ -247,6 +242,8 @@ res, err := bp.Resources(map[string]string{"region": "us-east-1", "vpc_cidr": "1
 
 ### Limits
 
+- **GCP creates are not awaited.** A create returns an async Operation, and the run reports success
+  once the call is accepted.
 - **No destroy command.** Nothing tears down a successful run; delete by hand with
   `aws ec2 delete-subnet` then `delete-vpc`.
 - **CIDRs are immutable in EC2**, so changing either is refused rather than replaced — no update

@@ -31,9 +31,12 @@ type buffer struct {
 	done     bool  // producer reached EOF; no further appends
 	err      error // terminal error (nil on clean EOF)
 
-	// storage: chunked so existing chunks never move under readers.
+	// storage: chunked so existing chunks never move under readers. chunks[0] holds absolute chunk
+	// base: a chunk every reader has passed is dropped, so storage follows the live records rather
+	// than everything ever published.
 	chunkSize int
 	chunks    [][]facade.Record
+	base      int
 
 	// back-pressure: max live (published-but-unreleased) records; 0 = unbounded.
 	capacity int
@@ -43,6 +46,61 @@ type buffer struct {
 	assigned int   // reader ids handed out so far
 	closed   int   // readers that have Closed; == readers ⇒ nobody consuming
 	cursors  []int // per-reader next-index-to-read
+}
+
+// Defaults for how far producers run ahead of their readers, in records: a row stage holds a chunk,
+// a request holds enough responses to overlap the next page's round trip with reading this one.
+const (
+	DefaultRowsAhead  = 1024
+	DefaultPagesAhead = 2
+)
+
+type aheadKey struct{}
+
+type ahead struct{ rows, pages int }
+
+// WithAhead carries a run's read-ahead onto ctx: rows for a stage of records, pages for a request's
+// responses. Zero is the default; negative is unbounded, which trades memory for never waiting on a
+// slow reader.
+func WithAhead(ctx context.Context, rows, pages int) context.Context {
+	return context.WithValue(ctx, aheadKey{}, ahead{rows: resolveAhead(rows, DefaultRowsAhead), pages: resolveAhead(pages, DefaultPagesAhead)})
+}
+
+func resolveAhead(n, def int) int {
+	switch {
+	case n == 0:
+		return def
+	case n < 0:
+		return 0
+	}
+	return n
+}
+
+// RowsAhead is the capacity of a row stage under ctx; 0 is unbounded.
+func RowsAhead(ctx context.Context) int {
+	if a, ok := ctx.Value(aheadKey{}).(ahead); ok {
+		return a.rows
+	}
+	return DefaultRowsAhead
+}
+
+// PagesAhead is the capacity of a request's responses under ctx; 0 is unbounded.
+func PagesAhead(ctx context.Context) int {
+	if a, ok := ctx.Value(aheadKey{}).(ahead); ok {
+		return a.pages
+	}
+	return DefaultPagesAhead
+}
+
+// Ahead is the capacity a stage with readers runs under: n records produced ahead of a lone reader,
+// so memory follows the slowest consumer rather than the size of the result. With several readers it
+// is unbounded: they may drain one after another, and a bound would park the producer on a reader
+// that has not started.
+func Ahead(readers, n int) int {
+	if readers == 1 {
+		return n
+	}
+	return 0
 }
 
 // NewBuffer builds a buffer for exactly `readers` consumers. chunkSize sizes each
@@ -119,7 +177,7 @@ func (b *buffer) Reader() facade.Records {
 
 // put stores r at absolute index i, growing chunks as needed. Caller holds mu.
 func (b *buffer) put(i int, r facade.Record) {
-	c := i / b.chunkSize
+	c := i/b.chunkSize - b.base
 	for len(b.chunks) <= c {
 		b.chunks = append(b.chunks, make([]facade.Record, b.chunkSize))
 	}
@@ -129,7 +187,7 @@ func (b *buffer) put(i int, r facade.Record) {
 // at fetches the record at absolute index i. Caller holds mu; i must be < length and
 // >= released (not yet reclaimed).
 func (b *buffer) at(i int) facade.Record {
-	return b.chunks[i/b.chunkSize][i%b.chunkSize]
+	return b.chunks[i/b.chunkSize-b.base][i%b.chunkSize]
 }
 
 // reclaim frees every record below the slowest cursor. Caller holds mu.
@@ -141,8 +199,13 @@ func (b *buffer) reclaim() {
 		}
 	}
 	for b.released < low {
-		b.chunks[b.released/b.chunkSize][b.released%b.chunkSize] = nil
+		b.chunks[b.released/b.chunkSize-b.base][b.released%b.chunkSize] = nil
 		b.released++
+	}
+	for len(b.chunks) > 0 && (b.base+1)*b.chunkSize <= b.released {
+		b.chunks[0] = nil
+		b.chunks = b.chunks[1:]
+		b.base++
 	}
 }
 

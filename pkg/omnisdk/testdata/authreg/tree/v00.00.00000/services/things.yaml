@@ -1,0 +1,31 @@
+openapi: 3.0.0
+info: {title: things, version: v1}
+servers:
+  - url: https://api.example.com
+paths:
+  /tree/folders:
+    get:
+      operationId: list_folders
+      parameters:
+        - {name: parent, in: query, required: true, schema: {type: string}}
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    id: {type: string}
+components:
+  x-stackQL-resources:
+    folders:
+      id: tree.things.folders
+      name: folders
+      methods:
+        list:
+          operation: {$ref: '#/paths/~1tree~1folders/get'}
+          response: {mediaType: application/json, openAPIDocKey: '200'}
+      sqlVerbs:
+        select: [{$ref: '#/components/x-stackQL-resources/folders/methods/list'}]

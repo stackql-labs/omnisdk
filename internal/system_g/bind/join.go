@@ -58,6 +58,12 @@ type bindJoinExchange struct {
 	inbound  facade.Transform
 }
 
+// ApplyInbound runs T_in over an assembled inbox, for an executor other than the join that binds an
+// exchange's inputs — a condensed cycle binds each round's inputs itself.
+func ApplyInbound(t facade.Transform, bound map[string]any) (map[string]any, error) {
+	return applyInbound(t, bound)
+}
+
 // applyInbound runs T_in over the assembled inbox and returns the consumer's inputs. The transform
 // sees the whole inbox, so it can build one input from several — an identifier from one producer
 // wrapped into a filter expression the consumer's API actually accepts.
@@ -155,7 +161,7 @@ func (e *bindJoinExchange) WriteTo(w io.Writer) (int64, error) {
 // schedule.Run); rows carry no cross-row dependency, so emission order is not preserved. First error
 // cancels in-flight rows and is returned after they drain.
 func (e *bindJoinExchange) Open(ctx context.Context) facade.Records {
-	buf := buffer.NewBuffer(e.getReaderCount(), 1024, 0)
+	buf := buffer.NewBuffer(e.getReaderCount(), 1024, buffer.Ahead(e.getReaderCount(), buffer.RowsAhead(ctx)))
 	outer := e.outer.Open(ctx)
 	go func() {
 		var cerr error
@@ -196,8 +202,13 @@ func (e *bindJoinExchange) Open(ctx context.Context) facade.Records {
 			if !ok {
 				continue
 			}
+			// An input with several sources is satisfied by any one of them: the first carrying a
+			// value wins, and a later source never blanks it.
 			bound := make(map[string]any, len(e.bindings))
 			for _, b := range e.bindings {
+				if cur, set := bound[b.Tgt()]; set && !emptyValue(cur) {
+					continue
+				}
 				bound[b.Tgt()] = row[b.Src()]
 			}
 			// T_in (§T): the assembled inbox becomes the consumer's inputs. It runs once every
@@ -306,4 +317,13 @@ func mergeMaps(a, b map[string]any) map[string]any {
 		out[k] = v
 	}
 	return out
+}
+
+// emptyValue is a value that satisfies nothing: absent, null or the empty string.
+func emptyValue(v any) bool {
+	if v == nil {
+		return true
+	}
+	s, ok := v.(string)
+	return ok && s == ""
 }

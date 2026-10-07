@@ -275,3 +275,15 @@ func (c *catalog) servicesLocked() []string {
 	sort.Strings(out)
 	return out
 }
+
+// MissingDocuments are the services the provider names a document for that the bundle lacks, with
+// the path it names. They are not addressable; an analyzer reports them.
+func (c *catalog) MissingDocuments() map[string]string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	out := make(map[string]string, len(c.missing))
+	for k, v := range c.missing {
+		out[k] = v
+	}
+	return out
+}
