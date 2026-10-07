@@ -531,13 +531,176 @@ That third one is the clearest case for `T_in` living on the consumer: `Subnets_
 inputs, one of which is derived from a different field of the same producer. A per-edge transform
 could not express it.
 
-> **Verified:** all three compose — `TestGuideGraphsCompose` builds each graph published here and
-> fails on the errors that used to reach a reader instead: an input nothing supplies, two documents
-> whose methods share a name, an auth exchange never wired in. The AWS case is additionally executed
-> against a stand-in EC2 (`TestGraphJoinsTwoExchangesTheDocumentDoesNotRelate`).
->
-> Google and Azure have not been run against a live provider, so their row paths and field names come
-> from the documents rather than from observed responses.
+`TestGuideGraphsCompose` builds each graph published here.
+
+### Cycles
+
+A node wired to itself, or nodes wired to each other, form a cycle. The plan condenses it and runs it
+to a fixpoint: the members a value from outside can start run first, then each round sends every new
+row along the cycle's own edges, until a round finds nothing new or the cycle's termination stops it.
+
+Every cycle needs a termination, and it must be well-founded — a bound on rounds, rows or time. "Stop
+when nothing new arrives" alone is not: a cycle that finds something new every round never stops.
+Both are checked when the query is planned, before any request.
+
+A crawl of a folder tree, the first parent a constant and each child the parent of the next request:
+
+```bash
+./build/omnicli doc-graph $R '{
+  "nodes": [{"alias": "f", "address": "<provider>.<service>.folders",
+             "params": {"parent": "root"}, "terminate": {"rounds": 10}}],
+  "wirings": [{"to": "f", "inbound": [{"from": "f", "src": "id", "as": "parent"}]}]
+}'
+```
+
+`terminate` takes `rounds`, `records` and `within` (a duration); the first reached stops the cycle.
+From Go, `omnisdk.WithTermination(g, alias, omnisdk.Rounds(10))`, with `Records`, `Within`, `AnyOf`
+and `AllOf` alongside.
+
+### Branches
+
+A branch chooses, once per row, the first arm whose condition holds — if, else if, else — and makes
+no request. Gates say which nodes run on which arm; a node gated from several arms runs when any of
+them is chosen. A node whose gates did not fire makes no request, and the row passes through it
+untouched. Gates are control, not data: an empty value never decides which way a row goes.
+
+List a folder's children only where the folder is `a`:
+
+```bash
+./build/omnicli doc-graph $R '{
+  "nodes": [{"alias": "top", "address": "<provider>.<service>.folders", "params": {"parent": "root"}},
+            {"alias": "sub", "address": "<provider>.<service>.folders"}],
+  "wirings": [{"to": "sub", "inbound": [{"from": "top", "src": "id", "as": "parent"}]}],
+  "branches": [{"alias": "pick",
+                "arms": [{"label": "deep", "when": {"left": "top.id", "op": "=", "right": "a"}},
+                         {"label": "shallow"}],
+                "gates": [{"arm": "deep", "to": "sub"}]}]
+}'
+```
+
+An arm with no `when` takes every row left and must be last. Inside a cycle a gate fires only on the
+run its branch caused, so a poll loop exits through a branch: gate the poll on the pending arm and the
+detail read on the done arm. From Go: `NewBranch`, `NewArm`, `Otherwise`, `NewGate`, `WithBranch`.
+
+### UNION ALL (`doc-union`)
+
+Several `doc-graph` specs as one stream: each leg runs concurrently, legs line up by column name, and
+one `--limit` covers the whole union. Each leg authenticates with its own provider's credentials. From
+Go: `omnisdk.UnionAll(plans...)`.
+
+Network name and region across all three clouds — one AWS region, one Google project, one Azure
+subscription:
+
+```bash
+source cicd/vol/vendor-secrets/secrets.sh
+./build/omnicli doc-union test/corpus/registry \
+ '{"nodes":[{"alias":"n","address":"stackql_unstable_aws.ec2.vpcs"}],
+   "projections":[{"alias":"n","select":[{"out":"name","field":"VpcId"},{"out":"region","literal":"'"${_AWS_REGION}"'"}]}],
+   "args":{"params":{"region":"'"${_AWS_REGION}"'"}}}' \
+ '{"nodes":[{"alias":"n","address":"stackql_unstable_google.compute.networks"}],
+   "projections":[{"alias":"n","select":[{"out":"name","field":"name"},{"out":"region","literal":"global"}]}],
+   "args":{"params":{"project":"'"${_GOOGLE_PROJECT_ID}"'"}}}' \
+ '{"nodes":[{"alias":"n","address":"stackql_unstable_azure.network.virtual_networks"}],
+   "projections":[{"alias":"n","select":[{"out":"name","field":"name"},{"out":"region","field":"location"}]}],
+   "args":{"params":{"subscription_id":"'"${AZURE_SUBSCRIPTION_ID}"'"}}}'
+```
+
+A VPC's name lives in its tags, so the AWS leg reports its id; Google networks are global.
+
+### LEFT JOIN across clouds
+
+A node marked `outer` keeps every upstream row it matches nothing for, its columns absent; `on` says
+what a match is — this node's column against a literal (`right`) or another node's column
+(`right_col`). The other node's column reaches the joined one without a wiring.
+
+AWS VPCs, each with the Google network and Azure virtual network of the same name, where one exists:
+
+```bash
+source cicd/vol/vendor-secrets/secrets.sh
+./build/omnicli doc-graph test/corpus/registry '{
+ "nodes":[
+  {"alias":"a","address":"stackql_unstable_aws.ec2.vpcs"},
+  {"alias":"g","address":"stackql_unstable_google.compute.networks","outer":true,
+   "on":[{"left":"g.g_name","op":"=","right_col":"a.name"}]},
+  {"alias":"z","address":"stackql_unstable_azure.network.virtual_networks","outer":true,
+   "on":[{"left":"z.z_name","op":"=","right_col":"a.name"}]}],
+ "projections":[
+  {"alias":"a","select":[{"out":"name","field":"VpcId"},{"out":"aws_region","literal":"'"${_AWS_REGION}"'"}]},
+  {"alias":"g","select":[{"out":"g_name","field":"name"}]},
+  {"alias":"z","select":[{"out":"z_name","field":"name"},{"out":"z_region","field":"location"}]}],
+ "args":{"params":{"region":"'"${_AWS_REGION}"'","project":"'"${_GOOGLE_PROJECT_ID}"'",
+                   "subscription_id":"'"${AZURE_SUBSCRIPTION_ID}"'"}}
+}'
+```
+
+```bash
+source cicd/vol/vendor-secrets/secrets.sh
+./build/omnicli doc-graph test/corpus/registry '{
+ "nodes":[
+  {"alias":"a","address":"stackql_unstable_aws.ec2.vpcs"},
+  {"alias":"g","address":"stackql_unstable_google.compute.networks","outer":true,
+   "on":[{"left":"g.g_name","op":"=","right_col":"a.aws_name"}]},
+  {"alias":"z","address":"stackql_unstable_azure.network.virtual_networks","outer":true,
+   "on":[{"left":"z.z_name","op":"=","right_col":"a.aws_name"}]}],
+ "projections":[
+  {"alias":"a","select":[{"out":"aws_name","field":"VpcId"},{"out":"aws_region","literal":"'"${_AWS_REGION}"'"}]},
+  {"alias":"g","select":[{"out":"g_name","field":"name"}]},
+  {"alias":"z","select":[{"out":"z_name","field":"name"},{"out":"z_region","field":"location"}]}],
+ "args":{"params":{"region":"'"${_AWS_REGION}"'","project":"'"${_GOOGLE_PROJECT_ID}"'",
+                   "subscription_id":"'"${AZURE_SUBSCRIPTION_ID}"'"}}
+}'
+```
+
+The Google and Azure listings are each fetched once, not once per VPC: nothing they are asked for
+depends on the VPC, so the join runs over their rows.
+
+### Cross and listed joins
+
+Two more ways to combine listings, each listing every table once:
+
+- **Cross** — every row paired with every row: nodes with no wiring and no `on`. One empty listing
+  empties the product; mark it `outer` to keep the rest. In SQL, `query.Cross`.
+- **Listed** — an inner join matched on the rows: `on` without `outer`. A row survives only with a
+  match, and nothing in `on` is sent as a parameter, even where the joined table's methods take it —
+  so a listing is used where an inner join would ask once per row. In SQL, `query.Listed`; from Go,
+  `omnisdk.NewMatchedNode`.
+
+Every combination of VPC, Google network and Azure virtual network:
+
+```bash
+source cicd/vol/vendor-secrets/secrets.sh
+./build/omnicli doc-graph test/corpus/registry '{
+ "nodes":[
+  {"alias":"a","address":"stackql_unstable_aws.ec2.vpcs"},
+  {"alias":"g","address":"stackql_unstable_google.compute.networks"},
+  {"alias":"z","address":"stackql_unstable_azure.network.virtual_networks"}],
+ "projections":[
+  {"alias":"a","select":[{"out":"aws_name","field":"VpcId"},{"out":"aws_region","literal":"'"${_AWS_REGION}"'"}]},
+  {"alias":"g","select":[{"out":"g_name","field":"name"}]},
+  {"alias":"z","select":[{"out":"z_name","field":"name"},{"out":"z_region","field":"location"}]}],
+ "args":{"params":{"region":"'"${_AWS_REGION}"'","project":"'"${_GOOGLE_PROJECT_ID}"'",
+                   "subscription_id":"'"${AZURE_SUBSCRIPTION_ID}"'"}}
+}'
+```
+
+Only the networks named alike in all three clouds:
+
+```bash
+./build/omnicli doc-graph test/corpus/registry '{
+ "nodes":[
+  {"alias":"a","address":"stackql_unstable_aws.ec2.vpcs"},
+  {"alias":"g","address":"stackql_unstable_google.compute.networks",
+   "on":[{"left":"g.g_name","op":"=","right_col":"a.aws_name"}]},
+  {"alias":"z","address":"stackql_unstable_azure.network.virtual_networks",
+   "on":[{"left":"z.z_name","op":"=","right_col":"a.aws_name"}]}],
+ "projections":[
+  {"alias":"a","select":[{"out":"aws_name","field":"VpcId"},{"out":"aws_region","literal":"'"${_AWS_REGION}"'"}]},
+  {"alias":"g","select":[{"out":"g_name","field":"name"}]},
+  {"alias":"z","select":[{"out":"z_name","field":"name"},{"out":"z_region","field":"location"}]}],
+ "args":{"params":{"region":"'"${_AWS_REGION}"'","project":"'"${_GOOGLE_PROJECT_ID}"'",
+                   "subscription_id":"'"${AZURE_SUBSCRIPTION_ID}"'"}}
+}'
+```
 
 
 ### Memory
@@ -559,7 +722,7 @@ whatever the documents weighed. Execution holds no documents at all.
 
 ## Generic DTO command
 
-`run <method-path> '<args-json>'` — the JSON deserializes straight into `omnisdk.Args` via Go's intrinsic `encoding/json` (`{"params":{…},"auth":{…},"endpoint":"…","tuning":{…}}`, field names case-insensitive). `--out`/`--log` and any tuning flags still apply; the JSON may also carry `endpoint`/`tuning`. Discover a method's params first with `./build/omnicli method <path>`.
+`run <method-path> '<args-json>'` — the JSON deserializes straight into `omnisdk.Args` via Go's intrinsic `encoding/json` (`{"params":{…},"auth_by_provider":{"<provider>":{…}},"endpoint":"…","tuning":{…}}`, field names case-insensitive). `--out`/`--log` and any tuning flags still apply; the JSON may also carry `endpoint`/`tuning`. Discover a method's params first with `./build/omnicli method <path>`.
 
 **Auth** flows entirely from the `auth` object and defaults to the canonical env vars, so it's optional. Each credential resolves **inline value → named env var → file**, and each env-var/file name defaults to the provider's canonical variable — so omit `auth` to use the standard environment, or inject secrets per-request inline: AWS `{"access_key_id":"…","secret_access_key":"…","session_token":"…"}`, GCP `{"credentials":"<SA JSON>"}` or `{"credentialsfilepath":"/path/key.json"}`, Azure `{"tenant":"…","client_id":"…","client_secret":"…"}` (or `{"type":"bearer","credentials":"<token>"}`). To point at a non-canonical env var instead of a value, use the `*_env_var` fields (e.g. `"access_key_id_env_var":"MY_AWS_KEY"`).
 
@@ -590,7 +753,7 @@ _now="$(date +%s)" && ./build/omnicli run aws.s3.buckets.list \
 
 # 5) Azure storage accounts with config-driven auth carried IN the DTO (no --auth flag).
 _now="$(date +%s)" && ./build/omnicli run azure.storage.containers.list \
-  '{"auth":{"type":"client_credentials","token_url":"https://login.microsoftonline.com/'"${AZURE_TENANT_ID}"'/oauth2/v2.0/token","client_id_env_var":"AZURE_CLIENT_ID","client_secret_env_var":"AZURE_CLIENT_SECRET","scopes":["https://management.azure.com/.default"]}}' \
+  '{"auth_by_provider":{"azure":{"type":"client_credentials","token_url":"https://login.microsoftonline.com/'"${AZURE_TENANT_ID}"'/oauth2/v2.0/token","client_id_env_var":"AZURE_CLIENT_ID","client_secret_env_var":"AZURE_CLIENT_SECRET","scopes":["https://management.azure.com/.default"]}}}' \
   --out "./cicd/out/dto-azure-cc-${_now}.jsonl"
 
 # 6) The CROSS-CLOUD COMPOSITE as one method: AWS + Azure + GCP in a single select. Params are the

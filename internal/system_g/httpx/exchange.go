@@ -52,10 +52,14 @@ type op struct {
 	decode facade.Transform
 	reqT   []facade.Transform
 	client *http.Client
+	// lastHeader is the most recent successful response's header, for a continuation read from it.
+	lastHeader http.Header
 }
 
+// Open fetches at most the run's pages-ahead responses before its reader takes them, so a slow
+// reader stops the paging.
 func (o *op) Open(ctx context.Context) facade.Records {
-	buf := buffer.NewBuffer(1, 1024, 0)
+	buf := buffer.NewBuffer(1, 1024, buffer.PagesAhead(ctx))
 	go func() {
 		var cerr error
 		defer func() { buf.Complete(cerr) }()
@@ -66,6 +70,8 @@ func (o *op) Open(ctx context.Context) facade.Records {
 			cerr = o.paginate(ctx, buf)
 		case ContFollow:
 			cerr = o.follow(ctx, buf)
+		case ContLink:
+			cerr = o.link(ctx, buf)
 		default:
 			cerr = o.once(ctx, buf, "")
 		}
@@ -138,17 +144,75 @@ func (o *op) follow(ctx context.Context, buf facade.Buffer) error {
 	}
 }
 
+// link paginates by following the rel="next" URL in a response header, until a response has none.
+func (o *op) link(ctx context.Context, buf facade.Buffer) error {
+	name := o.req.Continuation.LinkHeader
+	if name == "" {
+		name = "Link"
+	}
+	next := ""
+	for {
+		status, body, reqURL, err := o.do(ctx, "", next)
+		if err != nil {
+			return err
+		}
+		if err := emit(ctx, buf, status, body, reqURL); err != nil {
+			return err
+		}
+		if next = nextLink(o.lastHeader.Values(name)); next == "" {
+			return nil
+		}
+	}
+}
+
+// nextLink is the rel="next" target among Link header values, "" where there is none.
+func nextLink(values []string) string {
+	for _, v := range values {
+		for _, part := range strings.Split(v, ",") {
+			target, params, ok := strings.Cut(strings.TrimSpace(part), ";")
+			if !ok {
+				continue
+			}
+			for _, p := range strings.Split(params, ";") {
+				k, val, _ := strings.Cut(strings.TrimSpace(p), "=")
+				if strings.EqualFold(k, "rel") && strings.Trim(val, `"`) == "next" {
+					return strings.Trim(strings.TrimSpace(target), "<>")
+				}
+			}
+		}
+	}
+	return ""
+}
+
 // do builds a request record and sends it through the request-path transform chain. token (if
 // set) is added as the paginate token param; overrideURL (if set) is used verbatim as the request
 // URL, skipping templating and query assembly — for follow's absolute next-links.
 func (o *op) do(ctx context.Context, token, overrideURL string) (int, []byte, string, error) {
-	body, contentType := buildBody(o.req.Body, o.bound)
+	reqBody := o.req.Body
+	if token != "" && o.req.Continuation.TokenInBody && o.req.Continuation.TokenParam != "" {
+		params := make(map[string]any, len(reqBody.Params)+1)
+		for k, v := range reqBody.Params {
+			params[k] = v
+		}
+		params[o.req.Continuation.TokenParam] = token
+		reqBody.Params = params
+		if reqBody.Encoding == "" {
+			reqBody.Encoding = EncodingJSON
+		}
+		token = "" // sent in the body, not the query
+	}
+	body, contentType := buildBody(reqBody, o.bound)
 
 	u := overrideURL
 	if u == "" {
 		u = subst(o.req.URL, o.bound)
 		q := url.Values{}
 		for k, v := range o.req.Query {
+			// A parameter that is one input with no value is not sent: an optional input nothing
+			// supplied is absent from the request, never present and blank.
+			if name := wholeParam(v); name != "" && str(o.bound[name]) == "" {
+				continue
+			}
 			q.Set(subst(k, o.bound), subst(v, o.bound))
 		}
 		if token != "" && o.req.Continuation.TokenParam != "" {
@@ -212,6 +276,7 @@ func (o *op) send(ctx context.Context, rec facade.Record) (int, []byte, error) {
 		status, body, header, err := o.sendOnce(ctx, rec)
 		logWire(ctx, Method(rec), URL(rec), status, err, body)
 		if err == nil && status < 400 {
+			o.lastHeader = header
 			return status, body, nil
 		}
 		wait, ok := pol.Recover(ctx, facade.Attempt{
@@ -379,23 +444,56 @@ func substAny(v any, bound map[string]any) string {
 // raw body into an agnostic document (mxj/XML, or anything else) and the path is read off that.
 // So JSON and XML differ only in the decoder — no encoding is welded into the continuation logic.
 func (o *op) docValue(raw []byte, path string) string {
+	// Documents write the path as JSONPath ("$.NextToken") or as a bare key; both mean the same.
+	path = strings.TrimPrefix(strings.TrimPrefix(path, "$"), ".")
 	if path == "" {
 		return ""
 	}
+	var doc any
 	if o.decode == nil {
-		return JSONPath(raw, path)
+		if json.Unmarshal(raw, &doc) != nil {
+			return JSONPath(raw, path)
+		}
+	} else {
+		rec, err := o.decode.Apply(record.NewRecord(map[string]facade.Value{
+			facade.AnonymousPayload: value.NewBytesValue(raw),
+		}))
+		if err != nil || rec == nil {
+			return ""
+		}
+		var ok bool
+		if doc, ok = rec.Doc(facade.AnonymousPayload); !ok {
+			return ""
+		}
 	}
-	rec, err := o.decode.Apply(record.NewRecord(map[string]facade.Value{
-		facade.AnonymousPayload: value.NewBytesValue(raw),
-	}))
-	if err != nil || rec == nil {
-		return ""
+	// An XML reply is wrapped in elements naming the call (<ListXResponse><ListXResult>); the token
+	// is beneath them. A single-key object is such a wrapper and is looked through.
+	for range 3 {
+		// A key may itself contain dots (@odata.nextLink): as a whole name first, then as a path.
+		if m, ok := doc.(map[string]any); ok {
+			if v, ok := m[path].(string); ok && v != "" {
+				return v
+			}
+			// A protocol may case the echoed token differently from its parameter (EC2: NextToken
+			// sent, nextToken returned).
+			for k, raw := range m {
+				if v, ok := raw.(string); ok && v != "" && strings.EqualFold(k, path) {
+					return v
+				}
+			}
+		}
+		if v := DocPath(doc, path); v != "" {
+			return v
+		}
+		m, ok := doc.(map[string]any)
+		if !ok || len(m) != 1 {
+			return ""
+		}
+		for _, inner := range m {
+			doc = inner
+		}
 	}
-	doc, ok := rec.Doc(facade.AnonymousPayload)
-	if !ok {
-		return ""
-	}
-	return DocPath(doc, path)
+	return ""
 }
 
 // DocPath returns the string at a dotted path in an agnostic document tree ("" if

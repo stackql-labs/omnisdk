@@ -141,10 +141,6 @@ func TestGraphRejectsAmbiguousNodes(t *testing.T) {
 		"no alias and no address": {
 			nodes: []omnisdk.Node{omnisdk.NewNode("", "", nil)},
 		},
-		"edge onto itself": {
-			nodes:   []omnisdk.Node{omnisdk.NewNode("a", vpcsAddr, nil)},
-			wirings: []omnisdk.Wiring{filteredBy("a", byVpcID("a"))},
-		},
 		"two wirings into one node": {
 			nodes: []omnisdk.Node{
 				omnisdk.NewNode("a", vpcsAddr, nil), omnisdk.NewNode("b", vpcsAddr, nil), omnisdk.NewNode("c", vpcsAddr, nil),

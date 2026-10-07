@@ -1,0 +1,76 @@
+openapi: 3.0.0
+info: {title: things, version: v1}
+servers:
+  - url: https://api.example.com
+paths:
+  /widgets:
+    get:
+      operationId: find_widget
+      parameters:
+        - {name: id, in: query, required: true, schema: {type: string}}
+      responses:
+        '200':
+          content:
+            application/json:
+              schema: {type: array, items: {$ref: '#/components/schemas/Widget'}}
+    post:
+      operationId: create_widget
+      requestBody:
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/Widget'}
+      responses:
+        '200':
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Widget'}
+  /widgets/{id}:
+    patch:
+      operationId: update_widget
+      parameters:
+        - {name: id, in: path, required: true, schema: {type: string}}
+      requestBody:
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/Widget'}
+      responses:
+        '200':
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Widget'}
+    delete:
+      operationId: delete_widget
+      parameters:
+        - {name: id, in: path, required: true, schema: {type: string}}
+      responses:
+        '204': {description: gone}
+components:
+  schemas:
+    Widget:
+      type: object
+      properties:
+        id: {type: string}
+        size: {type: string}
+        color: {type: string}
+  x-stackQL-resources:
+    widgets:
+      id: widgets.things.widgets
+      name: widgets
+      methods:
+        find:
+          operation: {$ref: '#/paths/~1widgets/get'}
+          response: {mediaType: application/json, openAPIDocKey: '200'}
+        create:
+          operation: {$ref: '#/paths/~1widgets/post'}
+          response: {mediaType: application/json, openAPIDocKey: '200'}
+        update:
+          operation: {$ref: '#/paths/~1widgets~1{id}/patch'}
+          response: {mediaType: application/json, openAPIDocKey: '200'}
+        delete:
+          operation: {$ref: '#/paths/~1widgets~1{id}/delete'}
+          response: {mediaType: application/json, openAPIDocKey: '204'}
+      sqlVerbs:
+        select: [{$ref: '#/components/x-stackQL-resources/widgets/methods/find'}]
+        insert: [{$ref: '#/components/x-stackQL-resources/widgets/methods/create'}]
+        update: [{$ref: '#/components/x-stackQL-resources/widgets/methods/update'}]
+        delete: [{$ref: '#/components/x-stackQL-resources/widgets/methods/delete'}]

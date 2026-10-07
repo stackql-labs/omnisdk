@@ -2,6 +2,8 @@ package bind
 
 import (
 	"context"
+	"slices"
+	"strings"
 	"sync"
 	"testing"
 
@@ -95,4 +97,26 @@ func TestBindJoinTupleLeftOuter(t *testing.T) {
 func str(v any) string {
 	s, _ := v.(string)
 	return s
+}
+
+// An input with several sources is satisfied by any one: the first carrying a value wins, and an
+// empty one never blanks it.
+func TestBindJoinInputWithSeveralSources(t *testing.T) {
+	outer := sliceOp{recs: []facade.Record{
+		NewDocRecord(map[string]any{"a": "", "b": "from-b"}),
+		NewDocRecord(map[string]any{"a": "from-a", "b": nil}),
+	}}
+	var mu sync.Mutex
+	var seen []string
+	inner := func(bound map[string]any) facade.Operator {
+		mu.Lock()
+		seen = append(seen, str(bound["x"]))
+		mu.Unlock()
+		return sliceOp{}
+	}
+	collectDocs(t, NewBindJoin(1, outer, []Binding{NewBinding("a", "x"), NewBinding("b", "x")}, inner, nil, 1))
+	slices.Sort(seen)
+	if strings.Join(seen, ",") != "from-a,from-b" {
+		t.Errorf("bound x = %v, want each row's one value", seen)
+	}
 }

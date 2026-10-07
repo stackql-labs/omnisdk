@@ -16,6 +16,7 @@ import (
 	"github.com/stackql-labs/omnisdk/internal/system_g/fn"
 	"github.com/stackql-labs/omnisdk/internal/system_g/plan"
 	"github.com/stackql-labs/omnisdk/internal/system_g/transform"
+	"github.com/stackql-labs/omnisdk/pkg/docparse/aot"
 	"github.com/stackql-labs/omnisdk/pkg/docparse/dsl"
 	"github.com/stackql-labs/omnisdk/pkg/docparse/dsl/gotemplate"
 	"github.com/stackql-labs/omnisdk/pkg/docparse/dsl/schemaxml"
@@ -77,6 +78,18 @@ func NewFanoutNode(alias, address string, params map[string]string, fanout map[s
 func NewOuterNode(n Node, on []query.Predicate) Node {
 	return node{alias: n.Alias(), address: n.Address(), verb: n.Verb(), params: n.Params(),
 		fanout: n.Fanout(), body: n.Body(), tuples: n.Tuples(), outer: true, on: on}
+}
+
+// NewMatchedNode makes n an inner join matched on its rows by on: a row before it survives only
+// with a match, and nothing in on is sent as a parameter — n is listed once and looked up. It is the
+// graph form of query.Listed.
+func NewMatchedNode(n Node, on []query.Predicate) Node { return innerOn(n, on) }
+
+// innerOn gives n match conditions without keeping unmatched upstream rows: an inner join's ON
+// placed on its node, so an equality can probe the node's rows rather than filter every pair.
+func innerOn(n Node, on []query.Predicate) Node {
+	return node{alias: n.Alias(), address: n.Address(), verb: n.Verb(), params: n.Params(),
+		fanout: n.Fanout(), body: n.Body(), tuples: n.Tuples(), outer: n.Outer(), on: on}
 }
 
 // NewTupleNode makes n run once per tuple, each binding its keys together.
@@ -268,6 +281,12 @@ type Graph interface {
 	Fanout() map[string][]string
 	// Outputs are columns computed on each finished row, from several nodes' columns.
 	Outputs() []query.Output
+	// Terminations bound the graph's cycles, keyed by alias: a cycle runs under the termination of
+	// any node in it that has one, and a cycle with none is refused when the query is planned.
+	Terminations() map[string]Termination
+	// Branches choose a way for each row; Gates say which nodes run on which arm.
+	Branches() []Branch
+	Gates() []Gate
 }
 
 // RowOps is what a graph does to rows beyond running its nodes: the filters every returned row
@@ -321,9 +340,9 @@ func NewGraphWithFilters(nodes []Node, wirings []Wiring, projections []Projectio
 			return nil, fmt.Errorf("omnisdk: a node has neither an alias nor an address")
 		case strings.ContainsRune(n.Alias(), 0):
 			return nil, fmt.Errorf("omnisdk: alias %q contains a NUL byte", n.Alias())
-		case n.Address() == "":
+		case n.Address() == "" && n.Verb() != verbRecall && n.Verb() != verbDiff:
 			return nil, fmt.Errorf("omnisdk: node %q has no address", n.Alias())
-		case !contains([]string{"select", "insert", "update", "delete"}, n.Verb()):
+		case !contains([]string{"select", "insert", "update", "delete", verbRecall, verbDiff}, n.Verb()):
 			return nil, fmt.Errorf("omnisdk: node %q has unknown verb %q", n.Alias(), n.Verb())
 		case known[n.Alias()]:
 			return nil, fmt.Errorf("omnisdk: %q is referenced twice; give each reference an alias", n.Alias())
@@ -352,9 +371,6 @@ func NewGraphWithFilters(nodes []Node, wirings []Wiring, projections []Projectio
 		for _, in := range w.Inbound() {
 			if !known[in.From()] {
 				return nil, fmt.Errorf("omnisdk: %s expects a value from %q, which the graph does not include", w.To(), in.From())
-			}
-			if in.From() == w.To() {
-				return nil, fmt.Errorf("omnisdk: %s expects a value from itself; a self-join is two nodes", w.To())
 			}
 			if in.Src() == "" {
 				return nil, fmt.Errorf("omnisdk: %s declares an arrival from %s with no source attribute", w.To(), in.From())
@@ -399,7 +415,53 @@ func NewGraphWithFilters(nodes []Node, wirings []Wiring, projections []Projectio
 			return nil, fmt.Errorf("omnisdk: query-wide %q has no values", k)
 		}
 	}
+	wirings, err := deliverOn(nodes, wirings, known)
+	if err != nil {
+		return nil, err
+	}
 	return graph{nodes: nodes, wirings: wirings, overrides: overrides, projections: projections, filters: filters, fanout: fanout, outputs: outputs}, nil
+}
+
+// deliverOn wires every column a node's match conditions read from another node into that node's
+// inbox, under the other node's private key, where the conditions look for it. It is never sent: a
+// left join's ON reads it, as a filter would, and the caller states only the ON.
+func deliverOn(nodes []Node, wirings []Wiring, known map[string]bool) ([]Wiring, error) {
+	out := slices.Clone(wirings)
+	for _, n := range nodes {
+		var add []Inbound
+		for _, p := range n.On() {
+			for _, c := range predicateColumns(p) {
+				if c.Qualifier() == n.Alias() {
+					continue
+				}
+				if !known[c.Qualifier()] {
+					return nil, fmt.Errorf("omnisdk: %s matches on %s.%s, which the graph does not include", n.Alias(), c.Qualifier(), c.Name())
+				}
+				as := hidden(c.Qualifier(), c.Name())
+				if !slices.ContainsFunc(add, func(i Inbound) bool { return i.As() == as }) {
+					add = append(add, NewInbound(c.Qualifier(), c.Name(), as))
+				}
+			}
+		}
+		if len(add) == 0 {
+			continue
+		}
+		i := slices.IndexFunc(out, func(w Wiring) bool { return w.To() == n.Alias() })
+		if i < 0 {
+			out = append(out, NewWiring(n.Alias(), add, "", ""))
+			continue
+		}
+		w := out[i]
+		in := slices.Clone(w.Inbound())
+		for _, a := range add {
+			if !slices.ContainsFunc(in, func(x Inbound) bool { return x.As() == a.As() }) {
+				in = append(in, a)
+			}
+		}
+		typ, prog := w.Via()
+		out[i] = NewWiring(w.To(), in, typ, prog, w.Provides()...)
+	}
+	return out, nil
 }
 
 type graph struct {
@@ -410,9 +472,38 @@ type graph struct {
 	filters     []query.Predicate
 	fanout      map[string][]string
 	outputs     []query.Output
+	terminate   map[string]Termination
+	branches    []Branch
+	gates       []Gate
 }
 
 func (g graph) Outputs() []query.Output { return g.outputs }
+
+func (g graph) Terminations() map[string]Termination { return g.terminate }
+func (g graph) Branches() []Branch                   { return g.branches }
+func (g graph) Gates() []Gate                        { return g.gates }
+
+// WithTermination is g with the cycle through alias bounded by t. A node wired to itself, or to
+// nodes that wire back to it, forms a cycle; this is what stops it.
+func WithTermination(g Graph, alias string, t Termination) (Graph, error) {
+	if t == nil {
+		return nil, fmt.Errorf("omnisdk: termination for %q is nil", alias)
+	}
+	gr, ok := g.(graph)
+	if !ok {
+		return nil, fmt.Errorf("omnisdk: WithTermination needs a graph built by NewGraph")
+	}
+	if !slices.ContainsFunc(gr.nodes, func(n Node) bool { return n.Alias() == alias }) {
+		return nil, fmt.Errorf("omnisdk: termination targets %q, which the graph does not include", alias)
+	}
+	terminate := maps.Clone(gr.terminate)
+	if terminate == nil {
+		terminate = map[string]Termination{}
+	}
+	terminate[alias] = t
+	gr.terminate = terminate
+	return gr, nil
+}
 
 func (g graph) Fanout() map[string][]string { return g.fanout }
 func (g graph) Filters() []query.Predicate  { return g.filters }
@@ -510,6 +601,22 @@ func NewGraphSelectQuery(dir string, g Graph, args Args) (Plan, error) {
 	for _, o := range g.Outputs() {
 		reads = append(reads, query.NewTest(o.Expr()))
 	}
+	for _, b := range g.Branches() {
+		for _, a := range b.Arms() {
+			if a.When() != nil {
+				reads = append(reads, a.When())
+			}
+		}
+	}
+	for _, n := range g.Nodes() {
+		if in, ok := n.(intrinsicNode); ok && n.Verb() == verbDiff {
+			for _, f := range append(slices.Sorted(maps.Keys(n.Body())), in.liveIdentity) {
+				if !contains(emits[in.live], f) {
+					emits[in.live] = append(emits[in.live], f)
+				}
+			}
+		}
+	}
 	for _, f := range reads {
 		for _, c := range predicateColumns(f) {
 			if !contains(emits[c.Qualifier()], c.Name()) {
@@ -524,6 +631,7 @@ func NewGraphSelectQuery(dir string, g Graph, args Args) (Plan, error) {
 	// never leave in a result. Which names they are is whatever each auth expansion declares.
 	plumbing := map[string]bool{}
 	planned := make(map[string]string, len(g.Nodes()))
+	solos := map[string]*bool{}
 	taken := map[string]string{}
 	// A query-wide fanout runs first and merges one value per row, so every node in that row binds
 	// the same value by name. Each node compiles as though the value were supplied, which it is.
@@ -540,6 +648,27 @@ func NewGraphSelectQuery(dir string, g Graph, args Args) (Plan, error) {
 	}
 	for _, n := range g.Nodes() {
 		alias, addr := n.Alias(), n.Address()
+		if in, ok := n.(intrinsicNode); ok {
+			name := n.Verb() + "__" + planName(alias)
+			if other, clash := taken[name]; clash {
+				return nil, fmt.Errorf("omnisdk: aliases %q and %q name the same plan exchange %q", other, alias, name)
+			}
+			taken[name] = alias
+			planned[alias] = name
+			if n.Verb() == verbDiff {
+				live := slices.IndexFunc(g.Nodes(), func(x Node) bool { return x.Alias() == in.live })
+				if live < 0 || !g.Nodes()[live].Outer() {
+					return nil, fmt.Errorf("omnisdk: diff %q reads %q, which must be an outer node declared before it, so an absent object still reaches the diff", alias, in.live)
+				}
+			}
+			spec, b, err := intrinsicSpec(name, in, args.managed, planned)
+			if err != nil {
+				return nil, err
+			}
+			specs = append(specs, spec)
+			betas = append(betas, b...)
+			continue
+		}
 		// Two documents routinely name a method the same thing — "list" above all — and a plan names
 		// its exchanges. The alias is what tells them apart; the address keeps a trace readable.
 		name := planName(addr) + "__" + planName(alias)
@@ -562,7 +691,9 @@ func NewGraphSelectQuery(dir string, g Graph, args Args) (Plan, error) {
 			local[k] = v
 		}
 		for k, v := range n.Params() {
-			if contains(bound[alias], k) || contains(provided[alias], k) {
+			// In a cycle, a param and an arrival from the cycle are one input over time: the param is
+			// its first value, and each round supplies the next.
+			if (contains(bound[alias], k) && !cyclicArrival(g, alias, k)) || contains(provided[alias], k) {
 				return nil, fmt.Errorf("omnisdk: %s: %q is both a param and a wired input", alias, k)
 			}
 			if _, multi := n.Fanout()[k]; multi {
@@ -709,9 +840,17 @@ func NewGraphSelectQuery(dir string, g Graph, args Args) (Plan, error) {
 		// Nothing wired in means the same inputs for every upstream row: run once, replay the rest.
 		switch consumer := requestWired(g, alias); {
 		case mutating:
-			spec = effect{ExchangeSpec: spec, alias: alias, verb: n.Verb(), exchange: exchangeOf(addr, n.Verb()), journal: wal}
+			eff := effect{ExchangeSpec: spec, alias: alias, verb: n.Verb(), exchange: exchangeOf(addr, n.Verb()), journal: wal}
+			if run := args.managed; run != nil && run.ledger != nil {
+				if m, ok := run.nodes[alias]; ok {
+					eff.durable = &durable{run: run, resource: m, address: addr}
+				}
+			}
+			spec = eff
 		case !consumer:
-			spec = replayed{ExchangeSpec: spec}
+			solo := new(bool)
+			solos[name] = solo
+			spec = replayed{ExchangeSpec: spec, probe: probeOf(alias, n.On()), solo: solo}
 		}
 		// Match conditions run on this node's rows, so the join sees only matches and keeps an
 		// upstream row that has none.
@@ -720,6 +859,11 @@ func NewGraphSelectQuery(dir string, g Graph, args Args) (Plan, error) {
 		}
 		if n.Outer() {
 			spec = leftOuter{ExchangeSpec: spec}
+		}
+		// A required input with no value means nothing to ask about: the node has no match for that
+		// row, and no request is made. An optional input with no value is simply not sent.
+		if names := requiredOf(ex, wiredInputs(g, alias)); len(names) > 0 {
+			spec = guarded{ExchangeSpec: spec, names: names}
 		}
 		if attrs := emits[alias]; len(attrs) > 0 {
 			spec = tagged{ExchangeSpec: spec, alias: alias, attrs: attrs}
@@ -732,8 +876,111 @@ func NewGraphSelectQuery(dir string, g Graph, args Args) (Plan, error) {
 			betas = append(betas, plan.NewBetaEdge(planned[in.From()], planned[w.To()], hidden(in.From(), in.Src()), in.As()))
 		}
 	}
+	// The first node to run is opened once per distinct set of inputs: only a token exchange or a
+	// list of values runs before it, and neither repeats an identical request. Recording its rows
+	// for replay would hold the whole result in memory for nothing, so it streams instead.
+	for _, x := range plan.Order(specs, betas) {
+		if x == queryValues || strings.HasSuffix(x, "_auth") || strings.HasSuffix(x, "_values") {
+			continue
+		}
+		if solo, ok := solos[x]; ok {
+			*solo = true
+		}
+		break
+	}
 
-	return &cannedPlan{plan: plan.NewPlan(specs, betas, nil, inputs, egress(g, fns, redactor{policy: args.Redaction, credentials: plumbing}), nil), args: args}, nil
+	// Branches choose after the nodes they read; gates are α edges from the chosen arm to the nodes
+	// that run on it.
+	var alphas []plan.AlphaEdge
+	for _, b := range g.Branches() {
+		name := "branch__" + planName(b.Alias())
+		if other, clash := taken[name]; clash {
+			return nil, fmt.Errorf("omnisdk: branch %q and %q name the same plan exchange %q", b.Alias(), other, name)
+		}
+		taken[name] = b.Alias()
+		planned[b.Alias()] = name
+		var in []string
+		for _, a := range b.Arms() {
+			if a.When() == nil {
+				continue
+			}
+			for _, c := range predicateColumns(a.When()) {
+				key := hidden(c.Qualifier(), c.Name())
+				if !slices.Contains(in, key) {
+					in = append(in, key)
+					betas = append(betas, plan.NewBetaEdge(planned[c.Qualifier()], name, key, key))
+				}
+			}
+		}
+		specs = append(specs, plan.NewBranchSpec(name, in, chooser(b, fns)))
+	}
+	for _, x := range g.Gates() {
+		alphas = append(alphas, plan.NewAlphaEdge(planned[x.Branch()], planned[x.To()], bind.NewGateEdge(x.Arm())))
+	}
+	pl := plan.NewPlan(specs, betas, alphas, inputs, egress(g, fns, redactor{policy: args.Redaction, credentials: plumbing}), nil)
+	if ts := g.Terminations(); len(ts) > 0 {
+		specs := make(map[string]facade.TerminationSpec, len(ts))
+		for alias, t := range ts {
+			specs[planned[alias]] = t.spec()
+		}
+		pl = plan.WithTerminations(pl, specs)
+	}
+	if err := plan.CheckCycles(pl); err != nil {
+		// The plan names its exchanges; the caller named aliases.
+		msg := err.Error()
+		aliases := slices.Collect(maps.Keys(planned))
+		// Longest first, so one plan name that extends another is replaced whole.
+		slices.SortFunc(aliases, func(a, b string) int { return len(planned[b]) - len(planned[a]) })
+		for _, alias := range aliases {
+			msg = strings.ReplaceAll(msg, planned[alias], alias)
+		}
+		return nil, fmt.Errorf("omnisdk: %s", strings.TrimPrefix(msg, "plan: "))
+	}
+	return &cannedPlan{plan: pl, args: args}, nil
+}
+
+// cyclicArrival reports whether every value arriving at alias as name comes from alias's own cycle:
+// from alias itself, or from a node alias's values reach.
+func cyclicArrival(g Graph, alias, name string) bool {
+	feeds := map[string][]string{}
+	for _, w := range g.Wirings() {
+		for _, in := range w.Inbound() {
+			feeds[in.From()] = append(feeds[in.From()], w.To())
+		}
+	}
+	reaches := func(from, to string) bool {
+		seen := map[string]bool{}
+		stack := []string{from}
+		for len(stack) > 0 {
+			at := stack[len(stack)-1]
+			stack = stack[:len(stack)-1]
+			for _, next := range feeds[at] {
+				if next == to {
+					return true
+				}
+				if !seen[next] {
+					seen[next] = true
+					stack = append(stack, next)
+				}
+			}
+		}
+		return false
+	}
+	w, ok := wiringFor(g, alias)
+	if !ok {
+		return false
+	}
+	any := false
+	for _, in := range w.Inbound() {
+		if in.As() != name {
+			continue
+		}
+		if in.From() != alias && !reaches(alias, in.From()) {
+			return false
+		}
+		any = true
+	}
+	return any
 }
 
 // openJournal opens the write-ahead journal a query's mutations record into, where the caller opted
@@ -769,6 +1016,64 @@ func tupleKeys(n Node) []string {
 		return nil
 	}
 	return slices.Sorted(maps.Keys(n.Tuples()[0]))
+}
+
+// wiredInputs are the request inputs a node's wiring delivers: its identity arrivals, or the inputs
+// its T_in provides.
+func wiredInputs(g Graph, alias string) []string {
+	w, ok := wiringFor(g, alias)
+	if !ok {
+		return nil
+	}
+	if t, _ := w.Via(); t != "" {
+		return w.Provides()
+	}
+	var out []string
+	for _, in := range w.Inbound() {
+		if !strings.HasPrefix(in.As(), "\x00") {
+			out = append(out, in.As())
+		}
+	}
+	return out
+}
+
+// chooser is b's choice for one row: the first arm whose condition holds there, an Otherwise arm
+// taking what is left. A condition that is unknown — a comparison with a missing value — does not
+// hold, as in SQL. No arm holding chooses nothing, and no gate fires.
+func chooser(b Branch, fns facade.FnRegistry) func(map[string]any) (string, error) {
+	f := filterTransform{fns: fns}
+	return func(bound map[string]any) (string, error) {
+		for _, a := range b.Arms() {
+			if a.When() == nil {
+				return a.Label(), nil
+			}
+			t, err := f.eval(a.When(), bound)
+			if err != nil {
+				return "", fmt.Errorf("omnisdk: branch %q, arm %q: %w", b.Alias(), a.Label(), err)
+			}
+			if t == isTrue {
+				return a.Label(), nil
+			}
+		}
+		return "", nil
+	}
+}
+
+// requiredOf is those of names ex requires: the inputs whose absence leaves nothing to ask.
+func requiredOf(ex aot.AOTExchange, names []string) []string {
+	required := map[string]bool{}
+	for _, p := range ex.Request().Parameters() {
+		if p.Required() {
+			required[p.Name()] = true
+		}
+	}
+	var out []string
+	for _, n := range names {
+		if required[n] && !slices.Contains(out, n) {
+			out = append(out, n)
+		}
+	}
+	return out
 }
 
 // requestWired reports whether anything wired into a node reaches its request. Values delivered only
@@ -844,7 +1149,8 @@ func (d redactor) Apply(in facade.Page) (facade.Record, error) {
 	return bind.NewDocRecord(out), nil
 }
 
-// onlyColumns drops every column not named.
+// onlyColumns is the row as selected: every column named, NULL where the row has no value — the
+// unmatched side of a left join — and nothing else.
 type onlyColumns map[string]bool
 
 func (o onlyColumns) Apply(in facade.Page) (facade.Record, error) {
@@ -856,9 +1162,10 @@ func (o onlyColumns) Apply(in facade.Page) (facade.Record, error) {
 		return nil, fmt.Errorf("omnisdk: egress received a %T, not a record", in)
 	}
 	out := make(map[string]any, len(o))
-	for k, v := range row {
-		if o[k] {
-			out[k] = v
+	for k := range o {
+		// A column kept only for an edge or a filter is not part of what was selected.
+		if !strings.HasPrefix(k, "\x00") {
+			out[k] = row[k]
 		}
 	}
 	return bind.NewDocRecord(out), nil

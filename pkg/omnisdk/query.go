@@ -2,6 +2,8 @@ package omnisdk
 
 import (
 	"fmt"
+	"github.com/stackql-labs/omnisdk/internal/system_g/exchange/docx"
+	"slices"
 	"strings"
 
 	"github.com/stackql-labs/omnisdk/internal/system_g/fn"
@@ -140,6 +142,14 @@ func (s docSignature) row() aot.Schema {
 		}
 		sch = next
 	}
+	// No declared key: the conventional $.items, where the schema has a list there.
+	if strings.TrimSpace(resp.ObjectKey()) == "" {
+		if list, ok := sch.Property(docx.DefaultObjectKey); ok {
+			if _, isList := list.Items(); isList {
+				sch = list
+			}
+		}
+	}
 	if items, ok := sch.Items(); ok {
 		sch = items
 	}
@@ -171,7 +181,7 @@ func Resolve(q query.Unresolved, tables map[string]Table) (Resolution, error) {
 		fanout: map[string]map[string][]string{}, wide: map[string][]string{}, arrivals: map[string][]arrival{}, retain: map[string][]string{},
 		computed: map[string][]SelectColumn{}, body: map[string]any{},
 		outer: map[string][]query.Predicate{}, on: map[string][]query.Predicate{}}
-	var conjuncts []query.Predicate
+	var conjuncts, listed []query.Predicate
 	for _, j := range q.From() {
 		alias := j.Resource().Alias()
 		t, ok := tables[alias]
@@ -180,10 +190,17 @@ func Resolve(q query.Unresolved, tables map[string]Table) (Resolution, error) {
 		}
 		r.tables[alias] = t
 		r.order = append(r.order, alias)
-		if j.Form() == query.Left {
+		switch j.Form() {
+		case query.Left:
 			// A left join's ON decides what matches, not what survives: it is placed against the
 			// joined node, after the rest.
 			r.outer[alias] = j.On()
+			continue
+		case query.Cross:
+			continue
+		case query.Listed:
+			// Matched on the rows, never sent: placed once every edge is known.
+			listed = append(listed, j.On()...)
 			continue
 		}
 		// Under an inner join ON and WHERE are the same filter.
@@ -207,8 +224,21 @@ func Resolve(q query.Unresolved, tables map[string]Table) (Resolution, error) {
 			rest = append(rest, p)
 		}
 	}
+	var unbound []query.Predicate
 	for _, p := range rest {
 		placed, err := r.bindJoin(p)
+		if err != nil {
+			return nil, err
+		}
+		if !placed {
+			unbound = append(unbound, p)
+		}
+	}
+	// Equi-joins go after every edge is known, so the one each adds cannot close a cycle. A listed
+	// join's ON is among them, whatever its methods take.
+	unbound = append(unbound, listed...)
+	for _, p := range unbound {
+		placed, err := r.hashJoin(p)
 		if err != nil {
 			return nil, err
 		}
@@ -557,7 +587,13 @@ func (r *resolver) bindJoin(p query.Predicate) (bool, error) {
 	case rNeeds:
 		to, from = rc, l
 	default:
-		return false, nil
+		// Neither requires the value, but a side that takes it as a parameter must be sent it: its
+		// methods answer differently without it (ListAccessKeys without UserName lists only the
+		// caller's keys), so filtering what they return instead is silently wrong.
+		var ok bool
+		if to, from, ok = r.optionalEdge(l, rc); !ok {
+			return false, nil
+		}
 	}
 	if r.onTarget != "" && to.Qualifier() != r.onTarget {
 		return false, fmt.Errorf("omnisdk: %s: in a left join the preserved side %s cannot need a value from %s", describe(c), to.Qualifier(), r.onTarget)
@@ -576,6 +612,63 @@ func (r *resolver) bindJoin(p query.Predicate) (bool, error) {
 		}
 	}
 	return true, nil
+}
+
+// hashJoin places an inner equality between two tables that neither needs as a match condition on
+// the later one: the earlier side's value reaches it through the inbox and is never sent, and the
+// later side, listed once, is probed by that value rather than scanned once per upstream row.
+// Unplaced, the equality is a filter over every combination of the two.
+func (r *resolver) hashJoin(p query.Predicate) (bool, error) {
+	c, ok := p.(query.Compare)
+	if !ok || c.Op() != query.Eq || r.mutating != "" {
+		return false, nil
+	}
+	l, lok := c.Left().(query.Column)
+	rc, rok := c.Right().(query.Column)
+	if !lok || !rok {
+		return false, nil
+	}
+	var err error
+	if l, err = r.qualify(l); err != nil {
+		return false, fmt.Errorf("omnisdk: %s: %w", describe(c), err)
+	}
+	if rc, err = r.qualify(rc); err != nil {
+		return false, fmt.Errorf("omnisdk: %s: %w", describe(c), err)
+	}
+	a, b := l.Qualifier(), rc.Qualifier()
+	if a == b {
+		return false, nil
+	}
+	if slices.Index(r.order, a) > slices.Index(r.order, b) {
+		a, b = b, a
+	}
+	_, aOuter := r.outer[a]
+	_, bOuter := r.outer[b]
+	if aOuter || bOuter || r.reaches(b, a) {
+		return false, nil
+	}
+	r.onTarget = b
+	defer func() { r.onTarget = "" }()
+	return true, r.filter(p)
+}
+
+// reaches reports whether a value from one table travels, directly or through others, to another.
+func (r *resolver) reaches(from, to string) bool {
+	seen := map[string]bool{}
+	var walk func(at string) bool
+	walk = func(at string) bool {
+		if seen[at] {
+			return false
+		}
+		seen[at] = true
+		for _, a := range r.arrivals[at] {
+			if a.from == from || walk(a.from) {
+				return true
+			}
+		}
+		return false
+	}
+	return walk(to)
 }
 
 // leftJoin places a left join's ON against its node. A constant its methods take is pushed down, an
@@ -642,6 +735,35 @@ func (r *resolver) bindComputed(c query.Compare, col query.Column, e query.Expr)
 		}
 	}
 	return true, nil
+}
+
+// optionalEdge directs an equality onto an optional parameter. Where one side takes it, the value
+// flows there; where both do, it flows into the relation joined later — the one the ON belongs to —
+// and, under a left join, into the joined side. Where neither takes it, it is not an edge.
+func (r *resolver) optionalEdge(l, rc query.Column) (to, from query.Column, ok bool) {
+	lTakes := accepts(r.tables[l.Qualifier()], l.Name())
+	rTakes := accepts(r.tables[rc.Qualifier()], rc.Name())
+	if r.onTarget != "" {
+		switch {
+		case l.Qualifier() == r.onTarget && lTakes:
+			return l, rc, true
+		case rc.Qualifier() == r.onTarget && rTakes:
+			return rc, l, true
+		}
+		return nil, nil, false
+	}
+	switch {
+	case lTakes && rTakes:
+		if slices.Index(r.order, l.Qualifier()) > slices.Index(r.order, rc.Qualifier()) {
+			return l, rc, true
+		}
+		return rc, l, true
+	case lTakes:
+		return l, rc, true
+	case rTakes:
+		return rc, l, true
+	}
+	return nil, nil, false
 }
 
 // filter adds a condition on the returned rows, with its columns qualified and pointed at the
@@ -805,6 +927,8 @@ func (r *resolver) build(sel []query.Output) (Resolution, error) {
 		n := NewMutationNode(alias, r.tables[alias].Address(), verb, r.nodeParams[alias], r.fanout[alias], body)
 		if _, left := r.outer[alias]; left {
 			n = NewOuterNode(n, r.on[alias])
+		} else if on := r.on[alias]; len(on) > 0 {
+			n = innerOn(n, on)
 		}
 		if alias == r.mutating && len(r.tuples) > 0 {
 			n = NewTupleNode(n, r.tuples)
@@ -819,7 +943,10 @@ func (r *resolver) build(sel []query.Output) (Resolution, error) {
 		}
 		cols = append(cols, r.computed[alias]...)
 		if len(cols) == 0 {
-			continue
+			// A node the query reads nothing from still has a select list — an empty one, spelled as
+			// a hidden constant — so the result carries exactly what was asked for and none of the
+			// inputs that seeded the row.
+			cols = []SelectColumn{NewSelectColumn(kept(""), NewLiteral(nil))}
 		}
 		p, err := NewProjection(alias, cols)
 		if err != nil {

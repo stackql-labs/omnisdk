@@ -148,3 +148,19 @@ func TestHTTPXPollUntilDone(t *testing.T) {
 		t.Errorf("final body = %q, want the DONE operation", bodies[0])
 	}
 }
+
+// A query parameter that is one input with no value is left off the request, not sent blank.
+func TestHTTPXOmitsAnInputWithNoValue(t *testing.T) {
+	var got string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		got = r.URL.RawQuery
+		_, _ = io.WriteString(w, `{}`)
+	}))
+	defer srv.Close()
+	req := Request{Method: http.MethodGet, URL: "{base}/things",
+		Query: map[string]string{"parent": "{parent}", "depth": "{depth}"}}
+	drive(t, Make(req, nil)(map[string]any{"base": srv.URL, "parent": "root"}))
+	if got != "parent=root" {
+		t.Errorf("query = %q, want parent only", got)
+	}
+}

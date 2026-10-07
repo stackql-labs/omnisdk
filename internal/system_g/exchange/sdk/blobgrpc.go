@@ -62,7 +62,7 @@ func NewGCPBlobEncryptionGRPC(id int64, d *grpcx.Descriptors, endpoint, target s
 // GCPBlobGRPCPlan is the single-project gRPC bucket audit as a plan.Plan (compose as bytes or as
 // rows): OAuth (SA JWT → token) → gRPC ListBuckets(bearer). egress is the shared blobEgress("gcp").
 func GCPBlobGRPCPlan(d *grpcx.Descriptors, endpoint, target string, creds GCPCredentials, project string, dialOpts ...grpc.DialOption) plan.Plan {
-	oauth, jwt := gcpOAuth(endpoint, creds, gcpStorageScope)
+	oauth, jwt := gcpOAuth(endpoint, creds, creds.Scope())
 	specs := []plan.ExchangeSpec{oauth, grpcBucketSpec(d, target, dialOpts)}
 	betas := []plan.BetaEdge{plan.NewBetaEdge("OAuth", "ListBuckets", "token", "token")}
 	inputs := map[string]any{"assertion": jwt, "project": project}
@@ -80,7 +80,7 @@ func NewGCPBlobEncryptionOrgGRPC(id int64, d *grpcx.Descriptors, endpoint, targe
 // GCPBlobOrgGRPCPlan is the org-wide gRPC bucket audit as a plan.Plan (REST folder→project descent +
 // gRPC bucket visitor). org is a required κ input; egress is the shared blobEgress("gcp").
 func GCPBlobOrgGRPCPlan(d *grpcx.Descriptors, endpoint, target string, creds GCPCredentials, org string, dialOpts ...grpc.DialOption) plan.Plan {
-	oauth, jwt := gcpOAuth(endpoint, creds, gcpCloudPlatformScope)
+	oauth, jwt := gcpOAuth(endpoint, creds, creds.Scope())
 	specs := append([]plan.ExchangeSpec{oauth}, gcpOrgProjectSpecs(endpoint)...)
 	specs = append(specs, grpcBucketSpec(d, target, dialOpts))
 	betas := []plan.BetaEdge{

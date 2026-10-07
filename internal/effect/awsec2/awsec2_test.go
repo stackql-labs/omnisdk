@@ -168,7 +168,7 @@ func fixture(t *testing.T, srv *httptest.Server) (apply.Runner, facade.Ledger) {
 		t.Fatalf("semantics: %v", err)
 	}
 	eff := awsec2.New("us-east-1", sdk.Credentials{AccessKeyID: "AKIATEST", SecretAccessKey: "secret"}, srv.URL+"/")
-	return apply.New(log, js, lease.NewLeaser(log, time.Now), merge.ThreeWay(), eff, sem, unwind.New(log, js, sem, eff), lease.All(), time.Minute), log
+	return apply.New(log, js, lease.NewLeaser(log, time.Now), merge.ThreeWay(), eff, sem, unwind.New(log, js, sem, eff), lease.All(), time.Minute, 0), log
 }
 
 // The two steps of the premise: a VPC, then a subnet that cannot be addressed until the VPC's id

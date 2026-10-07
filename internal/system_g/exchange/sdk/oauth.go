@@ -25,3 +25,17 @@ func ClientCredentialsSpec(tokenURL string, scopes []string, clientID, clientSec
 		httpx.MakeAgnostic(req), httpx.NewJSONExtract(map[string]string{"token": "access_token"}))
 	return spec, map[string]any{"client_id": clientID, "client_secret": clientSecret}
 }
+
+// RefreshTokenSpec is an OAuth2 refresh-token exchange: a user credential's refresh token buys an
+// access token, emitted as "token". It is how gcloud's authorized_user credential is used.
+func RefreshTokenSpec(tokenURL, clientID, clientSecret, refreshToken string) (plan.ExchangeSpec, map[string]any) {
+	req := httpx.Request{Method: "POST", URL: tokenURL, Body: httpx.Body{Encoding: httpx.EncodingForm, Params: map[string]any{
+		"grant_type":    "refresh_token",
+		"client_id":     "{client_id}",
+		"client_secret": "{client_secret}",
+		"refresh_token": "{refresh_token}",
+	}}}
+	spec := plan.NewExchangeSpec("Token", []string{"client_id", "client_secret", "refresh_token"}, []string{"token"},
+		httpx.MakeAgnostic(req), httpx.NewJSONExtract(map[string]string{"token": "access_token"}))
+	return spec, map[string]any{"client_id": clientID, "client_secret": clientSecret, "refresh_token": refreshToken}
+}

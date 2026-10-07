@@ -5,9 +5,14 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 
+	"github.com/stackql-labs/omnisdk/internal/lease"
+	"github.com/stackql-labs/omnisdk/internal/ledger"
 	"github.com/stackql-labs/omnisdk/pkg/omnisdk"
 )
 
@@ -266,5 +271,109 @@ func TestSameBlueprintUnderTwoNames(t *testing.T) {
 	// Two collections, two independent sets of resources — the second did not adopt the first's.
 	if n := strings.Count(strings.Join(seen, " "), "CreateVpc"); n != 2 {
 		t.Errorf("CreateVpc issued %d times, want one per collection", n)
+	}
+}
+
+// Tuning.Parallelism is how many keys an IaC run converges at once: independent VPCs go out
+// together up to it, and never beyond.
+func TestConvergeParallelismIsTunable(t *testing.T) {
+	requireCorpus(t)
+	t.Setenv("AWS_ACCESS_KEY_ID", "AKIATEST")
+	t.Setenv("AWS_SECRET_ACCESS_KEY", "secret")
+	peak := func(parallelism int) int {
+		var mu sync.Mutex
+		cond := sync.NewCond(&mu)
+		inflight, most, n := 0, 0, 0
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			_ = r.ParseForm()
+			w.Header().Set("Content-Type", "text/xml")
+			switch act := param(r, "Action"); act {
+			case "DescribeVpcs":
+				fmt.Fprint(w, `<DescribeVpcsResponse><vpcSet></vpcSet></DescribeVpcsResponse>`)
+			case "CreateVpc":
+				mu.Lock()
+				inflight++
+				most = max(most, inflight)
+				cond.Broadcast()
+				deadline := time.Now().Add(5 * time.Second)
+				for inflight < min(3, parallelism) && time.Now().Before(deadline) {
+					stop := time.AfterFunc(10*time.Millisecond, cond.Broadcast)
+					cond.Wait()
+					stop.Stop()
+				}
+				n++
+				id := fmt.Sprintf("vpc-%03d", n)
+				inflight--
+				mu.Unlock()
+				fmt.Fprintf(w, `<CreateVpcResponse><vpc><vpcId>%s</vpcId></vpc></CreateVpcResponse>`, id)
+			default:
+				http.Error(w, "unexpected "+act, http.StatusBadRequest)
+			}
+		}))
+		defer srv.Close()
+		var res []omnisdk.ManagedResource
+		for _, k := range []string{"a", "b", "c"} {
+			res = append(res, omnisdk.NewResource("aws/ec2/vpc-"+k, "aws", "ec2.vpcs",
+				[]byte(`{"CidrBlock":"10.0.0.0/16"}`), map[string]string{"TagSpecification.1.ResourceType": "vpc",
+					"TagSpecification.1.Tag.1.Key": "omnisdk:key"},
+				nil, "", "", "line_items.VpcId", "VpcId", "TagSpecification.1.Tag.1.Value"))
+		}
+		args := awsArgs(srv)
+		args.Tuning.Parallelism = parallelism
+		pl, err := omnisdk.Converge(corpus, "par", t.TempDir(), "run", res, args)
+		if err != nil {
+			t.Fatal(err)
+		}
+		rows, err := pl.Open(context.Background())
+		if err != nil {
+			t.Fatal(err)
+		}
+		applied := 0
+		for rows.Next() {
+			if rows.Row()["status"] == "applied" {
+				applied++
+			}
+		}
+		rows.Close()
+		if applied != 3 {
+			t.Fatalf("parallelism %d: %d applied, want 3", parallelism, applied)
+		}
+		return most
+	}
+	if got := peak(3); got != 3 {
+		t.Errorf("parallelism 3: %d creates in flight at once, want 3", got)
+	}
+	if got := peak(1); got != 1 {
+		t.Errorf("parallelism 1: %d creates in flight at once, want 1", got)
+	}
+}
+
+// A run that finds its collection in use says so, and nothing about how runs are kept apart.
+func TestConvergeOnABusyCollection(t *testing.T) {
+	requireCorpus(t)
+	t.Setenv("AWS_ACCESS_KEY_ID", "AKIATEST")
+	t.Setenv("AWS_SECRET_ACCESS_KEY", "secret")
+	state := t.TempDir()
+	log, err := ledger.NewFile(filepath.Join(state, "ledger"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := lease.NewLeaser(log, time.Now).Acquire(context.Background(), "busy", lease.All(), "other", time.Minute); err != nil {
+		t.Fatal(err)
+	}
+	var seen []string
+	srv := fakeEC2(t, &seen, &map[string]string{})
+	defer srv.Close()
+	pl, err := omnisdk.Converge(corpus, "busy", state, "run", render(t, map[string]string{
+		"region": "us-east-1", "vpc_cidr": "10.0.0.0/16", "subnet_cidr": "10.0.1.0/24"}), awsArgs(srv))
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = pl.Open(context.Background())
+	if err == nil || err.Error() != `omnisdk: collection "busy" is busy with another run` {
+		t.Errorf("err = %v", err)
+	}
+	if len(seen) != 0 {
+		t.Errorf("calls = %v, want none", seen)
 	}
 }

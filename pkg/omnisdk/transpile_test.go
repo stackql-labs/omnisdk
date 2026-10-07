@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -157,7 +158,7 @@ func iamStub(t *testing.T) *httptest.Server {
 		switch r.Form.Get("Action") {
 		case "ListUsers":
 			fmt.Fprint(w, `<ListUsersResponse><ListUsersResult><Users>`+
-				`<member><UserName>alice</UserName></member><member><UserName>bob</UserName></member>`+
+				`<member><UserName>alice</UserName><UserId>id-alice</UserId></member><member><UserName>bob</UserName><UserId>id-bob</UserId></member>`+
 				`</Users></ListUsersResult></ListUsersResponse>`)
 		case "CreateUser":
 			if r.Form.Get("UserName") == "taken" {
@@ -174,6 +175,21 @@ func iamStub(t *testing.T) *httptest.Server {
 			fmt.Fprint(w, `<UpdateUserResponse><ResponseMetadata><RequestId>r</RequestId></ResponseMetadata></UpdateUserResponse>`)
 		case "DeleteUser":
 			fmt.Fprint(w, `<DeleteUserResponse><ResponseMetadata><RequestId>r</RequestId></ResponseMetadata></DeleteUserResponse>`)
+		case "ListAccessKeys":
+			if r.Form.Get("UserName") == withoutPolicies {
+				fmt.Fprint(w, `<ListAccessKeysResponse><ListAccessKeysResult><AccessKeyMetadata/></ListAccessKeysResult></ListAccessKeysResponse>`)
+				return
+			}
+			fmt.Fprintf(w, `<ListAccessKeysResponse><ListAccessKeysResult><AccessKeyMetadata>`+
+				`<member><UserName>%s</UserName><AccessKeyId>key-%s</AccessKeyId><Status>Active</Status></member>`+
+				`</AccessKeyMetadata></ListAccessKeysResult></ListAccessKeysResponse>`, r.Form.Get("UserName"), r.Form.Get("UserName"))
+		case "GetAccessKeyLastUsed":
+			if r.Form.Get("AccessKeyId") == "" {
+				http.Error(w, "AccessKeyId is required", http.StatusBadRequest)
+				return
+			}
+			fmt.Fprintf(w, `<GetAccessKeyLastUsedResponse><GetAccessKeyLastUsedResult><UserName>x</UserName>`+
+				`<AccessKeyLastUsed><ServiceName>s3</ServiceName></AccessKeyLastUsed></GetAccessKeyLastUsedResult></GetAccessKeyLastUsedResponse>`)
 		case "GetUser":
 			fmt.Fprintf(w, `<GetUserResponse><GetUserResult><User><UserName>%s</UserName></User></GetUserResult></GetUserResponse>`,
 				r.Form.Get("UserName"))
@@ -308,7 +324,10 @@ func tryQueryWith(t *testing.T, q query.Unresolved, adjust func(*omnisdk.Args), 
 			onRequest(r)
 		}
 		call := r.Form.Get("Action") + "|" + signingRegion(r.Header.Get("Authorization"))
-		if strings.HasSuffix(r.Form.Get("Action"), "User") && r.Form.Get("Action") != "GetUser" {
+		if r.Form.Get("Action") == "GetAccessKeyLastUsed" {
+			call += "|" + r.Form.Get("AccessKeyId")
+		}
+		if (strings.HasSuffix(r.Form.Get("Action"), "User") && r.Form.Get("Action") != "GetUser") || r.Form.Get("Action") == "ListAccessKeys" {
 			call += "|" + r.Form.Get("UserName") + r.Form.Get("NewPath")
 		}
 		seen.add(call)
@@ -410,14 +429,15 @@ func TestInListFansOut(t *testing.T) {
 }
 
 // SELECT a.UserName AS a, b.UserName AS b FROM aws.iam.users a INNER JOIN aws.iam.users b
-// ON a.UserName = b.UserName WHERE region = 'us-east-1'
-// Both sides list alone, so the join is local — and b is listed once, not once per row of a.
+// ON a.UserId = b.UserId WHERE region = 'us-east-1'
+// Neither side takes UserId as a parameter, so the join is local — and b is listed once, not once
+// per row of a.
 func TestJoinNeitherSideNeeds(t *testing.T) {
 	q := mustQuery(t,
 		[]query.Join{
 			query.NewJoin(query.NewResource("a", "aws.iam.users"), query.Base),
 			query.NewJoin(query.NewResource("b", "aws.iam.users"), query.Inner,
-				query.NewEq(query.NewColumn("a", "UserName"), query.NewColumn("b", "UserName"))),
+				query.NewEq(query.NewColumn("a", "UserId"), query.NewColumn("b", "UserId"))),
 		},
 		[]query.Predicate{query.NewEq(query.NewColumn("", "region"), query.NewLiteral("us-east-1"))},
 		[]query.Output{
@@ -431,6 +451,37 @@ func TestJoinNeitherSideNeeds(t *testing.T) {
 	}
 	if want := []string{"ListUsers|us-east-1", "ListUsers|us-east-1"}; !reflect.DeepEqual(made, want) {
 		t.Errorf("calls = %v, want one listing per reference", made)
+	}
+}
+
+// The same join is a probe of b by a's value, not a filter over every pair: no row filter remains,
+// and b carries the equality as its match condition.
+func TestJoinNeitherSideNeedsIsAProbe(t *testing.T) {
+	requireCorpus(t)
+	tbl, err := omnisdk.DescribeTable(corpus, "stackql_unstable_aws.iam.users")
+	if err != nil {
+		t.Fatal(err)
+	}
+	q := mustQuery(t,
+		[]query.Join{
+			query.NewJoin(query.NewResource("a", "aws.iam.users"), query.Base),
+			query.NewJoin(query.NewResource("b", "aws.iam.users"), query.Inner,
+				query.NewEq(query.NewColumn("a", "UserId"), query.NewColumn("b", "UserId"))),
+		},
+		[]query.Predicate{query.NewEq(query.NewColumn("", "region"), query.NewLiteral("us-east-1"))},
+		[]query.Output{query.NewOutput("a", query.NewColumn("a", "UserName"))},
+	)
+	res, err := omnisdk.Resolve(q, map[string]omnisdk.Table{"a": tbl, "b": tbl})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if f := res.Graph().Filters(); len(f) != 0 {
+		t.Errorf("filters = %v, want none", f)
+	}
+	for _, n := range res.Graph().Nodes() {
+		if want := map[string]int{"a": 0, "b": 1}[n.Alias()]; len(n.On()) != want {
+			t.Errorf("%s: %d match conditions, want %d", n.Alias(), len(n.On()), want)
+		}
 	}
 }
 
@@ -859,20 +910,20 @@ func TestLeftJoinKeepsTheUnmatched(t *testing.T) {
 		},
 	)
 	rows, _ := runQuery(t, q)
-	if want := []string{"PolicyName=alice-policy,UserName=alice", "UserName=bob"}; !reflect.DeepEqual(rows, want) {
+	if want := []string{"PolicyName=<nil>,UserName=bob", "PolicyName=alice-policy,UserName=alice"}; !reflect.DeepEqual(rows, want) {
 		t.Errorf("rows = %v, want %v", rows, want)
 	}
 }
 
 // SELECT a.UserName AS a, b.UserName AS b FROM aws.iam.users a LEFT JOIN aws.iam.users b
-// ON b.UserName = a.UserName AND b.UserName <> 'bob' WHERE region = 'us-east-1'
+// ON b.UserId = a.UserId AND b.UserName <> 'bob' WHERE region = 'us-east-1'
 // The <> is part of the match, not a filter: bob stays, unmatched. b is listed once.
 func TestLeftJoinConditionDecidesTheMatch(t *testing.T) {
 	q := mustQuery(t,
 		[]query.Join{
 			query.NewJoin(users("a"), query.Base),
 			query.NewJoin(users("b"), query.Left,
-				query.NewEq(query.NewColumn("b", "UserName"), query.NewColumn("a", "UserName")),
+				query.NewEq(query.NewColumn("b", "UserId"), query.NewColumn("a", "UserId")),
 				query.NewCompare(query.Ne, query.NewColumn("b", "UserName"), query.NewLiteral("bob"))),
 		},
 		[]query.Predicate{regionEq()},
@@ -882,7 +933,7 @@ func TestLeftJoinConditionDecidesTheMatch(t *testing.T) {
 		},
 	)
 	rows, made := runQuery(t, q)
-	if want := []string{"a=alice,b=alice", "a=bob"}; !reflect.DeepEqual(rows, want) {
+	if want := []string{"a=alice,b=alice", "a=bob,b=<nil>"}; !reflect.DeepEqual(rows, want) {
 		t.Errorf("rows = %v, want %v", rows, want)
 	}
 	if want := []string{"ListUsers|us-east-1", "ListUsers|us-east-1"}; !reflect.DeepEqual(made, want) {
@@ -1003,5 +1054,236 @@ func TestCatalogueFunctionsInAQuery(t *testing.T) {
 	rows, _ := runQuery(t, q)
 	if want := []string{"UserName=alice,shout=ALICE"}; !reflect.DeepEqual(rows, want) {
 		t.Errorf("rows = %v, want %v", rows, want)
+	}
+}
+
+// SELECT u.UserName, k.AccessKeyId FROM aws.iam.users u INNER JOIN aws.iam.access_keys k
+// ON k.UserName = u.UserName WHERE region = 'us-east-1'
+// UserName is optional on ListAccessKeys, and without it the API lists only the caller's keys. So it
+// is sent: one request per user, not one unscoped listing filtered afterwards.
+func TestJoinIntoAnOptionalParameterIsAnEdge(t *testing.T) {
+	q := mustQuery(t,
+		[]query.Join{
+			query.NewJoin(users("u"), query.Base),
+			query.NewJoin(query.NewResource("k", "aws.iam.access_keys"), query.Inner,
+				query.NewEq(query.NewColumn("k", "UserName"), query.NewColumn("u", "UserName"))),
+		},
+		[]query.Predicate{regionEq()},
+		[]query.Output{
+			query.NewOutput("UserName", query.NewColumn("u", "UserName")),
+			query.NewOutput("AccessKeyId", query.NewColumn("k", "AccessKeyId")),
+		},
+	)
+	rows, made := runQuery(t, q)
+	if want := []string{"AccessKeyId=key-alice,UserName=alice", "AccessKeyId=key-bob,UserName=bob"}; !reflect.DeepEqual(rows, want) {
+		t.Errorf("rows = %v, want %v", rows, want)
+	}
+	if want := []string{"ListAccessKeys|us-east-1|alice", "ListAccessKeys|us-east-1|bob", "ListUsers|us-east-1"}; !reflect.DeepEqual(made, want) {
+		t.Errorf("calls = %v, want one ListAccessKeys per user", made)
+	}
+}
+
+// users u LEFT JOIN access_keys k ON k.UserName = u.UserName LEFT JOIN access_key_last_useds l
+// ON l.AccessKeyId = k.AccessKeyId — bob has no keys, so there is no AccessKeyId to ask about: his row
+// stays unmatched and no GetAccessKeyLastUsed is sent for him.
+func TestLeftJoinSendsNothingForAMissingValue(t *testing.T) {
+	withoutPolicies = "bob"
+	defer func() { withoutPolicies = "" }()
+	q := mustQuery(t,
+		[]query.Join{
+			query.NewJoin(users("u"), query.Base),
+			query.NewJoin(query.NewResource("k", "aws.iam.access_keys"), query.Left,
+				query.NewEq(query.NewColumn("k", "UserName"), query.NewColumn("u", "UserName"))),
+			query.NewJoin(query.NewResource("l", "aws.iam.access_key_last_useds"), query.Left,
+				query.NewEq(query.NewColumn("l", "AccessKeyId"), query.NewColumn("k", "AccessKeyId"))),
+		},
+		[]query.Predicate{regionEq()},
+		[]query.Output{
+			query.NewOutput("UserName", query.NewColumn("u", "UserName")),
+			query.NewOutput("AccessKeyId", query.NewColumn("k", "AccessKeyId")),
+		},
+	)
+	rows, made := runQuery(t, q)
+	if want := []string{"AccessKeyId=<nil>,UserName=bob", "AccessKeyId=key-alice,UserName=alice"}; !reflect.DeepEqual(rows, want) {
+		t.Errorf("rows = %v, want %v", rows, want)
+	}
+	var lastUsed []string
+	for _, c := range made {
+		if strings.HasPrefix(c, "GetAccessKeyLastUsed") {
+			lastUsed = append(lastUsed, c)
+		}
+	}
+	if want := []string{"GetAccessKeyLastUsed|us-east-1|key-alice"}; !reflect.DeepEqual(lastUsed, want) {
+		t.Errorf("GetAccessKeyLastUsed calls = %v, want only alice's key", lastUsed)
+	}
+}
+
+// SELECT name FROM azure.storage.storage_accounts WHERE subscription_id = 'sub'
+// list and check_name_availability both need only subscription_id; check_name_availability needs a
+// request body the query does not have, so list is the read.
+func TestTiedMethodsPreferTheRead(t *testing.T) {
+	requireCorpus(t)
+	q := mustQuery(t,
+		[]query.Join{query.NewJoin(query.NewResource("a", "azure.storage.storage_accounts"), query.Base)},
+		[]query.Predicate{query.NewEq(query.NewColumn("a", "subscription_id"), query.NewLiteral("sub"))},
+		[]query.Output{query.NewOutput("name", query.NewColumn("a", "name"))},
+	)
+	tbl, err := omnisdk.DescribeTable(corpus, "stackql_unstable_azure.storage.storage_accounts")
+	if err != nil {
+		t.Fatal(err)
+	}
+	res, err := omnisdk.Resolve(q, map[string]omnisdk.Table{"a": tbl})
+	if err != nil {
+		t.Fatalf("resolve: %v", err)
+	}
+	t.Setenv("AZURE_TENANT_ID", "t")
+	t.Setenv("AZURE_CLIENT_ID", "c")
+	t.Setenv("AZURE_CLIENT_SECRET", "s")
+	var path string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if strings.Contains(r.URL.Path, "/token") {
+			fmt.Fprint(w, `{"access_token":"tok"}`)
+			return
+		}
+		path = r.Method + " " + r.URL.Path
+		fmt.Fprint(w, `{"value":[{"name":"acct"}]}`)
+	}))
+	defer srv.Close()
+	pl, err := omnisdk.NewGraphSelectQuery(corpus, res.Graph(), omnisdk.Args{Endpoint: srv.URL, Params: res.Params()})
+	if err != nil {
+		t.Fatalf("plan: %v", err)
+	}
+	rows, err := pl.Open(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for rows.Next() {
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatalf("rows: %v", err)
+	}
+	rows.Close()
+	if path != "GET /subscriptions/sub/providers/Microsoft.Storage/storageAccounts" {
+		t.Errorf("request = %q, want the list", path)
+	}
+}
+
+// Microsoft Graph declares every collection response by $ref to components/responses, under 2XX.
+// Both of these failed with "declares no columns" / "no table has a column".
+func TestResponsesDeclaredByRefHaveColumns(t *testing.T) {
+	requireCorpus(t)
+	for addr, out := range map[string]query.Output{
+		"stackql_unstable_entra_id.applications.applications":       query.NewOutput("", query.NewStar("")),
+		"stackql_unstable_entra_id.directory_roles.directory_roles": query.NewOutput("displayName", query.NewColumn("", "displayName")),
+	} {
+		tbl, err := omnisdk.DescribeTable(corpus, addr)
+		if err != nil {
+			t.Fatal(err)
+		}
+		q := mustQuery(t, []query.Join{query.NewJoin(query.NewResource("r", addr), query.Base)}, nil, []query.Output{out})
+		if _, err := omnisdk.Resolve(q, map[string]omnisdk.Table{"r": tbl}); err != nil {
+			t.Errorf("%s: %v", addr, err)
+		}
+	}
+}
+
+// Every S3 request is signed with its payload hash, which S3 requires.
+func TestS3RequestsCarryThePayloadHash(t *testing.T) {
+	requireCorpus(t)
+	t.Setenv("AWS_ACCESS_KEY_ID", "AKIATEST")
+	t.Setenv("AWS_SECRET_ACCESS_KEY", "secret")
+	var hash, signed string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hash, signed = r.Header.Get("X-Amz-Content-Sha256"), r.Header.Get("Authorization")
+		w.Header().Set("Content-Type", "application/xml")
+		fmt.Fprint(w, `<ListAllMyBucketsResult><Buckets><Bucket><Name>b</Name></Bucket></Buckets></ListAllMyBucketsResult>`)
+	}))
+	defer srv.Close()
+	g, err := omnisdk.NewGraph([]omnisdk.Node{omnisdk.NewNode("b", "stackql_unstable_aws.s3.buckets", nil)}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pl, err := omnisdk.NewGraphSelectQuery(corpus, g, omnisdk.Args{Endpoint: srv.URL, Params: map[string]string{"region": "us-east-1"}})
+	if err != nil {
+		t.Fatalf("plan: %v", err)
+	}
+	rows, err := pl.Open(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for rows.Next() {
+	}
+	rows.Close()
+	if hash == "" || !strings.Contains(signed, "x-amz-content-sha256") {
+		t.Errorf("X-Amz-Content-Sha256 = %q, Authorization = %q; want the hash sent and signed", hash, signed)
+	}
+}
+
+// A list declaring no objectKey reads its rows from the default $.items: googleadmin tokens expose
+// the token's columns, not the envelope's (etag, items, kind).
+func TestDefaultObjectKeyIsItems(t *testing.T) {
+	requireCorpus(t)
+	tbl, err := omnisdk.DescribeTable(corpus, "stackql_unstable_googleadmin.directory.tokens")
+	if err != nil {
+		t.Skipf("corpus has no googleadmin tokens: %v", err)
+	}
+	for _, m := range tbl.Methods() {
+		cols := m.Columns()
+		if slices.Contains(cols, "items") || !slices.Contains(cols, "clientId") {
+			t.Errorf("%s columns = %v, want a token's", m.Method(), cols)
+		}
+	}
+}
+
+// users u LISTED JOIN access_keys k ON k.UserName = u.UserName — the same join as above, forced to
+// list: one ListAccessKeys with no UserName, matched on its rows, where Inner sends one per user. The
+// listing here answers for the caller only, so nothing matches — the risk the caller took on.
+func TestListedJoinListsOnce(t *testing.T) {
+	q := mustQuery(t,
+		[]query.Join{
+			query.NewJoin(users("u"), query.Base),
+			query.NewJoin(query.NewResource("k", "aws.iam.access_keys"), query.Listed,
+				query.NewEq(query.NewColumn("k", "UserName"), query.NewColumn("u", "UserName"))),
+		},
+		[]query.Predicate{regionEq()},
+		[]query.Output{
+			query.NewOutput("UserName", query.NewColumn("u", "UserName")),
+			query.NewOutput("AccessKeyId", query.NewColumn("k", "AccessKeyId")),
+		},
+	)
+	rows, made := runQuery(t, q)
+	if want := []string{"ListAccessKeys|us-east-1|", "ListUsers|us-east-1"}; !reflect.DeepEqual(made, want) {
+		t.Errorf("calls = %v, want one listing of each", made)
+	}
+	if len(rows) != 0 {
+		t.Errorf("rows = %v, want none: the caller-only listing matches no user", rows)
+	}
+}
+
+// users a CROSS JOIN users b: every pair, each reference listed once.
+func TestCrossJoin(t *testing.T) {
+	q := mustQuery(t,
+		[]query.Join{
+			query.NewJoin(users("a"), query.Base),
+			query.NewJoin(users("b"), query.Cross),
+		},
+		[]query.Predicate{regionEq()},
+		[]query.Output{
+			query.NewOutput("a", query.NewColumn("a", "UserName")),
+			query.NewOutput("b", query.NewColumn("b", "UserName")),
+		},
+	)
+	rows, made := runQuery(t, q)
+	if want := []string{"a=alice,b=alice", "a=alice,b=bob", "a=bob,b=alice", "a=bob,b=bob"}; !reflect.DeepEqual(rows, want) {
+		t.Errorf("rows = %v, want every pair", rows)
+	}
+	if want := []string{"ListUsers|us-east-1", "ListUsers|us-east-1"}; !reflect.DeepEqual(made, want) {
+		t.Errorf("calls = %v, want one listing per reference", made)
+	}
+	if _, err := query.New([]query.Join{query.NewJoin(users("a"), query.Base),
+		query.NewJoin(users("b"), query.Cross, query.NewEq(query.NewColumn("a", "UserName"), query.NewColumn("b", "UserName")))},
+		nil, nil); err == nil {
+		t.Error("a cross join with an ON was accepted")
 	}
 }

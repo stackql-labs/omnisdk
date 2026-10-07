@@ -77,6 +77,13 @@ const (
 	Inner
 	// Left keeps every row before it, with this resource's columns absent where nothing matched.
 	Left
+	// Cross pairs every row before it with every row of this resource: a cartesian product. It takes
+	// no ON; the resource is listed once.
+	Cross
+	// Listed is an inner join whose ON is matched on the rows, never sent as a parameter: the
+	// resource is listed once and its rows are looked up by the ON, where Inner would send a value
+	// its methods take as a request for each row before it.
+	Listed
 )
 
 func (f JoinForm) String() string {
@@ -87,6 +94,10 @@ func (f JoinForm) String() string {
 		return "inner"
 	case Left:
 		return "left"
+	case Cross:
+		return "cross"
+	case Listed:
+		return "listed"
 	}
 	return fmt.Sprintf("JoinForm(%d)", int(f))
 }
@@ -249,6 +260,8 @@ func build(t Target, from []Join, where []Predicate, sel []Output) (Unresolved, 
 			return nil, fmt.Errorf("query: a resource has neither an alias nor a handle")
 		case scope[j.Resource().Alias()]:
 			return nil, fmt.Errorf("query: %q is referenced twice; give each reference an alias", j.Resource().Alias())
+		case j.Form() == Cross && len(j.On()) > 0:
+			return nil, fmt.Errorf("query: %s is a cross join, which takes no ON", j.Resource().Alias())
 		}
 		scope[j.Resource().Alias()] = true
 		// ON may name this resource and those before it, not those joined later.
