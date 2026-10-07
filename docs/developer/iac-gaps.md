@@ -1,5 +1,8 @@
 # IaC gaps
 
+`ConvergeGraph` runs IaC as a graph — recall, read, diff, branch, then any gated mutation — with
+the ledger, collection hold and compensation below. Its own gaps are in section 6.
+
 What `Converge` does not do, what happens instead, and what closing each gap takes. The run model
 these build on — intent before effect, compensation, correlation stamps — is in
 [invariants.md](invariants.md) and the package docs of `internal/apply`, `internal/lease` and
@@ -78,7 +81,28 @@ can carry any column, fan out, and poll; an IaC dependency cannot.
 - A decision on fan-out: one node producing N objects needs a key per object, derived from its
   inputs, so a re-run addresses the same N.
 
-## 6. Smaller limits
+## 6. ConvergeGraph
+
+**Now.** `ConvergeGraph` runs any gated mutation durably, but:
+
+- **`Converge` is not expressed through it.** The flat-list entry point still runs its own
+  create-or-refuse step; section 1 applies to it, not to `ConvergeGraph`.
+- **Compensation reverses creates only.** A failed run deletes what it created, addressed by
+  `AddressedBy`; an update or delete it made is reported outstanding.
+- **One object per managed key.** A mutation node that runs for several rows writes every row to the
+  same ledger key.
+- **No correlation stamp.** Nothing links a created object back to its key, so losing the ledger
+  orphans it.
+- **No CLI.** It is reachable from Go only.
+
+**Needs.**
+- `Converge(resources)` lowered to the recall, read, diff, branch graph.
+- Update reversal from the journalled prior intent, through the inverse model.
+- A key per row for fan-out, derived from the node's inputs.
+- The correlation parameter on `Managed`, stamped at create and used to adopt.
+- A `doc-graph`-style CLI command taking `managed`.
+
+## 7. Smaller limits
 
 - **Tags are stamped at create, not converged.** The read does not extract the tag set, so a tag
   edited elsewhere is not corrected.

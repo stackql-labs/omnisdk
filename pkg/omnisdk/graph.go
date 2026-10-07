@@ -335,9 +335,9 @@ func NewGraphWithFilters(nodes []Node, wirings []Wiring, projections []Projectio
 			return nil, fmt.Errorf("omnisdk: a node has neither an alias nor an address")
 		case strings.ContainsRune(n.Alias(), 0):
 			return nil, fmt.Errorf("omnisdk: alias %q contains a NUL byte", n.Alias())
-		case n.Address() == "":
+		case n.Address() == "" && n.Verb() != verbRecall && n.Verb() != verbDiff:
 			return nil, fmt.Errorf("omnisdk: node %q has no address", n.Alias())
-		case !contains([]string{"select", "insert", "update", "delete"}, n.Verb()):
+		case !contains([]string{"select", "insert", "update", "delete", verbRecall, verbDiff}, n.Verb()):
 			return nil, fmt.Errorf("omnisdk: node %q has unknown verb %q", n.Alias(), n.Verb())
 		case known[n.Alias()]:
 			return nil, fmt.Errorf("omnisdk: %q is referenced twice; give each reference an alias", n.Alias())
@@ -557,6 +557,15 @@ func NewGraphSelectQuery(dir string, g Graph, args Args) (Plan, error) {
 			}
 		}
 	}
+	for _, n := range g.Nodes() {
+		if in, ok := n.(intrinsicNode); ok && n.Verb() == verbDiff {
+			for _, f := range append(slices.Sorted(maps.Keys(n.Body())), in.liveIdentity) {
+				if !contains(emits[in.live], f) {
+					emits[in.live] = append(emits[in.live], f)
+				}
+			}
+		}
+	}
 	for _, f := range reads {
 		for _, c := range predicateColumns(f) {
 			if !contains(emits[c.Qualifier()], c.Name()) {
@@ -588,6 +597,27 @@ func NewGraphSelectQuery(dir string, g Graph, args Args) (Plan, error) {
 	}
 	for _, n := range g.Nodes() {
 		alias, addr := n.Alias(), n.Address()
+		if in, ok := n.(intrinsicNode); ok {
+			name := n.Verb() + "__" + planName(alias)
+			if other, clash := taken[name]; clash {
+				return nil, fmt.Errorf("omnisdk: aliases %q and %q name the same plan exchange %q", other, alias, name)
+			}
+			taken[name] = alias
+			planned[alias] = name
+			if n.Verb() == verbDiff {
+				live := slices.IndexFunc(g.Nodes(), func(x Node) bool { return x.Alias() == in.live })
+				if live < 0 || !g.Nodes()[live].Outer() {
+					return nil, fmt.Errorf("omnisdk: diff %q reads %q, which must be an outer node declared before it, so an absent object still reaches the diff", alias, in.live)
+				}
+			}
+			spec, b, err := intrinsicSpec(name, in, args.managed, planned)
+			if err != nil {
+				return nil, err
+			}
+			specs = append(specs, spec)
+			betas = append(betas, b...)
+			continue
+		}
 		// Two documents routinely name a method the same thing — "list" above all — and a plan names
 		// its exchanges. The alias is what tells them apart; the address keeps a trace readable.
 		name := planName(addr) + "__" + planName(alias)
@@ -759,7 +789,13 @@ func NewGraphSelectQuery(dir string, g Graph, args Args) (Plan, error) {
 		// Nothing wired in means the same inputs for every upstream row: run once, replay the rest.
 		switch consumer := requestWired(g, alias); {
 		case mutating:
-			spec = effect{ExchangeSpec: spec, alias: alias, verb: n.Verb(), exchange: exchangeOf(addr, n.Verb()), journal: wal}
+			eff := effect{ExchangeSpec: spec, alias: alias, verb: n.Verb(), exchange: exchangeOf(addr, n.Verb()), journal: wal}
+			if run := args.managed; run != nil && run.ledger != nil {
+				if m, ok := run.nodes[alias]; ok {
+					eff.durable = &durable{run: run, resource: m, address: addr}
+				}
+			}
+			spec = eff
 		case !consumer:
 			solo := new(bool)
 			solos[name] = solo

@@ -632,6 +632,8 @@ type effect struct {
 	plan.ExchangeSpec
 	alias, verb, exchange string
 	journal               facade.Journal
+	// durable, in a converging run, records the effect in the ledger as well.
+	durable *durable
 }
 
 func (e effect) Make(bound map[string]any) facade.Operator {
@@ -645,6 +647,9 @@ type effectOp struct {
 }
 
 func (o effectOp) Open(ctx context.Context) facade.Records {
+	if o.e.durable != nil {
+		return o.e.durable.open(ctx, o)
+	}
 	if j := o.e.journal; j != nil {
 		key, err := effectKey(o.e.alias, o.bound)
 		if err == nil {

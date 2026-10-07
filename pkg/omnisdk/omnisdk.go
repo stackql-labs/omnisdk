@@ -220,6 +220,8 @@ type Args struct {
 	AuthByProvider map[string]*Auth `json:"auth_by_provider,omitempty"`
 	// cred is the entry for the provider being resolved, set by withCredential; authOf reads it.
 	cred *Auth
+	// managed is the converging run a graph is planned for, nil for a query.
+	managed *managedRun
 	// Redaction decides which columns a result may not carry. Nil is DefaultRedaction: the values
 	// auth put on the row are dropped, everything else is kept. A power user who needs them sets
 	// RedactNone, or a policy of their own.

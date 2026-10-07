@@ -278,6 +278,10 @@ func (r *runner) adopt(ctx context.Context, s Step, v facade.LedgerVersion, iden
 	return r.log.Resolve(ctx, s.Key, identity, v)
 }
 
+// Satisfied reports whether actual already satisfies mutation: every enforced field matches, and every
+// unset field is absent. It is the test for "nothing to do".
+func Satisfied(mutation, actual []byte) (bool, error) { return converged(mutation, actual) }
+
 // converged reports whether actual already satisfies mutation: every enforced field matches, and
 // every unset field is absent. It is the test for "nothing to do", and it is why a re-run costs no
 // wire calls.

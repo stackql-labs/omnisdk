@@ -12,7 +12,7 @@ Migrating from `v0.1.3-alpha05`, the version stackql consumes, to the current tr
 
 ## Additions
 
-`Branch`, `Arm`, `Gate` with `NewBranch`, `NewArm`, `Otherwise`, `NewGate`, `WithBranch`; `Termination` with `Rounds`, `Records`, `Within`, `AnyOf`, `AllOf`, and `WithTermination`; `Tuning.RowsAhead`, `Tuning.PagesAhead`, `Auth.Profile`, `Auth.Subject`, `AnalyzeDocuments`, package
+`ConvergeGraph`, `NewRecallNode`, `NewDiffNode`, `Managed`/`NewManaged`, `DiffAbsent`/`DiffMatch`/`DiffDrift`; `Branch`, `Arm`, `Gate` with `NewBranch`, `NewArm`, `Otherwise`, `NewGate`, `WithBranch`; `Termination` with `Rounds`, `Records`, `Within`, `AnyOf`, `AllOf`, and `WithTermination`; `Tuning.RowsAhead`, `Tuning.PagesAhead`, `Auth.Profile`, `Auth.Subject`, `AnalyzeDocuments`, package
 `pkg/docparse/doclint`.
 
 ## Behaviour changes
