@@ -72,6 +72,56 @@ type catalog struct {
 func (c catalog) Get(name string) (Func, bool) { f, ok := c.byName[name]; return f, ok }
 func (c catalog) Funcs() []Func                { return append([]Func(nil), c.sorted...) }
 
+// Dialect is the SQL a catalogue speaks: which functions exist and what each does. stackql runs on
+// SQLite by default and on Postgres where configured, and the two disagree — in names
+// (json_extract against json_extract_path_text) and in semantics (regexp_replace replaces every
+// match in stackql's SQLite, the first unless flagged in Postgres).
+type Dialect string
+
+const (
+	SQLite   Dialect = "sqlite"
+	Postgres Dialect = "postgres"
+)
+
+// BuiltinsFor is every function d provides.
+func BuiltinsFor(d Dialect) Catalog {
+	if d == Postgres {
+		return Builtins()
+	}
+	c, err := NewCatalog(sqliteBuiltins()...)
+	if err != nil {
+		panic(err) // a duplicate here is a bug in this package, not in any input
+	}
+	return c
+}
+
+// sqliteBuiltins is SQLite's catalogue: its functions overriding any of the same name.
+func sqliteBuiltins() []Func {
+	byName := map[string]Func{}
+	var order []string
+	add := func(fs []Func) {
+		for _, f := range fs {
+			if _, seen := byName[f.Name()]; !seen {
+				order = append(order, f.Name())
+			}
+			byName[f.Name()] = f
+		}
+	}
+	add(builtins())
+	add(sqliteMath())
+	add(sqliteText())
+	add(sqliteConditional())
+	add(sqliteDates())
+	add(sqliteJSON())
+	add(stackqlExtensions())
+	add(sqlitePrintfFuncs())
+	out := make([]Func, 0, len(order))
+	for _, n := range order {
+		out = append(out, byName[n])
+	}
+	return out
+}
+
 // Builtins is every function this package ships.
 func Builtins() Catalog {
 	c, err := NewCatalog(builtins()...)
