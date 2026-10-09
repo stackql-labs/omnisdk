@@ -410,3 +410,23 @@ func readOneAndDrop(t *testing.T, endpoint string) {
 		t.Fatalf("no first row: %v", rows.Err())
 	}
 }
+
+// A GitHub document that declares no pagination still follows the Link header, as any-sdk does by
+// default for GitHub.
+func TestGithubDefaultsToLinkPagination(t *testing.T) {
+	var srv *httptest.Server
+	srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.URL.Query().Get("page") == "" {
+			w.Header().Set("Link", `<`+srv.URL+`/orgs/o/members?page=2>; rel="next"`)
+			fmt.Fprint(w, `[{"login":"a"}]`)
+			return
+		}
+		fmt.Fprint(w, `[{"login":"b"}]`)
+	}))
+	defer srv.Close()
+	if n := countRows(t, authRegistry, "stackql_unstable_github.orgs.members",
+		omnisdk.Args{Endpoint: srv.URL, Params: map[string]string{"org": "o"}}); n != 2 {
+		t.Errorf("rows = %d, want both pages", n)
+	}
+}

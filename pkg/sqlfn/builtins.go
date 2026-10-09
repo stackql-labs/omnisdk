@@ -65,6 +65,29 @@ func builtins() []Func {
 			}
 			return re.MatchString(text(a[0])), nil
 		})),
+		// Predicates SQL writes as operators: x IS NULL, x LIKE p, x BETWEEN lo AND hi. A query
+		// that cannot spell the operator calls these in a condition.
+		NewScalar("is_null", 1, 1, func(a []any) (any, error) { return a[0] == nil, nil }),
+		NewScalar("like", 2, 3, func(a []any) (any, error) {
+			if a[0] == nil || a[1] == nil {
+				return nil, nil
+			}
+			escape := ""
+			if len(a) == 3 && a[2] != nil {
+				escape = text(a[2])
+			}
+			re, err := likePattern(text(a[1]), escape)
+			if err != nil {
+				return nil, err
+			}
+			return re.MatchString(text(a[0])), nil
+		}),
+		NewScalar("between", 3, 3, func(a []any) (any, error) {
+			if a[0] == nil || a[1] == nil || a[2] == nil {
+				return nil, nil
+			}
+			return compareOrdered(a[0], a[1]) >= 0 && compareOrdered(a[0], a[2]) <= 0, nil
+		}),
 		// Null handling.
 		NewScalar("coalesce", 1, -1, func(a []any) (any, error) {
 			for _, v := range a {
@@ -680,4 +703,53 @@ func canonical(v any, key string) any {
 		return items
 	}
 	return v
+}
+
+// likePattern compiles a LIKE pattern as SQLite reads it: % any run, _ any one character, an escape
+// character making the next literal, and ASCII letters matching either case.
+func likePattern(pattern, escape string) (*regexp.Regexp, error) {
+	var esc rune = -1
+	if escape != "" {
+		r := []rune(escape)
+		if len(r) != 1 {
+			return nil, fmt.Errorf("like: escape %q must be one character", escape)
+		}
+		esc = r[0]
+	}
+	var b strings.Builder
+	b.WriteString("(?is)^")
+	runes := []rune(pattern)
+	for i := 0; i < len(runes); i++ {
+		switch r := runes[i]; {
+		case r == esc && i+1 < len(runes):
+			i++
+			b.WriteString(regexp.QuoteMeta(string(runes[i])))
+		case r == '%':
+			b.WriteString(".*")
+		case r == '_':
+			b.WriteString(".")
+		default:
+			b.WriteString(regexp.QuoteMeta(string(r)))
+		}
+	}
+	b.WriteString("$")
+	return regexp.Compile(b.String())
+}
+
+// compareOrdered orders two values numerically where both read as numbers, otherwise as text — the
+// same order the engine's comparisons use.
+func compareOrdered(a, b any) int {
+	as, bs := text(a), text(b)
+	af, aerr := strconv.ParseFloat(as, 64)
+	bf, berr := strconv.ParseFloat(bs, 64)
+	if aerr == nil && berr == nil && !math.IsNaN(af) && !math.IsNaN(bf) {
+		switch {
+		case af < bf:
+			return -1
+		case af > bf:
+			return 1
+		}
+		return 0
+	}
+	return strings.Compare(as, bs)
 }

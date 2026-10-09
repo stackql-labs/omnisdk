@@ -21,6 +21,7 @@ No caller change needed.
   `DiffAbsent`, `DiffMatch`, `DiffDrift`.
 - **Tuning and auth:** `Tuning.RowsAhead`, `Tuning.PagesAhead`; `Auth.Profile`, `Auth.Subject`.
 - **Documents:** `AnalyzeDocuments`; package `pkg/docparse/doclint`.
+- **SQL functions:** `is_null`, `like` (SQLite's `LIKE`, optional escape), `between`.
 
 ## Behaviour changes
 
@@ -42,6 +43,7 @@ No caller change needed.
 | A node's `On` may read another node's column with no wiring: the graph delivers it. | Graphs that wired those columns by hand still work. |
 | When every node has a projection, a row holds every projected column, NULL where it has no value — the unmatched side of a left join. | Anyone testing an unmatched column for absence rather than NULL. |
 | `Converge` on a collection another run holds fails with `collection "<name>" is busy with another run`; the holder and expiry are no longer in the message. | Anyone parsing that error. |
+| A GET whose document declares no pagination pages as any-sdk does: GitHub and Okta by the `Link` header, every other provider by a body `nextPageToken` sent back as the `pageToken` query parameter. | GitHub and Okta lists, which returned their first page only. |
 | `NaN` compares as text, not as a number; it equalled every number. | Filters or joins comparing a value spelled `NaN`. |
 
 ## CLI
