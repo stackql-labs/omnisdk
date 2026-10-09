@@ -21,7 +21,8 @@ No caller change needed.
   `DiffAbsent`, `DiffMatch`, `DiffDrift`.
 - **Tuning and auth:** `Tuning.RowsAhead`, `Tuning.PagesAhead`; `Auth.Profile`, `Auth.Subject`.
 - **Documents:** `AnalyzeDocuments`; package `pkg/docparse/doclint`.
-- **SQL functions:** `is_null`, `like` (SQLite's `LIKE`, optional escape), `between`.
+- **SQL functions:** `is_null`, `like` (SQLite's `LIKE`: ASCII-only case folding, optional escape), `between`, `||` (NULL if any argument is), `cast(x, type)` (SQLite's `CAST` rules).
+- **Table functions in FROM:** `query.TableFunction`, `query.NewTableFunction` — `FROM t, json_each(t.c) e`, run once per row before it, joined cross, inner or left.
 
 ## Behaviour changes
 

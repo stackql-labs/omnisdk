@@ -340,9 +340,9 @@ func NewGraphWithFilters(nodes []Node, wirings []Wiring, projections []Projectio
 			return nil, fmt.Errorf("omnisdk: a node has neither an alias nor an address")
 		case strings.ContainsRune(n.Alias(), 0):
 			return nil, fmt.Errorf("omnisdk: alias %q contains a NUL byte", n.Alias())
-		case n.Address() == "" && n.Verb() != verbRecall && n.Verb() != verbDiff:
+		case n.Address() == "" && n.Verb() != verbRecall && n.Verb() != verbDiff && n.Verb() != verbFunction:
 			return nil, fmt.Errorf("omnisdk: node %q has no address", n.Alias())
-		case !contains([]string{"select", "insert", "update", "delete", verbRecall, verbDiff}, n.Verb()):
+		case !contains([]string{"select", "insert", "update", "delete", verbRecall, verbDiff, verbFunction}, n.Verb()):
 			return nil, fmt.Errorf("omnisdk: node %q has unknown verb %q", n.Alias(), n.Verb())
 		case known[n.Alias()]:
 			return nil, fmt.Errorf("omnisdk: %q is referenced twice; give each reference an alias", n.Alias())
@@ -655,6 +655,32 @@ func NewGraphSelectQuery(dir string, g Graph, args Args) (Plan, error) {
 			}
 			taken[name] = alias
 			planned[alias] = name
+			if n.Verb() == verbFunction {
+				spec, err := functionSpec(name, in.call, wiredNames(g, alias), fns)
+				if err != nil {
+					return nil, fmt.Errorf("omnisdk: %s: %w", alias, err)
+				}
+				// The same wrappers a document node takes, in the same order: its select list, its
+				// match conditions, its outer join, and the columns other nodes read from it.
+				if p, ok := projectionFor(g, alias); ok {
+					t, err := transform.NewSelection(p.internal(), fns)
+					if err != nil {
+						return nil, fmt.Errorf("omnisdk: %s: %w", alias, err)
+					}
+					spec = plan.WithProject(spec, t)
+				}
+				if on := n.On(); len(on) > 0 {
+					spec = matched{ExchangeSpec: spec, alias: alias, on: on, fns: fns}
+				}
+				if n.Outer() {
+					spec = leftOuter{ExchangeSpec: spec}
+				}
+				if attrs := emits[alias]; len(attrs) > 0 {
+					spec = tagged{ExchangeSpec: spec, alias: alias, attrs: attrs}
+				}
+				specs = append(specs, spec)
+				continue
+			}
 			if n.Verb() == verbDiff {
 				live := slices.IndexFunc(g.Nodes(), func(x Node) bool { return x.Alias() == in.live })
 				if live < 0 || !g.Nodes()[live].Outer() {
@@ -1314,4 +1340,55 @@ func wiringFor(g Graph, alias string) (Wiring, bool) {
 		}
 	}
 	return nil, false
+}
+
+// wiredNames are the names values arrive at alias under.
+func wiredNames(g Graph, alias string) []string {
+	w, ok := wiringFor(g, alias)
+	if !ok {
+		return nil
+	}
+	out := make([]string, 0, len(w.Inbound()))
+	for _, in := range w.Inbound() {
+		if !slices.Contains(out, in.As()) {
+			out = append(out, in.As())
+		}
+	}
+	return out
+}
+
+// functionSpec runs a table function for each row reaching it, its arguments read from the values
+// delivered under the producing node's private keys. A row it returns nothing for is dropped, as for
+// any inner join; leftOuter keeps it.
+func functionSpec(name string, call query.Call, in []string, fns facade.FnRegistry) (plan.ExchangeSpec, error) {
+	expr, err := engineExpr(call, func(c query.Column) fn.Expr { return fn.Field(hidden(c.Qualifier(), c.Name())) })
+	if err != nil {
+		return nil, err
+	}
+	if _, ok := fns.Fn(call.Func()); !ok {
+		return nil, fmt.Errorf("no function %q", call.Func())
+	}
+	return plan.NewExchangeSpec(name, in, nil, func(bound map[string]any) facade.Operator {
+		v, err := expr.Eval(bound, fns)
+		if err != nil {
+			return failedOp{err}
+		}
+		switch rows := v.(type) {
+		case nil:
+			return staticOp{}
+		case []map[string]any:
+			return staticOp{rows: rows}
+		case []any:
+			out := make([]map[string]any, 0, len(rows))
+			for _, r := range rows {
+				m, ok := r.(map[string]any)
+				if !ok {
+					return failedOp{fmt.Errorf("%s returned a %T row, not a record", call.Func(), r)}
+				}
+				out = append(out, m)
+			}
+			return staticOp{rows: out}
+		}
+		return failedOp{fmt.Errorf("%s returned %T, not rows", call.Func(), v)}
+	}, bind.NewInnerFlatten()), nil
 }

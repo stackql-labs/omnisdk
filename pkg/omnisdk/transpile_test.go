@@ -1287,3 +1287,39 @@ func TestCrossJoin(t *testing.T) {
 		t.Error("a cross join with an ON was accepted")
 	}
 }
+
+// The predicates SQL spells as operators run on the SQL path, and their NULL handling is SQL's:
+// IS NULL is never unknown; LIKE and BETWEEN with a NULL are; || with a NULL is NULL.
+func TestOperatorFunctionsOnTheQueryPath(t *testing.T) {
+	run := func(where query.Predicate, sel ...query.Output) []string {
+		t.Helper()
+		if len(sel) == 0 {
+			sel = []query.Output{query.NewOutput("UserName", query.NewColumn("u", "UserName"))}
+		}
+		rows, _ := runQuery(t, mustQuery(t,
+			[]query.Join{query.NewJoin(users("u"), query.Base)},
+			[]query.Predicate{regionEq(), where}, sel))
+		return rows
+	}
+	name := query.NewColumn("u", "UserName")
+	call := func(fn string, args ...query.Expr) query.Predicate { return query.NewTest(query.NewCall(fn, args...)) }
+	for label, c := range map[string]struct {
+		where query.Predicate
+		want  []string
+	}{
+		"like":        {call("like", name, query.NewLiteral("AL%")), []string{"UserName=alice"}},
+		"not like":    {query.NewNot(call("like", name, query.NewLiteral("al%"))), []string{"UserName=bob"}},
+		"between":     {call("between", name, query.NewLiteral("b"), query.NewLiteral("c")), []string{"UserName=bob"}},
+		"is null":     {call("is_null", query.NewColumn("u", "PasswordLastUsed")), []string{"UserName=alice", "UserName=bob"}},
+		"is not null": {query.NewNot(call("is_null", name)), []string{"UserName=alice", "UserName=bob"}},
+	} {
+		if got := run(c.where); !reflect.DeepEqual(got, c.want) {
+			t.Errorf("%s: rows = %v, want %v", label, got, c.want)
+		}
+	}
+	got := run(call("like", name, query.NewLiteral("bob")),
+		query.NewOutput("tag", query.NewCall("||", name, query.NewLiteral("-"), query.NewCall("cast", query.NewLiteral("7.0"), query.NewLiteral("integer")))))
+	if !reflect.DeepEqual(got, []string{"tag=bob-7"}) {
+		t.Errorf("|| and cast: rows = %v", got)
+	}
+}

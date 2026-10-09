@@ -65,6 +65,22 @@ func builtins() []Func {
 			}
 			return re.MatchString(text(a[0])), nil
 		})),
+		// a || b: concatenation as the SQL operator does it, NULL if either side is — unlike concat,
+		// which skips NULLs.
+		NewScalar("||", 2, -1, strict(func(a []any) (any, error) {
+			var b strings.Builder
+			for _, v := range a {
+				b.WriteString(text(v))
+			}
+			return b.String(), nil
+		})),
+		// CAST(x AS type), with the type named as written.
+		NewScalar("cast", 2, 2, func(a []any) (any, error) {
+			if a[0] == nil {
+				return nil, nil
+			}
+			return castTo(a[0], text(a[1])), nil
+		}),
 		// Predicates SQL writes as operators: x IS NULL, x LIKE p, x BETWEEN lo AND hi. A query
 		// that cannot spell the operator calls these in a condition.
 		NewScalar("is_null", 1, 1, func(a []any) (any, error) { return a[0] == nil, nil }),
@@ -706,7 +722,7 @@ func canonical(v any, key string) any {
 }
 
 // likePattern compiles a LIKE pattern as SQLite reads it: % any run, _ any one character, an escape
-// character making the next literal, and ASCII letters matching either case.
+// character making the next literal, ASCII letters matching either case and nothing else folded.
 func likePattern(pattern, escape string) (*regexp.Regexp, error) {
 	var esc rune = -1
 	if escape != "" {
@@ -717,23 +733,35 @@ func likePattern(pattern, escape string) (*regexp.Regexp, error) {
 		esc = r[0]
 	}
 	var b strings.Builder
-	b.WriteString("(?is)^")
+	b.WriteString("(?s)^")
 	runes := []rune(pattern)
 	for i := 0; i < len(runes); i++ {
 		switch r := runes[i]; {
 		case r == esc && i+1 < len(runes):
 			i++
-			b.WriteString(regexp.QuoteMeta(string(runes[i])))
+			b.WriteString(likeLiteral(runes[i]))
 		case r == '%':
 			b.WriteString(".*")
 		case r == '_':
 			b.WriteString(".")
 		default:
-			b.WriteString(regexp.QuoteMeta(string(r)))
+			b.WriteString(likeLiteral(r))
 		}
 	}
 	b.WriteString("$")
 	return regexp.Compile(b.String())
+}
+
+// likeLiteral matches r as SQLite's LIKE does: an ASCII letter in either case, anything else exactly.
+// SQLite folds ASCII only; folding all of Unicode, as (?i) would, matches what SQLite does not.
+func likeLiteral(r rune) string {
+	switch {
+	case r >= 'a' && r <= 'z':
+		return "[" + string(r) + string(r-'a'+'A') + "]"
+	case r >= 'A' && r <= 'Z':
+		return "[" + string(r-'A'+'a') + string(r) + "]"
+	}
+	return regexp.QuoteMeta(string(r))
 }
 
 // compareOrdered orders two values numerically where both read as numbers, otherwise as text — the
@@ -752,4 +780,119 @@ func compareOrdered(a, b any) int {
 		return 0
 	}
 	return strings.Compare(as, bs)
+}
+
+// castTo converts v as SQLite's CAST does. The target's affinity comes from its name, by SQLite's
+// rules in order: INT → INTEGER; CHAR, CLOB or TEXT → TEXT; BLOB or nothing → unchanged; REAL, FLOA
+// or DOUB → REAL; anything else (DECIMAL, NUMERIC, BOOLEAN) → NUMERIC. Text becomes a number by its
+// longest leading numeric prefix, 0 where there is none.
+func castTo(v any, typ string) any {
+	t := strings.ToUpper(typ)
+	switch {
+	case strings.Contains(t, "INT"):
+		return castInteger(v)
+	case strings.Contains(t, "CHAR"), strings.Contains(t, "CLOB"), strings.Contains(t, "TEXT"):
+		return castText(v)
+	case strings.Contains(t, "BLOB"), strings.TrimSpace(t) == "":
+		return v
+	case strings.Contains(t, "REAL"), strings.Contains(t, "FLOA"), strings.Contains(t, "DOUB"):
+		return castReal(v)
+	}
+	// NUMERIC: an integer where the value is one exactly, otherwise real.
+	f := castReal(v)
+	if f == math.Trunc(f) && math.Abs(f) < 1<<63 {
+		return int64(f)
+	}
+	return f
+}
+
+func castInteger(v any) int64 {
+	switch n := v.(type) {
+	case bool:
+		if n {
+			return 1
+		}
+		return 0
+	case int:
+		return int64(n)
+	case int64:
+		return n
+	case float64:
+		return int64(n)
+	}
+	prefix := numericPrefix(text(v))
+	if i, err := strconv.ParseInt(prefix, 10, 64); err == nil {
+		return i
+	}
+	f, _ := strconv.ParseFloat(prefix, 64)
+	return int64(f)
+}
+
+func castReal(v any) float64 {
+	switch n := v.(type) {
+	case bool:
+		if n {
+			return 1
+		}
+		return 0
+	case int:
+		return float64(n)
+	case int64:
+		return float64(n)
+	case float64:
+		return n
+	}
+	f, _ := strconv.ParseFloat(numericPrefix(text(v)), 64)
+	return f
+}
+
+func castText(v any) string {
+	if f, ok := v.(float64); ok {
+		return strconv.FormatFloat(f, 'g', -1, 64)
+	}
+	return text(v)
+}
+
+// numericPrefix is the longest leading part of s that reads as a number, after leading spaces: an
+// optional sign, digits, an optional fraction and an optional exponent. "12abc" gives "12"; "abc"
+// gives "0".
+func numericPrefix(s string) string {
+	s = strings.TrimLeft(s, " \t\n\r")
+	i := 0
+	if i < len(s) && (s[i] == '+' || s[i] == '-') {
+		i++
+	}
+	digits := 0
+	for i < len(s) && s[i] >= '0' && s[i] <= '9' {
+		i++
+		digits++
+	}
+	if i < len(s) && s[i] == '.' {
+		j := i + 1
+		frac := 0
+		for j < len(s) && s[j] >= '0' && s[j] <= '9' {
+			j++
+			frac++
+		}
+		if digits+frac > 0 {
+			i, digits = j, digits+frac
+		}
+	}
+	if digits == 0 {
+		return "0"
+	}
+	if i < len(s) && (s[i] == 'e' || s[i] == 'E') {
+		j := i + 1
+		if j < len(s) && (s[j] == '+' || s[j] == '-') {
+			j++
+		}
+		k := j
+		for k < len(s) && s[k] >= '0' && s[k] <= '9' {
+			k++
+		}
+		if k > j {
+			i = k
+		}
+	}
+	return s[:i]
 }
