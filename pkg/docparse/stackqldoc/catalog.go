@@ -261,6 +261,9 @@ func (c *catalog) doc(service string) (Doc, error) {
 	if err != nil {
 		return nil, err
 	}
+	if parsed, ok := d.(*document); ok && c.provider != nil {
+		parsed.providerName = c.provider.Name()
+	}
 	if key != "" {
 		c.docs.Put(key, d, int64(len(b))*docCost)
 	}

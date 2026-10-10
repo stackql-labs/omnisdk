@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/stackql-labs/omnisdk/pkg/omnisdk"
+	"github.com/stackql-labs/omnisdk/pkg/sqlfn"
 )
 
 const vpcsAddr = "stackql_unstable_aws.ec2.vpcs"
@@ -63,9 +64,16 @@ func ec2Stub(t *testing.T, seen *calls) *httptest.Server {
 
 func runGraph(t *testing.T, srv *httptest.Server, g omnisdk.Graph) []omnisdk.Row {
 	t.Helper()
+	return runGraphIn(t, srv, g, sqlfn.SQLite)
+}
+
+// runGraphIn is runGraph with the functions of dialect d.
+func runGraphIn(t *testing.T, srv *httptest.Server, g omnisdk.Graph, d sqlfn.Dialect) []omnisdk.Row {
+	t.Helper()
 	pl, err := omnisdk.NewGraphSelectQuery(corpus, g, omnisdk.Args{
 		Endpoint: srv.URL,
 		Params:   map[string]string{"region": "us-east-1"},
+		Dialect:  d,
 	})
 	if err != nil {
 		t.Fatalf("plan: %v", err)
@@ -153,7 +161,7 @@ func TestTableValuedFunctionProjection(t *testing.T) {
 		t.Fatalf("graph: %v", err)
 	}
 
-	got := runGraph(t, srv, g)
+	got := runGraphIn(t, srv, g, sqlfn.Postgres)
 	// Two VPCs, four octets each.
 	if len(got) != 8 {
 		t.Fatalf("rows = %d, want 8: %#v", len(got), got)
@@ -182,8 +190,9 @@ func TestSelectRefusesTwoRowProducingColumns(t *testing.T) {
 	if err != nil {
 		t.Fatalf("graph: %v", err)
 	}
-	if _, err := omnisdk.NewGraphSelectQuery(corpus, g, omnisdk.Args{Params: map[string]string{"region": "us-east-1"}}); err == nil {
-		t.Fatal("want a refusal for two row-producing columns, got none")
+	_, err = omnisdk.NewGraphSelectQuery(corpus, g, omnisdk.Args{Params: map[string]string{"region": "us-east-1"}, Dialect: sqlfn.Postgres})
+	if err == nil || !strings.Contains(err.Error(), "two row-producing columns") {
+		t.Fatalf("want a refusal for two row-producing columns, got %v", err)
 	}
 }
 
@@ -261,7 +270,7 @@ func TestJoinOnATableValuedFunctionResult(t *testing.T) {
 		t.Fatalf("graph: %v", err)
 	}
 
-	if rows := runGraph(t, srv, g); len(rows) == 0 {
+	if rows := runGraphIn(t, srv, g, sqlfn.Postgres); len(rows) == 0 {
 		t.Fatal("no rows")
 	}
 	// Two VPCs, four octets each: the fan-out drives eight calls, not two.

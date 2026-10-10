@@ -25,9 +25,19 @@ func (s sqlFn) Signatures() []facade.Signature {
 			args[i] = kind.Unknown()
 		}
 		if s.f.Shape() == sqlfn.Table {
+			hidden := map[string]bool{}
+			if h, ok := s.f.(sqlfn.HiddenColumns); ok {
+				for _, c := range h.Hidden() {
+					hidden[c] = true
+				}
+			}
 			cols := make([]facade.FnColumn, 0, len(s.f.Columns()))
 			for _, c := range s.f.Columns() {
-				cols = append(cols, NewColumn(c, kind.Unknown()))
+				if hidden[c] {
+					cols = append(cols, NewHiddenColumn(c, kind.Unknown()))
+				} else {
+					cols = append(cols, NewColumn(c, kind.Unknown()))
+				}
 			}
 			return NewRowSignature(cols, args...)
 		}

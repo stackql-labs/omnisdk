@@ -3,6 +3,7 @@ package omnisdk
 import (
 	"github.com/stackql-labs/omnisdk/internal/system_g/facade"
 	"github.com/stackql-labs/omnisdk/internal/system_g/fn"
+	"github.com/stackql-labs/omnisdk/pkg/sqlfn"
 )
 
 // Function is one SQL-visible function: a consumer such as stackql lists these once and registers
@@ -32,6 +33,8 @@ type Signature struct {
 type Column struct {
 	Name string `json:"name"`
 	Kind string `json:"kind"`
+	// Hidden is a column a query may name but SELECT * leaves out.
+	Hidden bool `json:"hidden,omitempty"`
 }
 
 // FunctionCatalog is the discovery + invocation seam for functions, the sibling of Catalog: a
@@ -46,11 +49,9 @@ type FunctionCatalog interface {
 	Call(name string, args []any) (any, error)
 }
 
-// Functions returns the built-in function catalog. rowColumn is the column name a single-column
-// table function emits (SQLite's json_each calls it "value"): required explicit input, because
-// nothing above this module can rename it afterwards.
-func Functions(rowColumn string) (FunctionCatalog, error) {
-	r, err := fn.Builtins(rowColumn)
+// Functions returns dialect d's function catalog: sqlfn.SQLite or sqlfn.Postgres, empty for SQLite.
+func Functions(d sqlfn.Dialect) (FunctionCatalog, error) {
+	r, err := fn.Builtins(d)
 	if err != nil {
 		return nil, err
 	}
@@ -92,7 +93,7 @@ func (p published) Signatures() []Signature {
 			sig.Args = append(sig.Args, k.Name())
 		}
 		for _, c := range s.Columns() {
-			sig.Columns = append(sig.Columns, Column{Name: c.Name(), Kind: c.Kind().Name()})
+			sig.Columns = append(sig.Columns, Column{Name: c.Name(), Kind: c.Kind().Name(), Hidden: c.Hidden()})
 		}
 		out = append(out, sig)
 	}

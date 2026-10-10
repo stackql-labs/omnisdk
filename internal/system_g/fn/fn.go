@@ -15,12 +15,18 @@ import (
 
 // registry is an immutable name → Fn lookup.
 type registry struct {
-	byName map[string]facade.Fn
-	sorted []facade.Fn
+	byName  map[string]facade.Fn
+	sorted  []facade.Fn
+	literal func(any) any
 }
 
-// NewRegistry builds a registry over fns. A duplicate name is an error, not last-wins.
+// NewRegistry builds a registry over fns. A duplicate name is an error, not last-wins. Its literals
+// are SQLite's: as written.
 func NewRegistry(fns ...facade.Fn) (facade.FnRegistry, error) {
+	return newRegistry(sqlfn.SQLite, fns...)
+}
+
+func newRegistry(d sqlfn.Dialect, fns ...facade.Fn) (facade.FnRegistry, error) {
 	byName := make(map[string]facade.Fn, len(fns))
 	for _, f := range fns {
 		if _, dup := byName[f.Name()]; dup {
@@ -33,8 +39,10 @@ func NewRegistry(fns ...facade.Fn) (facade.FnRegistry, error) {
 		sorted = append(sorted, f)
 	}
 	sort.Slice(sorted, func(i, j int) bool { return sorted[i].Name() < sorted[j].Name() })
-	return registry{byName: byName, sorted: sorted}, nil
+	return registry{byName: byName, sorted: sorted, literal: func(v any) any { return sqlfn.Literal(d, v) }}, nil
 }
+
+func (r registry) Literal(v any) any { return r.literal(v) }
 
 func (r registry) Fns() []facade.Fn { return append([]facade.Fn(nil), r.sorted...) }
 
@@ -159,17 +167,21 @@ func lexeme(v any) ([]byte, error) {
 	return b, nil
 }
 
-// Builtins is the registry this module ships. out names the column a single-column table function
-// emits: required input ("value" is SQLite's convention, but the caller states it).
-func Builtins(out string) (facade.FnRegistry, error) {
-	return BuiltinsWith(out, nil)
+// Builtins is the registry of dialect d's functions. Options configure the catalogue, such as the
+// clock its date and time functions read.
+func Builtins(d sqlfn.Dialect, opts ...sqlfn.Option) (facade.FnRegistry, error) {
+	return BuiltinsWith(d, nil, opts...)
 }
 
 // BuiltinsWith is Builtins plus extra, a caller's own catalogue. A name extra shares with a built-in
 // is an error: which one a query meant would depend on order.
-func BuiltinsWith(out string, extra sqlfn.Catalog) (facade.FnRegistry, error) {
-	fns := []facade.Fn{NewSplitPart(), NewStringToTable(out)}
-	for _, f := range sqlfn.Builtins().Funcs() {
+func BuiltinsWith(d sqlfn.Dialect, extra sqlfn.Catalog, opts ...sqlfn.Option) (facade.FnRegistry, error) {
+	cat, err := sqlfn.BuiltinsFor(d, opts...)
+	if err != nil {
+		return nil, err
+	}
+	var fns []facade.Fn
+	for _, f := range cat.Funcs() {
 		fns = append(fns, FromSQL(f))
 	}
 	if extra != nil {
@@ -177,5 +189,5 @@ func BuiltinsWith(out string, extra sqlfn.Catalog) (facade.FnRegistry, error) {
 			fns = append(fns, FromSQL(f))
 		}
 	}
-	return NewRegistry(fns...)
+	return newRegistry(d, fns...)
 }

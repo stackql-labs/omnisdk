@@ -1,0 +1,43 @@
+openapi: 3.0.0
+info: {title: things, version: v1}
+servers:
+  - url: https://api.example.com
+paths:
+  /things:
+    get:
+      operationId: list_things
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items: {type: array, items: {type: object, properties: {id: {type: string}}}}
+                  nextPageToken: {type: string}
+    post:
+      operationId: create_thing
+      requestBody:
+        content:
+          application/json:
+            schema: {type: object, properties: {name: {type: string}}}
+      responses:
+        '200':
+          content:
+            application/json:
+              schema: {type: object, properties: {id: {type: string}, nextPageToken: {type: string}}}
+components:
+  x-stackQL-resources:
+    things:
+      id: pager.things.things
+      name: things
+      methods:
+        list:
+          operation: {$ref: '#/paths/~1things/get'}
+          response: {mediaType: application/json, openAPIDocKey: '200', objectKey: '$.items'}
+        create:
+          operation: {$ref: '#/paths/~1things/post'}
+          response: {mediaType: application/json, openAPIDocKey: '200'}
+      sqlVerbs:
+        select: [{$ref: '#/components/x-stackQL-resources/things/methods/list'}]
+        insert: [{$ref: '#/components/x-stackQL-resources/things/methods/create'}]

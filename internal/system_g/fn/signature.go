@@ -41,12 +41,19 @@ func (s signature) Returns() facade.Kind       { return s.returns }
 func (s signature) Columns() []facade.FnColumn { return s.cols }
 
 type column struct {
-	name string
-	kind facade.Kind
+	name   string
+	kind   facade.Kind
+	hidden bool
 }
 
 // NewColumn declares an output column.
 func NewColumn(name string, k facade.Kind) facade.FnColumn { return column{name: name, kind: k} }
 
+// NewHiddenColumn declares an output column SELECT * leaves out.
+func NewHiddenColumn(name string, k facade.Kind) facade.FnColumn {
+	return column{name: name, kind: k, hidden: true}
+}
+
 func (c column) Name() string      { return c.name }
 func (c column) Kind() facade.Kind { return c.kind }
+func (c column) Hidden() bool      { return c.hidden }
