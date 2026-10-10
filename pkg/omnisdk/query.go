@@ -3,6 +3,7 @@ package omnisdk
 import (
 	"fmt"
 	"github.com/stackql-labs/omnisdk/internal/system_g/exchange/docx"
+	"github.com/stackql-labs/omnisdk/pkg/sqlfn"
 	"slices"
 	"strings"
 
@@ -177,6 +178,12 @@ func (r resolution) Params() map[string]string { return r.params }
 // binding the row can also be checked against, is a filter on the returned rows. Anything that
 // cannot be placed is an error naming it, never a guess.
 func Resolve(q query.Unresolved, tables map[string]Table) (Resolution, error) {
+	return ResolveIn(q, tables, sqlfn.SQLite)
+}
+
+// ResolveIn is Resolve for a query written in dialect d, which decides the columns of a table
+// function in its FROM clause.
+func ResolveIn(q query.Unresolved, tables map[string]Table, d sqlfn.Dialect) (Resolution, error) {
 	r := resolver{tables: map[string]Table{}, params: map[string]string{}, nodeParams: map[string]map[string]string{},
 		fanout: map[string]map[string][]string{}, wide: map[string][]string{}, arrivals: map[string][]arrival{}, retain: map[string][]string{},
 		computed: map[string][]SelectColumn{}, body: map[string]any{},
@@ -186,7 +193,7 @@ func Resolve(q query.Unresolved, tables map[string]Table) (Resolution, error) {
 		alias := j.Resource().Alias()
 		t, ok := tables[alias]
 		if tf, isFn := j.Resource().(query.TableFunction); isFn {
-			ft, err := functionTable(tf.Call().Func())
+			ft, err := functionTable(tf.Call().Func(), d)
 			if err != nil {
 				return nil, fmt.Errorf("omnisdk: %s: %w", alias, err)
 			}
@@ -317,8 +324,8 @@ func exprColumns(e query.Expr) []query.Column {
 
 // functionTable is a table function as a table: the columns its rows carry, and nothing it takes —
 // its inputs are its arguments.
-func functionTable(name string) (Table, error) {
-	fns, err := fn.BuiltinsWith("value", nil)
+func functionTable(name string, d sqlfn.Dialect) (Table, error) {
+	fns, err := fn.Builtins(d)
 	if err != nil {
 		return nil, err
 	}
@@ -326,27 +333,36 @@ func functionTable(name string) (Table, error) {
 	if !ok {
 		return nil, fmt.Errorf("no function %q", name)
 	}
-	var cols []string
+	var cols, hidden []string
 	for _, sig := range f.Signatures() {
 		for _, c := range sig.Columns() {
 			if !slices.Contains(cols, c.Name()) {
 				cols = append(cols, c.Name())
+				if c.Hidden() {
+					hidden = append(hidden, c.Name())
+				}
 			}
 		}
 	}
 	if len(cols) == 0 {
 		return nil, fmt.Errorf("%s returns a value, not rows; it cannot stand in FROM", name)
 	}
-	return table{address: functionAddress + name, methods: []MethodSignature{functionSignature{name: name, cols: cols}}}, nil
+	return table{address: functionAddress + name, methods: []MethodSignature{functionSignature{name: name, cols: cols, hidden: hidden}}}, nil
 }
 
 // functionAddress prefixes a table function's address, which names no document.
 const functionAddress = "fn:"
 
 type functionSignature struct {
-	name string
-	cols []string
+	name   string
+	cols   []string
+	hidden []string
 }
+
+// hidingSignature is a method some of whose columns SELECT * leaves out.
+type hidingSignature interface{ hiddenColumns() []string }
+
+func (s functionSignature) hiddenColumns() []string { return s.hidden }
 
 func (s functionSignature) Method() string                     { return s.name }
 func (s functionSignature) Params() []ParamSignature           { return nil }
@@ -514,7 +530,7 @@ func (r *resolver) expand(sel []query.Output) ([]query.Output, error) {
 			aliases = []string{st.Qualifier()}
 		}
 		for _, alias := range aliases {
-			cols := columnsOf(r.tables[alias])
+			cols := starColumnsOf(r.tables[alias])
 			if len(cols) == 0 {
 				return nil, fmt.Errorf("omnisdk: %s.*: the document declares no columns for %s", alias, r.tables[alias].Address())
 			}
@@ -526,6 +542,25 @@ func (r *resolver) expand(sel []query.Output) ([]query.Output, error) {
 		}
 	}
 	return out, nil
+}
+
+// starColumnsOf are the columns SELECT * yields: columnsOf, less any a method hides.
+func starColumnsOf(t Table) []string {
+	hidden := map[string]bool{}
+	for _, m := range t.Methods() {
+		if h, ok := m.(hidingSignature); ok {
+			for _, c := range h.hiddenColumns() {
+				hidden[c] = true
+			}
+		}
+	}
+	var out []string
+	for _, c := range columnsOf(t) {
+		if !hidden[c] {
+			out = append(out, c)
+		}
+	}
+	return out
 }
 
 // columnsOf are the columns any of a table's methods declares, in first-seen order.

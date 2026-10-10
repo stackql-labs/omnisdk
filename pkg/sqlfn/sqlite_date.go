@@ -29,6 +29,7 @@ type dateTime struct {
 	rawS               bool  // s holds a bare number that 'unixepoch', 'julianday' or 'auto' may reinterpret
 	isError, useSubsec bool
 	isUTC, isLocal     bool
+	clock              Clock // where "now" comes from
 }
 
 // at is s[i] as C reads a NUL-terminated string: 0 past the end.
@@ -157,7 +158,7 @@ func (p *dateTime) parseHhMmSs(z string) bool {
 			scale := 1.0
 			i++
 			for isDigitByte(at(z, i)) {
-				ms = ms*10.0 + float64(at(z, i)) - '0'
+				ms = float64(ms*10.0) + float64(at(z, i)) - '0'
 				scale *= 10.0
 				i++
 			}
@@ -176,7 +177,7 @@ func (p *dateTime) parseHhMmSs(z string) bool {
 	return p.parseTimezone(from(z, i))
 }
 
-func (p *dateTime) datetimeError() { *p = dateTime{isError: true} }
+func (p *dateTime) datetimeError() { *p = dateTime{isError: true, clock: p.clock} }
 
 func (p *dateTime) computeJD() {
 	if p.validJD {
@@ -201,7 +202,7 @@ func (p *dateTime) computeJD() {
 	p.iJD = int64((float64(x1+x2+d+b) - 1524.5) * 86400000)
 	p.validJD = true
 	if p.validHMS {
-		p.iJD += int64(p.h*3600000+p.m*60000) + int64(p.s*1000+0.5)
+		p.iJD += int64(p.h*3600000+p.m*60000) + int64(float64(p.s*1000)+0.5)
 		if p.tz != 0 {
 			p.iJD -= int64(p.tz * 60000)
 			p.validYMD, p.validHMS, p.tz = false, false, 0
@@ -265,11 +266,11 @@ func (p *dateTime) parseYyyyMmDd(z string) bool {
 	return false
 }
 
-// sqliteNow is the current moment as a Julian day in milliseconds, as SQLite's xCurrentTimeInt64.
-var sqliteNow = func() int64 { return time.Now().UnixMilli() + 210866760000000 }
+// julianMillis is t as a Julian day in milliseconds, as SQLite's xCurrentTimeInt64 gives it.
+func julianMillis(t time.Time) int64 { return t.UnixMilli() + 210866760000000 }
 
 func (p *dateTime) setDateTimeToCurrent() bool {
-	p.iJD = sqliteNow()
+	p.iJD = julianMillis(p.clock.Now())
 	if p.iJD > 0 {
 		p.validJD = true
 		p.isUTC, p.isLocal = true, false
@@ -283,7 +284,7 @@ func (p *dateTime) setRawDateNumber(r float64) {
 	p.s = r
 	p.rawS = true
 	if r >= 0.0 && r < 5373484.5 {
-		p.iJD = int64(r*86400000.0 + 0.5)
+		p.iJD = int64(float64(r*86400000.0) + 0.5)
 		p.validJD = true
 	}
 }
@@ -386,7 +387,7 @@ func (p *dateTime) toLocaltime() {
 	p.D = lt.Day()
 	p.h = lt.Hour()
 	p.m = lt.Minute()
-	p.s = float64(lt.Second()) + float64(p.iJD%1000)*0.001
+	p.s = float64(lt.Second()) + float64(float64(p.iJD%1000)*0.001)
 	p.validYMD, p.validHMS = true, true
 	p.validJD = false
 	p.rawS = false
@@ -400,7 +401,7 @@ func (p *dateTime) autoAdjustDate() {
 	if !p.rawS || p.validJD {
 		p.rawS = false
 	} else if p.s >= -21086676*10000 && p.s <= 25340230*10000+799 {
-		r := p.s*1000.0 + 210866760000000
+		r := float64(p.s*1000.0) + 210866760000000
 		p.clearYMDHMSTZ()
 		p.iJD = int64(r + 0.5)
 		p.validJD = true
@@ -484,7 +485,7 @@ func (p *dateTime) parseModifier(z string, idx int) bool {
 			if idx > 1 {
 				return true
 			}
-			r := p.s*1000.0 + 2.1086676e+14
+			r := float64(p.s*1000.0) + 2.1086676e+14
 			if r >= 0 && r < 4.642690608e+14 {
 				p.clearYMDHMSTZ()
 				p.iJD = int64(r + 0.5)
@@ -514,7 +515,7 @@ func (p *dateTime) parseModifier(z string, idx int) bool {
 						break
 					}
 				}
-				*p = dateTime{iJD: guess, validJD: true, isUTC: true}
+				*p = dateTime{iJD: guess, validJD: true, isUTC: true, clock: p.clock}
 			}
 			rc = false
 		}
@@ -700,7 +701,7 @@ func (p *dateTime) numericModifier(z string) bool {
 			r -= float64(int(r))
 		}
 		p.computeJD()
-		p.iJD += int64(r*1000*float64(u.xform) + rounder)
+		p.iJD += int64(float64(float64(r*1000)*float64(u.xform)) + rounder)
 		rc = false
 		break
 	}
@@ -710,8 +711,8 @@ func (p *dateTime) numericModifier(z string) bool {
 
 // isDate reads a function's arguments — a time value (now when there is none), then each modifier —
 // into a moment; false where SQLite returns NULL.
-func isDate(a []any) (*dateTime, bool) {
-	p := &dateTime{}
+func isDate(a []any, clock Clock) (*dateTime, bool) {
+	p := &dateTime{clock: clock}
 	if len(a) == 0 {
 		return p, !p.setDateTimeToCurrent()
 	}
@@ -763,17 +764,17 @@ func (p *dateTime) dateText() string {
 func (p *dateTime) timeText() string {
 	s := fmt.Sprintf("%d%d:%d%d:", p.h/10%10, p.h%10, p.m/10%10, p.m%10)
 	if p.useSubsec {
-		ms := int(1000*p.s + 0.5)
+		ms := int(float64(1000*p.s) + 0.5)
 		return s + fmt.Sprintf("%d%d.%d%d%d", ms/10000%10, ms/1000%10, ms/100%10, ms/10%10, ms%10)
 	}
 	sec := int(p.s)
 	return s + fmt.Sprintf("%d%d", sec/10%10, sec%10)
 }
 
-func sqliteDates() []Func {
+func sqliteDates(clock Clock) []Func {
 	dated := func(name string, f func(p *dateTime) any) Func {
 		return NewScalar(name, 0, -1, func(a []any) (any, error) {
-			p, ok := isDate(a)
+			p, ok := isDate(a, clock)
 			if !ok {
 				return nil, nil
 			}
@@ -782,7 +783,7 @@ func sqliteDates() []Func {
 	}
 	now := func(name string, f func(p *dateTime) any) Func {
 		return NewScalar(name, 0, 0, func([]any) (any, error) {
-			p, ok := isDate(nil)
+			p, ok := isDate(nil, clock)
 			if !ok {
 				return nil, nil
 			}
@@ -811,13 +812,13 @@ func sqliteDates() []Func {
 			if isNull(a[0]) {
 				return nil, nil
 			}
-			p, ok := isDate(a[1:])
+			p, ok := isDate(a[1:], clock)
 			if !ok {
 				return nil, nil
 			}
 			return strftime(beforeNUL(sqlText(a[0])), p), nil
 		}),
-		NewScalar("timediff", 2, 2, timediff),
+		NewScalar("timediff", 2, 2, func(a []any) (any, error) { return timediff(a, clock) }),
 	}
 }
 
@@ -944,12 +945,12 @@ func strftime(format string, p *dateTime) any {
 
 // timediff is timediff(A, B): the time from B to A as ±YYYY-MM-DD HH:MM:SS.SSS — whole years and
 // months stepped on the calendar first, then what remains.
-func timediff(a []any) (any, error) {
-	d1, ok := isDate(a[:1])
+func timediff(a []any, clock Clock) (any, error) {
+	d1, ok := isDate(a[:1], clock)
 	if !ok {
 		return nil, nil
 	}
-	d2, ok := isDate(a[1:2])
+	d2, ok := isDate(a[1:2], clock)
 	if !ok {
 		return nil, nil
 	}

@@ -6,14 +6,12 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
-
-	"github.com/stackql-labs/omnisdk/pkg/sqlfn"
 )
 
 // stackql's own functions are pinned by any-sdk's golden vectors (testdata/anysdk, copied from
 // any-sdk v0.6.0-alpha01 public/sqlfuncs/testdata), run through the SQLite catalogue.
 func TestStackqlExtensionGoldenVectors(t *testing.T) {
-	cat := sqlfn.BuiltinsFor(sqlfn.SQLite)
+	cat := sqliteCatalog(t)
 	norm := func(v any) any {
 		if f, ok := v.(float64); ok && math.Trunc(f) == f && !math.IsInf(f, 0) {
 			return int64(f)

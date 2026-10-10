@@ -2,8 +2,6 @@ package sqlfn_test
 
 import (
 	"testing"
-
-	"github.com/stackql-labs/omnisdk/pkg/sqlfn"
 )
 
 func one(names ...string) []parity {
@@ -44,8 +42,8 @@ var textCases = append(one("lower", "upper", "length", "octet_length", "hex", "u
 	parity{name: "like", arity: []int{2, 3}},
 )
 
-func TestSQLiteParityMath(t *testing.T) { checkParity(t, sqlfn.BuiltinsFor(sqlfn.SQLite), mathCases) }
-func TestSQLiteParityText(t *testing.T) { checkParity(t, sqlfn.BuiltinsFor(sqlfn.SQLite), textCases) }
+func TestSQLiteParityMath(t *testing.T) { checkParity(t, sqliteCatalog(t), mathCases) }
+func TestSQLiteParityText(t *testing.T) { checkParity(t, sqliteCatalog(t), textCases) }
 
 var textTargeted = []parity{
 	{name: "unistr", args: [][]any{{`A\0042`}, {`é`}, {`\+01F600`}, {`\U0001F600`}, {`a\\b`}, {`\x`}, {`\12`}, {`\D800`}, {`\110000`}, {`plain`}}},
@@ -62,7 +60,7 @@ var textTargeted = []parity{
 }
 
 func TestSQLiteParityTextTargeted(t *testing.T) {
-	checkParity(t, sqlfn.BuiltinsFor(sqlfn.SQLite), textTargeted)
+	checkParity(t, sqliteCatalog(t), textTargeted)
 }
 
 // likelihood's probability must be a constant between 0 and 1, so it cannot be bound: each case is
@@ -76,7 +74,7 @@ func TestSQLiteParityLikelihood(t *testing.T) {
 		specs = append(specs, parity{name: "likelihood", sql: "likelihood(?, " + lit.sql + ")"})
 		specs[len(specs)-1].args = [][]any{{"a", lit.p}, {nil, lit.p}, {int64(3), lit.p}}
 	}
-	checkParityLiteral(t, sqlfn.BuiltinsFor(sqlfn.SQLite), specs)
+	checkParityLiteral(t, sqliteCatalog(t), specs)
 }
 
 var condCases = []parity{
@@ -93,5 +91,5 @@ var condCases = []parity{
 }
 
 func TestSQLiteParityConditional(t *testing.T) {
-	checkParity(t, sqlfn.BuiltinsFor(sqlfn.SQLite), condCases)
+	checkParity(t, sqliteCatalog(t), condCases)
 }

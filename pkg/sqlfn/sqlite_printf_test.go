@@ -6,8 +6,6 @@ import (
 	"math/rand"
 	"strconv"
 	"testing"
-
-	"github.com/stackql-labs/omnisdk/pkg/sqlfn"
 )
 
 // printfFormats cover every conversion with every flag, width and precision form, the argument
@@ -34,7 +32,7 @@ func TestSQLiteParityPrintf(t *testing.T) {
 			args = append(args, []any{f, a}, []any{f, a, a}, []any{f, int64(8), a}, []any{f, int64(-8), int64(2), a})
 		}
 	}
-	checkParity(t, sqlfn.BuiltinsFor(sqlfn.SQLite), []parity{{name: "printf", args: args}, {name: "format", arity: []int{1, 2}, dom: small}})
+	checkParity(t, sqliteCatalog(t), []parity{{name: "printf", args: args}, {name: "format", arity: []int{1, 2}, dom: small}})
 }
 
 // TestSQLiteRealText checks REAL text, JSON numbers, and text read as REAL, on doubles across the
@@ -45,7 +43,7 @@ func TestSQLiteRealText(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer db.Close()
-	cat := sqlfn.BuiltinsFor(sqlfn.SQLite)
+	cat := sqliteCatalog(t)
 	rng := rand.New(rand.NewSource(1))
 	var vals []float64
 	for i := 0; i < 4000; i++ {

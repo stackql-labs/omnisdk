@@ -465,10 +465,10 @@ var fmtInfo = map[byte]etInfo{
 }
 
 const (
-	sqliteMaxLength   = 1000000000
-	fpPrecisionLimit  = 100000000
-	etBufSize         = 70
-	errTooBigMessage  = "string or blob too big"
+	sqliteMaxLength  = 1000000000
+	fpPrecisionLimit = 100000000
+	etBufSize        = 70
+	errTooBigMessage = "string or blob too big"
 )
 
 var errTooBig = errors.New(errTooBigMessage)

@@ -1,0 +1,13 @@
+lower upper length char_length character_length octet_length bit_length substr substring strpos position
+replace btrim ltrim rtrim lpad rpad left right repeat reverse initcap concat concat_ws split_part starts_with
+translate ascii chr md5 to_hex quote_literal quote_ident quote_nullable regexp_replace regexp_match
+regexp_matches regexp_split_to_table regexp_split_to_array string_to_array string_to_table array_to_string
+format
+abs ceil ceiling floor round trunc sign sqrt cbrt exp ln log log10 power pow mod div pi degrees radians
+sin cos tan asin acos atan atan2 sinh cosh tanh asinh acosh atanh gcd lcm scale min_scale trim_scale factorial
+json_extract_path json_extract_path_text json_array_length json_typeof json_build_object json_build_array
+json_object to_json json_strip_nulls json_array_elements json_array_elements_text json_each json_each_text
+json_object_keys jsonb_extract_path jsonb_extract_path_text jsonb_array_length jsonb_typeof jsonb_build_object
+jsonb_build_array to_jsonb jsonb_strip_nulls jsonb_array_elements jsonb_array_elements_text jsonb_each
+jsonb_each_text jsonb_object_keys jsonb_set jsonb_insert jsonb_pretty
+unnest generate_series generate_subscripts now to_timestamp to_char date_trunc date_part

@@ -582,7 +582,10 @@ func jsonErrorFunc(a []any, _ int) (any, error) {
 
 // json_each and json_tree: a row per element, as json.c's virtual table cursor walks them.
 
-var jsonEachColumns = []string{"key", "value", "type", "atom", "id", "parent", "fullkey", "path"}
+var jsonEachColumns = []string{"key", "value", "type", "atom", "id", "parent", "fullkey", "path", "json", "root"}
+
+// jsonEachHidden are the columns json_each and json_tree declare HIDDEN: the arguments.
+var jsonEachHidden = []string{"json", "root"}
 
 type jsonParent struct {
 	iHead, iValue, iEnd int
@@ -603,7 +606,7 @@ type jsonEachCursor struct {
 }
 
 func jsonEachTable(name string, eMode int, recursive bool) Func {
-	return NewTable(name, jsonEachColumns, 1, 2, func(a []any) ([]map[string]any, error) {
+	return NewTableHidden(name, jsonEachColumns, jsonEachHidden, 1, 2, func(a []any) ([]map[string]any, error) {
 		return sqliteJSONEach(a, eMode, recursive)
 	})
 }
@@ -841,6 +844,13 @@ func (c *jsonEachCursor) column(col int) (any, error) {
 		return s, nil
 	case 7: // path
 		return string(c.path[:c.pathLength()]), nil
+	case 8: // json: the JSON argument, as given
+		if !p.hasJson {
+			return append([]byte(nil), p.aBlob...), nil
+		}
+		return p.zJson, nil
+	case 9: // root: the path argument, or $
+		return string(c.path[:c.nRoot]), nil
 	}
 	return nil, nil
 }

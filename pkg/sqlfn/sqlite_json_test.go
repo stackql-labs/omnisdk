@@ -70,7 +70,7 @@ func TestSQLiteParityJSONOne(t *testing.T) {
 		}
 	}
 	specs = append(specs, parity{name: "json_pretty", args: pretty})
-	checkParity(t, sqlfn.BuiltinsFor(sqlfn.SQLite), specs)
+	checkParity(t, sqliteCatalog(t), specs)
 }
 
 func TestSQLiteParityJSONPath(t *testing.T) {
@@ -95,14 +95,14 @@ func TestSQLiteParityJSONPath(t *testing.T) {
 		}
 	}
 	specs = append(specs, parity{name: "->", sql: "? -> ?", args: opArgs}, parity{name: "->>", sql: "? ->> ?", args: opArgs})
-	checkParity(t, sqlfn.BuiltinsFor(sqlfn.SQLite), specs)
+	checkParity(t, sqliteCatalog(t), specs)
 
 	var multi [][]any
 	for _, d := range jsonDocs {
 		multi = append(multi, []any{d, "$.a", "$.b"}, []any{d, "$[0]", "$[9]", "$"}, []any{d, "$.a", "bad"},
 			[]any{d, "$.a", nil}, []any{d}, []any{d, "$.d", "$.b[1]", "$.b[2]"})
 	}
-	checkParity(t, sqlfn.BuiltinsFor(sqlfn.SQLite), []parity{
+	checkParity(t, sqliteCatalog(t), []parity{
 		{name: "json_extract", args: multi}, {name: "jsonb_extract", args: multi},
 		{name: "json_remove", args: multi}, {name: "jsonb_remove", args: multi},
 	})
@@ -132,7 +132,7 @@ func TestSQLiteParityJSONEdit(t *testing.T) {
 		"jsonb_set", "jsonb_insert", "jsonb_replace", "jsonb_array_insert"} {
 		specs = append(specs, parity{name: n, args: args})
 	}
-	checkParity(t, sqlfn.BuiltinsFor(sqlfn.SQLite), specs)
+	checkParity(t, sqliteCatalog(t), specs)
 }
 
 func TestSQLiteParityJSONPatch(t *testing.T) {
@@ -145,7 +145,7 @@ func TestSQLiteParityJSONPatch(t *testing.T) {
 			args = append(args, []any{a, b})
 		}
 	}
-	checkParity(t, sqlfn.BuiltinsFor(sqlfn.SQLite), []parity{{name: "json_patch", args: args}, {name: "jsonb_patch", args: args}})
+	checkParity(t, sqliteCatalog(t), []parity{{name: "json_patch", args: args}, {name: "jsonb_patch", args: args}})
 }
 
 func TestSQLiteParityJSONBuild(t *testing.T) {
@@ -163,7 +163,7 @@ func TestSQLiteParityJSONBuild(t *testing.T) {
 		obj = append(obj, []any{"k", v}, []any{v, 1}, []any{"a", 1, "a", v})
 	}
 	specs = append(specs, parity{name: "json_object", args: obj}, parity{name: "jsonb_object", args: obj})
-	checkParity(t, sqlfn.BuiltinsFor(sqlfn.SQLite), specs)
+	checkParity(t, sqliteCatalog(t), specs)
 }
 
 // TestSQLiteParityJSONB feeds JSONB blobs, as SQLite itself encodes each document, to every function
@@ -220,7 +220,7 @@ func TestSQLiteParityJSONB(t *testing.T) {
 		patch = append(patch, []any{b, `{"a":null,"z":1}`}, []any{`{"a":1}`, b})
 	}
 	specs = append(specs, parity{name: "json_patch", args: patch}, parity{name: "jsonb_patch", args: patch})
-	checkParity(t, sqlfn.BuiltinsFor(sqlfn.SQLite), specs)
+	checkParity(t, sqliteCatalog(t), specs)
 }
 
 // TestSQLiteParityJSONEach compares json_each, json_tree and their jsonb twins row for row.
@@ -230,7 +230,7 @@ func TestSQLiteParityJSONEach(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer db.Close()
-	cat := sqlfn.BuiltinsFor(sqlfn.SQLite)
+	cat := sqliteCatalog(t)
 	roots := []any{nil, "$", "$.a", "$.b", "$.b[2]", "$.b[2].c", "$[0]", "$[6]", `$."x y"`, "$.zz", "a", "$[",
 		`$."x.y"`, `$.e`, `$.e.f`, "$.a[1]", "$[#-1]"}
 	var docs []any
@@ -240,12 +240,34 @@ func TestSQLiteParityJSONEach(t *testing.T) {
 		t.Fatal(err)
 	}
 	docs = append(docs, blob)
-	cols := "key, value, type, atom, id, parent, fullkey, path"
+	cols := "key, value, type, atom, id, parent, fullkey, path, json, root"
 	for _, name := range []string{"json_each", "json_tree", "jsonb_each", "jsonb_tree"} {
 		fn, ok := cat.Get(name)
 		if !ok {
 			t.Errorf("%s missing", name)
 			continue
+		}
+		// SELECT * is every column but the hidden ones.
+		star, err := db.Query(fmt.Sprintf("select * from %s('[]')", name))
+		if err != nil {
+			t.Fatal(err)
+		}
+		want, _ := star.Columns()
+		star.Close()
+		hidden := map[string]bool{}
+		if h, ok := fn.(sqlfn.HiddenColumns); ok {
+			for _, c := range h.Hidden() {
+				hidden[c] = true
+			}
+		}
+		var visible []string
+		for _, c := range fn.Columns() {
+			if !hidden[c] {
+				visible = append(visible, c)
+			}
+		}
+		if strings.Join(visible, ",") != strings.Join(want, ",") {
+			t.Errorf("%s: SELECT * columns %v, want %v", name, visible, want)
 		}
 		fails := 0
 		for _, d := range docs {
@@ -288,10 +310,11 @@ func sqliteRows(db *sql.DB, q string, args []any) ([][]any, error) {
 		return nil, err
 	}
 	defer rows.Close()
+	cols, _ := rows.Columns()
 	var out [][]any
 	for rows.Next() {
-		vals := make([]any, 8)
-		ptrs := make([]any, 8)
+		vals := make([]any, len(cols))
+		ptrs := make([]any, len(cols))
 		for i := range vals {
 			ptrs[i] = &vals[i]
 		}
@@ -376,7 +399,7 @@ func TestSQLiteParityJSONSubtype(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer db.Close()
-	cat := sqlfn.BuiltinsFor(sqlfn.SQLite)
+	cat := sqliteCatalog(t)
 	j := func(s string) xcall { return xcall{"json", []node{s}} }
 	exprs := []xcall{
 		{"json_array", []node{j("[1]"), "[1]"}},

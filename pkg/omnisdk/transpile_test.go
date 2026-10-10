@@ -1036,14 +1036,14 @@ func TestInsertSeveralRowsIntoAJSONBody(t *testing.T) {
 }
 
 // SELECT u.UserName, upper(u.UserName) AS shout FROM aws.iam.users u
-// WHERE region = 'us-east-1' AND regexp_like(u.UserName, '^A', 'i') AND json_extract('{"k":1}', '$.k') = 1
+// WHERE region = 'us-east-1' AND regexp_like(u.UserName, '(?i)^A') AND json_extract('{"k":1}', '$.k') = 1
 // Catalogue functions project and filter like any other.
 func TestCatalogueFunctionsInAQuery(t *testing.T) {
 	q := mustQuery(t,
 		[]query.Join{query.NewJoin(users("u"), query.Base)},
 		[]query.Predicate{
 			regionEq(),
-			query.NewTest(query.NewCall("regexp_like", query.NewColumn("u", "UserName"), query.NewLiteral("^A"), query.NewLiteral("i"))),
+			query.NewTest(query.NewCall("regexp_like", query.NewColumn("u", "UserName"), query.NewLiteral("(?i)^A"))),
 			query.NewEq(query.NewCall("json_extract", query.NewLiteral(`{"k":1}`), query.NewLiteral("$.k")), query.NewLiteral(1)),
 		},
 		[]query.Output{
@@ -1307,8 +1307,8 @@ func TestOperatorFunctionsOnTheQueryPath(t *testing.T) {
 		where query.Predicate
 		want  []string
 	}{
-		"like":        {call("like", name, query.NewLiteral("AL%")), []string{"UserName=alice"}},
-		"not like":    {query.NewNot(call("like", name, query.NewLiteral("al%"))), []string{"UserName=bob"}},
+		"like":        {call("like", query.NewLiteral("AL%"), name), []string{"UserName=alice"}},
+		"not like":    {query.NewNot(call("like", query.NewLiteral("al%"), name)), []string{"UserName=bob"}},
 		"between":     {call("between", name, query.NewLiteral("b"), query.NewLiteral("c")), []string{"UserName=bob"}},
 		"is null":     {call("is_null", query.NewColumn("u", "PasswordLastUsed")), []string{"UserName=alice", "UserName=bob"}},
 		"is not null": {query.NewNot(call("is_null", name)), []string{"UserName=alice", "UserName=bob"}},
@@ -1317,7 +1317,7 @@ func TestOperatorFunctionsOnTheQueryPath(t *testing.T) {
 			t.Errorf("%s: rows = %v, want %v", label, got, c.want)
 		}
 	}
-	got := run(call("like", name, query.NewLiteral("bob")),
+	got := run(call("like", query.NewLiteral("bob"), name),
 		query.NewOutput("tag", query.NewCall("||", name, query.NewLiteral("-"), query.NewCall("cast", query.NewLiteral("7.0"), query.NewLiteral("integer")))))
 	if !reflect.DeepEqual(got, []string{"tag=bob-7"}) {
 		t.Errorf("|| and cast: rows = %v", got)

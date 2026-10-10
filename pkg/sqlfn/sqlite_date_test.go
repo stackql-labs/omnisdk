@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stackql-labs/omnisdk/pkg/sqlfn"
 )
@@ -60,7 +61,7 @@ func TestSQLiteParityDateValues(t *testing.T) {
 	for _, n := range dateFuncs {
 		specs = append(specs, parity{name: n, arity: []int{1}, dom: timeValues})
 	}
-	checkParity(t, sqlfn.BuiltinsFor(sqlfn.SQLite), specs)
+	checkParity(t, sqliteCatalog(t), specs)
 }
 
 func TestSQLiteParityDateModifiers(t *testing.T) {
@@ -74,7 +75,7 @@ func TestSQLiteParityDateModifiers(t *testing.T) {
 		}
 		specs = append(specs, parity{name: n, args: args})
 	}
-	checkParity(t, sqlfn.BuiltinsFor(sqlfn.SQLite), specs)
+	checkParity(t, sqliteCatalog(t), specs)
 }
 
 // chains are modifier sequences whose order matters: month arithmetic before floor or ceiling, the
@@ -105,7 +106,7 @@ func TestSQLiteParityDateChains(t *testing.T) {
 		}
 		specs = append(specs, parity{name: n, args: args})
 	}
-	checkParity(t, sqlfn.BuiltinsFor(sqlfn.SQLite), specs)
+	checkParity(t, sqliteCatalog(t), specs)
 }
 
 func TestSQLiteParityStrftime(t *testing.T) {
@@ -118,7 +119,7 @@ func TestSQLiteParityStrftime(t *testing.T) {
 			args = append(args, []any{f, v}, []any{f, v, "subsec"}, []any{f, v, "+6 days"})
 		}
 	}
-	checkParity(t, sqlfn.BuiltinsFor(sqlfn.SQLite), []parity{{name: "strftime", args: args}})
+	checkParity(t, sqliteCatalog(t), []parity{{name: "strftime", args: args}})
 }
 
 func TestSQLiteParityTimediff(t *testing.T) {
@@ -133,7 +134,7 @@ func TestSQLiteParityTimediff(t *testing.T) {
 			args = append(args, []any{a, b})
 		}
 	}
-	checkParity(t, sqlfn.BuiltinsFor(sqlfn.SQLite), []parity{{name: "timediff", args: args}})
+	checkParity(t, sqliteCatalog(t), []parity{{name: "timediff", args: args}})
 }
 
 // TestSQLiteParityNow checks the current-time forms. SQLite fixes the time once per statement, so each
@@ -144,7 +145,6 @@ func TestSQLiteParityNow(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer db.Close()
-	cat := sqlfn.BuiltinsFor(sqlfn.SQLite)
 	type call struct {
 		name string
 		args []any
@@ -175,10 +175,9 @@ func TestSQLiteParityNow(t *testing.T) {
 			t.Fatal(err)
 		}
 		iJD := int64(jd*86400000 + 0.5)
-		restore := sqlfn.SetNow(func() int64 { return iJD })
-		fn, _ := cat.Get(c.name)
+		at := time.UnixMilli(iJD - 210866760000000)
+		fn, _ := sqliteCatalog(t, sqlfn.WithClock(sqlfn.FixedClock(at))).Get(c.name)
 		got, err := fn.Call(c.args)
-		restore()
 		if err != nil || !same(want, got) {
 			t.Errorf("%s(%s): want %s, got %s (%v)", c.name, showArgs(c.args), show(want), show(got), err)
 		}

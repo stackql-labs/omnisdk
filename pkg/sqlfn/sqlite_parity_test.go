@@ -209,3 +209,13 @@ func showArgs(args []any) string {
 	}
 	return strings.Join(s, ", ")
 }
+
+// sqliteCatalog is the SQLite catalogue.
+func sqliteCatalog(t *testing.T, opts ...sqlfn.Option) sqlfn.Catalog {
+	t.Helper()
+	c, err := sqlfn.BuiltinsFor(sqlfn.SQLite, opts...)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return c
+}

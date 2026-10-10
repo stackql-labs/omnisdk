@@ -525,10 +525,7 @@ func NewGraphSelectQuery(dir string, g Graph, args Args) (Plan, error) {
 	if err != nil {
 		return nil, err
 	}
-	// "value" names the column a single-column table function emits. A select list renames it to
-	// the column's own output name, so the choice only shows through where a caller uses the
-	// registry directly.
-	fns, err := fn.BuiltinsWith("value", args.Functions)
+	fns, err := fn.BuiltinsWith(args.Dialect, args.Functions)
 	if err != nil {
 		return nil, err
 	}

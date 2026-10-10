@@ -41,20 +41,20 @@ func sqliteMath() []Func {
 		NewScalar("ceiling", 1, 1, ceilingFn(math.Ceil)),
 		NewScalar("floor", 1, 1, ceilingFn(math.Floor)),
 		NewScalar("trunc", 1, 1, ceilingFn(math.Trunc)),
-		unary("acos", math.Acos), unary("acosh", math.Acosh), unary("asin", math.Asin),
-		unary("asinh", math.Asinh), unary("atan", math.Atan), unary("atanh", math.Atanh),
-		unary("cos", math.Cos), unary("cosh", math.Cosh), unary("exp", math.Exp),
-		NewScalar("ln", 1, 1, func(a []any) (any, error) { return logFn(a, math.Log), nil }),
-		NewScalar("log10", 1, 1, func(a []any) (any, error) { return logFn(a, math.Log10), nil }),
-		NewScalar("log2", 1, 1, func(a []any) (any, error) { return logFn(a, math.Log2), nil }),
-		unary("sin", math.Sin), unary("sinh", math.Sinh), unary("sqrt", math.Sqrt),
-		unary("tan", math.Tan), unary("tanh", math.Tanh),
+		unary("acos", libm.Acos), unary("acosh", libm.Acosh), unary("asin", libm.Asin),
+		unary("asinh", libm.Asinh), unary("atan", libm.Atan), unary("atanh", libm.Atanh),
+		unary("cos", libm.Cos), unary("cosh", libm.Cosh), unary("exp", libm.Exp),
+		NewScalar("ln", 1, 1, func(a []any) (any, error) { return logFn(a, libm.Log), nil }),
+		NewScalar("log10", 1, 1, func(a []any) (any, error) { return logFn(a, libm.Log10), nil }),
+		NewScalar("log2", 1, 1, func(a []any) (any, error) { return logFn(a, libm.Log2), nil }),
+		unary("sin", libm.Sin), unary("sinh", libm.Sinh), unary("sqrt", math.Sqrt),
+		unary("tan", libm.Tan), unary("tanh", libm.Tanh),
 		unary("degrees", func(x float64) float64 { return x * (180.0 / math.Pi) }),
 		unary("radians", func(x float64) float64 { return x * (math.Pi / 180.0) }),
-		binary("atan2", math.Atan2),
-		binary("pow", math.Pow), binary("power", math.Pow),
+		binary("atan2", libm.Atan2),
+		binary("pow", libm.Pow), binary("power", libm.Pow),
 		binary("mod", math.Mod),
-		NewScalar("log", 1, 2, func(a []any) (any, error) { return logFn(a, math.Log10), nil }),
+		NewScalar("log", 1, 2, func(a []any) (any, error) { return logFn(a, libm.Log10), nil }),
 		NewScalar("pi", 0, 0, func([]any) (any, error) { return math.Pi, nil }),
 		NewScalar("sign", 1, 1, func(a []any) (any, error) {
 			c, x := numericClass(a[0])
@@ -213,7 +213,7 @@ func logFn(a []any, single func(float64) float64) any {
 	if len(a) == 1 {
 		return finite(single(x))
 	}
-	b := math.Log(x)
+	b := libm.Log(x)
 	if b <= 0 {
 		return nil
 	}
@@ -221,5 +221,5 @@ func logFn(a []any, single func(float64) float64) any {
 	if y <= 0 {
 		return nil
 	}
-	return finite(math.Log(y) / b)
+	return finite(libm.Log(y) / b)
 }

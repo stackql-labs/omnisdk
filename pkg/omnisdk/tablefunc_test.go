@@ -12,6 +12,7 @@ import (
 
 	"github.com/stackql-labs/omnisdk/pkg/omnisdk"
 	"github.com/stackql-labs/omnisdk/pkg/query"
+	"github.com/stackql-labs/omnisdk/pkg/sqlfn"
 )
 
 // firewalls answers two firewalls, one with two source ranges and one with none.
@@ -25,6 +26,12 @@ func firewalls(t *testing.T) *httptest.Server {
 
 func runFirewalls(t *testing.T, srv *httptest.Server, from []query.Join, where []query.Predicate, sel []query.Output) []string {
 	t.Helper()
+	return runFirewallsIn(t, srv, sqlfn.SQLite, from, where, sel)
+}
+
+// runFirewallsIn is runFirewalls with the functions of dialect d.
+func runFirewallsIn(t *testing.T, srv *httptest.Server, d sqlfn.Dialect, from []query.Join, where []query.Predicate, sel []query.Output) []string {
+	t.Helper()
 	q, err := query.New(from, where, sel)
 	if err != nil {
 		t.Fatalf("query: %v", err)
@@ -33,11 +40,11 @@ func runFirewalls(t *testing.T, srv *httptest.Server, from []query.Join, where [
 	if err != nil {
 		t.Fatal(err)
 	}
-	res, err := omnisdk.Resolve(q, map[string]omnisdk.Table{"f": tbl})
+	res, err := omnisdk.ResolveIn(q, map[string]omnisdk.Table{"f": tbl}, d)
 	if err != nil {
 		t.Fatalf("resolve: %v", err)
 	}
-	pl, err := omnisdk.NewGraphSelectQuery(authRegistry, res.Graph(), omnisdk.Args{Endpoint: srv.URL, Params: res.Params()})
+	pl, err := omnisdk.NewGraphSelectQuery(authRegistry, res.Graph(), omnisdk.Args{Endpoint: srv.URL, Params: res.Params(), Dialect: d})
 	if err != nil {
 		t.Fatalf("plan: %v", err)
 	}
@@ -71,12 +78,12 @@ var (
 	}
 )
 
-// FROM firewalls f, json_array_elements_text(f.sourceRanges) sr: one row per range, run per
-// firewall; a firewall with no ranges has no rows.
+// FROM firewalls f, json_array_elements_text(f.sourceRanges) sr on Postgres: one row per range, run
+// per firewall; a firewall with no ranges has no rows.
 func TestTableFunctionCrossJoin(t *testing.T) {
 	srv := firewalls(t)
 	defer srv.Close()
-	got := runFirewalls(t, srv, []query.Join{fwBase, query.NewJoin(fwRanges, query.Cross)}, nil, fwOut)
+	got := runFirewallsIn(t, srv, sqlfn.Postgres, []query.Join{fwBase, query.NewJoin(fwRanges, query.Cross)}, nil, fwOut)
 	if want := []string{"name=a,range=1.2.3.4/32", "name=a,range=10.0.0.0/8"}; !reflect.DeepEqual(got, want) {
 		t.Errorf("rows = %v, want %v", got, want)
 	}
@@ -86,7 +93,7 @@ func TestTableFunctionCrossJoin(t *testing.T) {
 func TestTableFunctionLeftJoin(t *testing.T) {
 	srv := firewalls(t)
 	defer srv.Close()
-	got := runFirewalls(t, srv, []query.Join{fwBase, query.NewJoin(fwRanges, query.Left)}, nil, fwOut)
+	got := runFirewallsIn(t, srv, sqlfn.Postgres, []query.Join{fwBase, query.NewJoin(fwRanges, query.Left)}, nil, fwOut)
 	if want := []string{"name=a,range=1.2.3.4/32", "name=a,range=10.0.0.0/8", "name=b,range=<nil>"}; !reflect.DeepEqual(got, want) {
 		t.Errorf("rows = %v, want %v", got, want)
 	}
@@ -96,8 +103,8 @@ func TestTableFunctionLeftJoin(t *testing.T) {
 func TestTableFunctionFiltered(t *testing.T) {
 	srv := firewalls(t)
 	defer srv.Close()
-	got := runFirewalls(t, srv, []query.Join{fwBase, query.NewJoin(fwRanges, query.Cross)},
-		[]query.Predicate{query.NewTest(query.NewCall("like", query.NewColumn("sr", "value"), query.NewLiteral("10.%")))}, fwOut)
+	got := runFirewallsIn(t, srv, sqlfn.Postgres, []query.Join{fwBase, query.NewJoin(fwRanges, query.Cross)},
+		[]query.Predicate{query.NewTest(query.NewCall("starts_with", query.NewColumn("sr", "value"), query.NewLiteral("10.")))}, fwOut)
 	if want := []string{"name=a,range=10.0.0.0/8"}; !reflect.DeepEqual(got, want) {
 		t.Errorf("rows = %v, want %v", got, want)
 	}
@@ -120,5 +127,59 @@ func TestTableFunctionJsonEachAndScope(t *testing.T) {
 	if _, err := query.New([]query.Join{fwBase, query.NewJoin(forward, query.Cross),
 		query.NewJoin(query.NewResource("later", "fw.compute.firewalls"), query.Cross)}, nil, fwOut); err == nil {
 		t.Error("a table function reading a table joined after it was accepted")
+	}
+}
+
+// json_each's json and root are hidden: e.* leaves them out, and a query may still name them.
+func TestTableFunctionHiddenColumns(t *testing.T) {
+	srv := firewalls(t)
+	defer srv.Close()
+	each := query.NewTableFunction("e", query.NewCall("json_each", query.NewColumn("f", "sourceRanges")))
+	q, err := query.New([]query.Join{fwBase, query.NewJoin(each, query.Cross)}, nil, []query.Output{
+		query.NewOutput("", query.NewStar("e")),
+		query.NewOutput("r", query.NewColumn("e", "root")),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	tbl, err := omnisdk.DescribeTable(authRegistry, "stackql_unstable_fw.compute.firewalls")
+	if err != nil {
+		t.Fatal(err)
+	}
+	res, err := omnisdk.Resolve(q, map[string]omnisdk.Table{"f": tbl})
+	if err != nil {
+		t.Fatalf("resolve: %v", err)
+	}
+	pl, err := omnisdk.NewGraphSelectQuery(authRegistry, res.Graph(), omnisdk.Args{Endpoint: srv.URL, Params: res.Params()})
+	if err != nil {
+		t.Fatalf("plan: %v", err)
+	}
+	rows, err := pl.Open(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rows.Close()
+	n := 0
+	for rows.Next() {
+		n++
+		r := rows.Row()
+		var keys []string
+		for k := range r {
+			keys = append(keys, k)
+		}
+		slices.Sort(keys)
+		want := []string{"atom", "fullkey", "id", "key", "parent", "path", "r", "type", "value"}
+		if !reflect.DeepEqual(keys, want) {
+			t.Errorf("columns = %v, want %v", keys, want)
+		}
+		if r["r"] != "$" {
+			t.Errorf("root = %#v, want $", r["r"])
+		}
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatal(err)
+	}
+	if n != 2 {
+		t.Errorf("rows = %d, want 2", n)
 	}
 }

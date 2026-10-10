@@ -181,9 +181,9 @@ func extRegexpReplace(source, pattern, replacement any) (any, error) {
 
 // Error texts of the C implementations stackql first shipped.
 var (
-	errInvalidJSONArgs   = errors.New("Invalid JSON strings")             //nolint:staticcheck // C-parity text
-	errJSONParse         = errors.New("Error parsing JSON strings")       //nolint:staticcheck // C-parity text
-	errInvalidPolicyArgs = errors.New("Invalid policy strings")           //nolint:staticcheck // C-parity text
+	errInvalidJSONArgs   = errors.New("Invalid JSON strings")              //nolint:staticcheck // C-parity text
+	errJSONParse         = errors.New("Error parsing JSON strings")        //nolint:staticcheck // C-parity text
+	errInvalidPolicyArgs = errors.New("Invalid policy strings")            //nolint:staticcheck // C-parity text
 	errPolicyParse       = errors.New("Error parsing policy JSON strings") //nolint:staticcheck // C-parity text
 )
 
