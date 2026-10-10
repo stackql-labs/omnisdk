@@ -9,6 +9,8 @@ Migrating from `v0.1.3-alpha05`, the version stackql consumes, to the current tr
 | `Args.Auth *Auth` | removed | Put the credential under its provider in `Args.AuthByProvider`: `AuthByProvider: map[string]*omnisdk.Auth{"aws": a}`. A key is the namespaced name (`stackql_unstable_github`) or the document's (`github`); hand-authored methods use `aws`, `azure` (Entra included) and `google`. There is no query-wide credential: a provider with no entry authenticates from its document's defaults and the environment, never with another provider's entry. JSON `"auth"` is gone; use `"auth_by_provider": {"<provider>": {…}}`. |
 | `NewFromDoc(doc, resource, args)` | `NewFromDoc(doc, provider, resource, args)` | Name the provider whose credentials the call uses; a document alone does not say. |
 | `Graph` interface | Gains `Terminations()`, `Branches()`, `Gates()` | Only a caller that implements `Graph` must add it; graphs from `NewGraph` are unaffected. |
+| `Functions(rowColumn string)` | `Functions(d sqlfn.Dialect)` | Name the SQL dialect. A table function's columns are its own — Postgres's OUT parameters or the function's name, SQLite's `json_each` columns — not a name the caller supplies. |
+| `sqlfn.Builtins()` | `sqlfn.BuiltinsFor(d, opts...) (Catalog, error)` | Name the dialect; an unknown one is an error. |
 
 ## Additions
 
@@ -21,6 +23,24 @@ No caller change needed.
   `DiffAbsent`, `DiffMatch`, `DiffDrift`.
 - **Tuning and auth:** `Tuning.RowsAhead`, `Tuning.PagesAhead`; `Auth.Profile`, `Auth.Subject`.
 - **Documents:** `AnalyzeDocuments`; package `pkg/docparse/doclint`.
+- **SQL dialect:** `Args.Dialect` (JSON `"dialect"`): `sqlfn.SQLite`, the default when empty, or
+  `sqlfn.Postgres`; `ResolveIn(q, tables, d)` resolves a query's table functions in `d`.
+- **SQLite functions:** SQLite 3.53's built-ins as stackql's embedded SQLite runs them — math, text,
+  conditional, date and time, JSON and JSONB, `printf`/`format` — and stackql's own extensions.
+- **Postgres functions:** Postgres 14.5's, as stackql's `postgres:14.5-bullseye` backend runs them,
+  overloads resolved from Postgres's own catalog: math over integer, numeric and double precision;
+  text (`lower` … `format`, `split_part`, `string_to_array`/`string_to_table`); JSON and JSONB
+  (extraction, building, `jsonb_set`, `jsonb_insert`, `*_strip_nulls`, `jsonb_pretty`, the
+  set-returning `*_each`, `*_array_elements`, `*_object_keys`); `generate_series`,
+  `generate_subscripts`, `unnest`; `to_char`; dates and times — `timestamp`, `timestamptz`,
+  `date` and `interval` as datetime.c reads and prints them (session TimeZone `Etc/UTC`, DateStyle
+  `ISO, MDY`), `now`, `to_timestamp`, `date_trunc`, `date_part`.
+- **Operators as functions, per dialect:** `||`, `cast(x, type)`, `is_null`, `between`.
+- **`sqlfn`:** `Option`, `WithClock`, `Clock`, `StatementClock`, `FixedClock`; `WithPostgresArch`,
+  `PostgresArch`, `PostgresAMD64` (the default), `PostgresARM64` — glibc rounds `cbrt`, `log10` and
+  the hyperbolic functions differently on each; `Settle`; `Literal`;
+  `NewTableHidden` and `HiddenColumns`. `Column.Hidden` in a published signature.
+- **Table functions in FROM:** `query.TableFunction`, `query.NewTableFunction` — `FROM t, json_each(t.c) e`, run once per row before it, joined cross, inner or left.
 
 ## Behaviour changes
 
@@ -42,7 +62,14 @@ No caller change needed.
 | A node's `On` may read another node's column with no wiring: the graph delivers it. | Graphs that wired those columns by hand still work. |
 | When every node has a projection, a row holds every projected column, NULL where it has no value — the unmatched side of a left join. | Anyone testing an unmatched column for absence rather than NULL. |
 | `Converge` on a collection another run holds fails with `collection "<name>" is busy with another run`; the holder and expiry are no longer in the message. | Anyone parsing that error. |
+| A GET whose document declares no pagination pages as any-sdk does: GitHub and Okta by the `Link` header, every other provider by a body `nextPageToken` sent back as the `pageToken` query parameter. | GitHub and Okta lists, which returned their first page only. |
 | `NaN` compares as text, not as a number; it equalled every number. | Filters or joins comparing a value spelled `NaN`. |
+| SQL functions are their dialect's, exactly: the earlier approximations are gone. SQLite's `like(pattern, value)` takes the pattern first; `json_extract_path_text`, `json_build_object`, `json_array_elements_text`, `unnest` and `generate_subscripts` are Postgres's only. | Queries calling a function their dialect lacks, or relying on an approximation's results. |
+| A catalogue function publishes one signature per arity over the `unknown` kind: it takes row values as they are, its dialect typing them. | Consumers reading argument kinds from `Functions`. |
+| A JSON result passed to another JSON function stays JSON, as in SQLite (`json_array(json('[1]'))` is `[[1]]`); it leaves the expression as text. | Nested JSON calls. |
+| `'now'` is read once per statement, as SQLite fixes it. | Queries comparing two reads of the time. |
+| `json_each` and `json_tree` have SQLite's hidden `json` and `root` columns: a query may name them; `*` leaves them out. | None. |
+| On Postgres, a quoted literal is untyped until a parameter types it, an integer literal is an `integer` and a decimal one a `numeric`, as Postgres reads them; provider values are `text`, `bigint`, `numeric` and `boolean`. The first argument of `json_extract_path_text` and `json_array_elements_text` is cast to `json`, as stackql's Postgres formatter does. | Postgres-dialect calls whose overload depends on an argument's type. |
 
 ## CLI
 

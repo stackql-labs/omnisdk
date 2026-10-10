@@ -4,6 +4,7 @@ import (
 	"fmt"
 
 	"github.com/stackql-labs/omnisdk/internal/system_g/facade"
+	"github.com/stackql-labs/omnisdk/pkg/sqlfn"
 )
 
 // Expr is one value in a select list or an input list: a literal, a field of the current row, or a
@@ -22,8 +23,15 @@ func Literal(v any) Expr { return literal{v: v} }
 
 type literal struct{ v any }
 
-func (e literal) Eval(map[string]any, facade.FnRegistry) (any, error) { return e.v, nil }
-func (e literal) Fn() string                                          { return "" }
+// Eval is the literal as the registry's dialect types it: to Postgres, '1' is untyped and 1 an
+// integer.
+func (e literal) Eval(_ map[string]any, r facade.FnRegistry) (any, error) {
+	if r == nil {
+		return e.v, nil
+	}
+	return r.Literal(e.v), nil
+}
+func (e literal) Fn() string { return "" }
 
 // Field reads a key of the current row. A missing key is NULL, not an error: rows off a provider are
 // ragged, and a select that failed on the first absent field would be unusable.
@@ -44,10 +52,24 @@ type call struct {
 
 func (e call) Fn() string { return e.name }
 
+// Eval is the call's value as it leaves the expression. Inside the expression, one call's result
+// goes to the next as the catalogue returned it, so a JSON function hands another JSON, not a
+// string — json_array(json('[1]')) is [[1]], as in SQLite. Out of the expression it is a plain value.
 func (e call) Eval(row map[string]any, r facade.FnRegistry) (any, error) {
+	v, err := e.eval(row, r)
+	return sqlfn.Settle(v), err
+}
+
+func (e call) eval(row map[string]any, r facade.FnRegistry) (any, error) {
 	args := make([]any, 0, len(e.args))
 	for _, a := range e.args {
-		v, err := a.Eval(row, r)
+		var v any
+		var err error
+		if c, ok := a.(call); ok {
+			v, err = c.eval(row, r)
+		} else {
+			v, err = a.Eval(row, r)
+		}
 		if err != nil {
 			return nil, err
 		}

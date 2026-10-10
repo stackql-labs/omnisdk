@@ -1,0 +1,28 @@
+openapi: 3.0.0
+info: {title: orgs, version: v1}
+servers:
+  - url: https://api.okta.com
+paths:
+  /orgs/{org}/members:
+    get:
+      operationId: list_members
+      parameters:
+        - {name: org, in: path, required: true, schema: {type: string}}
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                type: array
+                items: {type: object, properties: {login: {type: string}}}
+components:
+  x-stackQL-resources:
+    members:
+      id: okta.orgs.members
+      name: members
+      methods:
+        list:
+          operation: {$ref: '#/paths/~1orgs~1{org}~1members/get'}
+          response: {mediaType: application/json, openAPIDocKey: '200'}
+      sqlVerbs:
+        select: [{$ref: '#/components/x-stackQL-resources/members/methods/list'}]

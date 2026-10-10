@@ -17,6 +17,21 @@ jobs:
   test:
     name: build & test
     runs-on: ubuntu-latest
+    # The Postgres catalogue is checked against the Postgres stackql runs, with its database's C
+    # collation and character type.
+    services:
+      postgres:
+        image: postgres:14.5-bullseye
+        env:
+          POSTGRES_PASSWORD: pg
+          POSTGRES_INITDB_ARGS: "--locale=C -E UTF8"
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -53,6 +68,8 @@ jobs:
       - name: Test (race + coverage)
         env:
           OMNISDK_REQUIRE_CORPUS: "1"
+          OMNISDK_REQUIRE_PG: "1"
+          OMNISDK_PG_DSN: "host=127.0.0.1 port=5432 user=postgres password=pg dbname=postgres sslmode=disable"
         run: go test -race -shuffle=on -timeout 40m -covermode=atomic -coverprofile=coverage.out ./...
 
   robot:

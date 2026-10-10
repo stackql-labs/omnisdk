@@ -26,6 +26,10 @@ column per select — two would be a cross product, which is a join and is state
 The projection runs **before** the row travels a β edge, so a join key may be a value a function
 computed rather than one the document returned.
 
+Functions are those of the SQL dialect `args.dialect` names: `sqlite`, the default, or `postgres`,
+each as stackql's backend of that name runs them. `string_to_table` is Postgres's, so the examples
+using it name `postgres`.
+
 ### Simple function projection example
 
 `split_part` cuts each subnet's availability zone into the region and the zone letter.
@@ -54,6 +58,7 @@ are scalar columns and are carried onto every produced row.
 
 ```bash
 _now="$(date +%s)" && ./build/omnicli doc-graph test/corpus/registry '{
+  "args": {"dialect": "postgres"},
   "nodes": [{"alias": "s", "address": "stackql_unstable_aws.ec2.subnets"}],
   "projections": [{
     "alias": "s",
@@ -110,6 +115,7 @@ two zones is four calls, not two — the fan-out happens before the edge.
 
 ```bash
 _now="$(date +%s)" && ./build/omnicli doc-graph test/corpus/registry '{
+  "args": {"dialect": "postgres"},
   "nodes": [{"alias": "v", "address": "stackql_unstable_aws.ec2.vpcs"}, {"alias": "s", "address": "stackql_unstable_aws.ec2.subnets"}],
   "projections": [{
     "alias": "v",

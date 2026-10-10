@@ -263,6 +263,13 @@ func build(t Target, from []Join, where []Predicate, sel []Output) (Unresolved, 
 		case j.Form() == Cross && len(j.On()) > 0:
 			return nil, fmt.Errorf("query: %s is a cross join, which takes no ON", j.Resource().Alias())
 		}
+		// A table function reads the resources before it — json_each(fw.sourceRanges) — and not
+		// itself or those joined later.
+		if tf, isFn := j.Resource().(TableFunction); isFn {
+			if err := exprInScope(tf.Call(), scope); err != nil {
+				return nil, fmt.Errorf("query: %s: %w", j.Resource().Alias(), err)
+			}
+		}
 		scope[j.Resource().Alias()] = true
 		// ON may name this resource and those before it, not those joined later.
 		for _, p := range j.On() {
@@ -453,6 +460,28 @@ type resource struct{ alias, handle string }
 
 func (r resource) Alias() string  { return r.alias }
 func (r resource) Handle() string { return r.handle }
+
+// TableFunction is a FROM item whose rows a function returns, once for each row before it:
+// json_each(fw.sourceRanges) sr. Its arguments may read the resources joined before it. Its handle
+// is the function's name.
+type TableFunction interface {
+	Resource
+	Call() Call
+}
+
+// NewTableFunction places call in FROM under alias.
+func NewTableFunction(alias string, call Call) TableFunction {
+	return tableFunction{alias: alias, call: call}
+}
+
+type tableFunction struct {
+	alias string
+	call  Call
+}
+
+func (t tableFunction) Alias() string  { return t.alias }
+func (t tableFunction) Handle() string { return t.call.Func() }
+func (t tableFunction) Call() Call     { return t.call }
 
 // NewJoin places a resource in FROM.
 func NewJoin(r Resource, form JoinForm, on ...Predicate) Join {

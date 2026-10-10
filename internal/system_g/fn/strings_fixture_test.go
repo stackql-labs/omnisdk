@@ -1,5 +1,8 @@
 package fn
 
+// Typed-signature fixtures: functions declared over argument kinds, which the registry parses each
+// argument through before a call. The catalogue functions take raw values; these exercise the other path.
+
 import (
 	"fmt"
 	"strconv"

@@ -52,7 +52,10 @@ func Parse(b []byte) (Doc, error) {
 // ---- document shape (only the parts an exchange needs) ----------------------
 
 type document struct {
-	Servers []server `yaml:"servers"`
+	// providerName is the provider the document belongs to, set by the catalog that read it. It
+	// matters only where the document says nothing: see pagination.
+	providerName string
+	Servers      []server `yaml:"servers"`
 	// Config is the document-wide stackql configuration; its pagination applies to every method
 	// that states none of its own.
 	Config struct {
@@ -387,7 +390,7 @@ func (d *document) build(name, verb, path string, op pathOp, m method) aot.AOTEx
 			override:   m.Response.OverrideMediaType,
 			objectKey:  m.Response.ObjectKey,
 			transform:  transformDecl(m.Response.Transform),
-			pagination: d.pagination(m, op, schema),
+			pagination: d.pagination(m, op, schema, verb),
 			schema:     schema,
 		},
 	}
@@ -395,9 +398,13 @@ func (d *document) build(name, verb, path string, op pathOp, m method) aot.AOTEx
 
 // pagination is how a method's results continue past the first page, as the document states it:
 // the method's own declaration; else the document's; else Microsoft's x-ms-pageable next link; else
-// the pageToken / nextPageToken pair a list method visibly declares (Google's). Every source is the
-// document — no provider is recognised by name.
-func (d *document) pagination(m method, op pathOp, schema aot.Schema) pagination {
+// the pageToken / nextPageToken pair a list method visibly declares (Google's), or AWS's Marker /
+// NextToken. Where the document states nothing, any-sdk's defaults apply, by provider name as any-sdk
+// applies them (any-sdk public/providerinvokers/anysdkhttp/invoker.go, inferNextPageResponseElement
+// and inferNextPageRequestElement): GitHub and Okta follow the Link header; every other provider
+// sends a body nextPageToken back as the pageToken query parameter. A reply without the token is the
+// last page, so a method that does not page costs nothing.
+func (d *document) pagination(m method, op pathOp, schema aot.Schema, verb string) pagination {
 	if p := (pagination{req: m.Config.Pagination.RequestToken, resp: m.Config.Pagination.ResponseToken}); p.Declared() {
 		return p
 	}
@@ -424,7 +431,16 @@ func (d *document) pagination(m method, op pathOp, schema aot.Schema) pagination
 			return pagination{req: tokenSpec{Key: p.Name, Location: loc}, resp: tokenSpec{Key: p.Name, Location: "body"}}
 		}
 	}
-	return pagination{}
+	// The defaults page reads only: a request with an effect, repeated for a next page, would repeat
+	// the effect. verb is the HTTP method.
+	if !strings.EqualFold(verb, "get") {
+		return pagination{}
+	}
+	switch d.providerName {
+	case "github", "okta":
+		return pagination{req: tokenSpec{Location: "request"}, resp: tokenSpec{Key: "Link", Location: "header"}}
+	}
+	return pagination{req: tokenSpec{Key: "pageToken", Location: "query"}, resp: tokenSpec{Key: "nextPageToken", Location: "body"}}
 }
 
 // bodyMediaType is how the operation writes its request body, empty where it declares none. A

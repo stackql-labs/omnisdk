@@ -1,0 +1,30 @@
+openapi: 3.0.0
+info: {title: compute, version: v1}
+servers:
+  - url: https://api.example.com
+paths:
+  /firewalls:
+    get:
+      operationId: list_firewalls
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    name: {type: string}
+                    sourceRanges: {type: array, items: {type: string}}
+components:
+  x-stackQL-resources:
+    firewalls:
+      id: fw.compute.firewalls
+      name: firewalls
+      methods:
+        list:
+          operation: {$ref: '#/paths/~1firewalls/get'}
+          response: {mediaType: application/json, openAPIDocKey: '200'}
+      sqlVerbs:
+        select: [{$ref: '#/components/x-stackQL-resources/firewalls/methods/list'}]

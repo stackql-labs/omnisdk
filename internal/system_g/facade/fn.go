@@ -37,6 +37,8 @@ type Signature interface {
 type FnColumn interface {
 	Name() string
 	Kind() Kind
+	// Hidden reports a column a query may name but SELECT * leaves out.
+	Hidden() bool
 }
 
 // FnRegistry is an immutable name → Fn lookup, shareable across runs.
@@ -44,4 +46,6 @@ type FnRegistry interface {
 	// Fns lists every function, ordered by name.
 	Fns() []Fn
 	Fn(name string) (Fn, bool)
+	// Literal is a query's literal as the registry's SQL dialect types it.
+	Literal(v any) any
 }
