@@ -3,6 +3,7 @@ package omnisdk
 import (
 	"fmt"
 	"github.com/stackql-labs/omnisdk/internal/system_g/exchange/docx"
+	"github.com/stackql-labs/omnisdk/pkg/sqlfn"
 	"slices"
 	"strings"
 
@@ -177,14 +178,28 @@ func (r resolution) Params() map[string]string { return r.params }
 // binding the row can also be checked against, is a filter on the returned rows. Anything that
 // cannot be placed is an error naming it, never a guess.
 func Resolve(q query.Unresolved, tables map[string]Table) (Resolution, error) {
+	return ResolveIn(q, tables, sqlfn.SQLite)
+}
+
+// ResolveIn is Resolve for a query written in dialect d, which decides the columns of a table
+// function in its FROM clause.
+func ResolveIn(q query.Unresolved, tables map[string]Table, d sqlfn.Dialect) (Resolution, error) {
 	r := resolver{tables: map[string]Table{}, params: map[string]string{}, nodeParams: map[string]map[string]string{},
 		fanout: map[string]map[string][]string{}, wide: map[string][]string{}, arrivals: map[string][]arrival{}, retain: map[string][]string{},
 		computed: map[string][]SelectColumn{}, body: map[string]any{},
-		outer: map[string][]query.Predicate{}, on: map[string][]query.Predicate{}}
+		outer: map[string][]query.Predicate{}, on: map[string][]query.Predicate{}, funcs: map[string]query.Call{}}
 	var conjuncts, listed []query.Predicate
 	for _, j := range q.From() {
 		alias := j.Resource().Alias()
 		t, ok := tables[alias]
+		if tf, isFn := j.Resource().(query.TableFunction); isFn {
+			ft, err := functionTable(tf.Call().Func(), d)
+			if err != nil {
+				return nil, fmt.Errorf("omnisdk: %s: %w", alias, err)
+			}
+			t, ok = ft, true
+			r.funcs[alias] = tf.Call()
+		}
 		if !ok {
 			return nil, fmt.Errorf("omnisdk: no table described for %q", alias)
 		}
@@ -260,12 +275,100 @@ func Resolve(q query.Unresolved, tables map[string]Table) (Resolution, error) {
 			return nil, fmt.Errorf("omnisdk: nothing from the sources reaches %s; the effect would repeat once per source row", r.mutating)
 		}
 	}
+	// A table function's arguments read the rows before it: each column they name is delivered to
+	// it, as a match condition's is, and never sent anywhere.
+	for _, alias := range r.order {
+		call, isFn := r.funcs[alias]
+		if !isFn {
+			continue
+		}
+		rewritten, err := r.rewriteExpr(call)
+		if err != nil {
+			return nil, fmt.Errorf("omnisdk: %s: %w", alias, err)
+		}
+		r.funcs[alias] = rewritten.(query.Call)
+		for _, c := range exprColumns(rewritten) {
+			as := hidden(c.Qualifier(), c.Name())
+			if !r.arriving(alias, as) {
+				r.arrive(alias, arrival{from: c.Qualifier(), src: c.Name(), as: as})
+			}
+		}
+	}
 	sel, err := r.expand(q.Select())
 	if err != nil {
 		return nil, err
 	}
 	return r.build(sel)
 }
+
+// exprColumns are the columns an expression reads.
+func exprColumns(e query.Expr) []query.Column {
+	switch e := e.(type) {
+	case query.Column:
+		return []query.Column{e}
+	case query.Call:
+		var out []query.Column
+		for _, a := range e.Args() {
+			out = append(out, exprColumns(a)...)
+		}
+		return out
+	case query.Collection:
+		var out []query.Column
+		for _, a := range e.Items() {
+			out = append(out, exprColumns(a)...)
+		}
+		return out
+	}
+	return nil
+}
+
+// functionTable is a table function as a table: the columns its rows carry, and nothing it takes —
+// its inputs are its arguments.
+func functionTable(name string, d sqlfn.Dialect) (Table, error) {
+	fns, err := fn.Builtins(d)
+	if err != nil {
+		return nil, err
+	}
+	f, ok := fns.Fn(name)
+	if !ok {
+		return nil, fmt.Errorf("no function %q", name)
+	}
+	var cols, hidden []string
+	for _, sig := range f.Signatures() {
+		for _, c := range sig.Columns() {
+			if !slices.Contains(cols, c.Name()) {
+				cols = append(cols, c.Name())
+				if c.Hidden() {
+					hidden = append(hidden, c.Name())
+				}
+			}
+		}
+	}
+	if len(cols) == 0 {
+		return nil, fmt.Errorf("%s returns a value, not rows; it cannot stand in FROM", name)
+	}
+	return table{address: functionAddress + name, methods: []MethodSignature{functionSignature{name: name, cols: cols, hidden: hidden}}}, nil
+}
+
+// functionAddress prefixes a table function's address, which names no document.
+const functionAddress = "fn:"
+
+type functionSignature struct {
+	name   string
+	cols   []string
+	hidden []string
+}
+
+// hidingSignature is a method some of whose columns SELECT * leaves out.
+type hidingSignature interface{ hiddenColumns() []string }
+
+func (s functionSignature) hiddenColumns() []string { return s.hidden }
+
+func (s functionSignature) Method() string                     { return s.name }
+func (s functionSignature) Params() []ParamSignature           { return nil }
+func (s functionSignature) Columns() []string                  { return s.cols }
+func (s functionSignature) ColumnTypes() map[string]ColumnType { return nil }
+func (s functionSignature) TakesBody() bool                    { return false }
 
 // target places a mutation's resource as the last node, running its verb's methods, and binds
 // what it sets: a literal is a parameter, a source's column or a function of one is an edge.
@@ -427,7 +530,7 @@ func (r *resolver) expand(sel []query.Output) ([]query.Output, error) {
 			aliases = []string{st.Qualifier()}
 		}
 		for _, alias := range aliases {
-			cols := columnsOf(r.tables[alias])
+			cols := starColumnsOf(r.tables[alias])
 			if len(cols) == 0 {
 				return nil, fmt.Errorf("omnisdk: %s.*: the document declares no columns for %s", alias, r.tables[alias].Address())
 			}
@@ -439,6 +542,25 @@ func (r *resolver) expand(sel []query.Output) ([]query.Output, error) {
 		}
 	}
 	return out, nil
+}
+
+// starColumnsOf are the columns SELECT * yields: columnsOf, less any a method hides.
+func starColumnsOf(t Table) []string {
+	hidden := map[string]bool{}
+	for _, m := range t.Methods() {
+		if h, ok := m.(hidingSignature); ok {
+			for _, c := range h.hiddenColumns() {
+				hidden[c] = true
+			}
+		}
+	}
+	var out []string
+	for _, c := range columnsOf(t) {
+		if !hidden[c] {
+			out = append(out, c)
+		}
+	}
+	return out
 }
 
 // columnsOf are the columns any of a table's methods declares, in first-seen order.
@@ -478,6 +600,8 @@ type resolver struct {
 	onTarget string
 	// tuples are a multi-row INSERT's rows.
 	tuples []map[string]any
+	// funcs are the table functions in FROM, by alias: each runs once per row before it.
+	funcs map[string]query.Call
 }
 
 type arrival struct{ from, src, as string }
@@ -923,6 +1047,23 @@ func (r *resolver) build(sel []query.Output) (Resolution, error) {
 		var body map[string]any
 		if alias == r.mutating {
 			body = r.body
+		}
+		if call, isFn := r.funcs[alias]; isFn {
+			_, left := r.outer[alias]
+			nodes = append(nodes, newFunctionNode(alias, call, left, r.on[alias]))
+			cols := byAlias[alias]
+			for _, name := range r.retain[alias] {
+				cols = append(cols, NewSelectColumn(kept(name), NewField(name)))
+			}
+			if len(cols) == 0 {
+				cols = []SelectColumn{NewSelectColumn(kept(""), NewLiteral(nil))}
+			}
+			p, err := NewProjection(alias, cols)
+			if err != nil {
+				return nil, err
+			}
+			projections = append(projections, p)
+			continue
 		}
 		n := NewMutationNode(alias, r.tables[alias].Address(), verb, r.nodeParams[alias], r.fanout[alias], body)
 		if _, left := r.outer[alias]; left {

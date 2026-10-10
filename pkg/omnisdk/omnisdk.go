@@ -238,7 +238,10 @@ type Args struct {
 	// Functions adds a caller's own SQL functions to the built-in catalogue for this query. A name the
 	// built-ins already use is an error.
 	Functions sqlfn.Catalog `json:"-"`
-	Endpoint  string
+	// Dialect is the SQL the query was written in, which decides what each function name means:
+	// sqlfn.SQLite or sqlfn.Postgres, stackql's two backends. Empty is SQLite, stackql's default.
+	Dialect  sqlfn.Dialect `json:"dialect,omitempty"`
+	Endpoint string
 	// InsecureSkipTLSVerify accepts any certificate. It exists for mocks that serve a self-signed one,
 	// but it is not tied to Endpoint: a private CA or an intercepting proxy is a real reason to need it
 	// against a real host, and a flag that silently did nothing in that case would be worse than the

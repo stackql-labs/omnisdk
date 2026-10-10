@@ -8,6 +8,7 @@ import (
 
 	"github.com/stackql-labs/omnisdk/internal/system_g/facade"
 	"github.com/stackql-labs/omnisdk/internal/system_g/fn"
+	"github.com/stackql-labs/omnisdk/pkg/sqlfn"
 )
 
 // Every call goes through Invoke: arity and the declared argument kinds are enforced there, so a
@@ -96,11 +97,12 @@ func TestOverloadResolvesByArity(t *testing.T) {
 	}
 }
 
+// builtins is a registry of the typed-signature fixtures.
 func builtins(t *testing.T) facade.FnRegistry {
 	t.Helper()
-	r, err := fn.Builtins("value")
+	r, err := fn.NewRegistry(fn.NewSplitPart(), fn.NewStringToTable("value"))
 	if err != nil {
-		t.Fatalf("Builtins: %v", err)
+		t.Fatalf("NewRegistry: %v", err)
 	}
 	return r
 }
@@ -169,7 +171,7 @@ func TestInvokeEnforcesArityAndReportsUnknown(t *testing.T) {
 }
 
 func TestBuiltinsAreListedInNameOrder(t *testing.T) {
-	r := builtins(t)
+	r := catalogue(t)
 	var names []string
 	for _, f := range r.Fns() {
 		names = append(names, f.Name())
@@ -177,7 +179,7 @@ func TestBuiltinsAreListedInNameOrder(t *testing.T) {
 	if !sort.StringsAreSorted(names) {
 		t.Fatalf("Fns() = %v, want name order", names)
 	}
-	for _, want := range []string{"split_part", "string_to_table", "json_extract", "json_each"} {
+	for _, want := range []string{"split_part", "json_extract", "json_each"} {
 		if !slices.Contains(names, want) {
 			t.Errorf("Fns() lacks %s", want)
 		}
@@ -185,10 +187,12 @@ func TestBuiltinsAreListedInNameOrder(t *testing.T) {
 }
 
 // A catalogue function is called with the row's values as they are, and a table one yields rows.
+// A JSON object arrives as its JSON text, as stackql stores it, so the 2.0 decoded from a provider's
+// JSON is SQLite's INTEGER 2.
 func TestCatalogueFunctionsRunThroughInvoke(t *testing.T) {
-	r := builtins(t)
+	r := catalogue(t)
 	got, err := fn.Invoke(r, "json_extract", []any{map[string]any{"a": []any{1.0, 2.0}}, "$.a[1]"})
-	if err != nil || got != 2.0 {
+	if err != nil || got != int64(2) {
 		t.Fatalf("json_extract = %#v, %v", got, err)
 	}
 	rows, err := fn.RowProducing(r, "json_each")
@@ -198,4 +202,14 @@ func TestCatalogueFunctionsRunThroughInvoke(t *testing.T) {
 	if _, err := fn.Invoke(r, "lower", []any{"a", "b"}); err == nil {
 		t.Error("lower accepted two arguments")
 	}
+}
+
+// catalogue is the SQLite catalogue's registry.
+func catalogue(t *testing.T) facade.FnRegistry {
+	t.Helper()
+	r, err := fn.Builtins(sqlfn.SQLite)
+	if err != nil {
+		t.Fatalf("Builtins: %v", err)
+	}
+	return r
 }

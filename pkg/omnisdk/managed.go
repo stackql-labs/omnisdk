@@ -21,6 +21,7 @@ import (
 	"github.com/stackql-labs/omnisdk/internal/system_g/facade"
 	"github.com/stackql-labs/omnisdk/internal/system_g/plan"
 	"github.com/stackql-labs/omnisdk/internal/system_g/retry"
+	"github.com/stackql-labs/omnisdk/pkg/query"
 )
 
 // A converging graph is IaC written as a query: recall what the ledger knows of a resource, read it
@@ -30,8 +31,9 @@ import (
 // held, intent is in the ledger before every request, and a failed run compensates what it did.
 
 const (
-	verbRecall = "recall"
-	verbDiff   = "diff"
+	verbRecall   = "recall"
+	verbDiff     = "diff"
+	verbFunction = "function"
 )
 
 // Diff statuses: what a diff found, for a branch to choose on.
@@ -49,6 +51,14 @@ type intrinsicNode struct {
 	key          string
 	live         string
 	liveIdentity string
+	// call is a function node's table function, its arguments reading the rows before it.
+	call query.Call
+}
+
+// newFunctionNode is a table function in FROM: call, run once per row before it, joined as outer
+// says — kept unmatched under a left join — and matched by on.
+func newFunctionNode(alias string, call query.Call, outer bool, on []query.Predicate) Node {
+	return intrinsicNode{node: node{alias: alias, verb: verbFunction, outer: outer, on: on}, call: call}
 }
 
 // NewRecallNode is what the ledger knows of resource key in the run's collection: column identity

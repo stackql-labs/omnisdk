@@ -1,0 +1,13 @@
+id: fw
+name: fw
+version: v00.00.00000
+providerServices:
+  compute:
+    id: compute:v00.00.00000
+    name: compute
+    preferred: true
+    service:
+      $ref: fw/v00.00.00000/services/compute.yaml
+config:
+  auth:
+    type: null_auth

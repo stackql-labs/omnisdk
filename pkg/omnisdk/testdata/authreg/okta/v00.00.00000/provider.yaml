@@ -1,0 +1,13 @@
+id: okta
+name: okta
+version: v00.00.00000
+providerServices:
+  orgs:
+    id: orgs:v00.00.00000
+    name: orgs
+    preferred: true
+    service:
+      $ref: okta/v00.00.00000/services/orgs.yaml
+config:
+  auth:
+    type: null_auth

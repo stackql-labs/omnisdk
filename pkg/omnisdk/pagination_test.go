@@ -10,6 +10,7 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -408,5 +409,133 @@ func readOneAndDrop(t *testing.T, endpoint string) {
 	}
 	if !rows.Next() {
 		t.Fatalf("no first row: %v", rows.Err())
+	}
+}
+
+// A GitHub document that declares no pagination still follows the Link header, as any-sdk does by
+// default for GitHub.
+func TestGithubDefaultsToLinkPagination(t *testing.T) {
+	var srv *httptest.Server
+	srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.URL.Query().Get("page") == "" {
+			w.Header().Set("Link", `<`+srv.URL+`/orgs/o/members?page=2>; rel="next"`)
+			fmt.Fprint(w, `[{"login":"a"}]`)
+			return
+		}
+		fmt.Fprint(w, `[{"login":"b"}]`)
+	}))
+	defer srv.Close()
+	if n := countRows(t, authRegistry, "stackql_unstable_github.orgs.members",
+		omnisdk.Args{Endpoint: srv.URL, Params: map[string]string{"org": "o"}}); n != 2 {
+		t.Errorf("rows = %d, want both pages", n)
+	}
+}
+
+// Okta, like GitHub, pages by the Link header when its document declares nothing.
+func TestOktaDefaultsToLinkPagination(t *testing.T) {
+	var srv *httptest.Server
+	srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.URL.Query().Get("page") == "" {
+			w.Header().Set("Link", `<`+srv.URL+`/orgs/o/members?page=2>; rel="next"`)
+			fmt.Fprint(w, `[{"login":"a"}]`)
+			return
+		}
+		fmt.Fprint(w, `[{"login":"b"}]`)
+	}))
+	defer srv.Close()
+	if n := countRows(t, authRegistry, "stackql_unstable_okta.orgs.members",
+		omnisdk.Args{Endpoint: srv.URL, Params: map[string]string{"org": "o"}}); n != 2 {
+		t.Errorf("rows = %d, want both pages", n)
+	}
+}
+
+// Any other provider whose document declares nothing pages as any-sdk does: a nextPageToken in the
+// body, sent back as the pageToken query parameter, until a reply carries none.
+func TestOtherProvidersDefaultToPageToken(t *testing.T) {
+	var mu sync.Mutex
+	var tokens []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		tokens = append(tokens, r.URL.Query().Get("pageToken"))
+		mu.Unlock()
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Query().Get("pageToken") {
+		case "":
+			fmt.Fprint(w, `{"items":[{"id":"1"}],"nextPageToken":"p2"}`)
+		case "p2":
+			fmt.Fprint(w, `{"items":[{"id":"2"}],"nextPageToken":"p3"}`)
+		default:
+			fmt.Fprint(w, `{"items":[{"id":"3"}]}`)
+		}
+	}))
+	defer srv.Close()
+	if n := countRows(t, authRegistry, "stackql_unstable_pager.things.things", omnisdk.Args{Endpoint: srv.URL}); n != 3 {
+		t.Errorf("rows = %d, want three pages", n)
+	}
+	if got := strings.Join(tokens, ","); got != ",p2,p3" {
+		t.Errorf("pageToken sent = %q, want none, p2, p3", got)
+	}
+}
+
+// The defaults never page a request with an effect: a create whose reply carries a nextPageToken is
+// sent once.
+func TestDefaultPaginationNeverRepeatsAMutation(t *testing.T) {
+	var posts atomic.Int64
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		n := int64(0)
+		if r.Method == http.MethodPost {
+			n = posts.Add(1)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		// Only the first reply offers a next page, so a create that were paged would be sent exactly
+		// twice and the test would fail rather than loop.
+		if n == 1 {
+			fmt.Fprint(w, `{"id":"1","nextPageToken":"more"}`)
+			return
+		}
+		fmt.Fprint(w, `{"id":"2"}`)
+	}))
+	defer srv.Close()
+	g, err := omnisdk.NewGraph([]omnisdk.Node{omnisdk.NewMutationNode("c", "stackql_unstable_pager.things.things", "insert",
+		nil, nil, map[string]any{"name": "x"})}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pl, err := omnisdk.NewGraphSelectQuery(authRegistry, g, omnisdk.Args{Endpoint: srv.URL})
+	if err != nil {
+		t.Fatal(err)
+	}
+	rows, err := pl.Open(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for rows.Next() {
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatal(err)
+	}
+	rows.Close()
+	if posts.Load() != 1 {
+		t.Errorf("create sent %d times, want once", posts.Load())
+	}
+}
+
+// A declaration wins over the defaults: the linked provider declares Link-header paging, so a
+// nextPageToken in its body is not followed.
+func TestDeclaredPaginationWinsOverTheDefault(t *testing.T) {
+	var calls atomic.Int64
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls.Add(1)
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprint(w, `[{"id":"1"}]`)
+	}))
+	defer srv.Close()
+	if n := countRows(t, authRegistry, "stackql_unstable_linked.things.items", omnisdk.Args{Endpoint: srv.URL}); n != 1 {
+		t.Errorf("rows = %d, want 1", n)
+	}
+	if calls.Load() != 1 {
+		t.Errorf("requests = %d, want 1: no Link header means no next page", calls.Load())
 	}
 }

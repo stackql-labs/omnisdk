@@ -1036,14 +1036,14 @@ func TestInsertSeveralRowsIntoAJSONBody(t *testing.T) {
 }
 
 // SELECT u.UserName, upper(u.UserName) AS shout FROM aws.iam.users u
-// WHERE region = 'us-east-1' AND regexp_like(u.UserName, '^A', 'i') AND json_extract('{"k":1}', '$.k') = 1
+// WHERE region = 'us-east-1' AND regexp_like(u.UserName, '(?i)^A') AND json_extract('{"k":1}', '$.k') = 1
 // Catalogue functions project and filter like any other.
 func TestCatalogueFunctionsInAQuery(t *testing.T) {
 	q := mustQuery(t,
 		[]query.Join{query.NewJoin(users("u"), query.Base)},
 		[]query.Predicate{
 			regionEq(),
-			query.NewTest(query.NewCall("regexp_like", query.NewColumn("u", "UserName"), query.NewLiteral("^A"), query.NewLiteral("i"))),
+			query.NewTest(query.NewCall("regexp_like", query.NewColumn("u", "UserName"), query.NewLiteral("(?i)^A"))),
 			query.NewEq(query.NewCall("json_extract", query.NewLiteral(`{"k":1}`), query.NewLiteral("$.k")), query.NewLiteral(1)),
 		},
 		[]query.Output{
@@ -1285,5 +1285,41 @@ func TestCrossJoin(t *testing.T) {
 		query.NewJoin(users("b"), query.Cross, query.NewEq(query.NewColumn("a", "UserName"), query.NewColumn("b", "UserName")))},
 		nil, nil); err == nil {
 		t.Error("a cross join with an ON was accepted")
+	}
+}
+
+// The predicates SQL spells as operators run on the SQL path, and their NULL handling is SQL's:
+// IS NULL is never unknown; LIKE and BETWEEN with a NULL are; || with a NULL is NULL.
+func TestOperatorFunctionsOnTheQueryPath(t *testing.T) {
+	run := func(where query.Predicate, sel ...query.Output) []string {
+		t.Helper()
+		if len(sel) == 0 {
+			sel = []query.Output{query.NewOutput("UserName", query.NewColumn("u", "UserName"))}
+		}
+		rows, _ := runQuery(t, mustQuery(t,
+			[]query.Join{query.NewJoin(users("u"), query.Base)},
+			[]query.Predicate{regionEq(), where}, sel))
+		return rows
+	}
+	name := query.NewColumn("u", "UserName")
+	call := func(fn string, args ...query.Expr) query.Predicate { return query.NewTest(query.NewCall(fn, args...)) }
+	for label, c := range map[string]struct {
+		where query.Predicate
+		want  []string
+	}{
+		"like":        {call("like", query.NewLiteral("AL%"), name), []string{"UserName=alice"}},
+		"not like":    {query.NewNot(call("like", query.NewLiteral("al%"), name)), []string{"UserName=bob"}},
+		"between":     {call("between", name, query.NewLiteral("b"), query.NewLiteral("c")), []string{"UserName=bob"}},
+		"is null":     {call("is_null", query.NewColumn("u", "PasswordLastUsed")), []string{"UserName=alice", "UserName=bob"}},
+		"is not null": {query.NewNot(call("is_null", name)), []string{"UserName=alice", "UserName=bob"}},
+	} {
+		if got := run(c.where); !reflect.DeepEqual(got, c.want) {
+			t.Errorf("%s: rows = %v, want %v", label, got, c.want)
+		}
+	}
+	got := run(call("like", query.NewLiteral("bob"), name),
+		query.NewOutput("tag", query.NewCall("||", name, query.NewLiteral("-"), query.NewCall("cast", query.NewLiteral("7.0"), query.NewLiteral("integer")))))
+	if !reflect.DeepEqual(got, []string{"tag=bob-7"}) {
+		t.Errorf("|| and cast: rows = %v", got)
 	}
 }
