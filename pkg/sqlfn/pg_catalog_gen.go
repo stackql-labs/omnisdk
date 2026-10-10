@@ -862,6 +862,15 @@ var pgProcs = map[string][]pgProc{
 		{src: "time_part", args: []string{"text", "time"}, ret: "float8", retset: false, variadic: "", strict: true, outs: []string{}, defaults: []string{}},
 		{src: "timestamp_part", args: []string{"text", "timestamp"}, ret: "float8", retset: false, variadic: "", strict: true, outs: []string{}, defaults: []string{}},
 	},
+	"like": {
+		{src: "textlike", args: []string{"text", "text"}, ret: "bool", retset: false, variadic: "", strict: true, outs: []string{}, defaults: []string{}},
+		{src: "namelike", args: []string{"name", "text"}, ret: "bool", retset: false, variadic: "", strict: true, outs: []string{}, defaults: []string{}},
+		{src: "bytealike", args: []string{"bytea", "bytea"}, ret: "bool", retset: false, variadic: "", strict: true, outs: []string{}, defaults: []string{}},
+	},
+	"like_escape": {
+		{src: "like_escape", args: []string{"text", "text"}, ret: "text", retset: false, variadic: "", strict: true, outs: []string{}, defaults: []string{}},
+		{src: "like_escape_bytea", args: []string{"bytea", "bytea"}, ret: "bytea", retset: false, variadic: "", strict: true, outs: []string{}, defaults: []string{}},
+	},
 }
 
 // pgQuotedKeywords are the SQL keywords quote_ident quotes: all but the unreserved (kwlist.h).

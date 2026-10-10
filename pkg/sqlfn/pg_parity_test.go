@@ -623,3 +623,44 @@ func TestPgParityNow(t *testing.T) {
 		}
 	}
 }
+
+// TestPgParityLike checks like(string, pattern) and like_escape, and that the two together are
+// Postgres's LIKE … ESCAPE.
+func TestPgParityLike(t *testing.T) {
+	values := []any{nil, "", "abc", "ABC", "a%c", "a_c", `a\c`, "héllo", "日本語", "xxhixx", "a!b", "%", "_"}
+	patterns := []any{nil, "", "%", "_", "a%", "%c", "a_c", "a\\%c", `a\_c`, `a\\c`, "h_llo", "h%o", "日_語", "%hi%",
+		"a!%c", "abc\\", "%%_", "_%_", "ABC", "a", sqlfn.PgUnknown("a%")}
+	var cases []pgCase
+	for _, v := range values {
+		for _, p := range patterns {
+			cases = append(cases, pgCase{"like", []any{v, p}})
+		}
+	}
+	for _, p := range patterns {
+		for _, e := range []any{nil, "", "!", `\`, "é", "ab", "%"} {
+			cases = append(cases, pgCase{"like_escape", []any{p, e}})
+		}
+	}
+	checkPg(t, cases)
+
+	db := postgres(t)
+	cat := pgCatalog(t)
+	like, _ := cat.Get("like")
+	esc, _ := cat.Get("like_escape")
+	for _, v := range values[1:] {
+		for _, p := range patterns[1:] {
+			for _, e := range []string{"", "!", `\`, "é"} {
+				var want sql.NullBool
+				werr := db.QueryRow(fmt.Sprintf("select %s LIKE %s ESCAPE %s", pgLiteral(v), pgLiteral(p), pgLiteral(e))).Scan(&want)
+				rewritten, gerr := esc.Call([]any{p, e})
+				var got any
+				if gerr == nil {
+					got, gerr = like.Call([]any{v, rewritten})
+				}
+				if (werr != nil) != (gerr != nil) || (werr == nil && got != want.Bool) {
+					t.Errorf("%v LIKE %v ESCAPE %q: want %v (%v), got %v (%v)", v, p, e, want.Bool, werr, got, gerr)
+				}
+			}
+		}
+	}
+}

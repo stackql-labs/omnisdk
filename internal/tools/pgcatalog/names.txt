@@ -11,3 +11,4 @@ json_object_keys jsonb_extract_path jsonb_extract_path_text jsonb_array_length j
 jsonb_build_array to_jsonb jsonb_strip_nulls jsonb_array_elements jsonb_array_elements_text jsonb_each
 jsonb_each_text jsonb_object_keys jsonb_set jsonb_insert jsonb_pretty
 unnest generate_series generate_subscripts now to_timestamp to_char date_trunc date_part
+like like_escape
