@@ -78,9 +78,11 @@ type runner struct {
 	merge     facade.Merge
 	effect    facade.Effector
 	semantics facade.Semantics
-	unwinder  unwind.Unwinder
-	keys      facade.KeySet
-	ttl       time.Duration
+	// router derives an update path where semantics declares none; nil derives nothing.
+	router   facade.Router
+	unwinder unwind.Unwinder
+	keys     facade.KeySet
+	ttl      time.Duration
 	// parallelism bounds how many keys converge at once.
 	parallelism int
 }
@@ -88,9 +90,10 @@ type runner struct {
 // DefaultParallelism is how many keys converge at once when the caller does not say.
 const DefaultParallelism = 16
 
-// New wires a Runner. keys is the lease's key set — v1 passes everything, and narrowing it later
-// is configuration rather than a rewrite. parallelism bounds how many keys converge at once; zero or
-// less is DefaultParallelism.
+// New wires a Runner. router derives the update that converges drift where sem declares none; nil
+// means only declared updates run. keys is the lease's key set — v1 passes everything, and narrowing
+// it later is configuration rather than a rewrite. parallelism bounds how many keys converge at once;
+// zero or less is DefaultParallelism.
 func New(
 	log facade.Ledger,
 	journals facade.Journals,
@@ -98,6 +101,7 @@ func New(
 	m facade.Merge,
 	effect facade.Effector,
 	sem facade.Semantics,
+	router facade.Router,
 	u unwind.Unwinder,
 	keys facade.KeySet,
 	ttl time.Duration,
@@ -106,7 +110,7 @@ func New(
 	if parallelism <= 0 {
 		parallelism = DefaultParallelism
 	}
-	return &runner{log: log, journals: journals, leaser: leaser, merge: m, effect: effect, semantics: sem, unwinder: u,
+	return &runner{log: log, journals: journals, leaser: leaser, merge: m, effect: effect, semantics: sem, router: router, unwinder: u,
 		keys: keys, ttl: ttl, parallelism: parallelism}
 }
 
@@ -385,6 +389,23 @@ func (r *runner) bind(ctx context.Context, s Step) (map[string]string, error) {
 	return params, nil
 }
 
+// update finds the exchange that converges a drifted key, and what to send it: declared, with the
+// whole mutation, or derived by the router, which may send less.
+func (r *runner) update(ctx context.Context, s Step, mutation, actual []byte, params map[string]string, identity []byte) (string, []byte, error) {
+	if up, ok := r.semantics.Update(s.Exchange); ok {
+		return up, mutation, nil
+	}
+	if r.router == nil {
+		return "", nil, fmt.Errorf("apply: %s has drifted and %s declares no update path", s.Key, s.Exchange)
+	}
+	in := facade.EffectInput{Params: params, Mutation: mutation, Identity: identity}
+	up, sent, err := r.router.Route(ctx, s.Exchange, "update", s.Key, in, actual)
+	if err != nil {
+		return "", nil, fmt.Errorf("apply: %s has drifted and no update path converges it: %w", s.Key, err)
+	}
+	return up, sent, nil
+}
+
 // step converges one key. Order is load-bearing: the journal and the ledger both record intent
 // before the wire call, so a crash can never leave an effect that nothing knows to ask about.
 func (r *runner) step(ctx context.Context, j facade.Journal, s Step) error {
@@ -448,13 +469,15 @@ func (r *runner) step(ctx context.Context, j facade.Journal, s Step) error {
 			}
 			return nil
 		}
-		// The object exists and does not match. Which exchange converges it is declared, not
-		// guessed: re-issuing a create is correct for an upsert and mints a duplicate otherwise.
-		up, ok := r.semantics.Update(s.Exchange)
-		if !ok {
-			return fmt.Errorf("apply: %s has drifted and %s declares no update path", s.Key, s.Exchange)
+		// The object exists and does not match. A declared update wins; otherwise the documents
+		// decide, and only an operation addressed by the object's identity that accepts every field
+		// being sent qualifies. Re-issuing the create is never the fallback: it is correct for an
+		// upsert and mints a duplicate otherwise.
+		up, sent, err := r.update(ctx, s, mutation, actual, params, identity)
+		if err != nil {
+			return err
 		}
-		exchange, form = up, facade.FormUpdate
+		exchange, form, mutation = up, facade.FormUpdate, sent
 	}
 
 	// The journal is appended here rather than on entry, once a wire effect is certain to be

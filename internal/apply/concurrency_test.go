@@ -78,7 +78,7 @@ func runnerWith(t *testing.T, tgt *target, eff facade.Effector, parallelism int)
 	if err != nil {
 		t.Fatal(err)
 	}
-	return apply.New(log, js, lease.NewLeaser(log, time.Now), merge.ThreeWay(), eff, sem,
+	return apply.New(log, js, lease.NewLeaser(log, time.Now), merge.ThreeWay(), eff, sem, nil,
 		unwind.New(log, js, sem, eff), lease.All(), time.Minute, parallelism)
 }
 

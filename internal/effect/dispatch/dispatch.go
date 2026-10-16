@@ -21,23 +21,41 @@ func New(routes map[string]facade.Effector) facade.Effector {
 	return &router{routes: routes}
 }
 
+func (r *router) forKey(k facade.LedgerKey) (facade.Effector, error) { return forKey(r.routes, k) }
+
+type drift struct{ routes map[string]facade.Router }
+
+// NewRouter returns a Router that routes by key prefix, as New does for effects.
+func NewRouter(routes map[string]facade.Router) facade.Router {
+	return &drift{routes: routes}
+}
+
+func (d *drift) Route(ctx context.Context, exchange, verb string, k facade.LedgerKey, in facade.EffectInput, actual []byte) (string, []byte, error) {
+	r, err := forKey(d.routes, k)
+	if err != nil {
+		return "", nil, err
+	}
+	return r.Route(ctx, exchange, verb, k, in, actual)
+}
+
 // forKey finds the most specific registered prefix for a key. The collection name is the first
 // segment and is not part of the address, so matching starts after it.
-func (r *router) forKey(k facade.LedgerKey) (facade.Effector, error) {
+func forKey[T any](routes map[string]T, k facade.LedgerKey) (T, error) {
+	var none T
 	_, addr, ok := strings.Cut(string(k), "/")
 	if !ok {
-		return nil, fmt.Errorf("dispatch: key %q has no address after the collection name", k)
+		return none, fmt.Errorf("dispatch: key %q has no address after the collection name", k)
 	}
 	best := ""
-	for prefix := range r.routes {
+	for prefix := range routes {
 		if strings.HasPrefix(addr, prefix) && len(prefix) > len(best) {
 			best = prefix
 		}
 	}
 	if best == "" {
-		return nil, fmt.Errorf("dispatch: no provider registered for %q", addr)
+		return none, fmt.Errorf("dispatch: no provider registered for %q", addr)
 	}
-	return r.routes[best], nil
+	return routes[best], nil
 }
 
 func (r *router) Effect(ctx context.Context, exchange string, k facade.LedgerKey, in facade.EffectInput) ([]byte, error) {

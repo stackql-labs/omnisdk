@@ -1237,11 +1237,7 @@ func NewSelectFromCatalog(dir, address string, args Args) (Plan, error) {
 	if err != nil {
 		return nil, err
 	}
-	candidates, err := c.Operations(address, "select")
-	if err != nil {
-		return nil, err
-	}
-	ex, err := chooseExchange(candidates, docInputs(args))
+	ex, err := chooseExchange(c, address, "select", docInputs(args), nil)
 	if err != nil {
 		return nil, fmt.Errorf("omnisdk: %s: %w", address, err)
 	}
@@ -1258,65 +1254,6 @@ func NewSelectFromCatalog(dir, address string, args Args) (Plan, error) {
 		return nil, err
 	}
 	return &cannedPlan{plan: pl, args: args}, nil
-}
-
-// chooseExchange picks the SELECT the caller actually asked for. A document binds several to one
-// resource — a get by identifier and a list by scope are both SELECT — and only the supplied
-// parameters say which. The most SPECIFIC satisfiable one wins (most required parameters met), since
-// supplying an identifier means asking for that one thing. A tie is ambiguous and says so rather than
-// guessing; nothing satisfiable says what each would have needed.
-func chooseExchange(candidates []aot.AOTExchange, inputs map[string]any) (aot.AOTExchange, error) {
-	var best []aot.AOTExchange
-	var bestScore int
-	var unmet []string
-	for _, ex := range candidates {
-		score, ok := 0, true
-		for _, p := range ex.Request().Parameters() {
-			if !p.Required() {
-				continue
-			}
-			if v, supplied := inputs[p.Name()]; !supplied || v == "" {
-				ok = false
-				unmet = append(unmet, ex.Name()+" needs "+p.Name())
-				break
-			}
-			score++
-		}
-		if !ok {
-			continue
-		}
-		switch {
-		case best == nil || score > bestScore:
-			best, bestScore = []aot.AOTExchange{ex}, score
-		case score == bestScore:
-			best = append(best, ex)
-		}
-	}
-	if len(best) > 1 {
-		// A read that needs a request body — Azure's check_name_availability, bound to select beside
-		// list — needs content the query does not have. Where methods tie, the ones that do not are
-		// the reads.
-		var reads []aot.AOTExchange
-		for _, ex := range best {
-			if ex.Request().BodyMediaType() == "" {
-				reads = append(reads, ex)
-			}
-		}
-		if len(reads) > 0 {
-			best = reads
-		}
-	}
-	switch {
-	case len(best) == 0:
-		return nil, fmt.Errorf("no satisfiable select method (%s)", strings.Join(unmet, "; "))
-	case len(best) > 1:
-		names := make([]string, len(best))
-		for i, ex := range best {
-			names[i] = ex.Name()
-		}
-		return nil, fmt.Errorf("several select methods are satisfiable (%s); supply a parameter that distinguishes them", strings.Join(names, ", "))
-	}
-	return best[0], nil
 }
 
 // docInputs are the caller's params as κ inputs.

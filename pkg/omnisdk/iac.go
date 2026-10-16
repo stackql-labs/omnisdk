@@ -130,7 +130,7 @@ func Converge(registry, name, state, runID string, resources []ManagedResource, 
 	case len(resources) == 0:
 		return nil, fmt.Errorf("omnisdk: no resources to converge")
 	}
-	effector, sem, exchanges, err := providerWiring(registry, resources, args)
+	effector, router, sem, exchanges, err := providerWiring(registry, resources, args)
 	if err != nil {
 		return nil, err
 	}
@@ -138,23 +138,23 @@ func Converge(registry, name, state, runID string, resources []ManagedResource, 
 		runID = time.Now().UTC().Format("20060102T150405Z")
 	}
 	return &convergePlan{name: name, state: state, runID: runID, resources: resources,
-		effector: effector, semantics: sem, exchanges: exchanges, scope: args.Params, tuning: args.Tuning}, nil
+		effector: effector, router: router, semantics: sem, exchanges: exchanges, scope: args.Params, tuning: args.Tuning}, nil
 }
 
-// providerWiring builds an effector per provider the resources name, and the semantics derived from
-// their documents.
+// providerWiring builds an effector per provider the resources name, the router that derives drift
+// convergence from their documents, and the semantics declared over them.
 //
 // Nothing here is a table of known services: a resource states its provider, its document address
 // and the residue its document leaves unsaid, so a new service is data a caller supplies rather than
 // an entry someone adds to this package.
-func providerWiring(registry string, resources []ManagedResource, args Args) (facade.Effector, facade.Semantics, map[string]string, error) {
+func providerWiring(registry string, resources []ManagedResource, args Args) (facade.Effector, facade.Router, facade.Semantics, map[string]string, error) {
 	reg, err := openRegistry(registry)
 	if err != nil {
-		return nil, nil, nil, err
+		return nil, nil, nil, nil, err
 	}
 	dslReg, err := dsl.NewRegistry(append(gotemplate.Evaluators(), schemaxml.New())...)
 	if err != nil {
-		return nil, nil, nil, err
+		return nil, nil, nil, nil, err
 	}
 
 	// A resource names a KEY; the effector resolves a published ADDRESS. Translating here keeps a
@@ -167,20 +167,20 @@ func providerWiring(registry string, resources []ManagedResource, args Args) (fa
 
 	for _, r := range resources {
 		if r.Provider() == "" || r.Address() == "" {
-			return nil, nil, nil, fmt.Errorf("omnisdk: resource %q names no provider or address", r.Key())
+			return nil, nil, nil, nil, fmt.Errorf("omnisdk: resource %q names no provider or address", r.Key())
 		}
 		cat, ok := catalogs[r.Provider()]
 		if !ok {
 			cat, err = reg.Catalog(r.Provider())
 			if err != nil {
-				return nil, nil, nil, fmt.Errorf("omnisdk: provider %q: %w", r.Provider(), err)
+				return nil, nil, nil, nil, fmt.Errorf("omnisdk: provider %q: %w", r.Provider(), err)
 			}
 			catalogs[r.Provider()] = cat
 			residues[r.Provider()] = map[string]docrun.Residue{}
 		}
 		qualified, err := qualify(cat, r.Address())
 		if err != nil {
-			return nil, nil, nil, err
+			return nil, nil, nil, nil, err
 		}
 		residues[r.Provider()][qualified] = docrun.NewResidue(r.Identity(), r.AddressedBy(), r.CorrelationParam())
 		for _, verb := range []string{"insert", "update", "delete", "select"} {
@@ -198,32 +198,34 @@ func providerWiring(registry string, resources []ManagedResource, args Args) (fa
 		})
 	}
 
-	routes := map[string]facade.Effector{}
+	routes := map[string]docrun.Effector{}
 	for prov, cat := range catalogs {
 		opts, err := providerOptions(args, cat.Provider())
 		if err != nil {
-			return nil, nil, nil, err
+			return nil, nil, nil, nil, err
 		}
-		routes[prov] = docrun.New(cat, dslReg, residues[prov], opts...)
+		routes[prov] = docrun.New(cat, analyzerFor(cat), dslReg, residues[prov], opts...)
 	}
 
 	sem, err := semantics.New(decls)
 	if err != nil {
-		return nil, nil, nil, err
+		return nil, nil, nil, nil, err
 	}
-	return byProvider(resources, routes), sem, exchanges, nil
+	effector, router := byProvider(resources, routes)
+	return effector, router, sem, exchanges, nil
 }
 
 // byProvider routes each key to the provider that declared it, so a collection spanning providers
 // reaches each one.
-func byProvider(resources []ManagedResource, routes map[string]facade.Effector) facade.Effector {
-	prefixes := map[string]facade.Effector{}
+func byProvider(resources []ManagedResource, routes map[string]docrun.Effector) (facade.Effector, facade.Router) {
+	effects := map[string]facade.Effector{}
+	drift := map[string]facade.Router{}
 	for _, r := range resources {
 		if eff, ok := routes[r.Provider()]; ok {
-			prefixes[r.Key()] = eff
+			effects[r.Key()], drift[r.Key()] = eff, eff
 		}
 	}
-	return dispatch.New(prefixes)
+	return dispatch.New(effects), dispatch.NewRouter(drift)
 }
 
 // exchangeOf names an operation: an address and the verb to run against it. Which concrete call that
@@ -265,6 +267,7 @@ type convergePlan struct {
 	runID     string
 	resources []ManagedResource
 	effector  facade.Effector
+	router    facade.Router
 	semantics facade.Semantics
 	// exchanges translates a blueprint's resource-key exchange name into the registry address the
 	// effector resolves.
@@ -288,7 +291,7 @@ func (p *convergePlan) Open(ctx context.Context) (Rows, error) {
 		return nil, err
 	}
 	runner := apply.New(log, journals, lease.NewLeaser(log, time.Now), merge.ThreeWay(),
-		p.effector, p.semantics, unwind.New(log, journals, p.semantics, p.effector), lease.All(), leaseTTL,
+		p.effector, p.semantics, p.router, unwind.New(log, journals, p.semantics, p.effector), lease.All(), leaseTTL,
 		orInt(p.tuning.Parallelism, apply.DefaultParallelism))
 	// Keys converging at once share each backend's request budget, as a query's requests do.
 	ctx = admit.WithAdmissions(ctx, admit.PerScope(orInt(p.tuning.MaxPerHost, 8)))

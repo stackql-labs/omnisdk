@@ -59,6 +59,7 @@ func TestLeafImplementationsSeeContractsOnly(t *testing.T) {
 		module + "/internal/journal",
 		module + "/internal/lease",
 		module + "/internal/semantics",
+		module + "/internal/analyze",
 	} {
 		for _, d := range deps(t, pkg) {
 			if d != module+"/internal/system_g/facade" {

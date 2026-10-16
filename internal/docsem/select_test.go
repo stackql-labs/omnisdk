@@ -1,17 +1,19 @@
 package docsem_test
 
 import (
+	"context"
 	"os"
 	"strings"
 	"testing"
 
+	"github.com/stackql-labs/omnisdk/internal/analyze"
 	"github.com/stackql-labs/omnisdk/internal/docsem"
 	"github.com/stackql-labs/omnisdk/pkg/docparse/stackqldoc"
 )
 
 // A verb fans out and the inputs pick which operation applies: only CreateSubnet accepts VpcId and
 // CidrBlock, so supplying them selects it over CreateDefaultSubnet regardless of declaration order.
-func TestSelectPicksBySignature(t *testing.T) {
+func TestCapabilitiesSelectBySignature(t *testing.T) {
 	reg, err := stackqldoc.OpenRegistry(os.DirFS("../../pkg/docparse/stackqldoc/testdata"))
 	if err != nil {
 		t.Fatalf("registry: %v", err)
@@ -31,29 +33,38 @@ func TestSelectPicksBySignature(t *testing.T) {
 	if addr == "" {
 		t.Fatal("ec2.subnets not addressable")
 	}
+	an := analyze.New(docsem.Capabilities(cat), analyze.PermitAll())
+	choose := func(inputs ...string) (string, error) {
+		m, err := an.Analyze(context.Background(), analyze.NewStatement(addr, "insert", inputs, inputs, ""))
+		if err != nil {
+			return "", err
+		}
+		ex, ok := docsem.Exchange(m)
+		if !ok {
+			t.Fatalf("method %s carries no document operation", m.Name())
+		}
+		return ex.OperationID(), nil
+	}
 
-	op, err := docsem.Select(cat, addr, "insert", []string{"VpcId", "CidrBlock"})
+	op, err := choose("VpcId", "CidrBlock")
 	if err != nil {
 		t.Fatalf("select: %v", err)
 	}
-	if op.OperationID() != "GET_CreateSubnet" {
-		t.Errorf("operation = %s, want GET_CreateSubnet", op.OperationID())
+	if op != "GET_CreateSubnet" {
+		t.Errorf("operation = %s, want GET_CreateSubnet", op)
 	}
 
 	// The other create is reachable by its own signature.
-	// AvailabilityZone alone also lands on CreateSubnet, which declares it too: where several
-	// operations match, declaration order breaks the tie, exactly as the document's own resolution
-	// does.
-	def, err := docsem.Select(cat, addr, "insert", []string{"AvailabilityZone"})
+	def, err := choose("AvailabilityZone")
 	if err != nil {
 		t.Fatalf("select default: %v", err)
 	}
-	if def.OperationID() != "GET_CreateSubnet" {
-		t.Errorf("AvailabilityZone selected %s, want the first declaration that accepts it", def.OperationID())
+	if def != "GET_CreateDefaultSubnet" {
+		t.Errorf("AvailabilityZone selected %s, want GET_CreateDefaultSubnet", def)
 	}
 
 	// An input no operation declares is an error, not a silent pick.
-	if _, err := docsem.Select(cat, addr, "insert", []string{"NotAThing"}); err == nil {
+	if _, err := choose("NotAThing"); err == nil {
 		t.Error("unknown input selected an operation; want an error")
 	}
 }

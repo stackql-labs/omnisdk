@@ -17,6 +17,7 @@ import (
 	"github.com/stackql-labs/omnisdk/internal/lease"
 	"github.com/stackql-labs/omnisdk/internal/ledger"
 	"github.com/stackql-labs/omnisdk/internal/merge"
+	"github.com/stackql-labs/omnisdk/internal/semantics"
 	"github.com/stackql-labs/omnisdk/internal/system_g/bind"
 	"github.com/stackql-labs/omnisdk/internal/system_g/facade"
 	"github.com/stackql-labs/omnisdk/internal/system_g/plan"
@@ -279,7 +280,7 @@ func (d durable) open(ctx context.Context, o effectOp) facade.Records {
 			return notAttempted(err)
 		}
 	}
-	if _, err := d.run.journal.Append(ctx, k, o.e.exchange, formOf(o.e.verb), prior); err != nil {
+	if _, err := d.run.journal.Append(ctx, k, o.e.exchange, semantics.FormOf(o.e.verb), prior); err != nil {
 		return notAttempted(err)
 	}
 	return &durableRecords{inner: effectRecords{Records: o.inner.Open(retryNever(ctx)), op: o}, d: d, key: k, entry: e, found: found}

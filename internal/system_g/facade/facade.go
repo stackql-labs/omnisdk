@@ -490,11 +490,66 @@ type Semantics interface {
 	// a particular create may not be — deletion protection, scheduled destruction, object-lock,
 	// anything billable.
 	Inverse(exchange string) (InverseExchange, bool)
-	// Update reports the exchange that converges an object that already exists, or false where
-	// none is declared. This is the verb-to-lifecycle role: without it there is no way to tell an
-	// upsert, where re-issuing the create is correct, from a mint, where re-issuing produces a
-	// duplicate. Absence means drift needs a replace, which is refused rather than guessed.
+	// Update reports the exchange declared to converge an object that already exists, or false where
+	// none is declared. A declaration overrides what a Router derives from the documents: it is how
+	// an upsert, where re-issuing the create is correct, is told apart from a mint.
 	Update(exchange string) (string, bool)
+}
+
+// Statement is one action asked of one resource, before it is bound to a method. It names a
+// resource and a verb; which method carries it out is the analyzer's decision, unless the caller
+// pinned one.
+type Statement interface {
+	// Resource is the document address, e.g. "aws.ec2.vpcs".
+	Resource() string
+	// Verb is the document's verb: select, insert, update or delete.
+	Verb() string
+	// Available are the inputs that will have a value when the method runs: what the caller
+	// supplied and what arrives from elsewhere. A method needing one that is not here cannot run.
+	Available() []string
+	// Sent are the inputs the statement sets. A method must accept every one: an input it does not
+	// declare is dropped or rejected, and either applies something other than what was asked.
+	Sent() []string
+	// Pinned is a method the caller named; empty means the analyzer chooses.
+	Pinned() string
+}
+
+// Method is one way the documents state of carrying out a verb on a resource.
+type Method interface {
+	Name() string
+	// Required are the inputs it cannot run without.
+	Required() []string
+	// Accepts reports whether it declares somewhere for input to go. A method taking a body accepts
+	// any field: the body's content is the caller's, and a document need not enumerate it.
+	Accepts(input string) bool
+	TakesBody() bool
+}
+
+// Capabilities are what the documents, and any declarations over them, say each method can do.
+type Capabilities interface {
+	// Methods are a resource's methods for one verb, in the order the document lists them.
+	Methods(resource, verb string) ([]Method, error)
+}
+
+// Policy permits or refuses a method chosen for a statement. It narrows what Capabilities allow and
+// never widens it: nothing a policy says makes a method accept an input it does not declare.
+type Policy interface {
+	Permit(ctx context.Context, s Statement, m Method) error
+}
+
+// Analyzer binds a statement to the method that carries it out, or says why none can.
+type Analyzer interface {
+	Analyze(ctx context.Context, s Statement) (Method, error)
+}
+
+// Router derives, from the documents, the exchange that applies a verb to an object an exchange
+// created. It is consulted where Semantics declares nothing, and an error is a refusal: the object
+// stays as it is.
+type Router interface {
+	// Route takes the whole desired document as in.Mutation and what the target holds as actual, and
+	// returns the exchange and the mutation to send it — which may be less than the whole document,
+	// where the operation can only be told what changed.
+	Route(ctx context.Context, exchange, verb string, k LedgerKey, in EffectInput, actual []byte) (string, []byte, error)
 }
 
 // EffectInput is everything one wire effect needs beyond the exchange itself.

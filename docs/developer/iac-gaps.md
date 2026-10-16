@@ -8,22 +8,25 @@ these build on — intent before effect, compensation, correlation stamps — is
 [invariants.md](invariants.md) and the package docs of `internal/apply`, `internal/lease` and
 `internal/unwind`.
 
-## 1. Drift on a live resource is refused
+## 1. Drift converges only where an update operation accepts the change
 
-**Now.** A live key whose target no longer matches its intent asks the semantics for an update
-exchange. `Converge` declares none for any resource (`providerWiring` in
-[iac.go](../../pkg/omnisdk/iac.go)), so the step fails with
-`apply: <key> has drifted and <exchange> declares no update path`
-([apply.go](../../internal/apply/apply.go)), and the run unwinds.
+**Now.** A live key whose target no longer matches its intent takes a declared update
+(`semantics.Declaration.Update`) if there is one. Otherwise the document decides
+(`Route` in [docrun.go](../../internal/effect/docrun/docrun.go)): the resource's `update` operation
+that the analyzer ([analyze.go](../../internal/analyze/analyze.go)) finds accepts the object's identity
+and every field being sent. An operation with a body is sent the whole desired document; one without
+is sent only the changed fields. Where no operation qualifies, the step fails with
+`apply: <key> has drifted and no update path converges it: …` and the run unwinds.
 
 **Needs.**
-- A resource that states its update: the document's `update` method, or the create itself where the
-  create is an upsert (`semantics.Declaration.Update`). Which one is a property of the API and is
-  declared, never guessed — re-issuing a create that mints duplicates an object.
-- A mutation that sends only what changed. The three-way merge already computes it; an API that takes
-  a full replacement rather than a patch needs the whole desired document instead.
-- Immutable fields — an EC2 CIDR — stay refused. Replacing an object is a delete and a create, and
-  belongs to a replace path, not to update.
+- Per-field declarations that override the document. The rule takes any `update` operation that
+  accepts a field, so EC2 `CidrBlock` drift routes to `AssociateVpcCidrBlock`, which adds a CIDR block
+  rather than changing it. A declaration marking a field immutable, or naming the operation for it, is
+  what stops that.
+- A replace path for immutable fields: a delete and a create, in a declared order, on one key. Until
+  then an immutable field with no declaration is either refused or misrouted as above.
+- Removing a field through an operation without a body is refused: such an operation cannot express
+  it.
 
 ## 2. Nothing destroys a collection
 

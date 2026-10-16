@@ -763,15 +763,11 @@ func NewGraphSelectQuery(dir string, g Graph, args Args) (Plan, error) {
 		if err != nil {
 			return nil, err
 		}
-		candidates, err := c.Operations(addr, n.Verb())
-		if err != nil {
-			return nil, err
-		}
 		// Selection must count what ARRIVES, not only what the caller supplied. Azure's Subnets_list
 		// needs a resource group and a VNet name, both of which come over the edge — judged on
 		// supplied inputs alone, no select is satisfiable and the query fails before its wiring is
 		// ever considered.
-		ex, err := chooseExchange(candidates, arrivals)
+		ex, err := chooseExchange(c, addr, n.Verb(), arrivals, sentBy(n))
 		if err != nil {
 			return nil, fmt.Errorf("omnisdk: %s (%s): %w", alias, addr, err)
 		}
@@ -1031,6 +1027,23 @@ func openJournal(g Graph, args Args) (facade.Journal, error) {
 		return nil, err
 	}
 	return journals.For(context.Background(), j.RunID)
+}
+
+// sentBy are the inputs a mutation node sets — its parameters, body fields, fanned-out and tupled
+// values — which the method chosen for it must accept. A read sends nothing it must be checked
+// against: its parameters narrow what comes back, and a run-wide one such as a region reaches every
+// node whether or not that node's method declares it.
+func sentBy(n Node) []string {
+	if n.Verb() == "select" {
+		return nil
+	}
+	var out []string
+	out = append(out, slices.Collect(maps.Keys(n.Params()))...)
+	out = append(out, slices.Collect(maps.Keys(n.Body()))...)
+	out = append(out, slices.Collect(maps.Keys(n.Fanout()))...)
+	out = append(out, tupleKeys(n)...)
+	slices.Sort(out)
+	return slices.Compact(out)
 }
 
 // tupleKeys are the keys a node's tuples bind, sorted; every tuple binds the same ones.
