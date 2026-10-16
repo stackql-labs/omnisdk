@@ -8,6 +8,7 @@ import (
 
 	"github.com/stackql-labs/omnisdk/internal/analyze"
 	"github.com/stackql-labs/omnisdk/internal/docsem"
+	"github.com/stackql-labs/omnisdk/internal/system_g/facade"
 	"github.com/stackql-labs/omnisdk/pkg/docparse/stackqldoc"
 )
 
@@ -35,7 +36,7 @@ func TestCapabilitiesSelectBySignature(t *testing.T) {
 	}
 	an := analyze.New(docsem.Capabilities(cat), analyze.PermitAll())
 	choose := func(inputs ...string) (string, error) {
-		m, err := an.Analyze(context.Background(), analyze.NewStatement(addr, "insert", inputs, inputs, ""))
+		m, err := an.Analyze(context.Background(), analyze.NewStatement(facade.AnonymousPrincipal, addr, "insert", inputs, inputs, ""))
 		if err != nil {
 			return "", err
 		}

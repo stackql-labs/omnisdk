@@ -243,7 +243,7 @@ func (e *effector) choose(ctx context.Context, addr, verb string, inputs map[str
 	for n := range inputs {
 		names = append(names, n)
 	}
-	m, err := e.analyzer.Analyze(ctx, analyze.NewStatement(addr, verb, names, names, ""))
+	m, err := e.analyzer.Analyze(ctx, analyze.NewStatement(facade.AnonymousPrincipal, addr, verb, names, names, ""))
 	if err != nil {
 		return nil, err
 	}

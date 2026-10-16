@@ -29,7 +29,7 @@ func chooseExchange(c aot.Catalog, addr, verb string, available map[string]any, 
 			names = append(names, k)
 		}
 	}
-	m, err := analyzerFor(c).Analyze(context.Background(), analyze.NewStatement(addr, verb, names, sent, ""))
+	m, err := analyzerFor(c).Analyze(context.Background(), analyze.NewStatement(facade.AnonymousPrincipal, addr, verb, names, sent, ""))
 	if err != nil {
 		return nil, err
 	}

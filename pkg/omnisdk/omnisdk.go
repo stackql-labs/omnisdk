@@ -222,6 +222,10 @@ type Args struct {
 	// Journal opts a query's mutations into write-ahead intent: each effect is recorded, and on disk,
 	// before its request is sent. Nil runs them unjournaled. Reads ignore it.
 	Journal *Journal `json:"journal,omitempty"`
+	// RBAC is the access-control configuration a run is checked against, in its own grammar. It is
+	// accepted and not yet enforced: every statement runs as facade.AnonymousPrincipal under a policy
+	// that permits everything.
+	RBAC json.RawMessage `json:"rbac,omitempty"`
 	// AuthByProvider is each provider's credentials, keyed by provider name — namespaced
 	// ("stackql_unstable_github") or as its document declares it ("github"). A credential belongs to
 	// one provider: a provider absent here authenticates from its document's defaults and the

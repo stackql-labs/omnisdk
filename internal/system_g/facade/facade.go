@@ -14,6 +14,8 @@ var (
 
 const (
 	AnonymousPayload = "_anon"
+	// AnonymousPrincipal is who a statement is on behalf of when no caller is identified.
+	AnonymousPrincipal = "anonymous"
 )
 
 type systemG struct {
@@ -500,6 +502,8 @@ type Semantics interface {
 // resource and a verb; which method carries it out is the analyzer's decision, unless the caller
 // pinned one.
 type Statement interface {
+	// Principal is who the statement is on behalf of: what a Policy decides for.
+	Principal() string
 	// Resource is the document address, e.g. "aws.ec2.vpcs".
 	Resource() string
 	// Verb is the document's verb: select, insert, update or delete.

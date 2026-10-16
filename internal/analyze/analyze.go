@@ -119,16 +119,19 @@ func fits(m facade.Method, s facade.Statement, available map[string]bool) string
 }
 
 type statement struct {
+	principal       string
 	resource, verb  string
 	available, sent []string
 	pinned          string
 }
 
-// NewStatement builds a Statement. pinned may be empty, meaning the analyzer chooses.
-func NewStatement(resource, verb string, available, sent []string, pinned string) facade.Statement {
-	return statement{resource: resource, verb: verb, available: available, sent: sent, pinned: pinned}
+// NewStatement builds a Statement on behalf of principal. pinned may be empty, meaning the analyzer
+// chooses.
+func NewStatement(principal, resource, verb string, available, sent []string, pinned string) facade.Statement {
+	return statement{principal: principal, resource: resource, verb: verb, available: available, sent: sent, pinned: pinned}
 }
 
+func (s statement) Principal() string   { return s.principal }
 func (s statement) Resource() string    { return s.resource }
 func (s statement) Verb() string        { return s.verb }
 func (s statement) Available() []string { return s.available }

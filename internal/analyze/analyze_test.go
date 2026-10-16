@@ -47,7 +47,7 @@ var (
 
 func analyze1(t *testing.T, c caps, p facade.Policy, verb string, available, sent []string, pinned string) (string, error) {
 	t.Helper()
-	m, err := analyze.New(c, p).Analyze(context.Background(), analyze.NewStatement("r", verb, available, sent, pinned))
+	m, err := analyze.New(c, p).Analyze(context.Background(), analyze.NewStatement(facade.AnonymousPrincipal, "r", verb, available, sent, pinned))
 	if err != nil {
 		return "", err
 	}
