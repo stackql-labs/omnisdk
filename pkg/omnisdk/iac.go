@@ -204,7 +204,7 @@ func providerWiring(registry string, resources []ManagedResource, args Args) (fa
 		if err != nil {
 			return nil, nil, nil, nil, err
 		}
-		routes[prov] = docrun.New(cat, analyzerFor(cat), dslReg, residues[prov], opts...)
+		routes[prov] = docrun.New(cat, analyzerFor(cat), principalOf(args), dslReg, residues[prov], opts...)
 	}
 
 	sem, err := semantics.New(decls)

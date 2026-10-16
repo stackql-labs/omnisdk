@@ -767,7 +767,7 @@ func NewGraphSelectQuery(dir string, g Graph, args Args) (Plan, error) {
 		// needs a resource group and a VNet name, both of which come over the edge — judged on
 		// supplied inputs alone, no select is satisfiable and the query fails before its wiring is
 		// ever considered.
-		ex, err := chooseExchange(c, addr, n.Verb(), arrivals, sentBy(n))
+		ex, err := chooseExchange(c, principalOf(args), addr, n.Verb(), arrivals, sentBy(n))
 		if err != nil {
 			return nil, fmt.Errorf("omnisdk: %s (%s): %w", alias, addr, err)
 		}

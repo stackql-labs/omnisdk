@@ -22,14 +22,14 @@ func analyzerFor(cat aot.Catalog) facade.Analyzer {
 // which the operation must accept.
 //
 // Planning happens when a plan is built, before any context exists, so the analysis runs under none.
-func chooseExchange(c aot.Catalog, addr, verb string, available map[string]any, sent []string) (aot.AOTExchange, error) {
+func chooseExchange(c aot.Catalog, principal, addr, verb string, available map[string]any, sent []string) (aot.AOTExchange, error) {
 	names := make([]string, 0, len(available))
 	for k, v := range available {
 		if v != "" {
 			names = append(names, k)
 		}
 	}
-	m, err := analyzerFor(c).Analyze(context.Background(), analyze.NewStatement(facade.AnonymousPrincipal, addr, verb, names, sent, ""))
+	m, err := analyzerFor(c).Analyze(context.Background(), analyze.NewStatement(principal, addr, verb, names, sent, ""))
 	if err != nil {
 		return nil, err
 	}
@@ -38,4 +38,12 @@ func chooseExchange(c aot.Catalog, addr, verb string, available map[string]any, 
 		return nil, fmt.Errorf("method %s is not a document operation", m.Name())
 	}
 	return ex, nil
+}
+
+// principalOf is who args runs on behalf of.
+func principalOf(args Args) string {
+	if args.Principal == "" {
+		return facade.AnonymousPrincipal
+	}
+	return args.Principal
 }

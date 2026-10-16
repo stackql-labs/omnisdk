@@ -62,18 +62,19 @@ type Effector interface {
 }
 
 type effector struct {
-	catalog  aot.Catalog
-	analyzer facade.Analyzer
-	dsl      dsl.Registry
-	residue  map[string]Residue // resource address → residue
-	opts     []docx.Option
+	catalog   aot.Catalog
+	analyzer  facade.Analyzer
+	principal string
+	dsl       dsl.Registry
+	residue   map[string]Residue // resource address → residue
+	opts      []docx.Option
 }
 
-// New returns an Effector over one provider's catalog. The analyzer chooses each call's operation, so
-// an effect is bound to a method by the same rule a query is. opts carry credentials and any endpoint
-// override, exactly as a query would supply them.
-func New(cat aot.Catalog, an facade.Analyzer, dslReg dsl.Registry, residues map[string]Residue, opts ...docx.Option) Effector {
-	return &effector{catalog: cat, analyzer: an, dsl: dslReg, residue: residues, opts: opts}
+// New returns an Effector over one provider's catalog. The analyzer chooses each call's operation on
+// behalf of principal, so an effect is bound to a method by the same rule a query is. opts carry
+// credentials and any endpoint override, exactly as a query would supply them.
+func New(cat aot.Catalog, an facade.Analyzer, principal string, dslReg dsl.Registry, residues map[string]Residue, opts ...docx.Option) Effector {
+	return &effector{catalog: cat, analyzer: an, principal: principal, dsl: dslReg, residue: residues, opts: opts}
 }
 
 // address splits an exchange name of the form "<provider>.<service>.<resource>:<verb>". The verb is
@@ -243,7 +244,7 @@ func (e *effector) choose(ctx context.Context, addr, verb string, inputs map[str
 	for n := range inputs {
 		names = append(names, n)
 	}
-	m, err := e.analyzer.Analyze(ctx, analyze.NewStatement(facade.AnonymousPrincipal, addr, verb, names, names, ""))
+	m, err := e.analyzer.Analyze(ctx, analyze.NewStatement(e.principal, addr, verb, names, names, ""))
 	if err != nil {
 		return nil, err
 	}

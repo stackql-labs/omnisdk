@@ -24,6 +24,12 @@ import (
 // operations, and the residue the document does not state.
 func fixture(t *testing.T, srv *httptest.Server) (docrun.Effector, string) {
 	t.Helper()
+	return fixtureAs(t, srv, facade.AnonymousPrincipal, analyze.PermitAll())
+}
+
+// fixtureAs is fixture acting on behalf of principal, under policy.
+func fixtureAs(t *testing.T, srv *httptest.Server, principal string, policy facade.Policy) (docrun.Effector, string) {
+	t.Helper()
 	reg, err := stackqldoc.OpenRegistry(os.DirFS("../../../pkg/docparse/stackqldoc/testdata"))
 	if err != nil {
 		t.Fatalf("registry: %v", err)
@@ -45,7 +51,7 @@ func fixture(t *testing.T, srv *httptest.Server) (docrun.Effector, string) {
 	if err != nil {
 		t.Fatalf("dsl: %v", err)
 	}
-	eff := docrun.New(cat, analyze.New(docsem.Capabilities(cat), analyze.PermitAll()), dslReg,
+	eff := docrun.New(cat, analyze.New(docsem.Capabilities(cat), policy), principal, dslReg,
 		map[string]docrun.Residue{
 			addr: docrun.NewResidue("CreateVpcResponse.vpc.vpcId", "VpcId", ""),
 		},
@@ -191,5 +197,36 @@ func TestDriftNothingConvergesIsRefused(t *testing.T) {
 		if ex, _, err := eff.Route(context.Background(), addr+":insert", "update", "demo/aws/ec2/vpc", in, []byte(c.actual)); err == nil {
 			t.Errorf("%s: routed to %s; want a refusal", name, ex)
 		}
+	}
+}
+
+type onlyFor string
+
+func (p onlyFor) Permit(_ context.Context, s facade.Statement, _ facade.Method) error {
+	if s.Principal() != string(p) {
+		return fmt.Errorf("%s may not act", s.Principal())
+	}
+	return nil
+}
+
+// An effect is analyzed on behalf of the effector's principal, so a policy deciding for someone else
+// stops it before anything is sent.
+func TestEffectRunsOnBehalfOfItsPrincipal(t *testing.T) {
+	calls := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		w.Header().Set("Content-Type", "text/xml")
+		fmt.Fprint(w, `<CreateVpcResponse><vpc><vpcId>vpc-1</vpcId></vpc></CreateVpcResponse>`)
+	}))
+	defer srv.Close()
+	in := facade.EffectInput{Mutation: []byte(`{"CidrBlock":"10.0.0.0/16"}`), Params: map[string]string{"region": "us-east-1"}}
+
+	eff, addr := fixtureAs(t, srv, "bob", onlyFor("alice"))
+	if _, err := eff.Effect(context.Background(), addr+":insert", "demo/aws/ec2/vpc", in); err == nil || calls != 0 {
+		t.Errorf("bob: err = %v, calls = %d; want a refusal before the wire", err, calls)
+	}
+	eff, addr = fixtureAs(t, srv, "alice", onlyFor("alice"))
+	if _, err := eff.Effect(context.Background(), addr+":insert", "demo/aws/ec2/vpc", in); err != nil || calls != 1 {
+		t.Errorf("alice: err = %v, calls = %d; want one create", err, calls)
 	}
 }
