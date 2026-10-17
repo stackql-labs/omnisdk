@@ -19,6 +19,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"slices"
 	"strings"
 	"time"
 
@@ -381,7 +382,7 @@ func PlanFor(ex aot.AOTExchange, inputs map[string]any, reg dsl.Registry, opts .
 	// Auth κ inputs are plumbing, not data: a signed assertion and a bearer token travel on the row so
 	// the exchanges can bind them, and emitting them would put a live credential in every result.
 	return plan.NewPlan(specs, betas, nil, inputs,
-		[]facade.Transform{dropKeys{"assertion", "token"}}, encoder.NewJSONLEncoder()), nil
+		[]facade.Transform{dropKeys(credentials)}, encoder.NewJSONLEncoder()), nil
 }
 
 // Spec compiles one AOT exchange into the engine's exchange declaration. inputs are the values the
@@ -1121,6 +1122,14 @@ func Expand(spec plan.ExchangeSpec) (auth plan.ExchangeSpec, inputs map[string]a
 
 // TokenAttr is the attribute an auth exchange emits and the call it feeds binds.
 const TokenAttr = "token"
+
+// credentials are the attributes that carry a credential on a row: a signed assertion and the bearer
+// token it buys.
+var credentials = []string{"assertion", TokenAttr}
+
+// IsCredential reports whether a bound attribute carries a credential. Such a value is plumbing,
+// never data: nothing emits it in a result, and nothing records it as intent.
+func IsCredential(name string) bool { return slices.Contains(credentials, name) }
 
 // Rename returns the spec under a different name.
 //

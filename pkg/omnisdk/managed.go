@@ -19,6 +19,7 @@ import (
 	"github.com/stackql-labs/omnisdk/internal/merge"
 	"github.com/stackql-labs/omnisdk/internal/semantics"
 	"github.com/stackql-labs/omnisdk/internal/system_g/bind"
+	"github.com/stackql-labs/omnisdk/internal/system_g/exchange/docx"
 	"github.com/stackql-labs/omnisdk/internal/system_g/facade"
 	"github.com/stackql-labs/omnisdk/internal/system_g/plan"
 	"github.com/stackql-labs/omnisdk/internal/system_g/retry"
@@ -257,9 +258,11 @@ func (d durable) open(ctx context.Context, o effectOp) facade.Records {
 	if !found {
 		v = facade.LedgerVersionNone
 	}
+	// Intent is what was asked for. Hidden plumbing and credentials travel on the row to make the
+	// request, and are not it: a bearer token in the ledger is a live credential on disk.
 	request := make(map[string]any, len(o.bound))
 	for name, val := range o.bound {
-		if !strings.HasPrefix(name, "\x00") {
+		if !strings.HasPrefix(name, "\x00") && !docx.IsCredential(name) {
 			request[name] = val
 		}
 	}
