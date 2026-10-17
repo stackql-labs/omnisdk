@@ -122,7 +122,7 @@ func prepareGraph(registry string, st graphStatement, w WALConfig, args Args) (P
 	if len(st.managed) > 0 {
 		return nil, fmt.Errorf("omnisdk: managed nodes need NewLedger: a ledger is what records them")
 	}
-	return NewGraphSelectQuery(registry, st.g, args)
+	return NewGraphQuery(registry, st.g, args)
 }
 
 // checkWAL refuses a configuration missing any of its scope.

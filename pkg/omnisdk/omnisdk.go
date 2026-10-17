@@ -6,7 +6,7 @@
 //   - Resolve turns a query.Unresolved — SQL already parsed — into a Graph, choosing each table's
 //     method and placing each condition as a request parameter, an edge or a row filter.
 //   - NewGraph declares a graph directly: nodes, wirings, projections, outer and matched joins,
-//     cycles (WithTermination) and branches (WithBranch). NewGraphSelectQuery plans it.
+//     cycles (WithTermination) and branches (WithBranch). NewGraphQuery plans it.
 //   - UnionAll runs several plans as one stream.
 //   - New runs a hand-authored catalog method by path.
 //

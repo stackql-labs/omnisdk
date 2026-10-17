@@ -10,11 +10,11 @@ func NewFromCatalog(dir, address string, args Args) (Plan, error) {
 	return NewSelectFromCatalog(dir, address, args)
 }
 
-// NewGraphQuery is NewGraphSelectQuery.
+// NewGraphSelectQuery is NewGraphQuery. A graph was never limited to reads.
 //
-// Deprecated: use NewGraphSelectQuery.
-func NewGraphQuery(dir string, g Graph, args Args) (Plan, error) {
-	return NewGraphSelectQuery(dir, g, args)
+// Deprecated: use NewGraphQuery.
+func NewGraphSelectQuery(dir string, g Graph, args Args) (Plan, error) {
+	return NewGraphQuery(dir, g, args)
 }
 
 // NodesOf references each address once, aliased by the address itself — which is how a graph

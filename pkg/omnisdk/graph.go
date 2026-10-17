@@ -512,12 +512,13 @@ func (g graph) Wirings() []Wiring           { return g.wirings }
 func (g graph) Overrides() []Override       { return g.overrides }
 func (g graph) Projections() []Projection   { return g.projections }
 
-// NewGraphSelectQuery plans a multi-exchange query over a registry root or bundle directory.
+// NewGraphQuery plans a multi-exchange query over a registry root or bundle directory: reads and
+// writes alike.
 //
 // Every exchange is compiled exactly as a single-address run compiles one, so auth, signing and
 // response handling are unchanged. What the caller adds is the data flow between them — the part a
 // document cannot state, because it describes one provider and a relationship may span two.
-func NewGraphSelectQuery(dir string, g Graph, args Args) (Plan, error) {
+func NewGraphQuery(dir string, g Graph, args Args) (Plan, error) {
 	if err := checkEndpoint(args); err != nil {
 		return nil, err
 	}

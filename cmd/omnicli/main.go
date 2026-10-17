@@ -710,7 +710,7 @@ func main() {
 				return nil, err
 			}
 		}
-		return omnisdk.NewGraphSelectQuery(registry, g, a)
+		return omnisdk.NewGraphQuery(registry, g, a)
 	}
 	docGraph := &cobra.Command{
 		Use:   "doc-graph <dir> <graph-json>",

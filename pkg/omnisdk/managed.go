@@ -398,7 +398,7 @@ func ConvergeGraph(registry, name, state, runID string, g Graph, managed []Manag
 	// Planned now, against no state, so a graph that cannot run is refused before anything is held.
 	probe := args
 	probe.managed = &managedRun{name: name, nodes: nodes}
-	if _, err := NewGraphSelectQuery(registry, g, probe); err != nil {
+	if _, err := NewGraphQuery(registry, g, probe); err != nil {
 		return nil, err
 	}
 	if runID == "" {
@@ -438,7 +438,7 @@ func (p *convergeGraphPlan) Open(ctx context.Context) (Rows, error) {
 	run := &managedRun{name: p.name, ledger: log, journal: j, nodes: p.nodes}
 	a := p.args
 	a.managed = run
-	pl, err := NewGraphSelectQuery(p.registry, p.g, a)
+	pl, err := NewGraphQuery(p.registry, p.g, a)
 	if err != nil {
 		return nil, err
 	}
@@ -508,7 +508,7 @@ func deleteOne(ctx context.Context, registry string, e appliedEffect, args Args)
 	if err != nil {
 		return err
 	}
-	pl, err := NewGraphSelectQuery(registry, g, args)
+	pl, err := NewGraphQuery(registry, g, args)
 	if err != nil {
 		return err
 	}

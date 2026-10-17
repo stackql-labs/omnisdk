@@ -43,7 +43,7 @@ func countNetworks(t *testing.T, dir string) int {
 	if err != nil {
 		t.Fatalf("graph: %v", err)
 	}
-	pl, err := omnisdk.NewGraphSelectQuery(dir, g, omnisdk.Args{Endpoint: srv.URL, Params: map[string]string{"project": "demo"}})
+	pl, err := omnisdk.NewGraphQuery(dir, g, omnisdk.Args{Endpoint: srv.URL, Params: map[string]string{"project": "demo"}})
 	if err != nil {
 		t.Fatalf("plan: %v", err)
 	}
@@ -292,7 +292,7 @@ func TestCreatePollThenGet(t *testing.T) {
 
 func runCreatePoll(t *testing.T, view string, g omnisdk.Graph, args omnisdk.Args) []omnisdk.Row {
 	t.Helper()
-	pl, err := omnisdk.NewGraphSelectQuery(view, g, args)
+	pl, err := omnisdk.NewGraphQuery(view, g, args)
 	if err != nil {
 		t.Fatalf("plan: %v", err)
 	}
