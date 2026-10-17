@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/stackql-labs/omnisdk/pkg/omnisdk"
+	"github.com/stackql-labs/omnisdk/pkg/query"
 )
 
 func drain(t *testing.T, pl omnisdk.Plan) []omnisdk.Row {
@@ -120,5 +121,55 @@ func TestPrepareRefuses(t *testing.T) {
 		if _, err := omnisdk.Prepare(authRegistry, c.s, c.w, c.args); err == nil || !strings.Contains(err.Error(), c.want) {
 			t.Errorf("%s: err = %v, want one mentioning %q", name, err, c.want)
 		}
+	}
+}
+
+// SQL is one more statement kind: resolved to a graph, it runs as a graph statement does — a read
+// with no WAL, and a write whose intent the journal records first.
+func TestPrepareSQLStatement(t *testing.T) {
+	store := &widgetStore{items: map[string]map[string]any{"w-9": {"id": "w-9", "size": "S"}}}
+	srv := store.serve(t)
+	defer srv.Close()
+
+	read, err := omnisdk.DescribeTable(authRegistry, widgets)
+	if err != nil {
+		t.Fatal(err)
+	}
+	q, err := query.New(
+		[]query.Join{query.NewJoin(query.NewResource("w", "widgets.things.widgets"), query.Base)},
+		[]query.Predicate{query.NewEq(query.NewColumn("w", "id"), query.NewLiteral("w-9"))},
+		[]query.Output{query.NewOutput("size", query.NewColumn("w", "size"))},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pl, err := omnisdk.Prepare(authRegistry, omnisdk.SQLStatement(q, map[string]omnisdk.Table{"w": read}), omnisdk.NoWAL(), omnisdk.Args{Endpoint: srv.URL})
+	if err != nil {
+		t.Fatalf("prepare select: %v", err)
+	}
+	if rows := drain(t, pl); len(rows) != 1 || rows[0]["size"] != "S" {
+		t.Errorf("rows = %v, want the one widget's size", rows)
+	}
+
+	write, err := omnisdk.DescribeMutation(authRegistry, widgets, "insert")
+	if err != nil {
+		t.Fatal(err)
+	}
+	ins, err := query.NewMutation(query.NewInsert(query.NewResource("w", "widgets.things.widgets"),
+		query.NewAssignment("size", query.NewLiteral("M"))), nil, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	state := t.TempDir()
+	pl, err = omnisdk.Prepare(authRegistry, omnisdk.SQLStatement(ins, map[string]omnisdk.Table{"w": write}), omnisdk.NewJournal(state, "r1"), omnisdk.Args{Endpoint: srv.URL})
+	if err != nil {
+		t.Fatalf("prepare insert: %v", err)
+	}
+	drain(t, pl)
+	if got := strings.Join(store.took(), ","); !strings.Contains(got, "create") {
+		t.Errorf("calls = %s, want the insert sent", got)
+	}
+	if entries, err := os.ReadDir(filepath.Join(state, "journal")); err != nil || len(entries) == 0 {
+		t.Errorf("journal = %v, %v; want the insert's intent recorded", entries, err)
 	}
 }

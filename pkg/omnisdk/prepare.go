@@ -1,6 +1,11 @@
 package omnisdk
 
-import "fmt"
+import (
+	"fmt"
+	"maps"
+
+	"github.com/stackql-labs/omnisdk/pkg/query"
+)
 
 // Statement is what a caller asks for, before any of it is bound to a method. Every kind goes
 // through the same analysis, so a resource is acted on the same way whichever kind asked.
@@ -13,13 +18,26 @@ type graphStatement struct {
 
 type desiredStatement struct{ resources []ManagedResource }
 
+type sqlStatement struct {
+	q      query.Unresolved
+	tables map[string]Table
+}
+
 func (graphStatement) statement()   {}
 func (desiredStatement) statement() {}
+func (sqlStatement) statement()     {}
 
 // GraphStatement is a graph of reads and writes. managed names the mutation nodes a ledger records,
 // and is only valid under NewLedger.
 func GraphStatement(g Graph, managed ...Managed) Statement {
 	return graphStatement{g: g, managed: managed}
+}
+
+// SQLStatement is a parsed query, with the table each of its aliases names. It resolves to a graph
+// in Args.Dialect, and runs as that graph does; its constant bindings are Params for the run, over
+// any of the same name in Args.Params.
+func SQLStatement(q query.Unresolved, tables map[string]Table) Statement {
+	return sqlStatement{q: q, tables: tables}
 }
 
 // DesiredState is a set of resources to converge on. It needs NewLedger: converging is deciding
@@ -70,6 +88,18 @@ func Prepare(registry string, s Statement, w WALConfig, args Args) (Plan, error)
 	switch st := s.(type) {
 	case graphStatement:
 		return prepareGraph(registry, st, w, args)
+	case sqlStatement:
+		res, err := ResolveIn(st.q, st.tables, args.Dialect)
+		if err != nil {
+			return nil, err
+		}
+		params := maps.Clone(args.Params)
+		if params == nil {
+			params = map[string]string{}
+		}
+		maps.Copy(params, res.Params())
+		args.Params = params
+		return prepareGraph(registry, graphStatement{g: res.Graph()}, w, args)
 	case desiredStatement:
 		l, ok := w.(ledgerWAL)
 		if !ok {

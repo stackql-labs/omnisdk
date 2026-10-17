@@ -312,12 +312,12 @@ provider: the first is deleted, and the final row says so — `{"status":"failed
 
 - **A create is awaited only where its document declares an `x-stackQL-beta`.** The base Google
   documents declare none, so without a patch a create is reported once the call is accepted.
-- **No destroy command.** Nothing tears down a successful run; delete by hand with
-  `aws ec2 delete-subnet` then `delete-vpc`.
+- **No destroy command.** Nothing tears down what a successful run created.
 - **Drift goes to any update operation accepting the changed field.** EC2 `CidrBlock` drift is sent
   to `AssociateVpcCidrBlock`, which adds a CIDR block rather than changing it; nothing yet declares a
   field immutable, and nothing replaces an object.
-- **Tags are stamped at create, not converged.** The read does not extract the tag set, so a tag
-  edited outside the tool is not corrected.
+- **Tags given as create parameters are not converged.** The read returns them, but
+  `TagSpecification.*` params are not desired state, so a tag edited elsewhere is not compared or
+  put back. EC2 declares tags as their own resource (`ec2.tags`: `CreateTags`, `DeleteTags`).
 - **Local disk only.** `O_EXCL` and `link` are unreliable on NFSv3; a network share is not a
   supported backing store.

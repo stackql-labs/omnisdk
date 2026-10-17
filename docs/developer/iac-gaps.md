@@ -105,6 +105,7 @@ can carry any column, fan out, and poll; an IaC dependency cannot.
 
 ## 7. Smaller limits
 
-- **Tags are stamped at create, not converged.** The read does not extract the tag set, so a tag
-  edited elsewhere is not corrected.
+- **Tags given as create parameters are not converged.** The read returns them, but
+  `TagSpecification.*` params are not desired state, so a tag edited elsewhere is not compared or
+  put back.
 - **Local disk only.** The ledger relies on `O_EXCL` and `link`, which are unreliable on NFSv3.
