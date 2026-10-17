@@ -280,14 +280,55 @@ func (e *effector) inputs(addr string, k facade.LedgerKey, in facade.EffectInput
 		if res.AddressedBy() != "" && len(in.Identity) > 0 {
 			inputs[res.AddressedBy()] = string(in.Identity)
 		}
-		if res.CorrelationParam() != "" && verb != "delete" {
+		// The stamp goes on at create; an update addresses an object that already carries it.
+		if res.CorrelationParam() != "" && verb != "delete" && verb != "update" {
 			inputs[res.CorrelationParam()] = string(k)
 		}
 	}
+	// An update takes only the parameters an update operation declares. The rest are the create's
+	// arguments — a tag specification, say — and an operation that does not take one would be ruled
+	// out by being sent it, exactly as a read would.
+	var declared map[string]bool
+	if verb == "update" {
+		var err error
+		if declared, err = e.declared(addr, verb); err != nil {
+			return nil, err
+		}
+	}
 	for name, v := range in.Params {
+		if declared != nil && !declared[baseName(name)] {
+			continue
+		}
 		inputs[name] = v
 	}
 	return inputs, nil
+}
+
+// declared are the names any operation for verb on addr takes: its parameters and server variables.
+func (e *effector) declared(addr, verb string) (map[string]bool, error) {
+	ops, err := e.catalog.Operations(addr, verb)
+	if err != nil {
+		return nil, err
+	}
+	out := map[string]bool{}
+	for _, op := range ops {
+		for _, in := range op.Inputs() {
+			out[in] = true
+		}
+		for _, p := range op.Request().Parameters() {
+			out[p.Name()] = true
+		}
+	}
+	return out, nil
+}
+
+// baseName is the parameter an indexed name belongs to: TagSpecification.1.Tag.2.Key is a member of
+// TagSpecification.
+func baseName(name string) string {
+	if i := strings.Index(name, "."); i > 0 {
+		return name[:i]
+	}
+	return name
 }
 
 // run selects the operation by signature, compiles it, and drains the single row it yields.

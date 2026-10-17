@@ -41,19 +41,17 @@ is sent only the changed fields. Where no operation qualifies, the step fails wi
 - A delete the provider refuses for a reason other than a dependent object (deletion protection,
   object lock) is reported as outstanding, never retried forever and never forced.
 
-## 3. GCP creates are not awaited
+## 3. A create is awaited only where its document says so
 
-**Now.** A GCP create returns a long-running Operation. The effector takes the call's acceptance as
-success ([docrun.go](../../internal/effect/docrun/docrun.go) never polls), so a dependent key can
-start before its source exists, and a create that later fails is recorded as live.
+**Now.** A method declaring `x-stackQL-beta` is followed by the call it names, polled until that
+call reports done ([beta.go](../../internal/system_g/exchange/docx/beta.go)); a dependent runs only
+then. Done with an error fails; never done, or the followed call itself failing, is reported as
+unknown. The base Google documents declare none, so a caller supplies it as a document patch.
 
 **Needs.**
-- The effector polls the Operation to completion, using the poll a graph already supports
-  (`docx.WithPoll`, `NewPollOverride`): status path, done value, interval and a bounded number of
-  attempts, all required.
-- A finished Operation carrying an error fails the step, so the run unwinds what it did.
-- An Operation that never finishes within its bound is reported as unknown, not as failed: the object
-  may exist, and the next run's read decides.
+- The declaration in the registry's own documents, rather than in every caller's patch.
+- A test of the IaC path: the effector compiles through the same `Spec`, so it awaits too, but only
+  the query path is exercised.
 
 ## 4. The lock covers the whole collection and is never renewed
 

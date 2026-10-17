@@ -11,6 +11,8 @@
 // compiler makes against these interfaces.
 package aot
 
+import "time"
+
 // AOTExchange is one operation as the document declares it, ahead of any plan.
 type AOTExchange interface {
 	// Name identifies the exchange (the resource it serves, e.g. "instances").
@@ -27,6 +29,36 @@ type AOTExchange interface {
 	// a document that says its calls are SigV4-signed means every one of them, and requiring a caller
 	// to restate that per exchange is how signing gets forgotten.
 	Security() Security
+	// Beta is the call the document says must follow this one before what it made exists, false
+	// where it declares none.
+	Beta() (Beta, bool)
+}
+
+// Beta is a β edge a document declares from an operation to the call that completes it: a create
+// answered with a long-running operation, and the get that reads that operation until it is done.
+// An operation declaring one has not finished when it answers; it has finished when Await says so.
+type Beta interface {
+	// Method is the call that follows.
+	Method() AOTExchange
+	// Bind maps each of Method's inputs to the field of this operation's response that supplies it.
+	// Inputs not named here are the same values this operation was called with — its scope.
+	Bind() map[string]string
+	Await() Await
+}
+
+// Await is when a followed call reports done. Every field is required: how long to wait is the
+// document's statement about its API, never a default.
+type Await interface {
+	// StatusPath is the dotted path of the status in Method's response.
+	StatusPath() string
+	// Done is the status value that means finished.
+	Done() string
+	// ErrorPath is the dotted path of an error a finished operation reports; empty where the API
+	// reports none. Finished with an error is failed.
+	ErrorPath() string
+	Interval() time.Duration
+	// MaxAttempts bounds the wait. Exhausting it says nothing about whether the operation succeeded.
+	MaxAttempts() int
 }
 
 // Scheme is a normalized authentication scheme — normalized because a document expresses it in its

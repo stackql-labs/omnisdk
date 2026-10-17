@@ -388,11 +388,31 @@ func PlanFor(ex aot.AOTExchange, inputs map[string]any, reg dsl.Registry, opts .
 // caller supplied: needed HERE, not merely validated later, because which optional parameters exist on
 // the wire depends on which were given — an unsupplied optional must not appear as an empty query
 // string, and a supplied one must not be silently dropped.
+//
+// An operation whose document declares an x-stackQL-beta is not finished when it answers, and compiles
+// to one that follows the declared call until it reports done.
 func Spec(ex aot.AOTExchange, inputs map[string]any, reg dsl.Registry, opts ...Option) (plan.ExchangeSpec, error) {
 	var o options
 	for _, opt := range opts {
 		opt(&o)
 	}
+	c, err := compile(ex, inputs, reg, o)
+	if err != nil {
+		return nil, err
+	}
+	b, ok := ex.Beta()
+	if !ok {
+		return c, nil
+	}
+	cc := c.(compiled)
+	if cc.spec, err = awaited(cc.spec, b, inputs, reg, o); err != nil {
+		return nil, err
+	}
+	return cc, nil
+}
+
+// compile is Spec for one call, beta aside.
+func compile(ex aot.AOTExchange, inputs map[string]any, reg dsl.Registry, o options) (plan.ExchangeSpec, error) {
 	req, resp := ex.Request(), ex.Response()
 	// A transform runs a PROGRAM only when the document ships one. Most declare a type with no body —
 	// naming a built-in decoding (golang_template_json_v0.3.0, schema_driven_xml_v0.1.0) rather than

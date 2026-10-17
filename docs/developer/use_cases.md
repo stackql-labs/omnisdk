@@ -240,14 +240,83 @@ bp, ok := omnisdk.BlueprintFor("aws-vpc-subnet")
 res, err := bp.Resources(map[string]string{"region": "us-east-1", "vpc_cidr": "10.42.0.0/16", ...})
 ```
 
+### Examples
+
+Each example is a test against a fake provider, named beside it, so the code shown is the code that
+runs.
+
+**The document says when a create is finished.** A Google network create answers with an Operation
+before the network exists. A session patch declares that, so anything wired to the create waits for
+it — the graph says nothing about waiting:
+
+```go
+awaitNetworks := omnisdk.DocPatch{
+    Service: "stackql_unstable_google.compute",
+    Merge: json.RawMessage(`{"components":{"x-stackQL-resources":{
+      "global_operations":{"methods":{"get":{
+        "operation":{"$ref":"#/paths/~1projects~1{project}~1global~1operations~1{operation}/get"},
+        "response":{"mediaType":"application/json","openAPIDocKey":"200"}}}},
+      "networks":{"methods":{"insert":{"x-stackQL-beta":{
+        "method":{"$ref":"#/components/x-stackQL-resources/global_operations/methods/get"},
+        "bind":{"operation":"name"},
+        "await":{"statusPath":"status","done":"DONE","errorPath":"error",
+                 "interval":"2s","maxAttempts":60}}}}}}}}`),
+}
+view, err := omnisdk.EffectiveRegistry(registry, []omnisdk.DocPatch{awaitNetworks}, omnisdk.DocCache{Dir: cache})
+
+g, err := omnisdk.NewGraph(
+    []omnisdk.Node{
+        omnisdk.NewMutationNode("net", "stackql_unstable_google.compute.networks", "insert",
+            map[string]string{"project": "demo"}, nil,
+            map[string]any{"name": "net-1", "autoCreateSubnetworks": false}),
+        omnisdk.NewMutationNode("sub", "stackql_unstable_google.compute.subnetworks", "insert",
+            map[string]string{"project": "demo", "region": "us-east1"}, nil,
+            map[string]any{"name": "sub-1", "ipCidrRange": "10.0.0.0/24", "network": nil}),
+    },
+    []omnisdk.Wiring{omnisdk.NewWiring("sub",
+        []omnisdk.Inbound{omnisdk.NewInbound("net", "targetLink", "network")}, "", "")},
+)
+pl, err := omnisdk.Prepare(view, omnisdk.GraphStatement(g), omnisdk.NoWAL(), args)
+```
+
+The network is created, its operation is polled until `DONE`, and only then is the subnetwork
+created, carrying the `targetLink` only a finished operation reports. An operation that never reports
+done fails with `ErrOutcomeUnknown` — the network may exist — and one done with an `error` fails with
+it; either way the subnetwork is not created. Without the patch the subnetwork is sent at once with
+`network: null`. `view` is the session's handle: built once, passed to every query after.
+(`TestBetaAwaitsTheCreateBeforeItsDependent`, `TestBetaUnfinishedOrFailedStopsTheDependent`.)
+
+**A rerun costs a read; drift is fixed by the call that fixes it.** A VPC converged from desired
+state:
+
+```go
+vpc := omnisdk.NewResource("aws/ec2/vpc", "aws", "ec2.vpcs",
+    []byte(`{"CidrBlock":"10.42.0.0/16","InstanceTenancy":"default"}`),
+    map[string]string{"TagSpecification.1.ResourceType": "vpc", "TagSpecification.1.Tag.1.Key": "omnisdk:key"},
+    nil, "", "", "line_items.VpcId", "VpcId", "TagSpecification.1.Tag.1.Value")
+pl, err := omnisdk.Prepare(registry, omnisdk.DesiredState([]omnisdk.ManagedResource{vpc}),
+    omnisdk.NewLedger("demo", state, runID), args)
+```
+
+The first run calls `CreateVpc`. A rerun calls `DescribeVpcs` and nothing else. After the tenancy is
+changed in the console, the next run calls `DescribeVpcs` then `ModifyVpcTenancy` with the VPC id and
+the tenancy alone: of the five operations the document binds to update, it is the only one that
+accepts `InstanceTenancy`, and an operation without a body is sent only what differs.
+(`TestExampleVPCConvergesAndCorrectsDrift`.)
+
+**A failed run undoes itself.** Two widgets converged as one graph run, the second refused by the
+provider: the first is deleted, and the final row says so — `{"status":"failed",
+"compensated":["demo/w1"]}`. (`TestConvergeGraphCompensatesAFailedRun`.)
+
 ### Limits
 
-- **GCP creates are not awaited.** A create returns an async Operation, and the run reports success
-  once the call is accepted.
+- **A create is awaited only where its document declares an `x-stackQL-beta`.** The base Google
+  documents declare none, so without a patch a create is reported once the call is accepted.
 - **No destroy command.** Nothing tears down a successful run; delete by hand with
   `aws ec2 delete-subnet` then `delete-vpc`.
-- **CIDRs are immutable in EC2**, so changing either is refused rather than replaced — no update
-  path is declared for these exchanges.
+- **Drift goes to any update operation accepting the changed field.** EC2 `CidrBlock` drift is sent
+  to `AssociateVpcCidrBlock`, which adds a CIDR block rather than changing it; nothing yet declares a
+  field immutable, and nothing replaces an object.
 - **Tags are stamped at create, not converged.** The read does not extract the tag set, so a tag
   edited outside the tool is not corrected.
 - **Local disk only.** `O_EXCL` and `link` are unreliable on NFSv3; a network share is not a

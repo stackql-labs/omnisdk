@@ -14,6 +14,7 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"time"
 
 	"gopkg.in/yaml.v3"
 
@@ -129,6 +130,22 @@ type method struct {
 		// OpenAPIDocKey names the response code whose schema the rows follow.
 		OpenAPIDocKey string `yaml:"openAPIDocKey"`
 	} `yaml:"response"`
+	// Beta is the call that completes this one, where it answers before what it made exists.
+	Beta *betaSpec `yaml:"x-stackQL-beta"`
+}
+
+// betaSpec is a method's x-stackQL-beta: the method that follows it, what binds that method's
+// inputs, and when it reports done.
+type betaSpec struct {
+	Method ref               `yaml:"method"`
+	Bind   map[string]string `yaml:"bind"`
+	Await  struct {
+		StatusPath  string `yaml:"statusPath"`
+		Done        string `yaml:"done"`
+		ErrorPath   string `yaml:"errorPath"`
+		Interval    string `yaml:"interval"`
+		MaxAttempts int    `yaml:"maxAttempts"`
+	} `yaml:"await"`
 }
 
 type transformSpec struct {
@@ -224,34 +241,12 @@ func (d *document) Verb(name, verb string) ([]aot.AOTExchange, error) {
 	for _, ref := range sel {
 		// sqlVerbs point at a method by $ref rather than naming it, so the last pointer segment is the
 		// method key. Following the document's own indirection keeps this honest.
-		mName := lastSegment(ref.Ref)
-		m, ok := res.Methods[mName]
-		if !ok {
-			firstErr = orErr(firstErr, fmt.Errorf("stackqldoc: resource %q select references unknown method %q", name, mName))
-			continue
-		}
-		path, httpVerb, err := splitOperationRef(m.Operation.Ref)
+		ex, err := d.resolve(name, lastSegment(ref.Ref), true)
 		if err != nil {
-			firstErr = orErr(firstErr, fmt.Errorf("stackqldoc: resource %q method %q: %w", name, mName, err))
+			firstErr = orErr(firstErr, err)
 			continue
 		}
-		node, ok := d.Paths[path][httpVerb]
-		if !ok {
-			firstErr = orErr(firstErr, fmt.Errorf("stackqldoc: resource %q method %q: path %q has no %q", name, mName, path, httpVerb))
-			continue
-		}
-		var op pathOp
-		if err := node.Decode(&op); err != nil {
-			firstErr = orErr(firstErr, fmt.Errorf("stackqldoc: resource %q method %q: decode %s %s: %w", name, mName, httpVerb, path, err))
-			continue
-		}
-		params, err := d.parameters(path, op.Parameters)
-		if err != nil {
-			firstErr = orErr(firstErr, fmt.Errorf("stackqldoc: resource %q method %q: %w", name, mName, err))
-			continue
-		}
-		op.Parameters = params
-		out = append(out, d.build(mName, httpVerb, path, op, m))
+		out = append(out, ex)
 	}
 	if len(out) == 0 {
 		if firstErr != nil {
@@ -261,6 +256,97 @@ func (d *document) Verb(name, verb string) ([]aot.AOTExchange, error) {
 	}
 	return out, nil
 }
+
+// resolve builds one method of a resource. withBeta follows the method's x-stackQL-beta; the method a
+// beta names is resolved without its own, so a declaration cannot chain without end.
+func (d *document) resolve(name, mName string, withBeta bool) (aot.AOTExchange, error) {
+	res, ok := d.Components.Resources[name]
+	if !ok {
+		return nil, fmt.Errorf("stackqldoc: no resource %q", name)
+	}
+	m, ok := res.Methods[mName]
+	if !ok {
+		return nil, fmt.Errorf("stackqldoc: resource %q references unknown method %q", name, mName)
+	}
+	path, httpVerb, err := splitOperationRef(m.Operation.Ref)
+	if err != nil {
+		return nil, fmt.Errorf("stackqldoc: resource %q method %q: %w", name, mName, err)
+	}
+	node, ok := d.Paths[path][httpVerb]
+	if !ok {
+		return nil, fmt.Errorf("stackqldoc: resource %q method %q: path %q has no %q", name, mName, path, httpVerb)
+	}
+	var op pathOp
+	if err := node.Decode(&op); err != nil {
+		return nil, fmt.Errorf("stackqldoc: resource %q method %q: decode %s %s: %w", name, mName, httpVerb, path, err)
+	}
+	params, err := d.parameters(path, op.Parameters)
+	if err != nil {
+		return nil, fmt.Errorf("stackqldoc: resource %q method %q: %w", name, mName, err)
+	}
+	op.Parameters = params
+	ex := d.build(mName, httpVerb, path, op, m)
+	if !withBeta || m.Beta == nil {
+		return ex, nil
+	}
+	b, err := d.beta(*m.Beta)
+	if err != nil {
+		// A beta that cannot be followed is an error, never dropped: without it the operation would
+		// read as finished the moment it answers.
+		return nil, fmt.Errorf("stackqldoc: resource %q method %q: x-stackQL-beta: %w", name, mName, err)
+	}
+	ex.(*aotExchange).beta = b
+	return ex, nil
+}
+
+// beta resolves a declared x-stackQL-beta. Its method is a pointer into this document's resources,
+// #/components/x-stackQL-resources/<resource>/methods/<method>, and every await field but the error
+// path is required.
+func (d *document) beta(spec betaSpec) (aot.Beta, error) {
+	const prefix = "#/components/x-stackQL-resources/"
+	resName, mName, ok := strings.Cut(strings.TrimPrefix(spec.Method.Ref, prefix), "/methods/")
+	if !strings.HasPrefix(spec.Method.Ref, prefix) || !ok || resName == "" || mName == "" {
+		return nil, fmt.Errorf("method $ref %q is not a %s<resource>/methods/<method> pointer", spec.Method.Ref, prefix)
+	}
+	follow, err := d.resolve(unescapePointer(resName), unescapePointer(mName), false)
+	if err != nil {
+		return nil, err
+	}
+	a := spec.Await
+	interval, err := time.ParseDuration(a.Interval)
+	switch {
+	case a.StatusPath == "" || a.Done == "":
+		return nil, fmt.Errorf("await needs statusPath and done")
+	case err != nil || interval <= 0:
+		return nil, fmt.Errorf("await interval %q is not a positive duration", a.Interval)
+	case a.MaxAttempts <= 0:
+		return nil, fmt.Errorf("await needs a positive maxAttempts")
+	}
+	return beta{method: follow, bind: spec.Bind, await: await{status: a.StatusPath, done: a.Done,
+		errPath: a.ErrorPath, interval: interval, attempts: a.MaxAttempts}}, nil
+}
+
+type beta struct {
+	method aot.AOTExchange
+	bind   map[string]string
+	await  await
+}
+
+func (b beta) Method() aot.AOTExchange { return b.method }
+func (b beta) Bind() map[string]string { return b.bind }
+func (b beta) Await() aot.Await        { return b.await }
+
+type await struct {
+	status, done, errPath string
+	interval              time.Duration
+	attempts              int
+}
+
+func (a await) StatusPath() string      { return a.status }
+func (a await) Done() string            { return a.done }
+func (a await) ErrorPath() string       { return a.errPath }
+func (a await) Interval() time.Duration { return a.interval }
+func (a await) MaxAttempts() int        { return a.attempts }
 
 // parameters are an operation's inputs with every $ref followed and the path's own parameters
 // included, as OpenAPI defines them: a path-level parameter applies to each of its operations unless
@@ -632,6 +718,7 @@ type aotExchange struct {
 	opID   string
 	req    request
 	resp   response
+	beta   aot.Beta
 }
 
 func (e *aotExchange) Name() string           { return e.name }
@@ -640,6 +727,7 @@ func (e *aotExchange) OperationID() string    { return e.opID }
 func (e *aotExchange) Request() aot.Request   { return e.req }
 func (e *aotExchange) Response() aot.Response { return e.resp }
 func (e *aotExchange) Security() aot.Security { return e.sec }
+func (e *aotExchange) Beta() (aot.Beta, bool) { return e.beta, e.beta != nil }
 
 // operationParams are the operation's declared inputs. The __-prefixed markers are excluded: they are
 // the operation's identity lifted out of the path key, already placed as fixed body params, and are
