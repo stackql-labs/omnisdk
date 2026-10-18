@@ -14,11 +14,12 @@ import (
 
 // s3Store is a bucket and its tags; refuse makes the bucket's delete fail as a non-empty bucket does.
 type s3Store struct {
-	mu      sync.Mutex
-	c       wireLog
-	bucket  bool
-	tagging string
-	refuse  bool
+	mu         sync.Mutex
+	c          wireLog
+	bucket     bool
+	tagging    string
+	refuse     bool
+	refuseTags bool
 }
 
 func (s *s3Store) serve(t *testing.T) *httptest.Server {
@@ -30,6 +31,9 @@ func (s *s3Store) serve(t *testing.T) *httptest.Server {
 		_, tagged := r.URL.Query()["tagging"]
 		b, _ := io.ReadAll(r.Body)
 		switch {
+		case r.Method == http.MethodPut && tagged && s.refuseTags:
+			s.c.add("put tagging refused")
+			http.Error(w, `<Error><Code>InvalidRequest</Code></Error>`, http.StatusBadRequest)
 		case r.Method == http.MethodPut && tagged:
 			s.c.add("put tagging")
 			s.tagging = string(b)
@@ -170,5 +174,29 @@ func TestDestroyAHandWrittenGraphsCollection(t *testing.T) {
 	}
 	if len(rows) != 2 || len(store.items) != 0 {
 		t.Errorf("rows = %v, store = %v, want both destroyed", rows, store.items)
+	}
+}
+
+// A run whose tags are refused undoes the bucket it made: the delete is signed into the run's region,
+// which the journal does not carry, and the refused tags leave nothing to undo or report.
+func TestFailedRunUndoesWhatItMade(t *testing.T) {
+	requireCorpus(t)
+	t.Setenv("AWS_ACCESS_KEY_ID", "AKIATEST")
+	t.Setenv("AWS_SECRET_ACCESS_KEY", "secret")
+	s := &s3Store{refuseTags: true}
+	srv := s.serve(t)
+	defer srv.Close()
+	pl, err := omnisdk.Prepare(corpus, omnisdk.DesiredState(s3Resources()), omnisdk.NewLedger("demo", t.TempDir(), "r1"),
+		omnisdk.Args{Endpoint: srv.URL, Params: map[string]string{"region": "us-east-1"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	rows := drain(t, pl)
+	last := rows[len(rows)-1]
+	if last["status"] != "failed" || !strings.Contains(fmt.Sprint(last["compensated"]), "demo/aws/s3/bucket") || fmt.Sprint(last["outstanding"]) != "[]" {
+		t.Errorf("last row = %v, want failed with the bucket compensated and nothing outstanding", last)
+	}
+	if got := s.c.took(); got != "create, put tagging refused, delete bucket" || s.bucket {
+		t.Errorf("calls = %s, bucket left = %v", got, s.bucket)
 	}
 }

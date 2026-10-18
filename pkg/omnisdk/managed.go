@@ -118,6 +118,9 @@ type managed struct {
 	intent       []byte
 	// about is what the ledger records the resource is, for acting on it from the ledger alone.
 	about []byte
+	// creates are the aliases whose effect makes the object, whatever their verb: a replace that
+	// makes an object is undone by deleting it, not by restoring an intent it never had.
+	creates map[string]bool
 }
 
 // identityAttr is the column a managed mutation adds to its row: the identity the ledger holds for
@@ -396,7 +399,11 @@ func (d durable) open(ctx context.Context, o effectOp) facade.Records {
 			return notAttempted(err)
 		}
 	}
-	if _, err := d.run.journal.Append(ctx, k, o.e.exchange, semantics.FormOf(o.e.verb), prior); err != nil {
+	form := semantics.FormOf(o.e.verb)
+	if m, ok := d.resource.(managed); ok && m.creates[o.e.alias] {
+		form = facade.FormCreate
+	}
+	if _, err := d.run.journal.Append(ctx, k, o.e.exchange, form, prior); err != nil {
 		return notAttempted(err)
 	}
 	// An object named by the caller is addressed by that name: it is its identity wherever the
@@ -435,6 +442,14 @@ func (r *durableRecords) Next(ctx context.Context) bool {
 	r.done = true
 	if err := r.inner.Err(); err != nil {
 		r.err = err
+		// The provider refused the create, so nothing was made: the intent recorded for it is
+		// withdrawn rather than left pending, where it would read as possibly applied. An update
+		// or a delete keeps its entry — the object it addresses still exists.
+		if errors.Is(err, ErrRejected) && !r.found {
+			if _, v, found, gerr := r.d.run.ledger.Get(ctx, r.key); gerr == nil && found {
+				_ = r.d.run.ledger.Forget(ctx, r.key, v)
+			}
+		}
 		return false
 	}
 	r.err = r.commit(ctx)

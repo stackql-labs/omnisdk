@@ -270,11 +270,44 @@ func (p *desiredPlan) Open(ctx context.Context) (Rows, error) {
 	// Forward recovery is preferred where it is reachable, because compensation is lossy — billing
 	// events, sent notifications, consumed ids and deleted data do not come back. Choosing between
 	// them is the caller's policy, so the outcome is reported rather than decided here.
-	out, unwindErr := unwind.New(h.log, h.journals, p.semantics, p.effector).Unwind(ctx, p.runID)
+	out, unwindErr := unwind.New(h.log, h.journals, p.semantics, scoped{inner: p.effector, scope: p.args.Params, log: h.log}).Unwind(ctx, p.runID)
 	if unwindErr != nil {
 		return nil, errors.Join(runErr, unwindErr)
 	}
 	return reportRows(ctx, h.log, landed, &out, failedKey(runErr, owners, p.name), runErr), nil
+}
+
+// scoped gives an undo's calls what the run's own calls had: the run's scope — the region a call is
+// signed into, say — and the values the ledger records the key's delete takes, a resource group. A
+// journal records what was done, not the scope it was done in.
+type scoped struct {
+	inner facade.Effector
+	scope map[string]string
+	log   facade.Ledger
+}
+
+func (s scoped) with(ctx context.Context, k facade.LedgerKey, in facade.EffectInput) facade.EffectInput {
+	params := maps.Clone(s.scope)
+	if params == nil {
+		params = map[string]string{}
+	}
+	if e, _, found, err := s.log.Get(ctx, k); err == nil && found {
+		var rec aboutRecord
+		if json.Unmarshal(e.About(), &rec) == nil {
+			maps.Copy(params, rec.Params)
+		}
+	}
+	maps.Copy(params, in.Params)
+	in.Params = params
+	return in
+}
+
+func (s scoped) Effect(ctx context.Context, exchange string, k facade.LedgerKey, in facade.EffectInput) ([]byte, error) {
+	return s.inner.Effect(ctx, exchange, k, s.with(ctx, k, in))
+}
+
+func (s scoped) Read(ctx context.Context, exchange string, k facade.LedgerKey, in facade.EffectInput) ([]byte, []byte, bool, error) {
+	return s.inner.Read(ctx, exchange, k, s.with(ctx, k, in))
 }
 
 // failedKey is the resource a run's failure belongs to: the node it names, through owners.
@@ -321,6 +354,13 @@ func reportRows(ctx context.Context, log facade.Ledger, keys []facade.LedgerKey,
 		if unwound != nil {
 			row["compensated"] = keyStrings(unwound.Compensated)
 			row["outstanding"] = keyStrings(unwound.Outstanding)
+			if len(unwound.Reasons) > 0 {
+				why := map[string]string{}
+				for k, v := range unwound.Reasons {
+					why[string(k)] = v
+				}
+				row["reasons"] = why
+			}
 			if !unwound.Complete() {
 				row["status"] = "failed; partially compensated"
 			}
@@ -475,7 +515,8 @@ func (p *desiredPlan) lower(prior func(string) map[string]any, outside func(stri
 		if err != nil {
 			return nil, nil, nil, err
 		}
-		m := managed{key: r.Key(), aliases: aliases, addressedBy: r.AddressedBy(), identityPath: r.Identity(), intent: r.Desired(), about: about}
+		m := managed{key: r.Key(), aliases: aliases, addressedBy: r.AddressedBy(), identityPath: r.Identity(), intent: r.Desired(), about: about,
+			creates: map[string]bool{create: true}}
 		for _, a := range aliases {
 			managedNodes[a] = m
 		}

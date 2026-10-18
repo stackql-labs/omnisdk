@@ -163,16 +163,19 @@ func providerWiring(registry string, resources []ManagedResource, args Args) (fa
 			return nil, nil, err
 		}
 		residues[r.Provider()][qualified] = docrun.NewResidue(r.Identity(), r.AddressedBy(), r.CorrelationParam())
-		decls = append(decls, semantics.Declaration{
-			Exchange: exchangeOf(qualified, "insert"),
-			Form:     "insert",
-			// The inverse of a create is the same resource's delete, chosen by signature when it
-			// runs. Its absence in the document is what declares the create non-invertible.
-			Inverse: exchangeOf(qualified, "delete"),
-			// A document does not say whether a delete loses anything, so a derived inverse is lossy
-			// until something states otherwise — which errs toward asking.
-			Fidelity: facade.FidelityLossy,
-		})
+		// The inverse of a create is the same resource's delete, chosen by signature when it runs; a
+		// resource made by a whole-object PUT is undone the same way. Its absence in the document is
+		// what declares the create non-invertible. A document does not say whether a delete loses
+		// anything, so a derived inverse is lossy until something states otherwise — which errs
+		// toward asking.
+		for _, verb := range []string{"insert", "replace"} {
+			decls = append(decls, semantics.Declaration{
+				Exchange: exchangeOf(qualified, verb),
+				Form:     "insert",
+				Inverse:  exchangeOf(qualified, "delete"),
+				Fidelity: facade.FidelityLossy,
+			})
+		}
 	}
 
 	routes := map[string]facade.Effector{}

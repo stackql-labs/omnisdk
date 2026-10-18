@@ -1,6 +1,8 @@
 package omnisdk_test
 
 import (
+	"crypto/md5"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -212,6 +214,12 @@ func TestExampleS3BucketWithTags(t *testing.T) {
 		b, _ := io.ReadAll(r.Body)
 		switch {
 		case r.Method == http.MethodPut && r.URL.Path == "/omni-demo" && tagged:
+			// S3 refuses a tagging body without its own integrity header.
+			sum := md5.Sum(b)
+			if r.Header.Get("Content-MD5") != base64.StdEncoding.EncodeToString(sum[:]) {
+				http.Error(w, `<Error><Code>InvalidRequest</Code><Message>Missing required header for this request: Content-MD5</Message></Error>`, http.StatusBadRequest)
+				return
+			}
 			c.add("put tagging")
 			tagging = string(b)
 		case r.Method == http.MethodPut && r.URL.Path == "/omni-demo":

@@ -142,7 +142,7 @@ document leaves unsaid.
      "identity": "line_items.SubnetId", "addressed_by": "SubnetId"}
   ],
   "args": {"params": {"region": "'"${_AWS_REGION}"'"}}
-}' --aws-region "${_AWS_REGION}"
+}'
 ```
 
 `inbound` is the β edge: the VPC's recorded identity arrives as `VpcId`. A reshaping `T_in`
@@ -269,7 +269,7 @@ metadata, not tags; the portal shows it under the container's Properties):
      "addressed_by": "bucket"}
   ],
   "args": {"params": {"region": "'"${_AWS_REGION}"'"}}
-}' --aws-region "${_AWS_REGION}"
+}'
 ```
 
 Outside `us-east-1`, S3 needs the region in the bucket's own body as well:
