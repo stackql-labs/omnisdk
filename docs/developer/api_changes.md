@@ -15,6 +15,7 @@ Migrating from `v0.1.3-alpha05`, the version stackql consumes, to the current tr
 | `NewGraphSelectQuery` | deprecated alias of `NewGraphQuery` | None needed; rename when convenient. A graph runs writes as well as reads. |
 | `aot.AOTExchange` | Gains `Beta() (Beta, bool)` | Only a caller that implements `AOTExchange` must add it. |
 | `aot.Parameter`, `aot.Request` | Gain `List() bool`, and `Translate()` and `Transpose()` | Only a caller that implements them must add them. |
+| `aot.AOTExchange` | Gains `Pushdown() (Pushdown, bool)` | Only a caller that implements `AOTExchange` must add it. |
 | A resource declaring an inbound transform (`via_type`/`via`) | Refused by `DesiredState` | Wire the transform in a graph, where the names it provides are stated. |
 
 ## Additions
@@ -25,6 +26,7 @@ No caller change needed.
   `GraphStatement`, `DesiredState`; WAL configurations `NoWAL`, `NewJournal`, `NewLedger`.
 - **Caller identity and access control:** `Args.Principal`; `Args.RBAC`, accepted and not yet enforced.
 - **Awaited operations:** a method's `x-stackQL-beta` in a provider document, or a document patch.
+- **Server-side projection and filtering:** a document's `queryParamPushdown` select, filter and top.
 
 - **Queries:** `UnionAll`; `NewMatchedNode`; `query.Cross` and `query.Listed` join forms.
 - **Cycles:** `Termination` with `Rounds`, `Records`, `Within`, `AnyOf`, `AllOf`; `WithTermination`.

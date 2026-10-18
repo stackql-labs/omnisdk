@@ -32,6 +32,33 @@ type AOTExchange interface {
 	// Beta is the call the document says must follow this one before what it made exists, false
 	// where it declares none.
 	Beta() (Beta, bool)
+	// Pushdown is what the call can do server-side that a query would otherwise do to the rows it
+	// returns, false where the document declares nothing.
+	Pushdown() (Pushdown, bool)
+}
+
+// Pushdown is a call's server-side query options: projection, filtering and a row cap. Each is
+// optional, and an option the call lacks is done client-side.
+type Pushdown interface {
+	Select() (PushdownOption, bool)
+	Filter() (PushdownOption, bool)
+	Top() (PushdownOption, bool)
+}
+
+// PushdownOption is one server-side query option as the document declares it.
+type PushdownOption interface {
+	// Dialect is the syntax family the option is written in: odata, or custom.
+	Dialect() string
+	// ParamName is the query parameter carrying it; empty where none is known.
+	ParamName() string
+	// Delimiter separates a projection's columns.
+	Delimiter() string
+	// MaxValue caps a row cap; zero is no cap.
+	MaxValue() int
+	// SupportsColumn and SupportsOperator report what the option may name; a document that lists
+	// none allows any.
+	SupportsColumn(name string) bool
+	SupportsOperator(op string) bool
 }
 
 // Beta is a β edge a document declares from an operation to the call that completes it: a create

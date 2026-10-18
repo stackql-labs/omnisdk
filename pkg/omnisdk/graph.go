@@ -799,6 +799,28 @@ func NewGraphQuery(dir string, g Graph, args Args) (Plan, error) {
 		if whole {
 			opts = append(opts, docx.WithWholeResponse())
 		}
+		// What the server can do instead of the rows: a projection, a filter, a cap. Each value is a
+		// constant of the run, bound through a slot of its own so its wire name is sent as written.
+		if n.Verb() == "select" {
+			needed := slices.Clone(emits[alias])
+			for _, p := range n.On() {
+				for _, c := range predicateColumns(p) {
+					if c.Qualifier() == alias {
+						needed = append(needed, c.Name())
+					}
+				}
+			}
+			if qp := pushdown(ex, g, alias, needed, args.Tuning.Limit); len(qp) > 0 {
+				slots := map[string]string{}
+				for i, wire := range slices.Sorted(maps.Keys(qp)) {
+					slot := fmt.Sprintf("pushdown_%d", i)
+					slots[wire] = slot
+					inputs[hidden(alias, slot)] = qp[wire]
+					betas = append(betas, plan.NewBetaEdge("", name, hidden(alias, slot), slot))
+				}
+				opts = append(opts, docx.WithQuerySlots(slots))
+			}
+		}
 		if body := n.Body(); len(body) > 0 {
 			opts = append(opts, docx.WithBodyFields(slices.Sorted(maps.Keys(body))...))
 		}

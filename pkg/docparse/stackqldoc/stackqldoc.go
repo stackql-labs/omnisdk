@@ -12,6 +12,7 @@ package stackqldoc
 
 import (
 	"fmt"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -64,6 +65,7 @@ type document struct {
 			RequestToken  tokenSpec `yaml:"requestToken"`
 			ResponseToken tokenSpec `yaml:"responseToken"`
 		} `yaml:"pagination"`
+		QueryParamPushdown *pushdownSpec `yaml:"queryParamPushdown"`
 	} `yaml:"x-stackQL-config"`
 	// A path item holds verbs alongside non-operation keys (an OpenAPI path-level `parameters`
 	// list, vendor extensions), so verbs are decoded on demand rather than assumed.
@@ -105,6 +107,9 @@ type resource struct {
 	Title    string            `yaml:"title"`
 	Methods  map[string]method `yaml:"methods"`
 	SQLVerbs map[string][]ref  `yaml:"sqlVerbs"`
+	Config   struct {
+		QueryParamPushdown *pushdownSpec `yaml:"queryParamPushdown"`
+	} `yaml:"config"`
 }
 
 type ref struct {
@@ -120,7 +125,8 @@ type method struct {
 		QueryParamTranspose struct {
 			Algorithm string `yaml:"algorithm"`
 		} `yaml:"queryParamTranspose"`
-		Pagination struct {
+		QueryParamPushdown *pushdownSpec `yaml:"queryParamPushdown"`
+		Pagination         struct {
 			RequestToken  tokenSpec `yaml:"requestToken"`
 			ResponseToken tokenSpec `yaml:"responseToken"`
 		} `yaml:"pagination"`
@@ -296,6 +302,13 @@ func (d *document) resolve(name, mName string, withBeta bool) (aot.AOTExchange, 
 	}
 	op.Parameters = params
 	ex := d.build(mName, httpVerb, path, op, m)
+	// The nearest declaration wins: the method's, else its resource's, else the document's.
+	for _, spec := range []*pushdownSpec{m.Config.QueryParamPushdown, res.Config.QueryParamPushdown, d.Config.QueryParamPushdown} {
+		if spec != nil {
+			ex.(*aotExchange).pushdown = spec
+			break
+		}
+	}
 	if !withBeta || m.Beta == nil {
 		return ex, nil
 	}
@@ -724,13 +737,14 @@ func lastSegment(ref string) string {
 // ---- AOT exchange -----------------------------------------------------------
 
 type aotExchange struct {
-	name   string
-	sec    security
-	inputs []string
-	opID   string
-	req    request
-	resp   response
-	beta   aot.Beta
+	name     string
+	sec      security
+	inputs   []string
+	opID     string
+	req      request
+	resp     response
+	beta     aot.Beta
+	pushdown *pushdownSpec
 }
 
 func (e *aotExchange) Name() string           { return e.name }
@@ -740,6 +754,14 @@ func (e *aotExchange) Request() aot.Request   { return e.req }
 func (e *aotExchange) Response() aot.Response { return e.resp }
 func (e *aotExchange) Security() aot.Security { return e.sec }
 func (e *aotExchange) Beta() (aot.Beta, bool) { return e.beta, e.beta != nil }
+
+// Pushdown is nil-safe: an exchange with no declaration offers none, rather than a nil option set.
+func (e *aotExchange) Pushdown() (aot.Pushdown, bool) {
+	if e.pushdown == nil {
+		return nil, false
+	}
+	return e.pushdown, true
+}
 
 // operationParams are the operation's declared inputs. The __-prefixed markers are excluded: they are
 // the operation's identity lifted out of the path key, already placed as fixed body params, and are
@@ -842,3 +864,56 @@ type pagination struct{ req, resp tokenSpec }
 func (p pagination) RequestToken() (string, string)  { return p.req.Key, p.req.Location }
 func (p pagination) ResponseToken() (string, string) { return p.resp.Key, p.resp.Location }
 func (p pagination) Declared() bool                  { return p.req.Key != "" || p.resp.Key != "" }
+
+// pushdownSpec is a queryParamPushdown declaration: the server-side query options a call offers, as
+// any-sdk reads them.
+type pushdownSpec struct {
+	SelectSpec *pushdownOption `yaml:"select"`
+	FilterSpec *pushdownOption `yaml:"filter"`
+	TopSpec    *pushdownOption `yaml:"top"`
+}
+
+func (p *pushdownSpec) Select() (aot.PushdownOption, bool) { return p.SelectSpec.opt("$select") }
+func (p *pushdownSpec) Filter() (aot.PushdownOption, bool) { return p.FilterSpec.opt("$filter") }
+func (p *pushdownSpec) Top() (aot.PushdownOption, bool)    { return p.TopSpec.opt("$top") }
+
+// opt is the option, with odata's parameter name where the document names none.
+func (o *pushdownOption) opt(odataParam string) (aot.PushdownOption, bool) {
+	if o == nil {
+		return nil, false
+	}
+	c := *o
+	if c.DialectName == "" {
+		c.DialectName = "custom"
+	}
+	if c.Param == "" && c.DialectName == "odata" {
+		c.Param = odataParam
+	}
+	if c.Delim == "" {
+		c.Delim = ","
+	}
+	return c, true
+}
+
+type pushdownOption struct {
+	DialectName        string   `yaml:"dialect"`
+	Param              string   `yaml:"paramName"`
+	Delim              string   `yaml:"delimiter"`
+	Max                int      `yaml:"maxValue"`
+	SupportedColumns   []string `yaml:"supportedColumns"`
+	SupportedOperators []string `yaml:"supportedOperators"`
+}
+
+func (o pushdownOption) Dialect() string   { return o.DialectName }
+func (o pushdownOption) ParamName() string { return o.Param }
+func (o pushdownOption) Delimiter() string { return o.Delim }
+func (o pushdownOption) MaxValue() int     { return o.Max }
+
+// SupportsColumn and SupportsOperator: a list the document leaves empty, or one naming "*", allows
+// anything.
+func (o pushdownOption) SupportsColumn(name string) bool { return supported(name, o.SupportedColumns) }
+func (o pushdownOption) SupportsOperator(op string) bool { return supported(op, o.SupportedOperators) }
+
+func supported(item string, list []string) bool {
+	return len(list) == 0 || slices.Contains(list, "*") || slices.Contains(list, item)
+}

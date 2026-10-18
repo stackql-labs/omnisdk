@@ -77,6 +77,9 @@ type options struct {
 	bodyFields map[string]bool
 	// poll re-requests until a status matures; nil sends once.
 	poll *httpx.Continuation
+	// querySlots place query parameters by wire name, each from the bound value of its slot: for a
+	// name a template cannot carry, such as OData's $filter.
+	querySlots map[string]string
 	// inbox names values T_in CONSUMES. They are bound — a producer emits each one — but never
 	// placed: they are raw material for the transform, not parameters the service has heard of.
 	inbox map[string]bool
@@ -250,6 +253,12 @@ func WithPoll(statusPath, done string, interval time.Duration, attempts int) Opt
 		o.poll = &httpx.Continuation{Kind: httpx.ContPoll, StatusPath: statusPath, DoneValue: done,
 			Interval: interval, MaxAttempts: attempts}
 	}
+}
+
+// WithQuerySlots places each wire name in the query string with the value bound to its slot. A
+// wire name is sent exactly as given, $-prefixed included, which a {placeholder} could not be.
+func WithQuerySlots(slots map[string]string) Option {
+	return func(o *options) { o.querySlots = slots }
 }
 
 // WithBodyFields places named values as fields of the request body, bound per row like any input.
@@ -560,6 +569,13 @@ func compile(ex aot.AOTExchange, inputs map[string]any, reg dsl.Registry, o opti
 	// fields into the query is how a create meant for a JSON API goes out as a query string.
 	if len(o.body) > 0 && req.BodyMediaType() != "" {
 		hreq.Body = httpx.Body{Encoding: bodyEncoding(req.BodyMediaType()), Raw: o.body}
+	}
+	for wire, slot := range o.querySlots {
+		if hreq.Query == nil {
+			hreq.Query = map[string]string{}
+		}
+		hreq.Query[wire] = "{" + slot + "}"
+		bindings = withInput(bindings, slot)
 	}
 	// Raw material for T_in: bound so a producer delivers it, never placed on the wire.
 	for name := range o.inbox {
