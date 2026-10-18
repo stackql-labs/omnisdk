@@ -54,13 +54,6 @@ func NewResidue(identity, addressedBy, correlationParam string) Residue {
 	return residue{identity: identity, addressedBy: addressedBy, correlation: correlationParam}
 }
 
-// Effector performs effects against documents, and derives from them how drift on an object is
-// converged.
-type Effector interface {
-	facade.Effector
-	facade.Router
-}
-
 type effector struct {
 	catalog   aot.Catalog
 	analyzer  facade.Analyzer
@@ -73,7 +66,7 @@ type effector struct {
 // New returns an Effector over one provider's catalog. The analyzer chooses each call's operation on
 // behalf of principal, so an effect is bound to a method by the same rule a query is. opts carry
 // credentials and any endpoint override, exactly as a query would supply them.
-func New(cat aot.Catalog, an facade.Analyzer, principal string, dslReg dsl.Registry, residues map[string]Residue, opts ...docx.Option) Effector {
+func New(cat aot.Catalog, an facade.Analyzer, principal string, dslReg dsl.Registry, residues map[string]Residue, opts ...docx.Option) facade.Effector {
 	return &effector{catalog: cat, analyzer: an, principal: principal, dsl: dslReg, residue: residues, opts: opts}
 }
 
@@ -173,68 +166,6 @@ func (e *effector) Read(ctx context.Context, exchange string, k facade.LedgerKey
 		return nil, nil, false, err
 	}
 	return b, identity, true, nil
-}
-
-// Route derives the exchange that applies verb to the object exchange created: the same address's
-// verb, where an operation for it, addressed by the object's identity, accepts everything the call
-// would send. Where none does, the error says why, and the object is left as it is.
-//
-// What is sent depends on the operation's shape. One taking a body is sent the whole document: a
-// body may replace the object, and a partial one would erase every field it leaves out. One without
-// a body is sent only the fields that differ from actual, since each is a parameter it must declare
-// and an unchanged field it does not take would rule out the operation that converges the rest. Such
-// an operation cannot express removing a field, so a field to unset is refused.
-func (e *effector) Route(ctx context.Context, exchange, verb string, k facade.LedgerKey, in facade.EffectInput, actual []byte) (string, []byte, error) {
-	addr, _, err := address(exchange)
-	if err != nil {
-		return "", nil, err
-	}
-	res := e.residue[addr]
-	if res == nil || res.AddressedBy() == "" {
-		return "", nil, fmt.Errorf("docrun: %s declares no parameter addressing an existing object", addr)
-	}
-	bodied, err := e.takesBody(addr, verb)
-	if err != nil {
-		return "", nil, err
-	}
-	if !bodied {
-		if in.Mutation, err = changed(in.Mutation, actual); err != nil {
-			return "", nil, err
-		}
-	}
-	inputs, err := e.inputs(addr, k, in, res, verb, bodied)
-	if err != nil {
-		return "", nil, err
-	}
-	if _, err := e.choose(ctx, addr, verb, inputs); err != nil {
-		return "", nil, fmt.Errorf("docrun: %s %s: %w", addr, verb, err)
-	}
-	return addr + ":" + verb, in.Mutation, nil
-}
-
-// changed reduces a mutation to the fields whose value differs from actual. An unset field still
-// present on the target cannot be sent as a parameter, so it is an error rather than dropped.
-func changed(mutation, actual []byte) ([]byte, error) {
-	want, err := decodeFields(mutation)
-	if err != nil {
-		return nil, err
-	}
-	have, err := decodeFields(actual)
-	if err != nil {
-		return nil, err
-	}
-	out := map[string]any{}
-	for k, v := range want {
-		got, present := have[k]
-		switch {
-		case v == nil && present:
-			return nil, fmt.Errorf("docrun: %s is to be removed, and an operation without a body cannot remove a field", k)
-		case v == nil:
-		case !present || fmt.Sprint(v) != fmt.Sprint(got):
-			out[k] = v
-		}
-	}
-	return json.Marshal(out)
 }
 
 // choose binds a call to its operation. Everything in inputs is sent, so an operation must accept

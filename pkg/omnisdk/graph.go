@@ -114,6 +114,20 @@ type node struct {
 	outer                bool
 	on                   []query.Predicate
 	tuples               []map[string]any
+	// What converging desired state states about a node beyond Node. pin is the method to run, where
+	// the graph rather than the analyzer chooses; whole takes the response whole rather than rows
+	// out of it; requires are inputs without which the node makes no request.
+	pin      string
+	whole    bool
+	requires []string
+}
+
+// tuningOf is what n states beyond Node, if it states anything.
+func tuningOf(n Node) (pin string, whole bool, requires []string) {
+	if x, ok := n.(node); ok {
+		return x.pin, x.whole, x.requires
+	}
+	return "", false, nil
 }
 
 func (n node) Tuples() []map[string]any { return n.tuples }
@@ -768,7 +782,8 @@ func NewGraphQuery(dir string, g Graph, args Args) (Plan, error) {
 		// needs a resource group and a VNet name, both of which come over the edge — judged on
 		// supplied inputs alone, no select is satisfiable and the query fails before its wiring is
 		// ever considered.
-		ex, err := chooseExchange(c, principalOf(args), addr, n.Verb(), arrivals, sentBy(n))
+		pin, whole, requires := tuningOf(n)
+		ex, err := chooseExchange(c, principalOf(args), addr, n.Verb(), arrivals, sentBy(n), pin)
 		if err != nil {
 			return nil, fmt.Errorf("omnisdk: %s (%s): %w", alias, addr, err)
 		}
@@ -781,11 +796,27 @@ func NewGraphQuery(dir string, g Graph, args Args) (Plan, error) {
 			// A mutation's reply is often undocumented; the effect is the point.
 			opts = append(opts, docx.WithoutResponseDecode())
 		}
+		if whole {
+			opts = append(opts, docx.WithWholeResponse())
+		}
 		if body := n.Body(); len(body) > 0 {
 			opts = append(opts, docx.WithBodyFields(slices.Sorted(maps.Keys(body))...))
 		}
 		if names := bound[alias]; len(names) > 0 {
 			opts = append(opts, docx.WithBound(names...))
+		}
+		// A list parameter is sent indexed — TagSpecification.1.Tag.2.Key, Filter.1.Name — and a
+		// document declares the parameter, never its members, so placement by declared name would
+		// drop every member. They are the caller's values, so they are bound as well as placed.
+		var indexed []string
+		for k := range n.Params() {
+			if strings.Contains(k, ".") {
+				indexed = append(indexed, k)
+			}
+		}
+		if len(indexed) > 0 {
+			slices.Sort(indexed)
+			opts = append(opts, docx.WithBound(indexed...))
 		}
 		if names := provided[alias]; len(names) > 0 {
 			opts = append(opts, docx.WithProvided(names...))
@@ -882,7 +913,7 @@ func NewGraphQuery(dir string, g Graph, args Args) (Plan, error) {
 		}
 		// A required input with no value means nothing to ask about: the node has no match for that
 		// row, and no request is made. An optional input with no value is simply not sent.
-		if names := requiredOf(ex, wiredInputs(g, alias)); len(names) > 0 {
+		if names := append(requiredOf(ex, wiredInputs(g, alias)), requires...); len(names) > 0 {
 			spec = guarded{ExchangeSpec: spec, names: names}
 		}
 		if attrs := emits[alias]; len(attrs) > 0 {

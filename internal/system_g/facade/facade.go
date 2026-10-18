@@ -492,10 +492,6 @@ type Semantics interface {
 	// a particular create may not be — deletion protection, scheduled destruction, object-lock,
 	// anything billable.
 	Inverse(exchange string) (InverseExchange, bool)
-	// Update reports the exchange declared to converge an object that already exists, or false where
-	// none is declared. A declaration overrides what a Router derives from the documents: it is how
-	// an upsert, where re-issuing the create is correct, is told apart from a mint.
-	Update(exchange string) (string, bool)
 }
 
 // Statement is one action asked of one resource, before it is bound to a method. It names a
@@ -544,16 +540,6 @@ type Policy interface {
 // Analyzer binds a statement to the method that carries it out, or says why none can.
 type Analyzer interface {
 	Analyze(ctx context.Context, s Statement) (Method, error)
-}
-
-// Router derives, from the documents, the exchange that applies a verb to an object an exchange
-// created. It is consulted where Semantics declares nothing, and an error is a refusal: the object
-// stays as it is.
-type Router interface {
-	// Route takes the whole desired document as in.Mutation and what the target holds as actual, and
-	// returns the exchange and the mutation to send it — which may be less than the whole document,
-	// where the operation can only be told what changed.
-	Route(ctx context.Context, exchange, verb string, k LedgerKey, in EffectInput, actual []byte) (string, []byte, error)
 }
 
 // EffectInput is everything one wire effect needs beyond the exchange itself.

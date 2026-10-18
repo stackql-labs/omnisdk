@@ -97,12 +97,11 @@ func TestDocumentDrivenPlanListsInstances(t *testing.T) {
 	if rows[0]["region"] != "us-east-1" {
 		t.Fatalf("bound input missing from row: %v", rows[0])
 	}
-	// the request is the one the DOCUMENT describes — verb and all. This document declares GET, so
-	// asserting POST would be asserting the previous document rather than this one.
-	if gotMethod != "GET" {
-		t.Fatalf("method = %q", gotMethod)
+	// The document describes a GET and declares it sent as a form POST: the query travels as the
+	// body, and nothing rides in the URL.
+	if gotMethod != "POST" || !strings.Contains(gotBody, "Action=DescribeInstances") {
+		t.Fatalf("method = %q, body = %q; want a form POST carrying the action", gotMethod, gotBody)
 	}
-	_ = gotBody
 }
 
 // A non-2xx must fail loudly rather than read as an empty result.

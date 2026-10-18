@@ -200,6 +200,9 @@ func TestNetworkProvisionRerunIssuesNoCreates(t *testing.T) {
 			t.Fatalf("open: %v", err)
 		}
 		for rows.Next() {
+			if row := rows.Row(); row["error"] != nil {
+				t.Fatalf("%s: %v", id, row)
+			}
 		}
 		rows.Close()
 	}

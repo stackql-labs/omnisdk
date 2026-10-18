@@ -43,8 +43,8 @@ func TestGraphJoinsTwoExchangesTheDocumentDoesNotRelate(t *testing.T) {
 
 	var actions []string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		action := r.URL.Query().Get("Action")
-		actions = append(actions, action+"|"+r.URL.Query().Get("Filter.1.Name")+"="+r.URL.Query().Get("Filter.1.Value.1"))
+		action := formValue(r, "Action")
+		actions = append(actions, action+"|"+formValue(r, "Filter.1.Name")+"="+formValue(r, "Filter.1.Value.1"))
 		w.Header().Set("Content-Type", "text/xml")
 		switch action {
 		case "DescribeVpcs":

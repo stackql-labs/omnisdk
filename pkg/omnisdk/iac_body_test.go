@@ -83,7 +83,7 @@ func TestRerunConvergesRatherThanReportingDrift(t *testing.T) {
 	var creates int
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/xml")
-		switch r.URL.Query().Get("Action") {
+		switch formValue(r, "Action") {
 		case "CreateVpc":
 			creates++
 			fmt.Fprint(w, `<CreateVpcResponse><vpc><vpcId>vpc-1</vpcId><cidrBlock>10.0.0.0/16</cidrBlock></vpc></CreateVpcResponse>`)
@@ -129,4 +129,11 @@ func TestRerunConvergesRatherThanReportingDrift(t *testing.T) {
 	if creates != 1 {
 		t.Errorf("CreateVpc issued %d times, want 1 — the re-run should converge, not re-create or refuse", creates)
 	}
+}
+
+// formValue is a request input wherever it was sent: an AWS Query-protocol call goes as a form POST,
+// so its inputs are in the body.
+func formValue(r *http.Request, name string) string {
+	_ = r.ParseForm()
+	return r.Form.Get(name)
 }

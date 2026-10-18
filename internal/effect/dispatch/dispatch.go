@@ -23,21 +23,6 @@ func New(routes map[string]facade.Effector) facade.Effector {
 
 func (r *router) forKey(k facade.LedgerKey) (facade.Effector, error) { return forKey(r.routes, k) }
 
-type drift struct{ routes map[string]facade.Router }
-
-// NewRouter returns a Router that routes by key prefix, as New does for effects.
-func NewRouter(routes map[string]facade.Router) facade.Router {
-	return &drift{routes: routes}
-}
-
-func (d *drift) Route(ctx context.Context, exchange, verb string, k facade.LedgerKey, in facade.EffectInput, actual []byte) (string, []byte, error) {
-	r, err := forKey(d.routes, k)
-	if err != nil {
-		return "", nil, err
-	}
-	return r.Route(ctx, exchange, verb, k, in, actual)
-}
-
 // forKey finds the most specific registered prefix for a key. The collection name is the first
 // segment and is not part of the address, so matching starts after it.
 func forKey[T any](routes map[string]T, k facade.LedgerKey) (T, error) {

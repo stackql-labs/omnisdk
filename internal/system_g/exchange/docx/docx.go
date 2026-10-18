@@ -483,7 +483,12 @@ func compile(ex aot.AOTExchange, inputs map[string]any, reg dsl.Registry, o opti
 			if hreq.Query == nil {
 				hreq.Query = map[string]string{}
 			}
-			hreq.Query[p.Name()] = tmpl
+			wire := p.Name()
+			if p.List() && queryProtocol(req) {
+				// AWS's Query protocol writes a list as numbered members; a single value is the first.
+				wire += ".1"
+			}
+			hreq.Query[wire] = tmpl
 		case aot.InHeader:
 			if hreq.Headers == nil {
 				hreq.Headers = map[string]string{}
@@ -635,6 +640,10 @@ func compile(ex aot.AOTExchange, inputs map[string]any, reg dsl.Registry, o opti
 
 	spec := plan.NewExchangeSpec(ex.Name(), bindings, nil, func(bound map[string]any) facade.Operator {
 		var reqT []facade.Transform
+		if req.Translate() == httpx.GetQueryToPostFormUTF8 {
+			// Translated before it is signed, so what is signed is what is sent.
+			reqT = append(reqT, httpx.GetQueryToPostForm())
+		}
 		switch {
 		case o.noSign:
 		case o.signer != nil:
@@ -1118,6 +1127,16 @@ func Expand(spec plan.ExchangeSpec) (auth plan.ExchangeSpec, inputs map[string]a
 		needed[k] = v
 	}
 	return c.auth, needed, true
+}
+
+// queryProtocol reports whether a request is AWS's Query protocol: the action it performs is a fixed
+// parameter of the request itself — in its body, or, for a GET, in its URL.
+func queryProtocol(req aot.Request) bool {
+	if _, ok := req.Params()["Action"]; ok {
+		return true
+	}
+	_, query, _ := strings.Cut(req.URL(), "?")
+	return slices.ContainsFunc(strings.Split(query, "&"), func(kv string) bool { return strings.HasPrefix(kv, "Action=") })
 }
 
 // TokenAttr is the attribute an auth exchange emits and the call it feeds binds.

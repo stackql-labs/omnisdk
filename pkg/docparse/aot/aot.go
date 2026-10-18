@@ -146,6 +146,9 @@ type Request interface {
 	// document does not need to enumerate its fields for one to be sent. Saying the operation takes
 	// a body, and in what encoding, is the whole of what a compiler needs.
 	BodyMediaType() string
+	// Translate names how the described request is sent instead, empty where it is sent as
+	// described: get_query_to_post_form_utf_8 sends a GET's query as a form POST's body.
+	Translate() string
 }
 
 // Parameter is one declared input and its location on the wire.
@@ -154,6 +157,9 @@ type Parameter interface {
 	// In is where the value goes: query, path, header or cookie.
 	In() string
 	Required() bool
+	// List reports whether the parameter takes several values — its schema is an array. How a list
+	// is written on the wire is the protocol's: AWS's Query protocol numbers each member, Name.1.
+	List() bool
 }
 
 // Parameter locations, as OpenAPI names them.

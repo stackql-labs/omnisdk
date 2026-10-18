@@ -55,7 +55,14 @@ type intrinsicNode struct {
 	liveIdentity string
 	// call is a function node's table function, its arguments reading the rows before it.
 	call query.Call
+	// route, on a diff, chooses the update for a drifted object: the method that converges it, in
+	// column update, and the fields to send it. Nil sends the whole mutation and names no method.
+	route driftRoute
 }
+
+// driftRoute chooses the update for a drift: given the merged mutation and the live object, the
+// method to send and what to send it, or an error where no method converges it.
+type driftRoute func(mutation, live map[string]any) (method string, send map[string]any, err error)
 
 // newFunctionNode is a table function in FROM: call, run once per row before it, joined as outer
 // says — kept unmatched under a left join — and matched by on.
@@ -103,7 +110,16 @@ type managed struct {
 	aliases     []string
 	identity    string
 	addressedBy string
+	// For a resource lowered from desired state: identityPath is a dotted path into the create's
+	// whole response, where identity is a column of its row; intent is the desired document, which
+	// the ledger records as the resource's intent in place of the request's inputs.
+	identityPath string
+	intent       []byte
 }
+
+// identityAttr is the column a managed mutation adds to its row: the identity the ledger holds for
+// its resource once the mutation lands, for whatever depends on the resource to read.
+const identityAttr = "\x00identity"
 
 func (m managed) Key() string         { return m.key }
 func (m managed) Aliases() []string   { return m.aliases }
@@ -231,9 +247,18 @@ func diffRow(run *managedRun, n intrinsicNode, fields []string, desired []byte, 
 	if same {
 		row[out("status")] = DiffMatch
 	}
-	var send map[string]any
-	if err := json.Unmarshal(mutation, &send); err != nil {
+	// Numbers stay as written: a value past float64's exact range is sent as it was asked for.
+	send, err := decodeObject(mutation)
+	if err != nil {
 		return nil, fmt.Errorf("omnisdk: diff %q: %w", n.Alias(), err)
+	}
+	if !same && n.route != nil {
+		method, routed, err := n.route(send, actual)
+		if err != nil {
+			return nil, fmt.Errorf("omnisdk: %s has drifted and no update path converges it: %w", n.key, err)
+		}
+		row[out("update")] = method
+		send = routed
 	}
 	for k, v := range send {
 		row[out(k)] = v
@@ -270,6 +295,9 @@ func (d durable) open(ctx context.Context, o effectOp) facade.Records {
 	if err != nil {
 		return failed(err)
 	}
+	if m, ok := d.resource.(managed); ok && len(m.intent) > 0 {
+		proposed = m.intent
+	}
 	notAttempted := func(err error) facade.Records {
 		return failed(&EffectError{Outcome: ErrNotAttempted, Verb: o.e.verb, Alias: o.e.alias,
 			Cause: fmt.Errorf("recording its intent failed: %w", err)})
@@ -290,14 +318,15 @@ func (d durable) open(ctx context.Context, o effectOp) facade.Records {
 }
 
 type durableRecords struct {
-	inner effectRecords
-	d     durable
-	key   facade.LedgerKey
-	entry facade.LedgerEntry
-	found bool
-	first map[string]any
-	done  bool
-	err   error
+	inner    effectRecords
+	d        durable
+	key      facade.LedgerKey
+	entry    facade.LedgerEntry
+	found    bool
+	first    map[string]any
+	identity string
+	done     bool
+	err      error
 }
 
 func (r *durableRecords) Next(ctx context.Context) bool {
@@ -307,6 +336,7 @@ func (r *durableRecords) Next(ctx context.Context) bool {
 	if r.inner.Next(ctx) {
 		if r.first == nil {
 			r.first, _ = bind.DocMap(r.inner.Record())
+			r.identity = r.identityOf()
 		}
 		return true
 	}
@@ -321,12 +351,9 @@ func (r *durableRecords) Next(ctx context.Context) bool {
 
 // commit records what landed: a create's identity, an update's new intent, a delete's absence.
 func (r *durableRecords) commit(ctx context.Context) error {
-	identity := ""
-	if r.found {
-		identity = string(r.entry.Identity())
-	}
-	if v, ok := r.first[r.d.resource.Identity()]; ok && v != nil && fmt.Sprint(v) != "" {
-		identity = fmt.Sprint(v)
+	identity := r.identity
+	if r.first == nil {
+		identity = r.identityOf()
 	}
 	_, ver, found, err := r.d.run.ledger.Get(ctx, r.key)
 	if err != nil {
@@ -355,9 +382,58 @@ func (r *durableRecords) commit(ctx context.Context) error {
 	return nil
 }
 
-func (r *durableRecords) Record() facade.Record { return r.inner.Record() }
-func (r *durableRecords) Err() error            { return r.err }
-func (r *durableRecords) Close() error          { return r.inner.Close() }
+// identityOf is the resource's identity after this mutation: what its response reports, else what
+// the ledger already held.
+func (r *durableRecords) identityOf() string {
+	identity := ""
+	if r.found {
+		identity = string(r.entry.Identity())
+	}
+	v, ok := r.first[r.d.resource.Identity()]
+	if m, lowered := r.d.resource.(managed); lowered && m.identityPath != "" {
+		v, ok = atPath(r.first, m.identityPath)
+	}
+	if ok && v != nil && fmt.Sprint(v) != "" {
+		identity = fmt.Sprint(v)
+	}
+	return identity
+}
+
+// Record is the mutation's row with the resource's identity beside it.
+func (r *durableRecords) Record() facade.Record {
+	rec := r.inner.Record()
+	m, ok := bind.DocMap(rec)
+	if !ok {
+		return rec
+	}
+	out := maps.Clone(m)
+	out[identityAttr] = r.identity
+	return bind.NewDocRecord(out)
+}
+
+// atPath walks a dotted path into a decoded response. A list of one is stepped through: a projected
+// response wraps the object a call concerns in a row list.
+func atPath(doc map[string]any, path string) (any, bool) {
+	var cur any = doc
+	for _, step := range strings.Split(path, ".") {
+		if list, isList := cur.([]any); isList && len(list) == 1 {
+			cur = list[0]
+		}
+		m, ok := cur.(map[string]any)
+		if !ok {
+			return nil, false
+		}
+		if cur, ok = m[step]; !ok {
+			return nil, false
+		}
+	}
+	if list, isList := cur.([]any); isList && len(list) == 1 {
+		cur = list[0]
+	}
+	return cur, true
+}
+func (r *durableRecords) Err() error   { return r.err }
+func (r *durableRecords) Close() error { return r.inner.Close() }
 
 // ConvergeGraph runs g as an IaC run over collection name, its ledger and journals under state. Every
 // mutation node must belong to one of managed. The collection is held for the run; intent is recorded
@@ -417,28 +493,48 @@ type convergeGraphPlan struct {
 	args                         Args
 }
 
-func (p *convergeGraphPlan) Open(ctx context.Context) (Rows, error) {
-	log, err := ledger.NewFile(filepath.Join(p.state, "ledger"))
+// held is a converging run's durable state, open and leased: the ledger, the run's journal, and the
+// collection held until release.
+type held struct {
+	log      facade.Ledger
+	journals facade.Journals
+	journal  facade.Journal
+	release  func()
+}
+
+// hold opens collection name's ledger and journals under state, and holds the collection for runID.
+func hold(ctx context.Context, state, name, runID string) (*held, error) {
+	log, err := ledger.NewFile(filepath.Join(state, "ledger"))
 	if err != nil {
 		return nil, err
 	}
-	journals, err := journal.NewFiles(filepath.Join(p.state, "journal"))
+	journals, err := journal.NewFiles(filepath.Join(state, "journal"))
 	if err != nil {
 		return nil, err
 	}
-	held, err := lease.NewLeaser(log, time.Now).Acquire(ctx, p.name, lease.All(), p.runID, leaseTTL)
+	l, err := lease.NewLeaser(log, time.Now).Acquire(ctx, name, lease.All(), runID, leaseTTL)
 	if errors.Is(err, facade.ErrLeaseHeld) {
-		return nil, fmt.Errorf("omnisdk: collection %q is busy with another run", p.name)
+		// How runs are kept apart is not the caller's business; that another is running is.
+		return nil, fmt.Errorf("omnisdk: collection %q is busy with another run", name)
 	}
 	if err != nil {
 		return nil, err
 	}
-	defer func() { _ = held.Release(ctx) }()
-	j, err := journals.For(ctx, p.runID)
+	j, err := journals.For(ctx, runID)
+	if err != nil {
+		_ = l.Release(ctx)
+		return nil, err
+	}
+	return &held{log: log, journals: journals, journal: j, release: func() { _ = l.Release(ctx) }}, nil
+}
+
+func (p *convergeGraphPlan) Open(ctx context.Context) (Rows, error) {
+	h, err := hold(ctx, p.state, p.name, p.runID)
 	if err != nil {
 		return nil, err
 	}
-	run := &managedRun{name: p.name, ledger: log, journal: j, nodes: p.nodes}
+	defer h.release()
+	run := &managedRun{name: p.name, ledger: h.log, journal: h.journal, nodes: p.nodes}
 	a := p.args
 	a.managed = run
 	pl, err := NewGraphQuery(p.registry, p.g, a)

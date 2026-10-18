@@ -10,13 +10,12 @@ these build on — intent before effect, compensation, correlation stamps — is
 
 ## 1. Drift converges only where an update operation accepts the change
 
-**Now.** A live key whose target no longer matches its intent takes a declared update
-(`semantics.Declaration.Update`) if there is one. Otherwise the document decides
-(`Route` in [docrun.go](../../internal/effect/docrun/docrun.go)): the resource's `update` operation
-that the analyzer ([analyze.go](../../internal/analyze/analyze.go)) finds accepts the object's identity
-and every field being sent. An operation with a body is sent the whole desired document; one without
-is sent only the changed fields. Where no operation qualifies, the step fails with
-`apply: <key> has drifted and no update path converges it: …` and the run unwinds.
+**Now.** Desired state is lowered to a graph ([desired.go](../../pkg/omnisdk/desired.go)) with one
+update arm per `update` operation the resource's fields could reach. The diff chooses the arm: the
+operation the analyzer ([analyze.go](../../internal/analyze/analyze.go)) finds accepts the object's
+identity and every field being sent. An operation with a body is sent the whole desired document;
+one without is sent only the changed fields. Where no operation qualifies, the diff fails with
+`<key> has drifted and no update path converges it: …` and the run unwinds.
 
 **Needs.**
 - Per-field declarations that override the document. The rule takes any `update` operation that
@@ -86,12 +85,9 @@ can carry any column, fan out, and poll; an IaC dependency cannot.
 
 **Now.** `ConvergeGraph` runs any gated mutation durably, but:
 
-- **Desired state converges differently.** A flat list of resources runs on the same plan engine,
-  each resource a step that reads, merges and routes drift itself, and undoes a failed run through
-  the journal, restoring updates. A graph uses recall and diff nodes and undoes creates only. Section
-  1 applies to desired state, not to `ConvergeGraph`.
-- **Compensation reverses creates only.** A failed run deletes what it created, addressed by
-  `AddressedBy`; an update or delete it made stays done, and is reported as completed.
+- **Two undo paths.** Desired state is lowered to a graph and undone through the journal, which
+  restores an update's prior intent. A hand-written graph's failed run deletes what it created,
+  addressed by `AddressedBy`; an update or delete it made stays done, and is reported as completed.
 - **One object per managed key.** A mutation node that runs for several rows writes every row to the
   same ledger key.
 - **No correlation stamp.** Nothing links a created object back to its key, so losing the ledger
@@ -99,9 +95,7 @@ can carry any column, fan out, and poll; an IaC dependency cannot.
 - **No CLI.** It is reachable from Go only.
 
 **Needs.**
-- One converging form: desired state's per-step drift routing and journal-driven undo, available to
-  a graph's managed nodes.
-- Update reversal from the journalled prior intent, through the inverse model.
+- Journal-driven undo for a hand-written graph's managed nodes, as desired state has.
 - A key per row for fan-out, derived from the node's inputs.
 - The correlation parameter on `Managed`, stamped at create and used to adopt.
 - A `doc-graph`-style CLI command taking `managed`.

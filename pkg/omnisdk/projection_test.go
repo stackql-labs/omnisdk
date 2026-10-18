@@ -47,8 +47,8 @@ func (c *calls) matching(prefix string) []string {
 func ec2Stub(t *testing.T, seen *calls) *httptest.Server {
 	t.Helper()
 	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		action := r.URL.Query().Get("Action")
-		seen.add(action + "|" + r.URL.Query().Get("Filter.1.Value.1"))
+		action := formValue(r, "Action")
+		seen.add(action + "|" + formValue(r, "Filter.1.Value.1"))
 		w.Header().Set("Content-Type", "text/xml")
 		switch action {
 		case "DescribeVpcs":

@@ -22,13 +22,13 @@ import (
 
 // fixture builds the effector the way a caller would: one provider catalog, the document's own
 // operations, and the residue the document does not state.
-func fixture(t *testing.T, srv *httptest.Server) (docrun.Effector, string) {
+func fixture(t *testing.T, srv *httptest.Server) (facade.Effector, string) {
 	t.Helper()
 	return fixtureAs(t, srv, facade.AnonymousPrincipal, analyze.PermitAll())
 }
 
 // fixtureAs is fixture acting on behalf of principal, under policy.
-func fixtureAs(t *testing.T, srv *httptest.Server, principal string, policy facade.Policy) (docrun.Effector, string) {
+func fixtureAs(t *testing.T, srv *httptest.Server, principal string, policy facade.Policy) (facade.Effector, string) {
 	t.Helper()
 	reg, err := stackqldoc.OpenRegistry(os.DirFS("../../../pkg/docparse/stackqldoc/testdata"))
 	if err != nil {
@@ -67,7 +67,11 @@ func fixtureAs(t *testing.T, srv *httptest.Server, principal string, policy faca
 func TestCreateFromDocument(t *testing.T) {
 	var seen string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		seen = r.URL.Query().Get("Action") + "|" + r.URL.Query().Get("CidrBlock")
+		_ = r.ParseForm()
+		if r.Method != http.MethodPost || r.URL.RawQuery != "" {
+			t.Errorf("%s %s: want a form POST with nothing in the URL", r.Method, r.URL)
+		}
+		seen = r.PostForm.Get("Action") + "|" + r.PostForm.Get("CidrBlock")
 		w.Header().Set("Content-Type", "text/xml")
 		fmt.Fprint(w, `<CreateVpcResponse><vpc><vpcId>vpc-777</vpcId></vpc></CreateVpcResponse>`)
 	}))
@@ -94,7 +98,8 @@ func TestCreateFromDocument(t *testing.T) {
 func TestDeleteFromDocument(t *testing.T) {
 	var seen string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		seen = r.URL.Query().Get("Action") + "|" + r.URL.Query().Get("VpcId")
+		_ = r.ParseForm()
+		seen = r.PostForm.Get("Action") + "|" + r.PostForm.Get("VpcId")
 		w.Header().Set("Content-Type", "text/xml")
 		fmt.Fprint(w, `<DeleteVpcResponse><return>true</return></DeleteVpcResponse>`)
 	}))
@@ -142,61 +147,6 @@ func TestReadCarriesMetadataAndBody(t *testing.T) {
 	}
 	if string(identity) != "vpc-777" {
 		t.Errorf("identity = %s, want vpc-777", identity)
-	}
-}
-
-// Drift goes to the update the document states for the field that changed. The VPC declares five
-// operations under update; only ModifyVpcTenancy accepts InstanceTenancy, and an operation without a
-// body is sent only what changed, so the unchanged CIDR does not rule it out.
-func TestDriftRoutesToTheOperationAcceptingTheChange(t *testing.T) {
-	var seen string
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		q := r.URL.Query()
-		seen = q.Get("Action") + "|" + q.Get("VpcId") + "|" + q.Get("InstanceTenancy") + "|" + q.Get("CidrBlock")
-		w.Header().Set("Content-Type", "text/xml")
-		fmt.Fprint(w, `<ModifyVpcTenancyResponse><return>true</return></ModifyVpcTenancyResponse>`)
-	}))
-	defer srv.Close()
-
-	eff, addr := fixture(t, srv)
-	in := facade.EffectInput{
-		Mutation: []byte(`{"CidrBlock":"10.0.0.0/16","InstanceTenancy":"default"}`),
-		Identity: []byte("vpc-1"),
-		Params:   map[string]string{"region": "us-east-1"},
-	}
-	actual := []byte(`{"CidrBlock":"10.0.0.0/16","InstanceTenancy":"dedicated"}`)
-	ex, sent, err := eff.Route(context.Background(), addr+":insert", "update", "demo/aws/ec2/vpc", in, actual)
-	if err != nil {
-		t.Fatalf("route: %v", err)
-	}
-	if ex != addr+":update" || string(sent) != `{"InstanceTenancy":"default"}` {
-		t.Fatalf("route = %s %s, want %s:update with only InstanceTenancy", ex, sent, addr)
-	}
-	in.Mutation = sent
-	if _, err := eff.Effect(context.Background(), ex, "demo/aws/ec2/vpc", in); err != nil {
-		t.Fatalf("effect: %v", err)
-	}
-	if seen != "ModifyVpcTenancy|vpc-1|default|" {
-		t.Errorf("wire = %q, want ModifyVpcTenancy for vpc-1 carrying only the tenancy", seen)
-	}
-}
-
-// A change no update operation accepts is refused, and so is removing a field through an operation
-// that has no body to express the removal in.
-func TestDriftNothingConvergesIsRefused(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		t.Errorf("a refused drift reached the wire: %s", r.URL.RawQuery)
-	}))
-	defer srv.Close()
-	eff, addr := fixture(t, srv)
-	for name, c := range map[string]struct{ desired, actual string }{
-		"unaccepted field": {`{"EnableDnsSupport":"true"}`, `{"EnableDnsSupport":"false"}`},
-		"unset field":      {`{"InstanceTenancy":null}`, `{"InstanceTenancy":"dedicated"}`},
-	} {
-		in := facade.EffectInput{Mutation: []byte(c.desired), Identity: []byte("vpc-1"), Params: map[string]string{"region": "us-east-1"}}
-		if ex, _, err := eff.Route(context.Background(), addr+":insert", "update", "demo/aws/ec2/vpc", in, []byte(c.actual)); err == nil {
-			t.Errorf("%s: routed to %s; want a refusal", name, ex)
-		}
 	}
 }
 

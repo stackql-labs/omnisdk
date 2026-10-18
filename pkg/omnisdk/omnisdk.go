@@ -1242,7 +1242,7 @@ func NewSelectFromCatalog(dir, address string, args Args) (Plan, error) {
 	if err != nil {
 		return nil, err
 	}
-	ex, err := chooseExchange(c, principalOf(args), address, "select", docInputs(args), nil)
+	ex, err := chooseExchange(c, principalOf(args), address, "select", docInputs(args), nil, "")
 	if err != nil {
 		return nil, fmt.Errorf("omnisdk: %s: %w", address, err)
 	}

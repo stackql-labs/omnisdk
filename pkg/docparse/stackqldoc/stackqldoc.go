@@ -114,6 +114,9 @@ type ref struct {
 type method struct {
 	Operation ref `yaml:"operation"`
 	Config    struct {
+		RequestTranslate struct {
+			Algorithm string `yaml:"algorithm"`
+		} `yaml:"requestTranslate"`
 		Pagination struct {
 			RequestToken  tokenSpec `yaml:"requestToken"`
 			ResponseToken tokenSpec `yaml:"responseToken"`
@@ -190,6 +193,10 @@ type pathParam struct {
 	Name     string `yaml:"name"`
 	In       string `yaml:"in"`
 	Required bool   `yaml:"required"`
+	Schema   struct {
+		Type string `yaml:"type"`
+		Ref  string `yaml:"$ref"`
+	} `yaml:"schema"`
 	// Ref points at a shared declaration under components/parameters, in place of the fields.
 	Ref string `yaml:"$ref"`
 }
@@ -468,8 +475,9 @@ func (d *document) build(name, verb, path string, op pathOp, m method) aot.AOTEx
 			url:           strings.TrimRight(serverURL(srv.URL), "/") + route,
 			mediaType:     m.Request.MediaType,
 			params:        params,
-			parameters:    operationParams(op),
+			parameters:    d.operationParams(op),
 			bodyMediaType: bodyMediaType(op),
+			translate:     m.Config.RequestTranslate.Algorithm,
 		},
 		resp: response{
 			mediaType:  m.Response.MediaType,
@@ -732,22 +740,45 @@ func (e *aotExchange) Beta() (aot.Beta, bool) { return e.beta, e.beta != nil }
 // operationParams are the operation's declared inputs. The __-prefixed markers are excluded: they are
 // the operation's identity lifted out of the path key, already placed as fixed body params, and are
 // not something a caller supplies.
-func operationParams(op pathOp) []aot.Parameter {
+func (d *document) operationParams(op pathOp) []aot.Parameter {
 	out := make([]aot.Parameter, 0, len(op.Parameters))
 	for _, p := range op.Parameters {
 		if p.Name == "" || strings.HasPrefix(p.Name, "__") {
 			continue
 		}
-		out = append(out, parameter{p})
+		out = append(out, parameter{p: p, list: d.isArray(p)})
 	}
 	return out
 }
 
-type parameter struct{ p pathParam }
+// isArray reports whether a parameter's schema, followed through a components $ref, is an array.
+func (d *document) isArray(p pathParam) bool {
+	if p.Schema.Type == "array" {
+		return true
+	}
+	const prefix = "#/components/schemas/"
+	if !strings.HasPrefix(p.Schema.Ref, prefix) {
+		return false
+	}
+	node, ok := d.Components.Schemas[strings.TrimPrefix(p.Schema.Ref, prefix)]
+	if !ok {
+		return false
+	}
+	var s struct {
+		Type string `yaml:"type"`
+	}
+	return node.Decode(&s) == nil && s.Type == "array"
+}
+
+type parameter struct {
+	p    pathParam
+	list bool
+}
 
 func (p parameter) Name() string   { return p.p.Name }
 func (p parameter) In() string     { return p.p.In }
 func (p parameter) Required() bool { return p.p.Required }
+func (p parameter) List() bool     { return p.list }
 
 type request struct {
 	method        string
@@ -756,10 +787,12 @@ type request struct {
 	params        map[string]string
 	parameters    []aot.Parameter
 	bodyMediaType string
+	translate     string
 }
 
 func (r request) Parameters() []aot.Parameter { return r.parameters }
 func (r request) BodyMediaType() string       { return r.bodyMediaType }
+func (r request) Translate() string           { return r.translate }
 
 func (r request) Method() string    { return r.method }
 func (r request) URL() string       { return r.url }

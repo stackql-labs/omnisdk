@@ -28,8 +28,8 @@ Every write belongs to a declared resource, so each has an entry in the ledger: 
 recorded before the request and its identity after it. Credentials travel with the request and are
 never recorded.
 
-The resources may be given as a graph or as a flat list of desired state; both run on the same plan
-engine, under the same lock, ledger and WAL.
+The resources may be given as a graph or as a flat list of desired state. Desired state is written as
+a graph before it runs, so both run the same way, under the same lock, ledger and WAL.
 
 ## Side by side
 

@@ -1,27 +1,15 @@
 package omnisdk
 
 import (
-	"context"
-	"errors"
 	"fmt"
-	"maps"
 	"os"
-	"path/filepath"
 	"strings"
 	"time"
 
-	"github.com/stackql-labs/omnisdk/internal/apply"
 	"github.com/stackql-labs/omnisdk/internal/effect/dispatch"
 	"github.com/stackql-labs/omnisdk/internal/effect/docrun"
-	"github.com/stackql-labs/omnisdk/internal/journal"
-	"github.com/stackql-labs/omnisdk/internal/lease"
-	"github.com/stackql-labs/omnisdk/internal/ledger"
-	"github.com/stackql-labs/omnisdk/internal/merge"
 	"github.com/stackql-labs/omnisdk/internal/semantics"
-	"github.com/stackql-labs/omnisdk/internal/system_g/admit"
-	"github.com/stackql-labs/omnisdk/internal/system_g/exchange/docx"
 	"github.com/stackql-labs/omnisdk/internal/system_g/facade"
-	"github.com/stackql-labs/omnisdk/internal/unwind"
 	"github.com/stackql-labs/omnisdk/pkg/docparse/aot"
 	"github.com/stackql-labs/omnisdk/pkg/docparse/dsl"
 	"github.com/stackql-labs/omnisdk/pkg/docparse/dsl/gotemplate"
@@ -131,59 +119,50 @@ func converge(registry, name, state, runID string, resources []ManagedResource, 
 	case len(resources) == 0:
 		return nil, fmt.Errorf("omnisdk: no resources to converge")
 	}
-	effector, router, sem, exchanges, err := providerWiring(registry, resources, args)
-	if err != nil {
-		return nil, err
-	}
-	return &convergePlan{name: name, state: state, runID: runID, resources: resources,
-		effector: effector, router: router, semantics: sem, exchanges: exchanges, scope: args.Params, tuning: args.Tuning}, nil
+	return newDesiredPlan(registry, name, state, runID, resources, args)
 }
 
-// providerWiring builds an effector per provider the resources name, the router that derives drift
-// convergence from their documents, and the semantics declared over them.
+// providerWiring builds an effector per provider the resources name, and the semantics declared over
+// them: what undoes a failed run through its journal.
 //
 // Nothing here is a table of known services: a resource states its provider, its document address
 // and the residue its document leaves unsaid, so a new service is data a caller supplies rather than
 // an entry someone adds to this package.
-func providerWiring(registry string, resources []ManagedResource, args Args) (facade.Effector, facade.Router, facade.Semantics, map[string]string, error) {
+func providerWiring(registry string, resources []ManagedResource, args Args) (facade.Effector, facade.Semantics, error) {
 	reg, err := openRegistry(registry)
 	if err != nil {
-		return nil, nil, nil, nil, err
+		return nil, nil, err
 	}
 	dslReg, err := dsl.NewRegistry(append(gotemplate.Evaluators(), schemaxml.New())...)
 	if err != nil {
-		return nil, nil, nil, nil, err
+		return nil, nil, err
 	}
 
 	// A resource names a KEY; the effector resolves a published ADDRESS. Translating here keeps a
 	// resource free of the registry's namespacing, so the same declaration survives a registry that
 	// renames its providers.
-	exchanges := map[string]string{}
 	residues := map[string]map[string]docrun.Residue{}
 	catalogs := map[string]aot.Catalog{}
 	var decls []semantics.Declaration
 
 	for _, r := range resources {
 		if r.Provider() == "" || r.Address() == "" {
-			return nil, nil, nil, nil, fmt.Errorf("omnisdk: resource %q names no provider or address", r.Key())
+			return nil, nil, fmt.Errorf("omnisdk: resource %q names no provider or address", r.Key())
 		}
 		cat, ok := catalogs[r.Provider()]
 		if !ok {
 			cat, err = reg.Catalog(r.Provider())
 			if err != nil {
-				return nil, nil, nil, nil, fmt.Errorf("omnisdk: provider %q: %w", r.Provider(), err)
+				return nil, nil, fmt.Errorf("omnisdk: provider %q: %w", r.Provider(), err)
 			}
 			catalogs[r.Provider()] = cat
 			residues[r.Provider()] = map[string]docrun.Residue{}
 		}
 		qualified, err := qualify(cat, r.Address())
 		if err != nil {
-			return nil, nil, nil, nil, err
+			return nil, nil, err
 		}
 		residues[r.Provider()][qualified] = docrun.NewResidue(r.Identity(), r.AddressedBy(), r.CorrelationParam())
-		for _, verb := range []string{"insert", "update", "delete", "select"} {
-			exchanges[exchangeOf(r.Key(), verb)] = exchangeOf(qualified, verb)
-		}
 		decls = append(decls, semantics.Declaration{
 			Exchange: exchangeOf(qualified, "insert"),
 			Form:     "insert",
@@ -196,34 +175,32 @@ func providerWiring(registry string, resources []ManagedResource, args Args) (fa
 		})
 	}
 
-	routes := map[string]docrun.Effector{}
+	routes := map[string]facade.Effector{}
 	for prov, cat := range catalogs {
 		opts, err := providerOptions(args, cat.Provider())
 		if err != nil {
-			return nil, nil, nil, nil, err
+			return nil, nil, err
 		}
 		routes[prov] = docrun.New(cat, analyzerFor(cat), principalOf(args), dslReg, residues[prov], opts...)
 	}
 
 	sem, err := semantics.New(decls)
 	if err != nil {
-		return nil, nil, nil, nil, err
+		return nil, nil, err
 	}
-	effector, router := byProvider(resources, routes)
-	return effector, router, sem, exchanges, nil
+	return byProvider(resources, routes), sem, nil
 }
 
 // byProvider routes each key to the provider that declared it, so a collection spanning providers
 // reaches each one.
-func byProvider(resources []ManagedResource, routes map[string]docrun.Effector) (facade.Effector, facade.Router) {
+func byProvider(resources []ManagedResource, routes map[string]facade.Effector) facade.Effector {
 	effects := map[string]facade.Effector{}
-	drift := map[string]facade.Router{}
 	for _, r := range resources {
 		if eff, ok := routes[r.Provider()]; ok {
-			effects[r.Key()], drift[r.Key()] = eff, eff
+			effects[r.Key()] = eff
 		}
 	}
-	return dispatch.New(effects), dispatch.NewRouter(drift)
+	return dispatch.New(effects)
 }
 
 // exchangeOf names an operation: an address and the verb to run against it. Which concrete call that
@@ -259,124 +236,8 @@ func openRegistry(root string) (aot.Registry, error) {
 	return stackqldoc.OpenRegistry(os.DirFS(root), docCacheOption(root))
 }
 
-type convergePlan struct {
-	name      string
-	state     string
-	runID     string
-	resources []ManagedResource
-	effector  facade.Effector
-	router    facade.Router
-	semantics facade.Semantics
-	// exchanges translates a blueprint's resource-key exchange name into the registry address the
-	// effector resolves.
-	exchanges map[string]string
-	// scope is what the run supplies to every step — a region, a project, a subscription.
-	scope map[string]string
-	// tuning bounds the run: Parallelism keys converge at once, MaxPerHost requests per backend.
-	tuning Tuning
-}
-
 // leaseTTL bounds how long a dead run can hold the collection before another may break it.
 const leaseTTL = 5 * time.Minute
-
-func (p *convergePlan) Open(ctx context.Context) (Rows, error) {
-	log, err := ledger.NewFile(filepath.Join(p.state, "ledger"))
-	if err != nil {
-		return nil, err
-	}
-	journals, err := journal.NewFiles(filepath.Join(p.state, "journal"))
-	if err != nil {
-		return nil, err
-	}
-	runner := apply.New(log, journals, lease.NewLeaser(log, time.Now), merge.ThreeWay(),
-		p.effector, p.semantics, p.router, unwind.New(log, journals, p.semantics, p.effector), lease.All(), leaseTTL,
-		orInt(p.tuning.Parallelism, apply.DefaultParallelism))
-	// Keys converging at once share each backend's request budget, as a query's requests do.
-	ctx = admit.WithAdmissions(ctx, admit.PerScope(orInt(p.tuning.MaxPerHost, 8)))
-
-	dslReg, err := dsl.NewRegistry(append(gotemplate.Evaluators(), schemaxml.New())...)
-	if err != nil {
-		return nil, err
-	}
-	steps := make([]apply.Step, 0, len(p.resources))
-	for _, r := range p.resources {
-		inbound := make([]apply.Arrival, 0, len(r.Inbound()))
-		for _, in := range r.Inbound() {
-			name := in.As
-			if name == "" {
-				name = in.From
-			}
-			inbound = append(inbound, apply.Arrival{From: facade.LedgerKey(p.name + "/" + in.From), As: name})
-		}
-		exchange, ok := p.exchanges[exchangeOf(r.Key(), "insert")]
-		if !ok {
-			return nil, fmt.Errorf("omnisdk: no document operation for %q", r.Key())
-		}
-		// Scope travels with every step: a region or a project is stated once for the run, and the
-		// document declares it as a server variable each call needs. A resource's own parameters win,
-		// being the more specific statement.
-		params := make(map[string]string, len(p.scope)+len(r.Params()))
-		maps.Copy(params, p.scope)
-		maps.Copy(params, r.Params())
-		step := apply.Step{
-			Key:      facade.LedgerKey(p.name + "/" + r.Key()),
-			Exchange: exchange,
-			Desired:  r.Desired(),
-			Params:   params,
-			Inbound:  inbound,
-		}
-		if typ, body := r.Via(); typ != "" {
-			step.Via = docx.InboundProgram(dslReg, typ, body)
-		}
-		steps = append(steps, step)
-	}
-
-	res, err := runner.Apply(ctx, p.runID, p.name, steps)
-	if errors.Is(err, facade.ErrLeaseHeld) {
-		// How runs are kept apart is not the caller's business; that another is running is.
-		return nil, fmt.Errorf("omnisdk: collection %q is busy with another run", p.name)
-	}
-	if err != nil {
-		return nil, err
-	}
-	return convergeRows(ctx, log, res), nil
-}
-
-// convergeRows reports one row per key the run touched, and a final row when the run failed, so a
-// partial compensation is visible rather than implied by an absence.
-func convergeRows(ctx context.Context, log facade.Ledger, res apply.Result) Rows {
-	// A key applied and then compensated must not read as "applied": the run left nothing behind,
-	// and reporting otherwise sends someone looking for a resource that is gone.
-	undone := map[facade.LedgerKey]bool{}
-	if res.Unwound != nil {
-		for _, k := range res.Unwound.Compensated {
-			undone[k] = true
-		}
-	}
-	var out []Row
-	for _, k := range res.Applied {
-		row := Row{"key": string(k), "status": "applied"}
-		if undone[k] {
-			row["status"] = "applied, then compensated"
-		}
-		if e, _, found, err := log.Get(ctx, k); err == nil && found {
-			row["identity"] = string(e.Identity())
-		}
-		out = append(out, row)
-	}
-	if res.Err != nil {
-		row := Row{"key": string(res.Failed), "status": "failed", "error": res.Err.Error()}
-		if res.Unwound != nil {
-			row["compensated"] = keyStrings(res.Unwound.Compensated)
-			row["outstanding"] = keyStrings(res.Unwound.Outstanding)
-			if !res.Unwound.Complete() {
-				row["status"] = "failed; partially compensated"
-			}
-		}
-		out = append(out, row)
-	}
-	return &sliceRows{rows: out, i: -1}
-}
 
 func keyStrings(keys []facade.LedgerKey) []string {
 	out := make([]string, len(keys))
