@@ -833,7 +833,13 @@ type programTransform struct {
 }
 
 func (t programTransform) Apply(in facade.Page) (facade.Record, error) {
-	out, err := t.reg.Eval(t.typ, t.ctx, t.body, in.Bytes(facade.AnonymousPayload))
+	raw := in.Bytes(facade.AnonymousPayload)
+	if len(bytes.TrimSpace(raw)) == 0 {
+		// An empty reply — S3's CreateBucket answers 200 with no body — has nothing to transform; it
+		// is an empty document, not a malformed one.
+		return record.NewRecord(map[string]facade.Value{facade.AnonymousPayload: value.NewBytesValue([]byte("{}"))}), nil
+	}
+	out, err := t.reg.Eval(t.typ, t.ctx, t.body, raw)
 	if err != nil {
 		return nil, err
 	}
@@ -1190,8 +1196,11 @@ func (r renamed) Name() string { return r.name }
 // the default: a document that states nothing about its request, yet declares body parameters, is
 // describing a JSON API — form encoding is always stated outright.
 func bodyEncoding(mediaType string) httpx.Encoding {
-	if strings.Contains(mediaType, "x-www-form-urlencoded") {
+	switch {
+	case strings.Contains(mediaType, "x-www-form-urlencoded"):
 		return httpx.EncodingForm
+	case strings.Contains(mediaType, "xml"):
+		return httpx.EncodingXML
 	}
 	return httpx.EncodingJSON
 }

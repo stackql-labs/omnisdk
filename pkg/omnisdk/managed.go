@@ -314,7 +314,13 @@ func (d durable) open(ctx context.Context, o effectOp) facade.Records {
 	if _, err := d.run.journal.Append(ctx, k, o.e.exchange, semantics.FormOf(o.e.verb), prior); err != nil {
 		return notAttempted(err)
 	}
-	return &durableRecords{inner: effectRecords{Records: o.inner.Open(retryNever(ctx)), op: o}, d: d, key: k, entry: e, found: found}
+	// An object named by the caller is addressed by that name: it is its identity wherever the
+	// response reports none.
+	named := ""
+	if a := d.resource.AddressedBy(); a != "" && o.bound[a] != nil {
+		named = fmt.Sprint(o.bound[a])
+	}
+	return &durableRecords{inner: effectRecords{Records: o.inner.Open(retryNever(ctx)), op: o}, d: d, key: k, entry: e, found: found, named: named}
 }
 
 type durableRecords struct {
@@ -325,6 +331,7 @@ type durableRecords struct {
 	found    bool
 	first    map[string]any
 	identity string
+	named    string
 	done     bool
 	err      error
 }
@@ -385,8 +392,8 @@ func (r *durableRecords) commit(ctx context.Context) error {
 // identityOf is the resource's identity after this mutation: what its response reports, else what
 // the ledger already held.
 func (r *durableRecords) identityOf() string {
-	identity := ""
-	if r.found {
+	identity := r.named
+	if r.found && len(r.entry.Identity()) > 0 {
 		identity = string(r.entry.Identity())
 	}
 	v, ok := r.first[r.d.resource.Identity()]

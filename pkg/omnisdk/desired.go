@@ -49,7 +49,16 @@ type target struct {
 	cat                    aot.Catalog
 	addr                   string
 	createBody, updateBody bool
+	// createVerb and updateVerb are the document's verbs for making the object and for changing
+	// it: insert and update, or replace where a PUT is the only write it declares.
+	createVerb, updateVerb string
 	updates                []facade.Method
+	// read is how the object is read back: a get addressed by its identity, or — where the document
+	// has none — a list whose rows are matched on the identity column. readParams are the resource's
+	// own parameters the read takes, a resource group, say.
+	read       facade.Method
+	listed     bool
+	readParams map[string]string
 }
 
 // unaddressable is an input nothing supplies: a read requiring it never runs.
@@ -87,9 +96,9 @@ func newDesiredPlan(registry, name, state, runID string, resources []ManagedReso
 		if err != nil {
 			return nil, err
 		}
-		t := &target{cat: cat, addr: addr, createBody: takesBody(cat, addr, "insert"), updateBody: takesBody(cat, addr, "update")}
-		if ms, err := docsem.Capabilities(cat).Methods(addr, "update"); err == nil {
-			t.updates = ms
+		t, err := targetOf(cat, addr, r, args)
+		if err != nil {
+			return nil, err
 		}
 		p.targets[r.Key()] = t
 	}
@@ -105,6 +114,73 @@ func newDesiredPlan(registry, name, state, runID string, resources []ManagedReso
 		return nil, err
 	}
 	return p, nil
+}
+
+// targetOf is what the documents say of r's address: the verbs that make and change it, and how it
+// is read back.
+func targetOf(cat aot.Catalog, addr string, r ManagedResource, args Args) (*target, error) {
+	caps := docsem.Capabilities(cat)
+	t := &target{cat: cat, addr: addr}
+	for _, v := range []string{"insert", "replace"} {
+		if ms, err := caps.Methods(addr, v); err == nil && len(ms) > 0 {
+			t.createVerb = v
+			break
+		}
+	}
+	if t.createVerb == "" {
+		return nil, fmt.Errorf("omnisdk: %s: %s declares no insert or replace, so nothing can make it", r.Key(), addr)
+	}
+	for _, v := range []string{"update", "replace"} {
+		if ms, err := caps.Methods(addr, v); err == nil && len(ms) > 0 {
+			t.updateVerb, t.updates = v, ms
+			break
+		}
+	}
+	t.createBody, t.updateBody = takesBody(cat, addr, t.createVerb), takesBody(cat, addr, t.updateVerb)
+
+	// The read: a GET is all that may read an object back — a POST bound to select, such as a key
+	// listing, is a call with effects of its own. Addressed by the identity where one takes it,
+	// else a list the identity is found in. The most specific satisfiable wins either way.
+	have := map[string]bool{}
+	for k := range args.Params {
+		have[k] = true
+	}
+	for k := range r.Params() {
+		have[k] = true
+	}
+	selects, _ := caps.Methods(addr, "select")
+	pick := func(addressed bool) facade.Method {
+		var best facade.Method
+		for _, m := range selects {
+			ex, ok := docsem.Exchange(m)
+			if !ok || ex.Request().Method() != "GET" {
+				continue
+			}
+			takes := r.AddressedBy() != "" && m.Accepts(r.AddressedBy())
+			if addressed != takes {
+				continue
+			}
+			if slices.ContainsFunc(m.Required(), func(q string) bool { return !have[q] && !(addressed && q == r.AddressedBy()) }) {
+				continue
+			}
+			if best == nil || len(m.Required()) > len(best.Required()) {
+				best = m
+			}
+		}
+		return best
+	}
+	if t.read = pick(true); t.read == nil {
+		t.read, t.listed = pick(false), true
+	}
+	if t.read != nil {
+		t.readParams = map[string]string{}
+		for k, v := range r.Params() {
+			if k != r.AddressedBy() && declares(t.read, k) {
+				t.readParams[k] = v
+			}
+		}
+	}
+	return t, nil
 }
 
 // takesBody reports whether the operations for verb on addr take a request body. Every operation for
@@ -194,7 +270,7 @@ func failedKey(err error, owners map[string]string, collection string) facade.Le
 		}
 	}
 	for alias, k := range owners {
-		if strings.Contains(err.Error(), alias) {
+		if strings.Contains(err.Error(), alias) || strings.Contains(err.Error(), k) {
 			return facade.LedgerKey(collection + "/" + k)
 		}
 	}
@@ -300,16 +376,23 @@ func (p *desiredPlan) lower(prior func(string) map[string]any, outside func(stri
 		if path := r.Identity(); path != "" {
 			liveIdentity = path[strings.LastIndex(path, ".")+1:]
 		}
-		requires := []string{r.AddressedBy()}
-		if r.AddressedBy() == "" {
-			requires = []string{unaddressable}
-		}
-		nodes = append(nodes,
-			NewRecallNode(recall, r.Key()),
-			node{alias: live, address: t.addr, verb: "select", outer: true, requires: requires})
-		if r.AddressedBy() != "" {
+		// The read runs only once there is an identity to read by: a resource never made is absent,
+		// and a read without its address would list everything.
+		ln := node{alias: live, address: t.addr, verb: "select", outer: true, params: maps.Clone(t.readParams)}
+		switch {
+		case t.read == nil || (r.AddressedBy() == "" && !t.listed):
+			ln.requires = []string{unaddressable}
+		case t.listed:
+			// No get: the object is the listed row whose identity column holds its identity.
+			private := hidden(recall, "identity")
+			ln.pin, ln.requires = t.read.Name(), []string{private}
+			ln.on = []query.Predicate{query.NewEq(query.NewColumn(live, liveIdentity), query.NewColumn(recall, "identity"))}
+			wirings = append(wirings, NewWiring(live, []Inbound{NewInbound(recall, "identity", private)}, "", ""))
+		default:
+			ln.pin, ln.requires = t.read.Name(), []string{r.AddressedBy()}
 			wirings = append(wirings, NewWiring(live, []Inbound{NewInbound(recall, "identity", r.AddressedBy())}, "", ""))
 		}
+		nodes = append(nodes, NewRecallNode(recall, r.Key()), ln)
 		d := NewDiffNode(diff, r.Key(), live, liveIdentity, want).(intrinsicNode)
 		d.route = p.route(r, t, all)
 		nodes = append(nodes, d)
@@ -322,7 +405,7 @@ func (p *desiredPlan) lower(prior func(string) map[string]any, outside func(stri
 		if c := r.CorrelationParam(); c != "" {
 			createParams[c] = p.name + "/" + r.Key()
 		}
-		c := node{alias: create, address: t.addr, verb: "insert", params: createParams, whole: true}
+		c := node{alias: create, address: t.addr, verb: t.createVerb, params: createParams, whole: true}
 		if t.createBody {
 			c.body = nilFields(fields)
 		}
@@ -331,14 +414,24 @@ func (p *desiredPlan) lower(prior func(string) map[string]any, outside func(stri
 		for _, f := range fields {
 			createIn = append(createIn, NewInbound(diff, f, f))
 		}
-		wirings = append(wirings, NewWiring(create, createIn, "", ""))
+		if len(createIn) > 0 {
+			wirings = append(wirings, NewWiring(create, createIn, "", ""))
+		}
 
 		arms := []Arm{NewArm("create", query.NewEq(query.NewColumn(diff, "status"), query.NewLiteral(DiffAbsent)))}
 		gates := []Gate{NewGate(b+"_b", "create", create)}
 		aliases := []string{create}
 		for j, m := range p.reachable(r, t, all, consts) {
 			u := fmt.Sprintf("%s_u%d", b, j)
-			un := node{alias: u, address: t.addr, verb: "update", params: maps.Clone(consts), pin: m.Name(), whole: true}
+			// The update takes the resource's own parameters it declares — a resource group, say —
+			// but not the address, which arrives from the diff, nor anything only the create takes.
+			params := maps.Clone(consts)
+			for k, v := range r.Params() {
+				if k != r.AddressedBy() && declares(m, k) {
+					params[k] = v
+				}
+			}
+			un := node{alias: u, address: t.addr, verb: t.updateVerb, params: params, pin: m.Name(), whole: true}
 			if t.updateBody {
 				un.body = nilFields(all)
 			}
@@ -388,6 +481,9 @@ func (p *desiredPlan) reachable(r ManagedResource, t *target, fields []string, c
 	for k := range p.args.Params {
 		have[k] = true
 	}
+	for k := range r.Params() {
+		have[k] = true
+	}
 	for k := range consts {
 		have[k] = true
 	}
@@ -431,12 +527,24 @@ func (p *desiredPlan) route(r ManagedResource, t *target, fields []string) drift
 		}
 		sent := append(slices.Sorted(maps.Keys(send)), r.AddressedBy())
 		available := append(slices.Clone(sent), slices.Collect(maps.Keys(p.args.Params))...)
-		m, err := an.Analyze(context.Background(), analyze.NewStatement(principalOf(p.args), t.addr, "update", available, sent, ""))
+		available = append(available, slices.Collect(maps.Keys(r.Params()))...)
+		m, err := an.Analyze(context.Background(), analyze.NewStatement(principalOf(p.args), t.addr, t.updateVerb, available, sent, ""))
 		if err != nil {
 			return "", nil, err
 		}
 		return m.Name(), send, nil
 	}
+}
+
+// declares reports whether m's operation names input k among its parameters or server variables —
+// not merely accepts it, as a method taking a body accepts any field.
+func declares(m facade.Method, k string) bool {
+	ex, ok := docsem.Exchange(m)
+	if !ok {
+		return false
+	}
+	return slices.Contains(ex.Inputs(), k) ||
+		slices.ContainsFunc(ex.Request().Parameters(), func(p aot.Parameter) bool { return p.Name() == k })
 }
 
 func nilFields(names []string) map[string]any {

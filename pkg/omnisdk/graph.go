@@ -42,7 +42,8 @@ type Node interface {
 	// Fanout are inputs taking several values: the reference runs once per value, and once per
 	// combination where there are several — an IN list pushed down.
 	Fanout() map[string][]string
-	// Verb is what the reference does: "select", or "insert", "update" or "delete" for a mutation,
+	// Verb is what the reference does: "select", or "insert", "update", "replace" or "delete" for a
+	// mutation — replace being a write of the whole object, a PUT,
 	// whose request has an effect and whose rows are what it returns.
 	Verb() string
 	// Tuples are rows the node runs once each for, each binding its keys together — a multi-row
@@ -356,7 +357,7 @@ func NewGraphWithFilters(nodes []Node, wirings []Wiring, projections []Projectio
 			return nil, fmt.Errorf("omnisdk: alias %q contains a NUL byte", n.Alias())
 		case n.Address() == "" && n.Verb() != verbRecall && n.Verb() != verbDiff && n.Verb() != verbFunction:
 			return nil, fmt.Errorf("omnisdk: node %q has no address", n.Alias())
-		case !contains([]string{"select", "insert", "update", "delete", verbRecall, verbDiff, verbFunction}, n.Verb()):
+		case !contains([]string{"select", "insert", "update", "replace", "delete", verbRecall, verbDiff, verbFunction}, n.Verb()):
 			return nil, fmt.Errorf("omnisdk: node %q has unknown verb %q", n.Alias(), n.Verb())
 		case known[n.Alias()]:
 			return nil, fmt.Errorf("omnisdk: %q is referenced twice; give each reference an alias", n.Alias())

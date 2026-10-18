@@ -305,6 +305,40 @@ the tenancy alone: of the five operations the document binds to update, it is th
 accepts `InstanceTenancy`, and an operation without a body is sent only what differs.
 (`TestExampleVPCConvergesAndCorrectsDrift`.)
 
+**A tagged bucket on each cloud.** One resource per cloud, converged three times: the first run
+creates, the second only reads, and after the tags are changed outside the tool the third puts them
+back.
+
+```go
+gcs := omnisdk.NewResource("google/storage/bucket", "google", "storage.buckets",
+    []byte(`{"name":"omni-demo","labels":{"env":"dev","team":"platform"}}`),
+    nil, nil, "", "", "name", "bucket", "")
+
+azure := omnisdk.NewResource("azure/storage/account", "azure", "storage.storage_accounts",
+    []byte(`{"location":"eastus","kind":"StorageV2","sku":{"name":"Standard_LRS"},"tags":{"env":"dev"}}`),
+    map[string]string{"resource_group_name": "rg", "account_name": "omnidemo"},
+    nil, "", "", "name", "account_name", "")
+
+s3 := omnisdk.NewResource("aws/s3/bucket", "aws", "s3.buckets", []byte(`{}`),
+    map[string]string{"bucket": "omni-demo"}, nil, "", "", "Name", "bucket", "")
+s3Tags := omnisdk.NewResource("aws/s3/bucket-tags", "aws", "s3.bucket_taggings",
+    []byte(`{"Tagging":{"TagSet":{"Tag":[{"Key":"env","Value":"dev"}]}}}`),
+    nil, []omnisdk.Arrival{{From: "aws/s3/bucket", As: "bucket"}}, "", "", "", "bucket", "")
+```
+
+Each cloud differs only in what its document offers:
+
+| | create | read back | tags corrected by |
+|---|---|---|---|
+| GCS | `insert` | `get` by name | `patch` |
+| Azure | `create` (PUT) | listing the resource group, matched on `name` — the document has no get | `update` (PATCH) |
+| S3 | `create_bucket` (PUT) | listing buckets, matched on `Name` | `put_bucket_tagging`, a resource of its own with an XML body |
+
+A caller-named object's identity is the name it was given, where the response carries none — S3's
+create answers with an empty body. S3's tags are written again on every run: what S3 reads back for
+them is not the document written, so they never compare equal; the PUT is whole, so the tags are the
+same. (`TestExampleGCSBucket`, `TestExampleAzureStorageAccount`, `TestExampleS3BucketWithTags`.)
+
 **A failed run undoes itself.** Two widgets converged as one graph run, the second refused by the
 provider: the first is deleted, and the final row says so — `{"status":"failed",
 "compensated":["demo/w1"]}`. (`TestConvergeGraphCompensatesAFailedRun`.)

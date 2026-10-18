@@ -316,8 +316,11 @@ type Catalog interface {
 	Resources(service string) ([]string, error)
 	// Methods are a resource's methods, sorted.
 	Methods(service, resource string) ([]Method, error)
-	// Paths are every addressable exchange, sorted.
+	// Paths are every addressable exchange, sorted. Listing them parses every service's document.
 	Paths() []string
+	// Address is the published address of one resource of one service — the namespace included —
+	// or false where the service's document declares no such resource. Only that document is read.
+	Address(service, resource string) (string, bool)
 	// Exchange resolves one address to its first SELECT.
 	Exchange(path string) (AOTExchange, error)
 	// Operations returns every exchange a resource binds to one SQL verb, in the order the document

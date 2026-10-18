@@ -27,6 +27,9 @@ No caller change needed.
 - **Caller identity and access control:** `Args.Principal`; `Args.RBAC`, accepted and not yet enforced.
 - **Awaited operations:** a method's `x-stackQL-beta` in a provider document, or a document patch.
 - **Server-side projection and filtering:** a document's `queryParamPushdown` select, filter and top.
+- **Graph verbs and bodies:** a mutation node may run `replace` (a whole-object PUT); an XML request
+  body is written from a JSON document. Desired state reads an object back by listing where a
+  document has no get, and takes a caller-given name as the identity where a create returns none.
 
 - **Queries:** `UnionAll`; `NewMatchedNode`; `query.Cross` and `query.Listed` join forms.
 - **Cycles:** `Termination` with `Rounds`, `Records`, `Within`, `AnyOf`, `AllOf`; `WithTermination`.

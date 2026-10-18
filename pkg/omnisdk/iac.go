@@ -214,13 +214,13 @@ func exchangeOf(addr, verb string) string { return addr + ":" + verb }
 // published list is the authority, and matching against it means a blueprint never states the
 // namespace.
 func qualify(cat aot.Catalog, addr string) (string, error) {
-	suffix := "." + addr
-	for _, p := range cat.Paths() {
-		if strings.HasSuffix(p, suffix) {
-			return p, nil
+	// Only the named service's document is read; listing every address would parse them all.
+	if service, resource, ok := strings.Cut(addr, "."); ok {
+		if a, ok := cat.Address(service, resource); ok {
+			return a, nil
 		}
 	}
-	return "", fmt.Errorf("omnisdk: the registry publishes no address ending %q", suffix)
+	return "", fmt.Errorf("omnisdk: the registry publishes no address ending %q", "."+addr)
 }
 
 // openRegistry resolves a registry root once per run.
