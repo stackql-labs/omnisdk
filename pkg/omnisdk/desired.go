@@ -12,9 +12,14 @@ import (
 
 	"github.com/stackql-labs/omnisdk/internal/analyze"
 	"github.com/stackql-labs/omnisdk/internal/docsem"
+	"github.com/stackql-labs/omnisdk/internal/system_g/bind"
+	"github.com/stackql-labs/omnisdk/internal/system_g/exchange/docx"
 	"github.com/stackql-labs/omnisdk/internal/system_g/facade"
 	"github.com/stackql-labs/omnisdk/internal/unwind"
 	"github.com/stackql-labs/omnisdk/pkg/docparse/aot"
+	"github.com/stackql-labs/omnisdk/pkg/docparse/dsl"
+	"github.com/stackql-labs/omnisdk/pkg/docparse/dsl/gotemplate"
+	"github.com/stackql-labs/omnisdk/pkg/docparse/dsl/schemaxml"
 	"github.com/stackql-labs/omnisdk/pkg/query"
 )
 
@@ -59,6 +64,45 @@ type target struct {
 	read       facade.Method
 	listed     bool
 	readParams map[string]string
+	// incoming are the inputs that reach the resource from others: what arrives, or — through an
+	// inbound transform — what the transform provides.
+	incoming []string
+}
+
+// incomingOf names what reaches r from other resources. Without a transform it is each arrival
+// under its name; with one it is the transform's output, found by running the program once on
+// placeholder values — a program's keys are its shape, not its data. One whose keys depend on the
+// values is not covered.
+func incomingOf(r ManagedResource) ([]string, error) {
+	var inbox []string
+	for _, in := range r.Inbound() {
+		as := in.As
+		if as == "" {
+			as = in.From
+		}
+		inbox = append(inbox, as)
+	}
+	typ, body := r.Via()
+	if typ == "" {
+		return inbox, nil
+	}
+	reg, err := dsl.NewRegistry(append(gotemplate.Evaluators(), schemaxml.New())...)
+	if err != nil {
+		return nil, err
+	}
+	sample := map[string]any{}
+	for _, in := range inbox {
+		sample[in] = "placeholder"
+	}
+	shaped, err := docx.InboundProgram(reg, typ, body).Apply(bind.NewDocRecord(sample))
+	if err != nil {
+		return nil, fmt.Errorf("omnisdk: %s: inbound transform: %w", r.Key(), err)
+	}
+	out, ok := bind.DocMap(shaped)
+	if !ok {
+		return nil, fmt.Errorf("omnisdk: %s: inbound transform did not yield a document", r.Key())
+	}
+	return slices.Sorted(maps.Keys(out)), nil
 }
 
 // unaddressable is an input nothing supplies: a read requiring it never runs.
@@ -89,9 +133,6 @@ func newDesiredPlan(registry, name, state, runID string, resources []ManagedReso
 				return nil, fmt.Errorf("omnisdk: %s: parameter %q is empty", r.Key(), k)
 			}
 		}
-		if typ, _ := r.Via(); typ != "" {
-			return nil, fmt.Errorf("omnisdk: %s declares an inbound transform, which a converging graph cannot place: it does not say which parameters the transform provides", r.Key())
-		}
 		cat, ok := catalogs[r.Provider()]
 		if !ok {
 			if cat, err = reg.Catalog(r.Provider()); err != nil {
@@ -103,7 +144,11 @@ func newDesiredPlan(registry, name, state, runID string, resources []ManagedReso
 		if err != nil {
 			return nil, err
 		}
-		t, err := targetOf(cat, addr, r, args)
+		incoming, err := incomingOf(r)
+		if err != nil {
+			return nil, err
+		}
+		t, err := targetOf(cat, addr, r, args, incoming)
 		if err != nil {
 			return nil, err
 		}
@@ -125,9 +170,9 @@ func newDesiredPlan(registry, name, state, runID string, resources []ManagedReso
 
 // targetOf is what the documents say of r's address: the verbs that make and change it, and how it
 // is read back.
-func targetOf(cat aot.Catalog, addr string, r ManagedResource, args Args) (*target, error) {
+func targetOf(cat aot.Catalog, addr string, r ManagedResource, args Args, incoming []string) (*target, error) {
 	caps := docsem.Capabilities(cat)
-	t := &target{cat: cat, addr: addr}
+	t := &target{cat: cat, addr: addr, incoming: incoming}
 	for _, v := range []string{"insert", "replace"} {
 		if ms, err := caps.Methods(addr, v); err == nil && len(ms) > 0 {
 			t.createVerb = v
@@ -157,12 +202,8 @@ func targetOf(cat aot.Catalog, addr string, r ManagedResource, args Args) (*targ
 	}
 	// What it reads from other resources reaches the read too: a container is read within its
 	// account.
-	for _, in := range r.Inbound() {
-		if in.As != "" {
-			have[in.As] = true
-		} else {
-			have[in.From] = true
-		}
+	for _, in := range incoming {
+		have[in] = true
 	}
 	selects, _ := caps.Methods(addr, "select")
 	pick := func(addressed bool) facade.Method {
@@ -428,6 +469,33 @@ func (p *desiredPlan) lower(prior func(string) map[string]any, outside func(stri
 			consts[as] = id
 		}
 
+		// An inbound transform reshapes what arrives into the parameters the calls take: it is a
+		// node of its own between the arrivals and every call, as T_in is on any wiring.
+		if typ, body := r.Via(); typ != "" {
+			if len(consts) > 0 {
+				return nil, nil, nil, fmt.Errorf("omnisdk: %s: an inbound transform over a resource outside the run is not supported", r.Key())
+			}
+			shape := b + "_s"
+			var inbox []string
+			for _, in := range r.Inbound() {
+				if in.As != "" {
+					inbox = append(inbox, in.As)
+				} else {
+					inbox = append(inbox, in.From)
+				}
+			}
+			nodes = append(nodes, intrinsicNode{node: node{alias: shape, verb: verbShape}, inbox: inbox,
+				viaType: typ, viaBody: body, provides: t.incoming})
+			if len(arrivals) > 0 {
+				wirings = append(wirings, NewWiring(shape, arrivals, "", ""))
+			}
+			arrivals = nil
+			for _, name := range t.incoming {
+				arrivals = append(arrivals, NewInbound(shape, name, name))
+			}
+			owners[shape] = r.Key()
+		}
+
 		liveIdentity := r.AddressedBy()
 		if path := r.Identity(); path != "" {
 			liveIdentity = path[strings.LastIndex(path, ".")+1:]
@@ -624,12 +692,8 @@ func (p *desiredPlan) reachable(r ManagedResource, t *target, fields []string, c
 	for k := range consts {
 		have[k] = true
 	}
-	for _, in := range r.Inbound() {
-		as := in.As
-		if as == "" {
-			as = in.From
-		}
-		have[as] = true
+	for _, in := range t.incoming {
+		have[in] = true
 	}
 	var out []facade.Method
 	for _, m := range t.updates {
@@ -665,6 +729,7 @@ func (p *desiredPlan) route(r ManagedResource, t *target, fields []string) drift
 		sent := append(slices.Sorted(maps.Keys(send)), r.AddressedBy())
 		available := append(slices.Clone(sent), slices.Collect(maps.Keys(p.args.Params))...)
 		available = append(available, slices.Collect(maps.Keys(r.Params()))...)
+		available = append(available, t.incoming...)
 		m, err := an.Analyze(context.Background(), analyze.NewStatement(principalOf(p.args), t.addr, t.updateVerb, available, sent, ""))
 		if err != nil {
 			return "", nil, err

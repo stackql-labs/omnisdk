@@ -156,3 +156,38 @@ func TestFailedRunRestoresAnUpdate(t *testing.T) {
 		t.Errorf("store = %v, want w1 kept and its size restored to L", store.items)
 	}
 }
+
+// A resource's inbound transform reshapes what arrives into the parameters its calls take: here the
+// VPC's id arrives as "vpc" and the transform writes it as CreateSubnet's VpcId.
+func TestInboundTransformShapesWhatArrives(t *testing.T) {
+	requireCorpus(t)
+	t.Setenv("AWS_ACCESS_KEY_ID", "AKIATEST")
+	t.Setenv("AWS_SECRET_ACCESS_KEY", "secret")
+	var mu sync.Mutex
+	gotVpc := ""
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = r.ParseForm()
+		mu.Lock()
+		defer mu.Unlock()
+		w.Header().Set("Content-Type", "text/xml")
+		switch param(r, "Action") {
+		case "CreateVpc":
+			fmt.Fprint(w, `<CreateVpcResponse><vpc><vpcId>vpc-001</vpcId></vpc></CreateVpcResponse>`)
+		case "CreateSubnet":
+			gotVpc = param(r, "VpcId")
+			fmt.Fprint(w, `<CreateSubnetResponse><subnet><subnetId>subnet-002</subnetId></subnet></CreateSubnetResponse>`)
+		default:
+			http.Error(w, "unexpected "+param(r, "Action"), http.StatusBadRequest)
+		}
+	}))
+	defer srv.Close()
+	vpc := omnisdk.NewResource("aws/ec2/vpc", "aws", "ec2.vpcs", []byte(`{"CidrBlock":"10.42.0.0/16"}`),
+		nil, nil, "", "", "line_items.VpcId", "VpcId", "")
+	subnet := omnisdk.NewResource("aws/ec2/subnet", "aws", "ec2.subnets", []byte(`{"CidrBlock":"10.42.1.0/24"}`),
+		nil, []omnisdk.Arrival{{From: "aws/ec2/vpc", As: "vpc"}},
+		"golang_template_json_v0.1.0", `{"VpcId":"{{ .vpc }}"}`, "line_items.SubnetId", "SubnetId", "")
+	converge(t, corpus, t.TempDir(), "r1", awsArgs(srv), vpc, subnet)
+	if gotVpc != "vpc-001" {
+		t.Errorf("CreateSubnet VpcId = %q, want the VPC's id through the transform", gotVpc)
+	}
+}

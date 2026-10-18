@@ -24,6 +24,7 @@ import (
 	"github.com/stackql-labs/omnisdk/internal/system_g/plan"
 	"github.com/stackql-labs/omnisdk/internal/system_g/retry"
 	"github.com/stackql-labs/omnisdk/pkg/docparse/aot"
+	"github.com/stackql-labs/omnisdk/pkg/docparse/dsl"
 	"github.com/stackql-labs/omnisdk/pkg/query"
 )
 
@@ -37,6 +38,7 @@ const (
 	verbRecall   = "recall"
 	verbDiff     = "diff"
 	verbFunction = "function"
+	verbShape    = "shape"
 )
 
 // Diff statuses: what a diff found, for a branch to choose on.
@@ -59,6 +61,10 @@ type intrinsicNode struct {
 	// route, on a diff, chooses the update for a drifted object: the method that converges it, in
 	// column update, and the fields to send it. Nil sends the whole mutation and names no method.
 	route driftRoute
+	// A shape node's inbox, the program reshaping it, and the names the program provides.
+	inbox            []string
+	viaType, viaBody string
+	provides         []string
 }
 
 // driftRoute chooses the update for a drift: given the merged mutation and the live object, the
@@ -154,12 +160,27 @@ type appliedEffect struct {
 func (r *managedRun) keyOf(k string) facade.LedgerKey { return facade.LedgerKey(r.name + "/" + k) }
 
 // intrinsicSpec compiles a recall or diff node.
-func intrinsicSpec(name string, n intrinsicNode, run *managedRun, planned map[string]string) (plan.ExchangeSpec, []plan.BetaEdge, error) {
+func intrinsicSpec(name string, n intrinsicNode, run *managedRun, planned map[string]string, reg dsl.Registry) (plan.ExchangeSpec, []plan.BetaEdge, error) {
 	if run == nil {
 		return nil, nil, fmt.Errorf("omnisdk: %s: a %s node runs only in a converging graph (ConvergeGraph)", n.Alias(), n.Verb())
 	}
 	out := func(attr string) string { return hidden(n.Alias(), attr) }
 	switch n.Verb() {
+	case verbShape:
+		// T_in on its own: the inbox reshaped by the program, emitted as the names it provides for
+		// the nodes after it. It makes no request.
+		var outs []string
+		for _, p := range n.provides {
+			outs = append(outs, out(p))
+		}
+		spec := plan.NewExchangeSpec(name, n.inbox, outs, func(bound map[string]any) facade.Operator {
+			row := map[string]any{}
+			for _, p := range n.provides {
+				row[out(p)] = bound[p]
+			}
+			return staticOp{rows: []map[string]any{row}}
+		}, nil)
+		return plan.WithInbound(spec, docx.InboundProgram(reg, n.viaType, n.viaBody)), nil, nil
 	case verbRecall:
 		return plan.NewExchangeSpec(name, nil, []string{out("identity")}, func(map[string]any) facade.Operator {
 			row := map[string]any{out("identity"): ""}
@@ -575,7 +596,7 @@ func ConvergeGraph(registry, name, state, runID string, g Graph, managed []Manag
 	}
 	for _, n := range g.Nodes() {
 		_, isManaged := nodes[n.Alias()]
-		mutating := n.Verb() != "select" && n.Verb() != verbRecall && n.Verb() != verbDiff
+		mutating := n.Verb() != "select" && n.Verb() != verbRecall && n.Verb() != verbDiff && n.Verb() != verbShape && n.Verb() != verbFunction
 		switch {
 		case mutating && !isManaged:
 			return nil, fmt.Errorf("omnisdk: %s %s belongs to no managed resource; a converging run records every mutation", n.Verb(), n.Alias())

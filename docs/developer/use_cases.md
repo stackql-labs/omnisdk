@@ -145,9 +145,9 @@ document leaves unsaid.
 }'
 ```
 
-`inbound` is the β edge: the VPC's recorded identity arrives as `VpcId`. A reshaping `T_in`
-(`via_type`/`via`) is refused here, since a resource does not say which parameters it provides;
-where one is needed, write the run as a graph, whose wirings state them.
+`inbound` is the β edge: the VPC's recorded identity arrives as `VpcId`. Where the shape differs
+from what the next call accepts, `via_type`/`via` reshape what arrives — the same `T_in` a query
+uses.
 
 The three fields a document does not state:
 

@@ -16,7 +16,6 @@ Migrating from `v0.1.3-alpha05`, the version stackql consumes, to the current tr
 | `aot.AOTExchange` | Gains `Beta() (Beta, bool)` | Only a caller that implements `AOTExchange` must add it. |
 | `aot.Parameter`, `aot.Request` | Gain `List() bool`, and `Translate()` and `Transpose()` | Only a caller that implements them must add them. |
 | `aot.AOTExchange` | Gains `Pushdown() (Pushdown, bool)` | Only a caller that implements `AOTExchange` must add it. |
-| A resource declaring an inbound transform (`via_type`/`via`) | Refused by `DesiredState` | Wire the transform in a graph, where the names it provides are stated. |
 
 ## Additions
 

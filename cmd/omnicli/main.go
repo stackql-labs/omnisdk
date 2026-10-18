@@ -9,6 +9,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -168,44 +169,42 @@ func main() {
 	// leaves unsaid. No Go entry is added for a new service — the same relationship doc-graph has to
 	// a query.
 	iacApply := &cobra.Command{
-		Use:   "iac-apply <registry> <spec-json>",
-		Short: "Converge resources declared inline against provider documents; CREATES REAL RESOURCES",
-		Args:  cobra.ExactArgs(2),
+		Use:   "iac-apply <registry> <spec-json | @file>",
+		Short: "Converge resources declared inline or in a file against provider documents; CREATES REAL RESOURCES",
+		Long: `Converge resources declared inline or in a file against provider documents.
+
+The spec is JSON, or @path to read it from a file. --name and --state name the collection and where
+its ledger lives, over whatever the spec says; a file holding only resources needs both.`,
+		Args: cobra.ExactArgs(2),
 		RunE: withSinks(func(cmd *cobra.Command, w, logw io.Writer) error {
-			var spec struct {
-				Name      string `json:"name"`
-				State     string `json:"state"`
-				RunID     string `json:"run_id,omitempty"`
-				Resources []struct {
-					Key      string            `json:"key"`
-					Provider string            `json:"provider"`
-					Address  string            `json:"address"`
-					Desired  json.RawMessage   `json:"desired,omitempty"`
-					Params   map[string]string `json:"params,omitempty"`
-					Inbound  []struct {
-						From string `json:"from"`
-						As   string `json:"as,omitempty"`
-					} `json:"inbound,omitempty"`
-					ViaType          string `json:"via_type,omitempty"`
-					Via              string `json:"via,omitempty"`
-					Identity         string `json:"identity,omitempty"`
-					AddressedBy      string `json:"addressed_by,omitempty"`
-					CorrelationParam string `json:"correlation_param,omitempty"`
-				} `json:"resources"`
-				Args *omnisdk.Args `json:"args,omitempty"`
-			}
-			if err := json.Unmarshal([]byte(cmdArgs(cmd)[1]), &spec); err != nil {
-				return fmt.Errorf("spec json: %w", err)
-			}
-			resources := make([]omnisdk.ManagedResource, 0, len(spec.Resources))
-			for _, r := range spec.Resources {
-				inbound := make([]omnisdk.Arrival, 0, len(r.Inbound))
-				for _, in := range r.Inbound {
-					inbound = append(inbound, omnisdk.Arrival{From: in.From, As: in.As})
+			raw := []byte(cmdArgs(cmd)[1])
+			if path, isFile := strings.CutPrefix(cmdArgs(cmd)[1], "@"); isFile {
+				b, err := os.ReadFile(path)
+				if err != nil {
+					return fmt.Errorf("spec file: %w", err)
 				}
-				resources = append(resources, omnisdk.NewResource(r.Key, r.Provider, r.Address,
-					[]byte(r.Desired), r.Params, inbound, r.ViaType, r.Via,
-					r.Identity, r.AddressedBy, r.CorrelationParam))
+				raw = b
+			}
+			var spec struct {
+				Name  string        `json:"name"`
+				State string        `json:"state"`
+				RunID string        `json:"run_id,omitempty"`
+				Args  *omnisdk.Args `json:"args,omitempty"`
+			}
+			// A file of resources alone is a list; it carries no collection, state or args.
+			if trimmed := bytes.TrimSpace(raw); len(trimmed) > 0 && trimmed[0] == '{' {
+				if err := json.Unmarshal(raw, &spec); err != nil {
+					return fmt.Errorf("spec json: %w", err)
+				}
+			}
+			resources, err := omnisdk.ParseResources(raw)
+			if err != nil {
+				return fmt.Errorf("spec: %w", err)
+			}
+			for flag, field := range map[string]*string{"name": &spec.Name, "state": &spec.State, "run-id": &spec.RunID} {
+				if v, _ := cmd.Flags().GetString(flag); v != "" {
+					*field = v
+				}
 			}
 			a := omnisdk.Args{}
 			if spec.Args != nil {
@@ -236,6 +235,9 @@ func main() {
 			return streamRows(pl, w)
 		}),
 	}
+	iacApply.Flags().String("name", "", "collection to apply under, over the spec's name")
+	iacApply.Flags().String("state", "", "directory holding the collection's ledger, over the spec's state")
+	iacApply.Flags().String("run-id", "", "journal name for this run, over the spec's (default: a UTC timestamp)")
 	root.AddCommand(iacApply)
 
 	iacCmd := &cobra.Command{

@@ -355,9 +355,9 @@ func NewGraphWithFilters(nodes []Node, wirings []Wiring, projections []Projectio
 			return nil, fmt.Errorf("omnisdk: a node has neither an alias nor an address")
 		case strings.ContainsRune(n.Alias(), 0):
 			return nil, fmt.Errorf("omnisdk: alias %q contains a NUL byte", n.Alias())
-		case n.Address() == "" && n.Verb() != verbRecall && n.Verb() != verbDiff && n.Verb() != verbFunction:
+		case n.Address() == "" && n.Verb() != verbRecall && n.Verb() != verbDiff && n.Verb() != verbFunction && n.Verb() != verbShape:
 			return nil, fmt.Errorf("omnisdk: node %q has no address", n.Alias())
-		case !contains([]string{"select", "insert", "update", "replace", "delete", verbRecall, verbDiff, verbFunction}, n.Verb()):
+		case !contains([]string{"select", "insert", "update", "replace", "delete", verbRecall, verbDiff, verbFunction, verbShape}, n.Verb()):
 			return nil, fmt.Errorf("omnisdk: node %q has unknown verb %q", n.Alias(), n.Verb())
 		case known[n.Alias()]:
 			return nil, fmt.Errorf("omnisdk: %q is referenced twice; give each reference an alias", n.Alias())
@@ -700,7 +700,7 @@ func NewGraphQuery(dir string, g Graph, args Args) (Plan, error) {
 					return nil, fmt.Errorf("omnisdk: diff %q reads %q, which must be an outer node declared before it, so an absent object still reaches the diff", alias, in.live)
 				}
 			}
-			spec, b, err := intrinsicSpec(name, in, args.managed, planned)
+			spec, b, err := intrinsicSpec(name, in, args.managed, planned, reg)
 			if err != nil {
 				return nil, err
 			}
