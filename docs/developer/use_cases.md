@@ -74,7 +74,7 @@ Neither is defaulted: both decide which resources a run applies to.
 
 ```bash
 ./build/omnicli iac --registry test/corpus/registry --handle aws-vpc-subnet \
-  --aws-region us-east-1 --state cicd/work/iac-state --name scratch \
+  --aws-region "${_AWS_REGION}" --state cicd/work/iac-state --name scratch \
   --input '{"vpc_cidr":"10.42.0.0/16","subnet_cidr":"10.42.1.0/24","vpc_tags":{"Name":"scratch"}}'
 ```
 
@@ -108,7 +108,7 @@ the easy way to see it:
 
 ```bash
 ./build/omnicli iac --registry test/corpus/registry --handle aws-vpc-subnet \
-  --aws-region us-east-1 --state cicd/work/iac-state --name failtest \
+  --aws-region "${_AWS_REGION}" --state cicd/work/iac-state --name failtest \
   --input '{"vpc_cidr":"10.43.0.0/16","subnet_cidr":"192.168.1.0/24"}' 
 ```
 
@@ -141,8 +141,8 @@ document leaves unsaid.
      "inbound": [{"from": "aws/ec2/vpc", "as": "VpcId"}],
      "identity": "line_items.SubnetId", "addressed_by": "SubnetId"}
   ],
-  "args": {"params": {"region": "us-east-1"}}
-}' --aws-region us-east-1
+  "args": {"params": {"region": "'"${_AWS_REGION}"'"}}
+}' --aws-region "${_AWS_REGION}"
 ```
 
 `inbound` is the β edge: the VPC's recorded identity arrives as `VpcId`. A reshaping `T_in`
@@ -169,7 +169,7 @@ which the document declares, so no field is scattered into the query:
      "desired": {"name": "demo-net", "autoCreateSubnetworks": false},
      "addressed_by": "network"}
   ],
-  "args": {"params": {"project": "PROJECT"}}
+  "args": {"params": {"project": "'"${_GOOGLE_PROJECT_ID}"'"}}
 }'
 ```
 
@@ -182,19 +182,26 @@ which the document declares, so no field is scattered into the query:
     {"key": "azure/network/vnet", "provider": "azure", "address": "network.virtual_networks",
      "desired": {"location": "eastus",
                  "properties": {"addressSpace": {"addressPrefixes": ["10.42.0.0/16"]}}},
-     "params": {"resource_group_name": "RG", "virtual_network_name": "demo-vnet"},
+     "params": {"resource_group_name": "'"${_AZURE_RESOURCE_GROUP}"'", "virtual_network_name": "demo-vnet"},
      "addressed_by": "virtual_network_name"}
   ],
-  "args": {"params": {"subscription_id": "SUBSCRIPTION"}}
+  "args": {"params": {"subscription_id": "'"${AZURE_SUBSCRIPTION_ID}"'"}}
 }'
 ```
 
 ### Tagged buckets, run for real
 
 One tagged bucket per cloud. Each command creates the bucket on the first run, reads it and changes
-nothing on a rerun, and puts the tags back if they are edited elsewhere. Bucket and account names are
-global: change `omni-demo-…` to something of your own. Credentials come from the environment, as for
-any query (see the developer guide).
+nothing on a rerun, and puts the tags back if they are edited elsewhere. Credentials and scope come
+from `secrets.sh`; bucket and account names are global, so they are derived from your project and
+subscription. The Azure resource group must already exist:
+
+```bash
+source cicd/vol/vendor-secrets/secrets.sh
+export _AZURE_RESOURCE_GROUP='an-existing-resource-group'
+export _OMNI_BUCKET="omni-demo-${_GOOGLE_PROJECT_ID}"
+export _OMNI_STORAGE_ACCOUNT="omni$(printf %s "${AZURE_SUBSCRIPTION_ID}" | tr -d - | cut -c1-16)"
+```
 
 **GCS** — labels on the bucket:
 
@@ -203,10 +210,10 @@ any query (see the developer guide).
   "name": "buckets", "state": "cicd/work/iac-state",
   "resources": [
     {"key": "google/storage/bucket", "provider": "google", "address": "storage.buckets",
-     "desired": {"name": "omni-demo-gcs-1234", "labels": {"env": "dev", "team": "platform"}},
+     "desired": {"name": "'"${_OMNI_BUCKET}"'", "labels": {"env": "dev", "team": "platform"}},
      "identity": "name", "addressed_by": "bucket"}
   ],
-  "args": {"params": {"project": "PROJECT"}}
+  "args": {"params": {"project": "'"${_GOOGLE_PROJECT_ID}"'"}}
 }'
 ```
 
@@ -219,10 +226,10 @@ any query (see the developer guide).
     {"key": "azure/storage/account", "provider": "azure", "address": "storage.storage_accounts",
      "desired": {"location": "eastus", "kind": "StorageV2", "sku": {"name": "Standard_LRS"},
                  "tags": {"env": "dev", "team": "platform"}},
-     "params": {"resource_group_name": "RG", "account_name": "omnidemo1234"},
+     "params": {"resource_group_name": "'"${_AZURE_RESOURCE_GROUP}"'", "account_name": "'"${_OMNI_STORAGE_ACCOUNT}"'"},
      "identity": "name", "addressed_by": "account_name"}
   ],
-  "args": {"params": {"subscription_id": "SUBSCRIPTION"}}
+  "args": {"params": {"subscription_id": "'"${AZURE_SUBSCRIPTION_ID}"'"}}
 }'
 ```
 
@@ -233,7 +240,7 @@ any query (see the developer guide).
   "name": "buckets", "state": "cicd/work/iac-state",
   "resources": [
     {"key": "aws/s3/bucket", "provider": "aws", "address": "s3.buckets",
-     "desired": {}, "params": {"bucket": "omni-demo-s3-1234"},
+     "desired": {}, "params": {"bucket": "'"${_OMNI_BUCKET}"'"},
      "identity": "Name", "addressed_by": "bucket"},
     {"key": "aws/s3/bucket-tags", "provider": "aws", "address": "s3.bucket_taggings",
      "desired": {"Tagging": {"TagSet": {"Tag": [{"Key": "env", "Value": "dev"},
@@ -241,8 +248,8 @@ any query (see the developer guide).
      "inbound": [{"from": "aws/s3/bucket", "as": "bucket"}],
      "addressed_by": "bucket"}
   ],
-  "args": {"params": {"region": "us-east-1"}}
-}' --aws-region us-east-1
+  "args": {"params": {"region": "'"${_AWS_REGION}"'"}}
+}' --aws-region "${_AWS_REGION}"
 ```
 
 Outside `us-east-1`, S3 needs the region in the bucket's own body as well:
@@ -254,7 +261,7 @@ collection made, dependents first — the S3 tags before their bucket:
 ```bash
 ./build/omnicli iac-destroy --registry test/corpus/registry --name buckets \
   --state cicd/work/iac-state \
-  --params '{"project":"PROJECT","subscription_id":"SUBSCRIPTION","region":"us-east-1"}'
+  --params '{"project":"'"${_GOOGLE_PROJECT_ID}"'","subscription_id":"'"${AZURE_SUBSCRIPTION_ID}"'","region":"'"${_AWS_REGION}"'"}'
 ```
 
 Each row says what happened to a key: `destroyed`, or `outstanding` with the provider's reason for
