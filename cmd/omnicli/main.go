@@ -228,13 +228,8 @@ func main() {
 			if (a.Tuning == omnisdk.Tuning{}) {
 				a.Tuning = t.facade()
 			}
-			runID := spec.RunID
-			if runID == "" {
-				// The run id names this run's journal; the CLI stamps one when the spec leaves it out.
-				runID = time.Now().UTC().Format("20060102T150405Z")
-			}
 			pl, err := omnisdk.Prepare(cmdArgs(cmd)[0], omnisdk.DesiredState(resources),
-				omnisdk.NewLedger(spec.Name, spec.State, runID), a)
+				omnisdk.NewLedger(spec.Name, spec.State, runIDOr(spec.RunID)), a)
 			if err != nil {
 				return err
 			}
@@ -269,7 +264,7 @@ func main() {
 			a.Endpoint, a.Log, a.Tuning = endpoint, logw, t.facade()
 			a.InsecureSkipTLSVerify = insecureTLS
 			pl, err := omnisdk.Prepare(mustFlag(cmd, "registry"), omnisdk.DesiredState(resources),
-				omnisdk.NewLedger(mustFlag(cmd, "name"), mustFlag(cmd, "state"), mustFlag(cmd, "run-id")), a)
+				omnisdk.NewLedger(mustFlag(cmd, "name"), mustFlag(cmd, "state"), runIDOr(mustFlag(cmd, "run-id"))), a)
 			if err != nil {
 				return err
 			}
@@ -288,6 +283,39 @@ func main() {
 		_ = iacCmd.MarkFlagRequired(f)
 	}
 	root.AddCommand(iacCmd)
+
+	iacDestroy := &cobra.Command{
+		Use:   "iac-destroy",
+		Short: "Destroy everything a collection's ledger holds, dependents first; DELETES REAL RESOURCES",
+		RunE: withSinks(func(cmd *cobra.Command, w, logw io.Writer) error {
+			a := omnisdk.Args{Params: map[string]string{}}
+			if p := mustFlag(cmd, "params"); p != "" {
+				if err := json.Unmarshal([]byte(p), &a.Params); err != nil {
+					return fmt.Errorf("--params: %w", err)
+				}
+			}
+			if _, given := a.Params["region"]; !given && awsRegion != "" {
+				a.Params["region"] = awsRegion
+			}
+			a.Endpoint, a.Log, a.Tuning = endpoint, logw, t.facade()
+			a.InsecureSkipTLSVerify = insecureTLS
+			pl, err := omnisdk.Prepare(mustFlag(cmd, "registry"), omnisdk.Destroy(),
+				omnisdk.NewLedger(mustFlag(cmd, "name"), mustFlag(cmd, "state"), runIDOr(mustFlag(cmd, "run-id"))), a)
+			if err != nil {
+				return err
+			}
+			return streamRows(pl, w)
+		}),
+	}
+	iacDestroy.Flags().String("registry", "", "provider-document registry root (required)")
+	iacDestroy.Flags().String("name", "", "collection to destroy (required)")
+	iacDestroy.Flags().String("state", "", "directory holding the collection's ledger (required)")
+	iacDestroy.Flags().String("params", "", `scope the deletes run in, as a JSON object, e.g. {"subscription_id":"…"}`)
+	iacDestroy.Flags().String("run-id", "", "journal name for this run (default: a UTC timestamp)")
+	for _, f := range []string{"registry", "name", "state"} {
+		_ = iacDestroy.MarkFlagRequired(f)
+	}
+	root.AddCommand(iacDestroy)
 
 	// ---- GCP ------------------------------------------------------------------
 	gcpCmd := &cobra.Command{
@@ -1092,4 +1120,13 @@ func columnRef(s string) (query.Column, error) {
 		return nil, fmt.Errorf("%q must be <alias>.<column>", s)
 	}
 	return query.NewColumn(q, c), nil
+}
+
+// runIDOr is the run id given, or one stamped from the clock: it names the run's journal, and the
+// CLI chooses it where the caller has not.
+func runIDOr(id string) string {
+	if id != "" {
+		return id
+	}
+	return time.Now().UTC().Format("20060102T150405Z")
 }

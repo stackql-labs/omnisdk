@@ -101,7 +101,7 @@ func (e *effector) Effect(ctx context.Context, exchange string, k facade.LedgerK
 	if bodied {
 		body = in.Mutation
 	}
-	row, err := e.run(ctx, addr, verb, inputs, body)
+	row, err := e.run(ctx, addr, verb, inputs, body, in.Params)
 	if err != nil {
 		return nil, fmt.Errorf("docrun: %s %s %s: %w", addr, verb, k, err)
 	}
@@ -150,7 +150,7 @@ func (e *effector) Read(ctx context.Context, exchange string, k facade.LedgerKey
 	}
 	// A read takes the whole response too: the caller is asking about one object, and the metadata
 	// travels with it rather than being dropped on the way to a row.
-	row, err := e.run(ctx, addr, "select", inputs, nil)
+	row, err := e.run(ctx, addr, "select", inputs, nil, in.Params)
 	if err != nil {
 		return nil, nil, false, fmt.Errorf("docrun: read %s: %w", k, err)
 	}
@@ -170,12 +170,23 @@ func (e *effector) Read(ctx context.Context, exchange string, k facade.LedgerKey
 
 // choose binds a call to its operation. Everything in inputs is sent, so an operation must accept
 // all of it as well as find its required inputs there.
-func (e *effector) choose(ctx context.Context, addr, verb string, inputs map[string]any) (aot.AOTExchange, error) {
+func (e *effector) choose(ctx context.Context, addr, verb string, inputs map[string]any, scope map[string]string) (aot.AOTExchange, error) {
+	declared, err := e.declared(addr, verb)
+	if err != nil {
+		return nil, err
+	}
 	names := make([]string, 0, len(inputs))
+	var sent []string
 	for n := range inputs {
 		names = append(names, n)
+		// A run's scope value the operation does not declare — a region a call is signed into but
+		// never sends — is available to it, not something it must accept.
+		if _, isScope := scope[n]; isScope && !declared[baseName(n)] {
+			continue
+		}
+		sent = append(sent, n)
 	}
-	m, err := e.analyzer.Analyze(ctx, analyze.NewStatement(e.principal, addr, verb, names, names, ""))
+	m, err := e.analyzer.Analyze(ctx, analyze.NewStatement(e.principal, addr, verb, names, sent, ""))
 	if err != nil {
 		return nil, err
 	}
@@ -325,8 +336,8 @@ func (e *effector) takesBody(addr, verb string) (bool, error) {
 	return ops[0].Request().BodyMediaType() != "", nil
 }
 
-func (e *effector) run(ctx context.Context, addr, verb string, inputs map[string]any, body []byte) (map[string]any, error) {
-	ex, err := e.choose(ctx, addr, verb, inputs)
+func (e *effector) run(ctx context.Context, addr, verb string, inputs map[string]any, body []byte, scope map[string]string) (map[string]any, error) {
+	ex, err := e.choose(ctx, addr, verb, inputs, scope)
 	if err != nil {
 		return nil, err
 	}

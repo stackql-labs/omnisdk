@@ -24,9 +24,11 @@ type entry struct {
 	plan     []byte
 	proposed []byte
 	identity []byte
+	about    []byte
 }
 
 func (e entry) Key() facade.LedgerKey     { return e.key }
+func (e entry) About() []byte             { return clone(e.about) }
 func (e entry) Phase() facade.LedgerPhase { return e.phase }
 func (e entry) Plan() []byte              { return clone(e.plan) }
 func (e entry) Proposed() []byte          { return clone(e.proposed) }
@@ -125,7 +127,7 @@ func (m *memory) Begin(_ context.Context, k facade.LedgerKey, proposed []byte, v
 	return nil
 }
 
-func (m *memory) Resolve(_ context.Context, k facade.LedgerKey, identity []byte, v facade.LedgerVersion) error {
+func (m *memory) Resolve(_ context.Context, k facade.LedgerKey, identity, about []byte, v facade.LedgerVersion) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	s, err := m.check(k, v)
@@ -141,6 +143,9 @@ func (m *memory) Resolve(_ context.Context, k facade.LedgerKey, identity []byte,
 	s.e.plan = s.e.proposed
 	s.e.proposed = nil
 	s.e.identity = clone(identity)
+	if about != nil {
+		s.e.about = clone(about)
+	}
 	s.e.phase = facade.LedgerLive
 	s.ver++
 	return nil

@@ -67,7 +67,7 @@ func TestResolvePromotesProposedToPlan(t *testing.T) {
 		}
 		_, v := get(t, l, "s/a")
 
-		if err := l.Resolve(ctx, "s/a", []byte("id-1"), v); err != nil {
+		if err := l.Resolve(ctx, "s/a", []byte("id-1"), nil, v); err != nil {
 			t.Fatalf("resolve: %v", err)
 		}
 
@@ -96,7 +96,7 @@ func TestBeginNeverOverwritesPlan(t *testing.T) {
 			t.Fatalf("begin: %v", err)
 		}
 		_, v := get(t, l, "s/a")
-		if err := l.Resolve(ctx, "s/a", []byte("id-1"), v); err != nil {
+		if err := l.Resolve(ctx, "s/a", []byte("id-1"), nil, v); err != nil {
 			t.Fatalf("resolve: %v", err)
 		}
 		_, v = get(t, l, "s/a")
@@ -122,7 +122,7 @@ func TestStaleVersionConflicts(t *testing.T) {
 			t.Fatalf("begin: %v", err)
 		}
 		_, stale := get(t, l, "s/a")
-		if err := l.Resolve(ctx, "s/a", []byte("id-1"), stale); err != nil {
+		if err := l.Resolve(ctx, "s/a", []byte("id-1"), nil, stale); err != nil {
 			t.Fatalf("resolve: %v", err)
 		}
 
@@ -166,12 +166,12 @@ func TestResolveRequiresPending(t *testing.T) {
 			t.Fatalf("begin: %v", err)
 		}
 		_, v := get(t, l, "s/a")
-		if err := l.Resolve(ctx, "s/a", []byte("id-1"), v); err != nil {
+		if err := l.Resolve(ctx, "s/a", []byte("id-1"), nil, v); err != nil {
 			t.Fatalf("resolve: %v", err)
 		}
 		_, v = get(t, l, "s/a")
 
-		if err := l.Resolve(ctx, "s/a", []byte("id-2"), v); !errors.Is(err, facade.ErrLedgerPhase) {
+		if err := l.Resolve(ctx, "s/a", []byte("id-2"), nil, v); !errors.Is(err, facade.ErrLedgerPhase) {
 			t.Errorf("resolve of a live entry = %v, want phase error", err)
 		}
 	})
@@ -278,7 +278,7 @@ func TestConcurrentUpdateAdmitsExactlyOne(t *testing.T) {
 			t.Fatalf("begin: %v", err)
 		}
 		_, v := get(t, l, "s/a")
-		if err := l.Resolve(ctx, "s/a", []byte("id-1"), v); err != nil {
+		if err := l.Resolve(ctx, "s/a", []byte("id-1"), nil, v); err != nil {
 			t.Fatalf("resolve: %v", err)
 		}
 		_, shared := get(t, l, "s/a")

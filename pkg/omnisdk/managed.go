@@ -115,6 +115,8 @@ type managed struct {
 	// the ledger records as the resource's intent in place of the request's inputs.
 	identityPath string
 	intent       []byte
+	// about is what the ledger records the resource is, for acting on it from the ledger alone.
+	about []byte
 }
 
 // identityAttr is the column a managed mutation adds to its row: the identity the ledger holds for
@@ -378,7 +380,11 @@ func (r *durableRecords) commit(ctx context.Context) error {
 		if !found {
 			return fmt.Errorf("omnisdk: %s vanished between intent and commit", r.key)
 		}
-		if err := r.d.run.ledger.Resolve(ctx, r.key, []byte(identity), ver); err != nil {
+		var about []byte
+		if m, ok := r.d.resource.(managed); ok {
+			about = m.about
+		}
+		if err := r.d.run.ledger.Resolve(ctx, r.key, []byte(identity), about, ver); err != nil {
 			return err
 		}
 	}

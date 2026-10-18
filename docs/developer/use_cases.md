@@ -347,7 +347,9 @@ provider: the first is deleted, and the final row says so — `{"status":"failed
 
 - **A create is awaited only where its document declares an `x-stackQL-beta`.** The base Google
   documents declare none, so without a patch a create is reported once the call is accepted.
-- **No destroy command.** Nothing tears down what a successful run created.
+- **Destroy deletes what desired state made.** `./build/omnicli iac-destroy --registry … --name … --state …`
+  removes the collection's keys, dependents first. A delete the provider refuses — deletion
+  protection, a lock — is reported outstanding with its reason, never forced.
 - **Drift goes to any update operation accepting the changed field.** EC2 `CidrBlock` drift is sent
   to `AssociateVpcCidrBlock`, which adds a CIDR block rather than changing it; nothing yet declares a
   field immutable, and nothing replaces an object.

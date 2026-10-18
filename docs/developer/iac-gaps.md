@@ -27,18 +27,20 @@ one without is sent only the changed fields. Where no operation qualifies, the d
 - Removing a field through an operation without a body is refused: such an operation cannot express
   it.
 
-## 2. Nothing destroys a collection
+## 2. Destroy works from what the ledger records
 
-**Now.** There is no entry point that removes what a collection created. Compensation removes what a
-*failed* run did; a successful run's objects stay until removed by hand.
+**Now.** `Destroy()` under `NewLedger` deletes every live key of the collection
+([destroy.go](../../pkg/omnisdk/destroy.go)), dependents first, each delete journalled before it is
+sent and the key forgotten after. What each key is — its address, how it is addressed, what it
+depends on — is recorded in the ledger when desired state resolves it. A refused delete is retried
+while other deletes make progress; what still refuses is reported outstanding with the provider's
+reason.
 
 **Needs.**
-- A facade entry point taking the collection name and state directory, both required.
-- Teardown in reverse dependency order, each delete written to the ledger before it is sent, and
-  repeated until a pass makes no progress — the shape `unwind` already has, driven from the ledger's
-  live keys rather than a run's journal.
-- A delete the provider refuses for a reason other than a dependent object (deletion protection,
-  object lock) is reported as outstanding, never retried forever and never forced.
+- The same record for a hand-written graph's managed nodes: today only desired state writes it, so a
+  graph's keys are reported outstanding by a destroy.
+- Protections that refuse a delete for a reason other than a dependent — see
+  [known_issues.md](known_issues.md).
 
 ## 3. A create is awaited only where its document says so
 

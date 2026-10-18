@@ -450,7 +450,11 @@ func (p *desiredPlan) lower(prior func(string) map[string]any, outside func(stri
 			return nil, nil, nil, err
 		}
 		branches = append(branches, branched{br, gates})
-		m := managed{key: r.Key(), aliases: aliases, addressedBy: r.AddressedBy(), identityPath: r.Identity(), intent: r.Desired()}
+		about, err := p.about(r, t)
+		if err != nil {
+			return nil, nil, nil, err
+		}
+		m := managed{key: r.Key(), aliases: aliases, addressedBy: r.AddressedBy(), identityPath: r.Identity(), intent: r.Desired(), about: about}
 		for _, a := range aliases {
 			managedNodes[a] = m
 		}
@@ -468,6 +472,35 @@ func (p *desiredPlan) lower(prior func(string) map[string]any, outside func(stri
 		}
 	}
 	return g, managedNodes, owners, nil
+}
+
+// aboutRecord is what the ledger records a desired-state resource is: enough to delete it from the
+// ledger alone, and to delete what depends on it first.
+type aboutRecord struct {
+	Provider    string `json:"provider"`
+	Address     string `json:"address"`
+	AddressedBy string `json:"addressed_by,omitempty"`
+	// Params are the resource's own values its delete declares — a resource group, say.
+	Params map[string]string `json:"params,omitempty"`
+	// DependsOn are the ledger keys this resource reads from.
+	DependsOn []string `json:"depends_on,omitempty"`
+}
+
+func (p *desiredPlan) about(r ManagedResource, t *target) ([]byte, error) {
+	rec := aboutRecord{Provider: r.Provider(), Address: r.Address(), AddressedBy: r.AddressedBy()}
+	deletes, _ := docsem.Capabilities(t.cat).Methods(t.addr, "delete")
+	for k, v := range r.Params() {
+		if k != r.AddressedBy() && slices.ContainsFunc(deletes, func(m facade.Method) bool { return declares(m, k) }) {
+			if rec.Params == nil {
+				rec.Params = map[string]string{}
+			}
+			rec.Params[k] = v
+		}
+	}
+	for _, in := range r.Inbound() {
+		rec.DependsOn = append(rec.DependsOn, p.name+"/"+in.From)
+	}
+	return json.Marshal(rec)
 }
 
 // reachable are the update methods a drift on r could take: those whose required inputs the

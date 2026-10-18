@@ -347,6 +347,10 @@ type LedgerEntry interface {
 	// Identity is everything the inverse call needs to address the object — not merely an id,
 	// since a compensation is derived from Plan and Identity alone.
 	Identity() []byte
+	// About is what the key is, recorded when it was last resolved: opaque to the ledger, written by
+	// whoever converged it — what it is in the documents, how it is addressed, what it depends on —
+	// so that the collection can be acted on from the ledger alone, a destroy above all.
+	About() []byte
 }
 
 // Ledger is the durable, per-key write-ahead log of resolved intent. Redo-only: a pending entry
@@ -366,7 +370,8 @@ type Ledger interface {
 	// with itself.
 	Begin(ctx context.Context, k LedgerKey, proposed []byte, v LedgerVersion) error
 	// Resolve commits: Proposed is promoted to Plan, identity is stored, phase becomes LedgerLive.
-	Resolve(ctx context.Context, k LedgerKey, identity []byte, v LedgerVersion) error
+	// about replaces what the entry records of itself; nil keeps what it had.
+	Resolve(ctx context.Context, k LedgerKey, identity, about []byte, v LedgerVersion) error
 	// Forget removes the entry after a successful delete.
 	Forget(ctx context.Context, k LedgerKey, v LedgerVersion) error
 }
