@@ -117,6 +117,10 @@ func (m withMetadata) Apply(in facade.Page) (facade.Record, error) {
 		if err != nil {
 			return nil, err
 		}
+		// An empty reply — a delete's 204 — decodes to nothing; the metadata is the whole response.
+		if decoded == nil {
+			return record.NewRecord(map[string]facade.Value{facade.AnonymousPayload: value.NewDocValue(doc)}), nil
+		}
 		if payload, ok := decoded.Doc(facade.AnonymousPayload); ok {
 			if fields, ok := payload.(map[string]any); ok {
 				for k, v := range fields {

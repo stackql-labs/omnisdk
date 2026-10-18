@@ -142,3 +142,33 @@ func TestDestroyReportsWhatItCannotRemove(t *testing.T) {
 		t.Errorf("after the refusal clears: %v, want the bucket destroyed", again)
 	}
 }
+
+// A collection made by a hand-written graph is destroyed the same way: its mutations recorded what
+// each resource is when they landed.
+func TestDestroyAHandWrittenGraphsCollection(t *testing.T) {
+	store := &widgetStore{items: map[string]map[string]any{}}
+	srv := store.serve(t)
+	defer srv.Close()
+	state := t.TempDir()
+	convergeWidgets(t, srv, state, map[string]map[string]any{
+		"w1": {"size": "L", "color": "red"}, "w2": {"size": "M", "color": "blue"},
+	}, []string{"w1", "w2"})
+	if len(store.items) != 2 {
+		t.Fatalf("store = %v, want two widgets", store.items)
+	}
+	store.took()
+
+	pl, err := omnisdk.Prepare(authRegistry, omnisdk.Destroy(), omnisdk.NewLedger("demo", state, "d1"), omnisdk.Args{Endpoint: srv.URL})
+	if err != nil {
+		t.Fatalf("prepare: %v", err)
+	}
+	rows := drain(t, pl)
+	for _, r := range rows {
+		if r["status"] != "destroyed" {
+			t.Errorf("row %v, want destroyed", r)
+		}
+	}
+	if len(rows) != 2 || len(store.items) != 0 {
+		t.Errorf("rows = %v, store = %v, want both destroyed", rows, store.items)
+	}
+}

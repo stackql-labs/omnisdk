@@ -917,7 +917,8 @@ func NewGraphQuery(dir string, g Graph, args Args) (Plan, error) {
 			eff := effect{ExchangeSpec: spec, alias: alias, verb: n.Verb(), exchange: exchangeOf(addr, n.Verb()), journal: wal}
 			if run := args.managed; run != nil && run.ledger != nil {
 				if m, ok := run.nodes[alias]; ok {
-					eff.durable = &durable{run: run, resource: m, address: addr}
+					eff.durable = &durable{run: run, resource: m, address: addr, provider: c.Provider().Name(),
+						deletes: deleteInputs(c, addr), dependsOn: dependsOn(g, run.nodes, m)}
 				}
 			}
 			spec = eff

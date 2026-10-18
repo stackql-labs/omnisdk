@@ -23,6 +23,7 @@ import (
 	"github.com/stackql-labs/omnisdk/internal/system_g/facade"
 	"github.com/stackql-labs/omnisdk/internal/system_g/plan"
 	"github.com/stackql-labs/omnisdk/internal/system_g/retry"
+	"github.com/stackql-labs/omnisdk/pkg/docparse/aot"
 	"github.com/stackql-labs/omnisdk/pkg/query"
 )
 
@@ -274,6 +275,88 @@ type durable struct {
 	run      *managedRun
 	resource Managed
 	address  string
+	// What the ledger records the resource is, where desired state has not already said: its
+	// provider, the inputs its delete declares, and the keys it reads from.
+	provider  string
+	deletes   map[string]bool
+	dependsOn []string
+}
+
+// aboutOf is what the ledger records a hand-written graph's resource is, from what its mutation was
+// bound with: enough for a destroy to delete it from the ledger alone, and after what depends on it.
+func (d durable) aboutOf(bound map[string]any) []byte {
+	rel := d.address
+	if i := strings.Index(rel, d.provider+"."); i >= 0 {
+		rel = rel[i+len(d.provider)+1:]
+	}
+	rec := aboutRecord{Provider: d.provider, Address: rel, AddressedBy: d.resource.AddressedBy()}
+	for k, v := range bound {
+		if d.deletes[k] && k != rec.AddressedBy && !strings.HasPrefix(k, "\x00") && v != nil {
+			if rec.Params == nil {
+				rec.Params = map[string]string{}
+			}
+			rec.Params[k] = fmt.Sprint(v)
+		}
+	}
+	for _, k := range d.dependsOn {
+		rec.DependsOn = append(rec.DependsOn, d.run.name+"/"+k)
+	}
+	b, _ := json.Marshal(rec)
+	return b
+}
+
+// deleteInputs are the inputs any delete operation on addr declares.
+func deleteInputs(c aot.Catalog, addr string) map[string]bool {
+	out := map[string]bool{}
+	ops, _ := c.Operations(addr, "delete")
+	for _, op := range ops {
+		for _, in := range op.Inputs() {
+			out[in] = true
+		}
+		for _, p := range op.Request().Parameters() {
+			out[p.Name()] = true
+		}
+	}
+	return out
+}
+
+// dependsOn are the resources m reads from: walking back from its mutations along the graph's
+// wirings, any node of another managed resource, or a recall of another key.
+func dependsOn(g Graph, owners map[string]Managed, m Managed) []string {
+	from := map[string][]string{}
+	for _, w := range g.Wirings() {
+		for _, in := range w.Inbound() {
+			from[w.To()] = append(from[w.To()], in.From())
+		}
+	}
+	recalls := map[string]string{}
+	for _, n := range g.Nodes() {
+		if in, ok := n.(intrinsicNode); ok && n.Verb() == verbRecall {
+			recalls[n.Alias()] = in.key
+		}
+	}
+	var out []string
+	seen := map[string]bool{}
+	queue := slices.Clone(m.Aliases())
+	for len(queue) > 0 {
+		a := queue[0]
+		queue = queue[1:]
+		if seen[a] {
+			continue
+		}
+		seen[a] = true
+		if o, ok := owners[a]; ok && o.Key() != m.Key() {
+			out = append(out, o.Key())
+			continue
+		}
+		if k, ok := recalls[a]; ok && k != m.Key() {
+			out = append(out, k)
+			continue
+		}
+		queue = append(queue, from[a]...)
+	}
+	slices.Sort(out)
+	return slices.Compact(out)
 }
 
 func (d durable) open(ctx context.Context, o effectOp) facade.Records {
@@ -383,6 +466,9 @@ func (r *durableRecords) commit(ctx context.Context) error {
 		var about []byte
 		if m, ok := r.d.resource.(managed); ok {
 			about = m.about
+		}
+		if about == nil && r.d.provider != "" {
+			about = r.d.aboutOf(r.inner.op.bound)
 		}
 		if err := r.d.run.ledger.Resolve(ctx, r.key, []byte(identity), about, ver); err != nil {
 			return err

@@ -32,13 +32,13 @@ one without is sent only the changed fields. Where no operation qualifies, the d
 **Now.** `Destroy()` under `NewLedger` deletes every live key of the collection
 ([destroy.go](../../pkg/omnisdk/destroy.go)), dependents first, each delete journalled before it is
 sent and the key forgotten after. What each key is — its address, how it is addressed, what it
-depends on — is recorded in the ledger when desired state resolves it. A refused delete is retried
+depends on — is recorded in the ledger whenever a run resolves it, from desired state or a graph. A refused delete is retried
 while other deletes make progress; what still refuses is reported outstanding with the provider's
 reason.
 
 **Needs.**
-- The same record for a hand-written graph's managed nodes: today only desired state writes it, so a
-  graph's keys are reported outstanding by a destroy.
+- A key resolved before the record existed has none, and a destroy reports it outstanding; a run
+  that touches it again writes it.
 - Protections that refuse a delete for a reason other than a dependent — see
   [known_issues.md](known_issues.md).
 
