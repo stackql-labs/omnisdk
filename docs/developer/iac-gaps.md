@@ -3,7 +3,7 @@
 `ConvergeGraph` runs IaC as a graph — recall, read, diff, branch, then any gated mutation — with
 the ledger, collection hold and compensation below. Its own gaps are in section 6.
 
-What `Converge` does not do, what happens instead, and what closing each gap takes. The run model
+What converging desired state does not do, what happens instead, and what closing each gap takes. The run model
 these build on — intent before effect, compensation, correlation stamps — is in
 [invariants.md](invariants.md) and the package docs of `internal/apply`, `internal/lease` and
 `internal/unwind`.
@@ -86,8 +86,10 @@ can carry any column, fan out, and poll; an IaC dependency cannot.
 
 **Now.** `ConvergeGraph` runs any gated mutation durably, but:
 
-- **`Converge` is not expressed through it.** The flat-list entry point still runs its own
-  create-or-refuse step; section 1 applies to it, not to `ConvergeGraph`.
+- **Desired state converges differently.** A flat list of resources runs on the same plan engine,
+  each resource a step that reads, merges and routes drift itself, and undoes a failed run through
+  the journal, restoring updates. A graph uses recall and diff nodes and undoes creates only. Section
+  1 applies to desired state, not to `ConvergeGraph`.
 - **Compensation reverses creates only.** A failed run deletes what it created, addressed by
   `AddressedBy`; an update or delete it made stays done, and is reported as completed.
 - **One object per managed key.** A mutation node that runs for several rows writes every row to the
@@ -97,7 +99,8 @@ can carry any column, fan out, and poll; an IaC dependency cannot.
 - **No CLI.** It is reachable from Go only.
 
 **Needs.**
-- `Converge(resources)` lowered to the recall, read, diff, branch graph.
+- One converging form: desired state's per-step drift routing and journal-driven undo, available to
+  a graph's managed nodes.
 - Update reversal from the journalled prior intent, through the inverse model.
 - A key per row for fan-out, derived from the node's inputs.
 - The correlation parameter on `Managed`, stamped at create and used to adopt.

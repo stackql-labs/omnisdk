@@ -204,14 +204,14 @@ res := []omnisdk.ManagedResource{
     ),
 }
 
-pl, err := omnisdk.Converge(registry, "scratch", state, runID, res, omnisdk.Args{
+pl, err := omnisdk.Prepare(registry, omnisdk.DesiredState(res), omnisdk.NewLedger("scratch", state, runID), omnisdk.Args{
     Params: map[string]string{"region": "us-east-1"},
 })
 rows, err := pl.Open(ctx)          // same Plan/Rows a query returns
 for rows.Next() { rows.Row() }     // {"key":…, "identity":…, "status":…}
 ```
 
-`Converge` returns the same `Plan`/`Rows` a query does, so a consumer iterates one cursor shape
+A converging run returns the same `Plan`/`Rows` a query does, so a consumer iterates one cursor shape
 whether it is reading or provisioning.
 
 **Auth is identical to every other call.** `Args` carries it, resolved exactly as a query resolves
@@ -221,7 +221,7 @@ provisioning run signs, or exchanges a token, by the same code path a read does,
 can already query a provider can already provision against it.
 
 ```go
-omnisdk.Converge(registry, name, state, runID, res, omnisdk.Args{
+omnisdk.Prepare(registry, omnisdk.DesiredState(res), omnisdk.NewLedger(name, state, runID), omnisdk.Args{
     // Auth is per provider and optional: a provider absent here falls back to the canonical AWS_*,
     // AZURE_* and GOOGLE_* variables. One provider's credential never reaches another.
     AuthByProvider: map[string]*omnisdk.Auth{"aws": {AccessKeyID: "...", SecretAccessKey: "..."}},

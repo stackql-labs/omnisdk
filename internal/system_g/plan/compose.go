@@ -102,45 +102,115 @@ func composePipeline(id int64, p Plan) (facade.Operator, error) {
 		stages = comps[1:]
 	}
 
-	for _, c := range stages {
-		if c.cyclic {
-			spec := specs[slices.IndexFunc(comps, func(x component) bool { return x.members[0] == c.members[0] })]
-			stage, err := newCycleStage(p, byName, c, op, spec)
+	// Components with no path between them are independent: each level of the condensation — every
+	// component whose sources all ran in an earlier level — runs its members side by side.
+	var err error
+	for _, level := range levels(p, comps, stages) {
+		if len(level) == 1 {
+			if op, err = stage(p, byName, comps, specs, level[0], op, &nid); err != nil {
+				return nil, err
+			}
+			continue
+		}
+		sec := &section{up: op}
+		for _, c := range level {
+			slot := &rowSlot{}
+			member, err := stage(p, byName, comps, specs, c, slot, &nid)
 			if err != nil {
 				return nil, err
 			}
-			op = tap(&nid, stage, strings.Join(c.members, "+"))
-			continue
+			sec.slots, sec.members = append(sec.slots, slot), append(sec.members, member)
 		}
-		name := c.members[0]
-		node := byName[name]
-		var bindings []bind.Binding
-		for _, attr := range node.In() {
-			// An input may have several sources; any one satisfies it, the first with a value
-			// winning (see the join).
-			found := false
-			for _, e := range p.Betas() {
-				if e.To() == name && e.Tgt() == attr {
-					bindings = append(bindings, bind.NewBinding(e.Src(), attr))
-					found = true
-				}
-			}
-			if !found {
-				bindings = append(bindings, bind.NewBinding(attr, attr)) // κ/env by name
-			}
-		}
-		nid++
-		op = bind.NewBindJoinIn(nid, op, bindings, bind.InnerFactory(node.Make), alphaInto(p.Alphas(), name), 1, node.Inbound())
-
-		flat := node.Flatten()
-		if flat == nil {
-			flat = bind.NewTupleFlatten()
-		}
-		nid++
-		op = exchange.NewTransformExchange(nid, op, flat, 1)
-		op = tap(&nid, op, name) // bowtie: every exchange → output
+		op = sec
 	}
 	return op, nil
+}
+
+// stage is component c's stage over upstream: a cycle run to its fixpoint, or a bind join of the
+// exchange's inputs followed by the flatten that merges its output into the running row.
+func stage(p Plan, byName map[string]ExchangeSpec, comps []component, specs []facade.TerminationSpec, c component,
+	op facade.Operator, nid *int64) (facade.Operator, error) {
+	if c.cyclic {
+		spec := specs[slices.IndexFunc(comps, func(x component) bool { return x.members[0] == c.members[0] })]
+		stage, err := newCycleStage(p, byName, c, op, spec)
+		if err != nil {
+			return nil, err
+		}
+		return tap(nid, stage, strings.Join(c.members, "+")), nil
+	}
+	name := c.members[0]
+	node := byName[name]
+	var bindings []bind.Binding
+	for _, attr := range node.In() {
+		// An input may have several sources; any one satisfies it, the first with a value
+		// winning (see the join).
+		found := false
+		for _, e := range p.Betas() {
+			if e.To() == name && e.Tgt() == attr {
+				bindings = append(bindings, bind.NewBinding(e.Src(), attr))
+				found = true
+			}
+		}
+		if !found {
+			bindings = append(bindings, bind.NewBinding(attr, attr)) // κ/env by name
+		}
+	}
+	*nid++
+	op = bind.NewBindJoinIn(*nid, op, bindings, bind.InnerFactory(node.Make), alphaInto(p.Alphas(), name), 1, node.Inbound())
+
+	flat := node.Flatten()
+	if flat == nil {
+		flat = bind.NewTupleFlatten()
+	}
+	*nid++
+	op = exchange.NewTransformExchange(*nid, op, flat, 1)
+	return tap(nid, op, name), nil // bowtie: every exchange → output
+}
+
+// levels groups stages by depth in the condensation: a component's level is one past the deepest
+// component it depends on, so the members of a level depend on nothing else in it. Dependencies on a
+// component outside stages — the root, which already ran — are met. Within a level the order is the
+// condensation's.
+func levels(p Plan, comps, stages []component) [][]component {
+	of := map[string]int{}
+	for i, c := range comps {
+		for _, m := range c.members {
+			of[m] = i
+		}
+	}
+	staged := map[int]bool{}
+	for _, c := range stages {
+		staged[of[c.members[0]]] = true
+	}
+	deps := map[int][]int{}
+	edge := func(from, to string) {
+		a, okA := of[from]
+		b, okB := of[to]
+		if okA && okB && a != b && staged[a] && !slices.Contains(deps[b], a) {
+			deps[b] = append(deps[b], a)
+		}
+	}
+	for _, e := range p.Betas() {
+		edge(e.From(), e.To())
+	}
+	for _, a := range p.Alphas() {
+		edge(a.From(), a.To())
+	}
+	level := map[int]int{}
+	var out [][]component
+	for _, c := range stages {
+		i := of[c.members[0]]
+		l := 0
+		for _, d := range deps[i] {
+			l = max(l, level[d]+1)
+		}
+		level[i] = l
+		for len(out) <= l {
+			out = append(out, nil)
+		}
+		out[l] = append(out[l], c)
+	}
+	return out
 }
 
 // Order is the order Compose runs a plan's exchanges in: components of the condensation in

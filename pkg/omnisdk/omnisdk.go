@@ -1750,6 +1750,8 @@ func (c *cannedPlan) decorate(parent context.Context) (context.Context, context.
 	}))
 	ctx = admit.WithAdmissions(ctx, admit.PerScope(orInt(c.args.Tuning.MaxPerHost, 8)))
 	ctx = schedule.WithLimiter(ctx, admit.NewSemaphore(orInt(c.args.Tuning.Parallelism, 16)))
+	// Independent sections of the plan run at once under the same bound, from a pool of their own.
+	ctx = schedule.WithSectionLimiter(ctx, admit.NewSemaphore(orInt(c.args.Tuning.Parallelism, 16)))
 	return ctx, func() { abortCancel(); timeoutCancel(); closeLog() }
 }
 

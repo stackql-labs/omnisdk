@@ -76,7 +76,7 @@ res := []omnisdk.ManagedResource{
     ),
 }
 
-pl, err := omnisdk.Converge(registryRoot, "scratch", stateDir, "" /* runID: timestamp */, res,
+pl, err := omnisdk.Prepare(registryRoot, omnisdk.DesiredState(res), omnisdk.NewLedger("scratch", stateDir, runID),
     omnisdk.Args{AuthByProvider: map[string]*omnisdk.Auth{"aws": awsAuth}, Params: map[string]string{"region": "us-east-1"}})
 if err != nil {
     return err

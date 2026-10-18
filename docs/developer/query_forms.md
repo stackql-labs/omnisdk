@@ -22,14 +22,14 @@ The same plan, wrapped in four things:
 | **lock** | an expiring hold on the collection for the length of the run | keeps two runs off the same resources; a dead run's hold expires rather than waiting to be released |
 | **ledger** | per resource: the last intent applied and the identity the provider gave the object | read back by the run to decide, against the live object, whether each resource is absent, matches, or has drifted, and what to send |
 | **WAL** | each effect the run attempts, recorded and synced before its request | intent is on disk before any effect, so a crash never leaves an effect nothing knows to ask about |
-| **undo log** | the WAL, read backwards | a failed run deletes what it created, latest first, retrying what a provider refuses while a dependent exists, until a pass makes no progress; updates and deletes are reported as completed, not reversed |
+| **undo log** | the WAL, read backwards | a failed run deletes what it created, latest first, retrying what a provider refuses while a dependent exists, until a pass makes no progress. Given as desired state, it also restores what an update replaced; given as a graph, updates and deletes are reported as completed, not reversed |
 
 Every write belongs to a declared resource, so each has an entry in the ledger: its intent is
 recorded before the request and its identity after it. Credentials travel with the request and are
 never recorded.
 
-The resources may be given as a graph or as a flat list of desired state; both carry the same lock,
-ledger, WAL and undo log.
+The resources may be given as a graph or as a flat list of desired state; both run on the same plan
+engine, under the same lock, ledger and WAL.
 
 ## Side by side
 

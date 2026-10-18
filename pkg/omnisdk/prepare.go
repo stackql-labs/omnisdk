@@ -105,7 +105,7 @@ func Prepare(registry string, s Statement, w WALConfig, args Args) (Plan, error)
 		if !ok {
 			return nil, fmt.Errorf("omnisdk: desired state needs NewLedger: converging is decided from what the ledger last recorded")
 		}
-		return Converge(registry, l.collection, l.state, l.runID, st.resources, args)
+		return converge(registry, l.collection, l.state, l.runID, st.resources, args)
 	case nil:
 		return nil, fmt.Errorf("omnisdk: no statement")
 	}

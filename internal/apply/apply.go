@@ -16,12 +16,15 @@ import (
 	"errors"
 	"fmt"
 	"maps"
-	"slices"
-	"strings"
+	"sync"
 	"time"
 
+	"github.com/stackql-labs/omnisdk/internal/system_g/admit"
 	"github.com/stackql-labs/omnisdk/internal/system_g/bind"
+	"github.com/stackql-labs/omnisdk/internal/system_g/buffer"
 	"github.com/stackql-labs/omnisdk/internal/system_g/facade"
+	"github.com/stackql-labs/omnisdk/internal/system_g/plan"
+	"github.com/stackql-labs/omnisdk/internal/system_g/schedule"
 	"github.com/stackql-labs/omnisdk/internal/unwind"
 )
 
@@ -115,7 +118,7 @@ func New(
 }
 
 func (r *runner) Apply(ctx context.Context, runID, scope string, steps []Step) (Result, error) {
-	deps, err := dependencies(steps)
+	p, out, err := r.plan(runID, steps)
 	if err != nil {
 		return Result{}, err
 	}
@@ -132,138 +135,145 @@ func (r *runner) Apply(ctx context.Context, runID, scope string, steps []Step) (
 	if err != nil {
 		return Result{}, err
 	}
+	out.journal = j
 
-	res := r.converge(ctx, j, steps, deps)
+	res := out.run(ctx, p, r.parallelism)
 	if res.Err == nil {
 		return res, nil
 	}
 	// Forward recovery is preferred where it is reachable, because compensation is lossy — billing
 	// events, sent notifications, consumed ids and deleted data do not come back. Choosing between
 	// them is the caller's policy, so the outcome is reported rather than decided here.
-	out, unwindErr := r.unwinder.Unwind(ctx, runID)
+	unwound, unwindErr := r.unwinder.Unwind(ctx, runID)
 	if unwindErr != nil {
 		return res, errors.Join(res.Err, unwindErr)
 	}
-	res.Unwound = &out
+	res.Unwound = &unwound
 	return res, nil
 }
 
-// converge runs every step once the keys it reads from are live, up to parallelism at a time. A key
-// with nothing between it and another runs alongside it: a run waits on its dependencies, not on its
-// declaration order.
-//
-// The first failure stops new steps from starting. Steps already in flight finish rather than being
-// cancelled — an effect abandoned mid-call has an unknown outcome — and everything that landed is then
-// in the journal for the unwind.
-func (r *runner) converge(ctx context.Context, j facade.Journal, steps []Step, deps map[int][]int) Result {
-	waiting := make([]int, len(steps)) // unfinished dependencies per step
-	after := make(map[int][]int)       // steps that depend on each step
-	var ready []int
-	for i := range steps {
-		waiting[i] = len(deps[i])
-		for _, d := range deps[i] {
-			after[d] = append(after[d], i)
-		}
-		if waiting[i] == 0 {
-			ready = append(ready, i)
-		}
-	}
+// identityAttr is what a step emits for the steps that read from it.
+const identityAttr = "\x00identity"
 
-	type done struct {
-		i   int
-		err error
+// plan lowers the steps onto a System G plan: one exchange per step, and a β edge carrying a key's
+// recorded identity to each step that reads from it. The plan runs a step once the keys it reads
+// from are live, and steps with nothing between them side by side — the same scheduling a query
+// gets. An arrival from a key outside the run is not an edge: it must already be live, which bind
+// checks. A cycle is refused here, before anything is taken or sent.
+func (r *runner) plan(runID string, steps []Step) (plan.Plan, *outcome, error) {
+	in := make(map[facade.LedgerKey]bool, len(steps))
+	for _, s := range steps {
+		if in[s.Key] {
+			return nil, nil, fmt.Errorf("apply: %s appears twice", s.Key)
+		}
+		in[s.Key] = true
 	}
-	finished := make(chan done)
-	var res Result
-	var errs []error
-	running := 0
-	for len(ready) > 0 || running > 0 {
-		for len(ready) > 0 && running < r.parallelism && res.Err == nil && len(errs) == 0 {
-			i := ready[0]
-			ready = ready[1:]
-			running++
-			go func() { finished <- done{i, r.step(ctx, j, steps[i])} }()
-		}
-		if running == 0 {
-			break // a failure has stopped new steps, and nothing is left in flight
-		}
-		d := <-finished
-		running--
-		if d.err != nil {
-			if len(errs) == 0 {
-				res.Failed = steps[d.i].Key
+	out := &outcome{r: r}
+	var specs []plan.ExchangeSpec
+	var betas []plan.BetaEdge
+	for _, s := range steps {
+		var arriving []string
+		for _, a := range s.Inbound {
+			if !in[a.From] {
+				continue
 			}
-			errs = append(errs, fmt.Errorf("%s: %w", steps[d.i].Key, d.err))
-			continue
+			as := a.name()
+			arriving = append(arriving, as)
+			betas = append(betas, plan.NewBetaEdge(string(a.From), string(s.Key), string(a.From)+identityAttr, as))
 		}
-		res.Applied = append(res.Applied, steps[d.i].Key)
-		for _, n := range after[d.i] {
-			if waiting[n]--; waiting[n] == 0 {
-				ready = append(ready, n)
-			}
-		}
+		specs = append(specs, plan.NewExchangeSpec(string(s.Key), arriving, []string{string(s.Key) + identityAttr},
+			func(bound map[string]any) facade.Operator { return stepOp{out: out, s: s, arrived: bound} },
+			bind.NewInnerFlatten()))
 	}
-	if len(errs) == 1 {
-		res.Err = errors.Unwrap(errs[0])
-	} else if len(errs) > 1 {
-		res.Err = errors.Join(errs...)
+	// The run id seeds the plan, so every step is a stage of it rather than the first being its root.
+	p := plan.NewPlan(specs, betas, nil, map[string]any{"\x00run": runID}, nil, nil)
+	if err := plan.CheckCycles(p); err != nil {
+		return nil, nil, fmt.Errorf("apply: dependency %w", err)
 	}
-	return res
+	return p, out, nil
 }
 
-// dependencies maps each step to the steps whose keys it reads from. An arrival from a key outside
-// the run is not a dependency: it must already be live, which bind checks. A cycle is refused before
-// anything is taken or sent.
-func dependencies(steps []Step) (map[int][]int, error) {
-	index := make(map[facade.LedgerKey]int, len(steps))
-	for i, s := range steps {
-		if _, dup := index[s.Key]; dup {
-			return nil, fmt.Errorf("apply: %s appears twice", s.Key)
-		}
-		index[s.Key] = i
+// outcome gathers what a run's steps did, in the order they finished.
+type outcome struct {
+	r       *runner
+	journal facade.Journal
+	mu      sync.Mutex
+	res     Result
+}
+
+// run executes p. Steps run under parallelism at once; the first failure starts no new step, and a
+// step already in flight finishes rather than being cancelled — an effect abandoned mid-call has an
+// unknown outcome — so everything that landed is in the journal for the unwind.
+func (o *outcome) run(ctx context.Context, p plan.Plan, parallelism int) Result {
+	ctx = schedule.WithSectionLimiter(ctx, admit.NewSemaphore(parallelism))
+	rows := plan.ComposeRows(0, p).Open(ctx)
+	for rows.Next(ctx) {
 	}
-	deps := make(map[int][]int, len(steps))
-	for i, s := range steps {
-		for _, in := range s.Inbound {
-			if d, ok := index[in.From]; ok && !slices.Contains(deps[i], d) {
-				deps[i] = append(deps[i], d)
-			}
-		}
+	err := rows.Err()
+	_ = rows.Close()
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	if err != nil && o.res.Err == nil {
+		// A failure outside any step — the plan itself — still fails the run.
+		o.res.Err = err
 	}
-	// Kahn's: whatever never becomes ready is on a cycle.
-	waiting := make([]int, len(steps))
-	after := map[int][]int{}
-	var queue []int
-	for i := range steps {
-		waiting[i] = len(deps[i])
-		for _, d := range deps[i] {
-			after[d] = append(after[d], i)
-		}
-		if waiting[i] == 0 {
-			queue = append(queue, i)
-		}
+	return o.res
+}
+
+func (o *outcome) landed(k facade.LedgerKey) {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	o.res.Applied = append(o.res.Applied, k)
+}
+
+func (o *outcome) failed(k facade.LedgerKey, err error) {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	if o.res.Err == nil {
+		o.res.Failed, o.res.Err = k, err
+		return
 	}
-	seen := 0
-	for len(queue) > 0 {
-		i := queue[0]
-		queue = queue[1:]
-		seen++
-		for _, n := range after[i] {
-			if waiting[n]--; waiting[n] == 0 {
-				queue = append(queue, n)
-			}
+	o.res.Err = errors.Join(o.res.Err, fmt.Errorf("%s: %w", k, err))
+}
+
+// stepOp converges one step and emits the identity the ledger then holds for its key.
+type stepOp struct {
+	out     *outcome
+	s       Step
+	arrived map[string]any
+}
+
+func (o stepOp) Open(ctx context.Context) facade.Records {
+	buf := buffer.NewBuffer(1, 1, 0)
+	go func() {
+		err := o.out.r.step(ctx, o.out.journal, o.s, o.arrived)
+		if err != nil {
+			o.out.failed(o.s.Key, err)
+			buf.Complete(fmt.Errorf("%s: %w", o.s.Key, err))
+			return
 		}
-	}
-	if seen != len(steps) {
-		var cyclic []string
-		for i, w := range waiting {
-			if w > 0 {
-				cyclic = append(cyclic, string(steps[i].Key))
-			}
+		e, _, found, err := o.out.r.log.Get(ctx, o.s.Key)
+		if err != nil {
+			o.out.failed(o.s.Key, err)
+			buf.Complete(err)
+			return
 		}
-		return nil, fmt.Errorf("apply: dependency cycle among %s", strings.Join(cyclic, ", "))
+		identity := ""
+		if found {
+			identity = string(e.Identity())
+		}
+		o.out.landed(o.s.Key)
+		_ = buf.Append(ctx, bind.NewDocRecord(map[string]any{string(o.s.Key) + identityAttr: identity}))
+		buf.Complete(nil)
+	}()
+	return buf.Reader()
+}
+
+func (a Arrival) name() string {
+	if a.As != "" {
+		return a.As
 	}
-	return deps, nil
+	return string(a.From)
 }
 
 // adopt writes an entry for an object the target already holds. Intent and identity are recorded in
@@ -347,19 +357,21 @@ func satisfied(want, have map[string]any) bool {
 //
 // An arrival from a key that is not live is an error rather than a silent empty string: it means the
 // dependency was ordered wrongly, and sending an unbound parameter would create an orphan.
-func (r *runner) bind(ctx context.Context, s Step) (map[string]string, error) {
+func (r *runner) bind(ctx context.Context, s Step, arrived map[string]any) (map[string]string, error) {
 	inbox := make(map[string]any, len(s.Inbound))
 	for _, in := range s.Inbound {
+		name := in.name()
+		// Delivered by the plan from a key in this run, which has just landed.
+		if v, ok := arrived[name]; ok && v != nil && v != "" {
+			inbox[name] = v
+			continue
+		}
 		e, _, found, err := r.log.Get(ctx, in.From)
 		if err != nil {
 			return nil, err
 		}
 		if !found || e.Phase() != facade.LedgerLive {
 			return nil, fmt.Errorf("apply: %s expects a value from %s, which is not live", s.Key, in.From)
-		}
-		name := in.As
-		if name == "" {
-			name = string(in.From)
 		}
 		inbox[name] = string(e.Identity())
 	}
@@ -408,7 +420,7 @@ func (r *runner) update(ctx context.Context, s Step, mutation, actual []byte, pa
 
 // step converges one key. Order is load-bearing: the journal and the ledger both record intent
 // before the wire call, so a crash can never leave an effect that nothing knows to ask about.
-func (r *runner) step(ctx context.Context, j facade.Journal, s Step) error {
+func (r *runner) step(ctx context.Context, j facade.Journal, s Step, arrived map[string]any) error {
 	e, v, found, err := r.log.Get(ctx, s.Key)
 	if err != nil {
 		return err
@@ -423,7 +435,7 @@ func (r *runner) step(ctx context.Context, j facade.Journal, s Step) error {
 	// Actual is read live and never persisted as the merge basis. Where a target exposes no usable
 	// read the log degrades from fact to belief — a property of the target, not of the design — and
 	// convergence weakens to idempotence.
-	params, err := r.bind(ctx, s)
+	params, err := r.bind(ctx, s, arrived)
 	if err != nil {
 		return err
 	}

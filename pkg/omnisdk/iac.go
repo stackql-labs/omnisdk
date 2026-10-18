@@ -107,8 +107,9 @@ func (r resource) Params() map[string]string { return r.params }
 func (r resource) Inbound() []Arrival        { return r.inbound }
 func (r resource) Via() (string, string)     { return r.viaType, r.viaProgram }
 
-// Converge applies a set of resources as one collection, and is the whole IaC entry point: a client
-// issues the imperative and the system works out idempotence, ordering, concurrency and compensation.
+// converge applies a set of resources as one collection: the desired-state form of a converging
+// run, reached through Prepare with DesiredState and NewLedger. A client issues the imperative and the
+// system works out idempotence, ordering, concurrency and compensation.
 //
 //   - registry is the provider-document root. Every effect is compiled from the document that
 //     declares it, so a new service is a document plus its residue rather than Go code.
@@ -116,12 +117,12 @@ func (r resource) Via() (string, string)     { return r.viaType, r.viaProgram }
 //     correlation tag stamped on each object.
 //   - state holds the ledger and run journals. Local disk only — O_EXCL and link are unreliable on a
 //     network share. One state directory holds many collections, separated by name.
-//   - runID names this run's journal; empty means a UTC timestamp.
+//   - runID names this run's journal.
 //   - resources are what to converge. Order is irrelevant: dependencies travel through bindings.
 //   - args carries credentials, an endpoint override and tuning, exactly as a query does.
 //
 // Opening the returned Plan performs the run; the rows report what each key did.
-func Converge(registry, name, state, runID string, resources []ManagedResource, args Args) (Plan, error) {
+func converge(registry, name, state, runID string, resources []ManagedResource, args Args) (Plan, error) {
 	switch {
 	case name == "":
 		return nil, fmt.Errorf("omnisdk: collection name is required")
@@ -133,9 +134,6 @@ func Converge(registry, name, state, runID string, resources []ManagedResource, 
 	effector, router, sem, exchanges, err := providerWiring(registry, resources, args)
 	if err != nil {
 		return nil, err
-	}
-	if runID == "" {
-		runID = time.Now().UTC().Format("20060102T150405Z")
 	}
 	return &convergePlan{name: name, state: state, runID: runID, resources: resources,
 		effector: effector, router: router, semantics: sem, exchanges: exchanges, scope: args.Params, tuning: args.Tuning}, nil

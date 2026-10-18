@@ -228,7 +228,13 @@ func main() {
 			if (a.Tuning == omnisdk.Tuning{}) {
 				a.Tuning = t.facade()
 			}
-			pl, err := omnisdk.Converge(cmdArgs(cmd)[0], spec.Name, spec.State, spec.RunID, resources, a)
+			runID := spec.RunID
+			if runID == "" {
+				// The run id names this run's journal; the CLI stamps one when the spec leaves it out.
+				runID = time.Now().UTC().Format("20060102T150405Z")
+			}
+			pl, err := omnisdk.Prepare(cmdArgs(cmd)[0], omnisdk.DesiredState(resources),
+				omnisdk.NewLedger(spec.Name, spec.State, runID), a)
 			if err != nil {
 				return err
 			}
@@ -262,8 +268,8 @@ func main() {
 			a := omnisdk.Args{Params: map[string]string{"region": inputs["region"]}}
 			a.Endpoint, a.Log, a.Tuning = endpoint, logw, t.facade()
 			a.InsecureSkipTLSVerify = insecureTLS
-			pl, err := omnisdk.Converge(mustFlag(cmd, "registry"), mustFlag(cmd, "name"),
-				mustFlag(cmd, "state"), mustFlag(cmd, "run-id"), resources, a)
+			pl, err := omnisdk.Prepare(mustFlag(cmd, "registry"), omnisdk.DesiredState(resources),
+				omnisdk.NewLedger(mustFlag(cmd, "name"), mustFlag(cmd, "state"), mustFlag(cmd, "run-id")), a)
 			if err != nil {
 				return err
 			}

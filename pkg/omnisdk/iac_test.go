@@ -135,7 +135,7 @@ func TestNetworkProvisionAppliesBothStepsAndStampsTags(t *testing.T) {
 		"vpc_tags":    `{"Name":"demo-vpc","env":"dev"}`,
 		"subnet_tags": `{"Name":"demo-subnet"}`,
 	})
-	pl, err := omnisdk.Converge(corpus, "demo", t.TempDir(), "run-1", resources, awsArgs(srv))
+	pl, err := omnisdk.Prepare(corpus, omnisdk.DesiredState(resources), omnisdk.NewLedger("demo", t.TempDir(), "run-1"), awsArgs(srv))
 	if err != nil {
 		t.Fatalf("plan: %v", err)
 	}
@@ -191,7 +191,7 @@ func TestNetworkProvisionRerunIssuesNoCreates(t *testing.T) {
 		resources := render(t, map[string]string{
 			"region": "us-east-1", "vpc_cidr": "10.0.0.0/16", "subnet_cidr": "10.0.1.0/24",
 		})
-		pl, err := omnisdk.Converge(corpus, "demo", state, id, resources, awsArgs(srv))
+		pl, err := omnisdk.Prepare(corpus, omnisdk.DesiredState(resources), omnisdk.NewLedger("demo", state, id), awsArgs(srv))
 		if err != nil {
 			t.Fatalf("plan: %v", err)
 		}
@@ -250,7 +250,7 @@ func TestSameBlueprintUnderTwoNames(t *testing.T) {
 	state := t.TempDir()
 	inputs := map[string]string{"region": "us-east-1", "vpc_cidr": "10.0.0.0/16", "subnet_cidr": "10.0.1.0/24"}
 	for _, name := range []string{"alpha", "beta"} {
-		pl, err := omnisdk.Converge(corpus, name, state, "run-"+name, render(t, inputs), awsArgs(srv))
+		pl, err := omnisdk.Prepare(corpus, omnisdk.DesiredState(render(t, inputs)), omnisdk.NewLedger(name, state, "run-"+name), awsArgs(srv))
 		if err != nil {
 			t.Fatalf("%s plan: %v", name, err)
 		}
@@ -320,7 +320,7 @@ func TestConvergeParallelismIsTunable(t *testing.T) {
 		}
 		args := awsArgs(srv)
 		args.Tuning.Parallelism = parallelism
-		pl, err := omnisdk.Converge(corpus, "par", t.TempDir(), "run", res, args)
+		pl, err := omnisdk.Prepare(corpus, omnisdk.DesiredState(res), omnisdk.NewLedger("par", t.TempDir(), "run"), args)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -364,8 +364,8 @@ func TestConvergeOnABusyCollection(t *testing.T) {
 	var seen []string
 	srv := fakeEC2(t, &seen, &map[string]string{})
 	defer srv.Close()
-	pl, err := omnisdk.Converge(corpus, "busy", state, "run", render(t, map[string]string{
-		"region": "us-east-1", "vpc_cidr": "10.0.0.0/16", "subnet_cidr": "10.0.1.0/24"}), awsArgs(srv))
+	pl, err := omnisdk.Prepare(corpus, omnisdk.DesiredState(render(t, map[string]string{
+		"region": "us-east-1", "vpc_cidr": "10.0.0.0/16", "subnet_cidr": "10.0.1.0/24"})), omnisdk.NewLedger("busy", state, "run"), awsArgs(srv))
 	if err != nil {
 		t.Fatal(err)
 	}
