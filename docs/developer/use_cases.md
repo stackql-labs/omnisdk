@@ -231,7 +231,8 @@ export _OMNI_BUCKET='omni-iac-trial-bucket-01' # must be unique in each provider
 }'
 ```
 
-**Azure** — tags on a storage account, in an existing resource group:
+**Azure** — a tagged storage account and a blob container in it with metadata (containers take
+metadata, not tags; the portal shows it under the container's Properties):
 
 ```bash
 ./build/omnicli iac-apply test/corpus/registry '{
@@ -241,7 +242,12 @@ export _OMNI_BUCKET='omni-iac-trial-bucket-01' # must be unique in each provider
      "desired": {"location": "eastus", "kind": "StorageV2", "sku": {"name": "Standard_LRS"},
                  "tags": {"env": "dev", "team": "platform"}},
      "params": {"resource_group_name": "'"${_AZURE_RESOURCE_GROUP}"'", "account_name": "'"${_OMNI_STORAGE_ACCOUNT}"'"},
-     "identity": "name", "addressed_by": "account_name"}
+     "identity": "name", "addressed_by": "account_name"},
+    {"key": "azure/storage/container", "provider": "azure", "address": "storage.blob_containers",
+     "desired": {"properties": {"metadata": {"env": "dev", "team": "platform"}}},
+     "params": {"resource_group_name": "'"${_AZURE_RESOURCE_GROUP}"'", "container_name": "omni-demo"},
+     "inbound": [{"from": "azure/storage/account", "as": "account_name"}],
+     "identity": "name", "addressed_by": "container_name"}
   ],
   "args": {"params": {"subscription_id": "'"${AZURE_SUBSCRIPTION_ID}"'"}}
 }'

@@ -264,3 +264,96 @@ func TestExampleS3BucketWithTags(t *testing.T) {
 		t.Errorf("tagging after drift = %s, want it put back", tagging)
 	}
 }
+
+// An Azure blob container with metadata, inside the storage account it reads its name from. The
+// container is created once the account exists, and read back within that account.
+func TestExampleAzureContainerWithMetadata(t *testing.T) {
+	requireCorpus(t)
+	t.Setenv("AZURE_TENANT_ID", "t")
+	t.Setenv("AZURE_CLIENT_ID", "c")
+	t.Setenv("AZURE_CLIENT_SECRET", "s")
+	var c wireLog
+	var mu sync.Mutex
+	var account, container map[string]any
+	const base = "/subscriptions/sub/resourceGroups/rg/providers/Microsoft.Storage/storageAccounts"
+	const cpath = base + "/omnidemo/blobServices/default/containers/omni-demo"
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if strings.HasSuffix(r.URL.Path, "/token") {
+			fmt.Fprint(w, `{"access_token":"tok","expires_in":3600}`)
+			return
+		}
+		mu.Lock()
+		defer mu.Unlock()
+		var body map[string]any
+		b, _ := io.ReadAll(r.Body)
+		_ = json.Unmarshal(b, &body)
+		switch {
+		case r.Method == http.MethodPut && r.URL.Path == base+"/omnidemo":
+			c.add("create account")
+			account = body
+			account["name"] = "omnidemo"
+			_ = json.NewEncoder(w).Encode(account)
+		case r.Method == http.MethodGet && r.URL.Path == base:
+			rows := []any{}
+			if account != nil {
+				rows = append(rows, account)
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{"value": rows})
+		case r.Method == http.MethodPut && r.URL.Path == cpath:
+			if account == nil {
+				http.Error(w, `{"error":{"code":"ParentResourceNotFound"}}`, http.StatusNotFound)
+				return
+			}
+			c.add("create container")
+			container = body
+			container["name"] = "omni-demo"
+			_ = json.NewEncoder(w).Encode(container)
+		case r.Method == http.MethodGet && r.URL.Path == cpath:
+			c.add("get container")
+			if container == nil {
+				http.Error(w, `{"error":{"code":"ContainerNotFound"}}`, http.StatusNotFound)
+				return
+			}
+			_ = json.NewEncoder(w).Encode(container)
+		default:
+			http.Error(w, "unexpected "+r.Method+" "+r.URL.Path, http.StatusNotFound)
+		}
+	}))
+	defer srv.Close()
+
+	account0 := omnisdk.NewResource("azure/storage/account", "azure", "storage.storage_accounts",
+		[]byte(`{"location":"eastus","kind":"StorageV2","sku":{"name":"Standard_LRS"},"tags":{"env":"dev"}}`),
+		map[string]string{"resource_group_name": "rg", "account_name": "omnidemo"}, nil, "", "", "name", "account_name", "")
+	container0 := omnisdk.NewResource("azure/storage/container", "azure", "storage.blob_containers",
+		[]byte(`{"properties":{"metadata":{"env":"dev","team":"platform"}}}`),
+		map[string]string{"resource_group_name": "rg", "container_name": "omni-demo"},
+		[]omnisdk.Arrival{{From: "azure/storage/account", As: "account_name"}}, "", "", "name", "container_name", "")
+	args := omnisdk.Args{Endpoint: srv.URL, Params: map[string]string{"subscription_id": "sub"}}
+	state := t.TempDir()
+
+	converge(t, corpus, state, "r1", args, account0, container0)
+	if got := c.took(); got != "create account, create container" {
+		t.Errorf("first run: %s, want the account then the container", got)
+	}
+	if fmt.Sprint(container["properties"]) != "map[metadata:map[env:dev team:platform]]" {
+		t.Errorf("container = %v, want its metadata", container)
+	}
+	converge(t, corpus, state, "r2", args, account0, container0)
+	if got := c.took(); got != "get container" {
+		t.Errorf("rerun: %s, want only reads", got)
+	}
+}
+
+// A parameter given empty — an unset variable spliced into a spec — is refused by name, before
+// anything runs.
+func TestEmptyParameterIsRefusedByName(t *testing.T) {
+	requireCorpus(t)
+	r := omnisdk.NewResource("azure/storage/account", "azure", "storage.storage_accounts", []byte(`{"location":"eastus"}`),
+		map[string]string{"resource_group_name": "", "account_name": "omnidemo"}, nil, "", "", "name", "account_name", "")
+	_, err := omnisdk.Prepare(corpus, omnisdk.DesiredState([]omnisdk.ManagedResource{r}), omnisdk.NewLedger("demo", t.TempDir(), "r1"),
+		omnisdk.Args{Params: map[string]string{"subscription_id": "sub"}})
+	if err == nil || !strings.Contains(err.Error(), `"resource_group_name" is empty`) {
+		t.Errorf("err = %v, want the empty parameter named", err)
+	}
+}

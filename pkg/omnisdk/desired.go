@@ -82,6 +82,13 @@ func newDesiredPlan(registry, name, state, runID string, resources []ManagedReso
 			return nil, fmt.Errorf("omnisdk: %s appears twice", r.Key())
 		}
 		seen[r.Key()] = true
+		// An empty value is a value nobody gave — an unset environment variable, most often — and
+		// would surface far from its cause as a method that cannot be satisfied.
+		for _, k := range slices.Sorted(maps.Keys(r.Params())) {
+			if r.Params()[k] == "" {
+				return nil, fmt.Errorf("omnisdk: %s: parameter %q is empty", r.Key(), k)
+			}
+		}
 		if typ, _ := r.Via(); typ != "" {
 			return nil, fmt.Errorf("omnisdk: %s declares an inbound transform, which a converging graph cannot place: it does not say which parameters the transform provides", r.Key())
 		}
@@ -147,6 +154,15 @@ func targetOf(cat aot.Catalog, addr string, r ManagedResource, args Args) (*targ
 	}
 	for k := range r.Params() {
 		have[k] = true
+	}
+	// What it reads from other resources reaches the read too: a container is read within its
+	// account.
+	for _, in := range r.Inbound() {
+		if in.As != "" {
+			have[in.As] = true
+		} else {
+			have[in.From] = true
+		}
 	}
 	selects, _ := caps.Methods(addr, "select")
 	pick := func(addressed bool) facade.Method {
@@ -379,6 +395,11 @@ func (p *desiredPlan) lower(prior func(string) map[string]any, outside func(stri
 		// The read runs only once there is an identity to read by: a resource never made is absent,
 		// and a read without its address would list everything.
 		ln := node{alias: live, address: t.addr, verb: "select", outer: true, params: maps.Clone(t.readParams)}
+		maps.Copy(ln.params, consts)
+		// The read is addressed only by the identity the ledger recorded, never by a value arriving
+		// from another resource, or it would find an object this run did not make.
+		readIn := slices.DeleteFunc(slices.Clone(arrivals), func(in Inbound) bool { return in.As() == r.AddressedBy() })
+		delete(ln.params, r.AddressedBy())
 		switch {
 		case t.read == nil || (r.AddressedBy() == "" && !t.listed):
 			ln.requires = []string{unaddressable}
@@ -387,10 +408,10 @@ func (p *desiredPlan) lower(prior func(string) map[string]any, outside func(stri
 			private := hidden(recall, "identity")
 			ln.pin, ln.requires = t.read.Name(), []string{private}
 			ln.on = []query.Predicate{query.NewEq(query.NewColumn(live, liveIdentity), query.NewColumn(recall, "identity"))}
-			wirings = append(wirings, NewWiring(live, []Inbound{NewInbound(recall, "identity", private)}, "", ""))
+			wirings = append(wirings, NewWiring(live, append([]Inbound{NewInbound(recall, "identity", private)}, readIn...), "", ""))
 		default:
 			ln.pin, ln.requires = t.read.Name(), []string{r.AddressedBy()}
-			wirings = append(wirings, NewWiring(live, []Inbound{NewInbound(recall, "identity", r.AddressedBy())}, "", ""))
+			wirings = append(wirings, NewWiring(live, append([]Inbound{NewInbound(recall, "identity", r.AddressedBy())}, readIn...), "", ""))
 		}
 		nodes = append(nodes, NewRecallNode(recall, r.Key()), ln)
 		d := NewDiffNode(diff, r.Key(), live, liveIdentity, want).(intrinsicNode)
