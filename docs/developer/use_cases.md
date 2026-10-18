@@ -189,6 +189,77 @@ which the document declares, so no field is scattered into the query:
 }'
 ```
 
+### Tagged buckets, run for real
+
+One tagged bucket per cloud. Each command creates the bucket on the first run, reads it and changes
+nothing on a rerun, and puts the tags back if they are edited elsewhere. Bucket and account names are
+global: change `omni-demo-…` to something of your own. Credentials come from the environment, as for
+any query (see the developer guide).
+
+**GCS** — labels on the bucket:
+
+```bash
+./build/omnicli iac-apply test/corpus/registry '{
+  "name": "buckets", "state": "cicd/work/iac-state",
+  "resources": [
+    {"key": "google/storage/bucket", "provider": "google", "address": "storage.buckets",
+     "desired": {"name": "omni-demo-gcs-1234", "labels": {"env": "dev", "team": "platform"}},
+     "identity": "name", "addressed_by": "bucket"}
+  ],
+  "args": {"params": {"project": "PROJECT"}}
+}'
+```
+
+**Azure** — tags on a storage account, in an existing resource group:
+
+```bash
+./build/omnicli iac-apply test/corpus/registry '{
+  "name": "buckets", "state": "cicd/work/iac-state",
+  "resources": [
+    {"key": "azure/storage/account", "provider": "azure", "address": "storage.storage_accounts",
+     "desired": {"location": "eastus", "kind": "StorageV2", "sku": {"name": "Standard_LRS"},
+                 "tags": {"env": "dev", "team": "platform"}},
+     "params": {"resource_group_name": "RG", "account_name": "omnidemo1234"},
+     "identity": "name", "addressed_by": "account_name"}
+  ],
+  "args": {"params": {"subscription_id": "SUBSCRIPTION"}}
+}'
+```
+
+**S3** — the bucket, and its tags as a resource of their own that reads the bucket's name:
+
+```bash
+./build/omnicli iac-apply test/corpus/registry '{
+  "name": "buckets", "state": "cicd/work/iac-state",
+  "resources": [
+    {"key": "aws/s3/bucket", "provider": "aws", "address": "s3.buckets",
+     "desired": {}, "params": {"bucket": "omni-demo-s3-1234"},
+     "identity": "Name", "addressed_by": "bucket"},
+    {"key": "aws/s3/bucket-tags", "provider": "aws", "address": "s3.bucket_taggings",
+     "desired": {"Tagging": {"TagSet": {"Tag": [{"Key": "env", "Value": "dev"},
+                                                  {"Key": "team", "Value": "platform"}]}}},
+     "inbound": [{"from": "aws/s3/bucket", "as": "bucket"}],
+     "addressed_by": "bucket"}
+  ],
+  "args": {"params": {"region": "us-east-1"}}
+}' --aws-region us-east-1
+```
+
+Outside `us-east-1`, S3 needs the region in the bucket's own body as well:
+`"desired": {"CreateBucketConfiguration": {"LocationConstraint": "eu-west-1"}}`.
+
+The three can share one collection, as here, or each have its own. To remove everything the
+collection made, dependents first — the S3 tags before their bucket:
+
+```bash
+./build/omnicli iac-destroy --registry test/corpus/registry --name buckets \
+  --state cicd/work/iac-state \
+  --params '{"project":"PROJECT","subscription_id":"SUBSCRIPTION","region":"us-east-1"}'
+```
+
+Each row says what happened to a key: `destroyed`, or `outstanding` with the provider's reason for
+refusing — a bucket that still holds objects, say.
+
 ### Calling it from Go
 
 The CLI is a thin consumer; a client such as stackql uses the same facade:
