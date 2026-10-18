@@ -117,6 +117,9 @@ type method struct {
 		RequestTranslate struct {
 			Algorithm string `yaml:"algorithm"`
 		} `yaml:"requestTranslate"`
+		QueryParamTranspose struct {
+			Algorithm string `yaml:"algorithm"`
+		} `yaml:"queryParamTranspose"`
 		Pagination struct {
 			RequestToken  tokenSpec `yaml:"requestToken"`
 			ResponseToken tokenSpec `yaml:"responseToken"`
@@ -478,6 +481,7 @@ func (d *document) build(name, verb, path string, op pathOp, m method) aot.AOTEx
 			parameters:    d.operationParams(op),
 			bodyMediaType: bodyMediaType(op),
 			translate:     m.Config.RequestTranslate.Algorithm,
+			transpose:     m.Config.QueryParamTranspose.Algorithm,
 		},
 		resp: response{
 			mediaType:  m.Response.MediaType,
@@ -788,11 +792,13 @@ type request struct {
 	parameters    []aot.Parameter
 	bodyMediaType string
 	translate     string
+	transpose     string
 }
 
 func (r request) Parameters() []aot.Parameter { return r.parameters }
 func (r request) BodyMediaType() string       { return r.bodyMediaType }
 func (r request) Translate() string           { return r.translate }
+func (r request) Transpose() string           { return r.transpose }
 
 func (r request) Method() string    { return r.method }
 func (r request) URL() string       { return r.url }

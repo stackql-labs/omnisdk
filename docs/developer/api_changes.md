@@ -14,7 +14,7 @@ Migrating from `v0.1.3-alpha05`, the version stackql consumes, to the current tr
 | `Converge(registry, name, state, runID, resources, args)` | removed | `Prepare(registry, DesiredState(resources), NewLedger(name, state, runID), args)`. The run id is required: an empty one is refused, not stamped with the time. |
 | `NewGraphSelectQuery` | deprecated alias of `NewGraphQuery` | None needed; rename when convenient. A graph runs writes as well as reads. |
 | `aot.AOTExchange` | Gains `Beta() (Beta, bool)` | Only a caller that implements `AOTExchange` must add it. |
-| `aot.Parameter`, `aot.Request` | Gain `List() bool` and `Translate() string` | Only a caller that implements them must add them. |
+| `aot.Parameter`, `aot.Request` | Gain `List() bool`, and `Translate()` and `Transpose()` | Only a caller that implements them must add them. |
 | A resource declaring an inbound transform (`via_type`/`via`) | Refused by `DesiredState` | Wire the transform in a graph, where the names it provides are stated. |
 
 ## Additions

@@ -149,6 +149,9 @@ type Request interface {
 	// Translate names how the described request is sent instead, empty where it is sent as
 	// described: get_query_to_post_form_utf_8 sends a GET's query as a form POST's body.
 	Translate() string
+	// Transpose names how a structured input is written into the query, empty where it is sent as one
+	// value: AWSCanonical writes a list as name.1, name.2 and a map as name.Key.
+	Transpose() string
 }
 
 // Parameter is one declared input and its location on the wire.

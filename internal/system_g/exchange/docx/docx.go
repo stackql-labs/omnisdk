@@ -653,7 +653,11 @@ func compile(ex aot.AOTExchange, inputs map[string]any, reg dsl.Registry, o opti
 			reqT = append(reqT, awsv4.NewSigV4Transform(
 				awsv4.NewSigV4Signer(str(bound["region"]), service, o.creds, signsPayload(service))))
 		}
-		send := httpx.Make(hreq, tokenDecoder(resp), reqT...)(bound)
+		rowReq, rowBound := hreq, bound
+		if req.Transpose() == AWSCanonical {
+			rowReq, rowBound = transposed(hreq, bound)
+		}
+		send := httpx.Make(rowReq, tokenDecoder(resp), reqT...)(rowBound)
 		// non-2xx fails loudly rather than looking like an empty result
 		checked := exchange.NewTransformExchange(0, send, httpx.NewRequireOK(), 1)
 		// the document's own program, moved from source to here — when it declares one
