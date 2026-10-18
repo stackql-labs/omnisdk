@@ -203,9 +203,22 @@ export _OMNI_BUCKET="omni-demo-${_GOOGLE_PROJECT_ID}"
 export _OMNI_STORAGE_ACCOUNT="omni$(printf %s "${AZURE_SUBSCRIPTION_ID}" | tr -d - | cut -c1-16)"
 ```
 
+Run the commands below in that same shell: an unset `_OMNI_BUCKET` sends an empty bucket name. Azure
+also needs the service principal allowed to write storage accounts in the resource group, once:
+
+```bash
+az role assignment create --assignee "${AZURE_CLIENT_ID}" \
+  --role "Storage Account Contributor" \
+  --scope "/subscriptions/${AZURE_SUBSCRIPTION_ID}/resourceGroups/${_AZURE_RESOURCE_GROUP}"
+```
+
 **GCS** — labels on the bucket:
 
 ```bash
+
+export _OMNI_BUCKET='omni-iac-trial-bucket-01' # must be unique in each provider
+
+
 ./build/omnicli iac-apply test/corpus/registry '{
   "name": "buckets", "state": "cicd/work/iac-state",
   "resources": [
