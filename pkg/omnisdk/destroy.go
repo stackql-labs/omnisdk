@@ -137,7 +137,7 @@ func (p *destroyPlan) delete(ctx context.Context, h *held, k facade.LedgerKey, e
 	}
 	params := map[string]string{}
 	maps.Copy(params, p.args.Params)
-	maps.Copy(params, rec.Params)
+	maps.Copy(params, rec.inputs(ctx, h.log))
 	if _, err := effector.Effect(ctx, exchange, k, facade.EffectInput{Params: params, Identity: identity}); err != nil {
 		return err
 	}

@@ -317,6 +317,16 @@ func TestExampleAzureContainerWithMetadata(t *testing.T) {
 			container = body
 			container["name"] = "omni-demo"
 			_ = json.NewEncoder(w).Encode(container)
+		case r.Method == http.MethodDelete && r.URL.Path == cpath:
+			c.add("delete container")
+			container = nil
+		case r.Method == http.MethodDelete && r.URL.Path == base+"/omnidemo":
+			if container != nil {
+				http.Error(w, `{"error":{"code":"Conflict"}}`, http.StatusConflict)
+				return
+			}
+			c.add("delete account")
+			account = nil
 		case r.Method == http.MethodGet && r.URL.Path == cpath:
 			c.add("get container")
 			if container == nil {
@@ -350,6 +360,21 @@ func TestExampleAzureContainerWithMetadata(t *testing.T) {
 	converge(t, corpus, state, "r2", args, account0, container0)
 	if got := c.took(); got != "get container" {
 		t.Errorf("rerun: %s, want only reads", got)
+	}
+
+	// Destroy deletes the container within its account — whose name it read from the account, and
+	// the ledger recorded where it came from — then the account.
+	pl, err := omnisdk.Prepare(corpus, omnisdk.Destroy(), omnisdk.NewLedger("demo", state, "d1"), args)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, row := range drain(t, pl) {
+		if row["status"] != "destroyed" {
+			t.Errorf("destroy: %v", row)
+		}
+	}
+	if got := c.took(); got != "delete container, delete account" {
+		t.Errorf("destroy: %s, want the container then the account", got)
 	}
 }
 

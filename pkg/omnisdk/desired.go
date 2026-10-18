@@ -294,7 +294,7 @@ func (s scoped) with(ctx context.Context, k facade.LedgerKey, in facade.EffectIn
 	if e, _, found, err := s.log.Get(ctx, k); err == nil && found {
 		var rec aboutRecord
 		if json.Unmarshal(e.About(), &rec) == nil {
-			maps.Copy(params, rec.Params)
+			maps.Copy(params, rec.inputs(ctx, s.log))
 		}
 	}
 	maps.Copy(params, in.Params)
@@ -546,6 +546,40 @@ type aboutRecord struct {
 	Params map[string]string `json:"params,omitempty"`
 	// DependsOn are the ledger keys this resource reads from.
 	DependsOn []string `json:"depends_on,omitempty"`
+	// Arrives maps each input that comes from another resource to that resource's ledger key: its
+	// recorded identity is the value — a container's account name, say.
+	Arrives map[string]string `json:"arrives,omitempty"`
+}
+
+// inputs are what a call on a recorded resource takes from the ledger: its own values, and the
+// identities of the keys it reads from.
+func (rec aboutRecord) inputs(ctx context.Context, log facade.Ledger) map[string]string {
+	out := maps.Clone(rec.Params)
+	if out == nil {
+		out = map[string]string{}
+	}
+	for as, k := range rec.Arrives {
+		if e, _, found, err := log.Get(ctx, facade.LedgerKey(k)); err == nil && found && len(e.Identity()) > 0 {
+			out[as] = string(e.Identity())
+		}
+	}
+	// A key this one depends on is addressed by its own identity, under the parameter it is
+	// addressed by: an account's identity is its account_name, which a container in it takes too. A
+	// record written before arrivals were kept still resolves this way.
+	for _, k := range rec.DependsOn {
+		e, _, found, err := log.Get(ctx, facade.LedgerKey(k))
+		if err != nil || !found || len(e.Identity()) == 0 {
+			continue
+		}
+		var dep aboutRecord
+		if json.Unmarshal(e.About(), &dep) != nil || dep.AddressedBy == "" {
+			continue
+		}
+		if _, given := out[dep.AddressedBy]; !given {
+			out[dep.AddressedBy] = string(e.Identity())
+		}
+	}
+	return out
 }
 
 func (p *desiredPlan) about(r ManagedResource, t *target) ([]byte, error) {
@@ -561,6 +595,14 @@ func (p *desiredPlan) about(r ManagedResource, t *target) ([]byte, error) {
 	}
 	for _, in := range r.Inbound() {
 		rec.DependsOn = append(rec.DependsOn, p.name+"/"+in.From)
+		as := in.As
+		if as == "" {
+			as = in.From
+		}
+		if rec.Arrives == nil {
+			rec.Arrives = map[string]string{}
+		}
+		rec.Arrives[as] = p.name + "/" + in.From
 	}
 	return json.Marshal(rec)
 }
