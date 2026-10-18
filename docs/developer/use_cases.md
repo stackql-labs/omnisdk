@@ -2,7 +2,7 @@
 # Use cases
 
 
-Broadly, the requisite setup for excret and build here is identical to [the developer guide](/docs/developer/developer_guide.md).  We will repeat some things for easy of copy paste, but not all, refere developer guide in all cases for full clarity on build and auth.
+Secrets and build setup are as in [the developer guide](/docs/developer/developer_guide.md). Some of it is repeated here for ease of copy and paste, but not all; refer to the developer guide for the full build and auth setup.
 
 ```bash
 go build -o build/omnicli ./cmd/omnicli
