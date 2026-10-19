@@ -24,10 +24,6 @@ type Declaration struct {
 	Form     string          `json:"form"`
 	Inverse  string          `json:"inverse,omitempty"`
 	Fidelity facade.Fidelity `json:"fidelity,omitempty"`
-	// Update names the exchange that converges an object that already exists. Set it to Exchange
-	// itself where the create is an upsert; leave it empty where re-issuing would mint a duplicate,
-	// as an EC2 CreateVpc does.
-	Update string `json:"update,omitempty"`
 }
 
 type inverse struct {
@@ -41,7 +37,6 @@ func (i inverse) Fidelity() facade.Fidelity { return i.fidelity }
 type static struct {
 	forms    map[string]facade.FormClass
 	inverses map[string]inverse
-	updates  map[string]string
 }
 
 // FormOf maps a SQL verb, as the parsed provider documents carry it, onto the system-wide form
@@ -62,15 +57,12 @@ func FormOf(verb string) facade.FormClass {
 
 // New returns Semantics over the given declarations.
 func New(decls []Declaration) (facade.Semantics, error) {
-	s := &static{forms: map[string]facade.FormClass{}, inverses: map[string]inverse{}, updates: map[string]string{}}
+	s := &static{forms: map[string]facade.FormClass{}, inverses: map[string]inverse{}}
 	for _, d := range decls {
 		if d.Exchange == "" {
 			return nil, fmt.Errorf("semantics: declaration with no exchange")
 		}
 		s.forms[d.Exchange] = FormOf(d.Form)
-		if d.Update != "" {
-			s.updates[d.Exchange] = d.Update
-		}
 		if d.Inverse == "" {
 			continue
 		}
@@ -100,11 +92,6 @@ func FromJSON(b []byte) (facade.Semantics, error) {
 func (s *static) Form(exchange string) (facade.FormClass, bool) {
 	f, ok := s.forms[exchange]
 	return f, ok
-}
-
-func (s *static) Update(exchange string) (string, bool) {
-	u, ok := s.updates[exchange]
-	return u, ok
 }
 
 func (s *static) Inverse(exchange string) (facade.InverseExchange, bool) {

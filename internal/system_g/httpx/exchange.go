@@ -377,6 +377,13 @@ func buildBody(b Body, bound map[string]any) (body []byte, contentType string) {
 	// entire content, so composing one from named parameters would be second-guessing it.
 	if len(b.Raw) > 0 {
 		switch b.Encoding {
+		case EncodingXML:
+			// The whole body is a document in JSON; XML is how this call takes it.
+			var doc map[string]any
+			if err := json.Unmarshal([]byte(subst(string(b.Raw), bound)), &doc); err != nil {
+				return []byte(subst(string(b.Raw), bound)), "application/xml"
+			}
+			return xmlDoc(doc), "application/xml"
 		case EncodingForm:
 			return []byte(subst(string(b.Raw), bound)), "application/x-www-form-urlencoded"
 		default:
@@ -390,7 +397,7 @@ func buildBody(b Body, bound map[string]any) (body []byte, contentType string) {
 			vals.Set(k, substAny(v, bound))
 		}
 		return []byte(vals.Encode()), "application/x-www-form-urlencoded"
-	case EncodingJSON:
+	case EncodingJSON, EncodingXML:
 		m := make(map[string]any, len(b.Params))
 		for k, v := range b.Params {
 			s, ok := v.(string)
@@ -404,6 +411,9 @@ func buildBody(b Body, bound map[string]any) (body []byte, contentType string) {
 			default:
 				m[k] = subst(s, bound)
 			}
+		}
+		if b.Encoding == EncodingXML {
+			return xmlDoc(m), "application/xml"
 		}
 		bs, _ := json.Marshal(m)
 		return bs, "application/json"

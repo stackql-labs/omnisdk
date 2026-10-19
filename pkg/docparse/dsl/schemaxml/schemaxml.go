@@ -193,7 +193,7 @@ func findListMember(payload map[string]any, row Schema) (string, []any) {
 
 // itemsOf reads a member as a list. XML has no arrays, so a set is either <x><item>…</item></x> with
 // one item decoded as an object, or several decoded as a slice. The ec2 protocol names the element
-// <item>; the query protocol names it <member>.
+// <item>; the query protocol names it <member>; rest-xml names it after the member itself.
 func itemsOf(v any) []any {
 	m, ok := v.(map[string]any)
 	if !ok {
@@ -202,6 +202,13 @@ func itemsOf(v any) []any {
 	inner, ok := m["item"]
 	if !ok {
 		inner, ok = m["member"]
+	}
+	if !ok && len(m) == 1 {
+		// rest-xml names a member after what it is — <Buckets><Bucket>…</Bucket></Buckets> — so a
+		// set whose only child element repeats holds its members there.
+		for _, v := range m {
+			inner, ok = v, true
+		}
 	}
 	if !ok {
 		return nil

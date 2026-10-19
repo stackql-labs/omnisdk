@@ -26,7 +26,7 @@ func countRows(t *testing.T, dir, address string, args omnisdk.Args) int {
 	if err != nil {
 		t.Fatal(err)
 	}
-	pl, err := omnisdk.NewGraphSelectQuery(dir, g, args)
+	pl, err := omnisdk.NewGraphQuery(dir, g, args)
 	if err != nil {
 		t.Fatalf("plan: %v", err)
 	}
@@ -136,7 +136,7 @@ func TestRowsArriveBeforeTheLastPage(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	pl, err := omnisdk.NewGraphSelectQuery(corpus, g, omnisdk.Args{Endpoint: srv.URL, Params: map[string]string{"project": "demo"}})
+	pl, err := omnisdk.NewGraphQuery(corpus, g, omnisdk.Args{Endpoint: srv.URL, Params: map[string]string{"project": "demo"}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -249,7 +249,7 @@ func TestResolvedQueryStreamsInBoundedMemory(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	pl, err := omnisdk.NewGraphSelectQuery(corpus, res.Graph(), omnisdk.Args{Endpoint: srv.URL, Params: res.Params()})
+	pl, err := omnisdk.NewGraphQuery(corpus, res.Graph(), omnisdk.Args{Endpoint: srv.URL, Params: res.Params()})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -319,7 +319,7 @@ func TestReadAheadIsTunable(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		pl, err := omnisdk.NewGraphSelectQuery(corpus, g, omnisdk.Args{Endpoint: srv.URL,
+		pl, err := omnisdk.NewGraphQuery(corpus, g, omnisdk.Args{Endpoint: srv.URL,
 			Params: map[string]string{"project": "demo"}, Tuning: tuning})
 		if err != nil {
 			t.Fatal(err)
@@ -399,7 +399,7 @@ func readOneAndDrop(t *testing.T, endpoint string) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	pl, err := omnisdk.NewGraphSelectQuery(corpus, g, omnisdk.Args{Endpoint: endpoint, Params: map[string]string{"project": "demo"}})
+	pl, err := omnisdk.NewGraphQuery(corpus, g, omnisdk.Args{Endpoint: endpoint, Params: map[string]string{"project": "demo"}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -503,7 +503,7 @@ func TestDefaultPaginationNeverRepeatsAMutation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	pl, err := omnisdk.NewGraphSelectQuery(authRegistry, g, omnisdk.Args{Endpoint: srv.URL})
+	pl, err := omnisdk.NewGraphQuery(authRegistry, g, omnisdk.Args{Endpoint: srv.URL})
 	if err != nil {
 		t.Fatal(err)
 	}

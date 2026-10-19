@@ -39,7 +39,7 @@ func TestFileKeepsEveryVersion(t *testing.T) {
 		t.Fatalf("begin: %v", err)
 	}
 	_, v := get(t, l, "s/a")
-	if err := l.Resolve(ctx, "s/a", []byte("id-1"), v); err != nil {
+	if err := l.Resolve(ctx, "s/a", []byte("id-1"), nil, v); err != nil {
 		t.Fatalf("resolve: %v", err)
 	}
 
@@ -123,7 +123,7 @@ func TestFileSurvivesReopen(t *testing.T) {
 		t.Fatalf("begin: %v", err)
 	}
 	_, v := get(t, first, "s/a")
-	if err := first.Resolve(ctx, "s/a", []byte("id-1"), v); err != nil {
+	if err := first.Resolve(ctx, "s/a", []byte("id-1"), nil, v); err != nil {
 		t.Fatalf("resolve: %v", err)
 	}
 

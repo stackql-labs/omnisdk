@@ -6,7 +6,9 @@ package awsv4
 
 import (
 	"crypto/hmac"
+	"crypto/md5"
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/hex"
 	"errors"
 	"fmt"
@@ -94,6 +96,12 @@ func (s sigV4Signer) Sign(req *http.Request, payload []byte, now time.Time) erro
 	}
 	if s.signPayloadHeader {
 		req.Header.Set("X-Amz-Content-Sha256", payloadHash)
+		// S3 refuses a body some calls carry — PutBucketTagging among them — without an integrity
+		// header of the body's own, and accepts one on any call that has a body.
+		if len(payload) > 0 && req.Header.Get("Content-MD5") == "" {
+			sum := md5.Sum(payload)
+			req.Header.Set("Content-MD5", base64.StdEncoding.EncodeToString(sum[:]))
+		}
 	}
 
 	canonicalHeaders, signedHeaders := s.canonicalHeaders(req)

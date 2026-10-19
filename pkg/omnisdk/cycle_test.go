@@ -47,7 +47,7 @@ func crawlGraph(t *testing.T) omnisdk.Graph {
 
 func crawlIDs(t *testing.T, g omnisdk.Graph, srv *httptest.Server) []string {
 	t.Helper()
-	pl, err := omnisdk.NewGraphSelectQuery(authRegistry, g, omnisdk.Args{Endpoint: srv.URL})
+	pl, err := omnisdk.NewGraphQuery(authRegistry, g, omnisdk.Args{Endpoint: srv.URL})
 	if err != nil {
 		t.Fatalf("plan: %v", err)
 	}
@@ -114,7 +114,7 @@ func TestCycleWithoutAWellFoundedTerminationIsRefused(t *testing.T) {
 		cases[name] = g
 	}
 	for name, g := range cases {
-		_, err := omnisdk.NewGraphSelectQuery(authRegistry, g, omnisdk.Args{Endpoint: srv.URL})
+		_, err := omnisdk.NewGraphQuery(authRegistry, g, omnisdk.Args{Endpoint: srv.URL})
 		if err == nil || !strings.Contains(err.Error(), "cycle through") {
 			t.Errorf("%s: err = %v, want the cycle refused", name, err)
 		}
@@ -134,7 +134,7 @@ func TestUnionAll(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		pl, err := omnisdk.NewGraphSelectQuery(authRegistry, g, omnisdk.Args{Endpoint: srv.URL, Tuning: omnisdk.Tuning{Limit: limit}})
+		pl, err := omnisdk.NewGraphQuery(authRegistry, g, omnisdk.Args{Endpoint: srv.URL, Tuning: omnisdk.Tuning{Limit: limit}})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -187,7 +187,7 @@ func TestLeftJoinByOnAlone(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	pl, err := omnisdk.NewGraphSelectQuery(authRegistry, g, omnisdk.Args{Endpoint: srv.URL})
+	pl, err := omnisdk.NewGraphQuery(authRegistry, g, omnisdk.Args{Endpoint: srv.URL})
 	if err != nil {
 		t.Fatal(err)
 	}

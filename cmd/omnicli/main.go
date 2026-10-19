@@ -9,6 +9,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -168,44 +169,42 @@ func main() {
 	// leaves unsaid. No Go entry is added for a new service — the same relationship doc-graph has to
 	// a query.
 	iacApply := &cobra.Command{
-		Use:   "iac-apply <registry> <spec-json>",
-		Short: "Converge resources declared inline against provider documents; CREATES REAL RESOURCES",
-		Args:  cobra.ExactArgs(2),
+		Use:   "iac-apply <registry> <spec-json | @file>",
+		Short: "Converge resources declared inline or in a file against provider documents; CREATES REAL RESOURCES",
+		Long: `Converge resources declared inline or in a file against provider documents.
+
+The spec is JSON, or @path to read it from a file. --name and --state name the collection and where
+its ledger lives, over whatever the spec says; a file holding only resources needs both.`,
+		Args: cobra.ExactArgs(2),
 		RunE: withSinks(func(cmd *cobra.Command, w, logw io.Writer) error {
-			var spec struct {
-				Name      string `json:"name"`
-				State     string `json:"state"`
-				RunID     string `json:"run_id,omitempty"`
-				Resources []struct {
-					Key      string            `json:"key"`
-					Provider string            `json:"provider"`
-					Address  string            `json:"address"`
-					Desired  json.RawMessage   `json:"desired,omitempty"`
-					Params   map[string]string `json:"params,omitempty"`
-					Inbound  []struct {
-						From string `json:"from"`
-						As   string `json:"as,omitempty"`
-					} `json:"inbound,omitempty"`
-					ViaType          string `json:"via_type,omitempty"`
-					Via              string `json:"via,omitempty"`
-					Identity         string `json:"identity,omitempty"`
-					AddressedBy      string `json:"addressed_by,omitempty"`
-					CorrelationParam string `json:"correlation_param,omitempty"`
-				} `json:"resources"`
-				Args *omnisdk.Args `json:"args,omitempty"`
-			}
-			if err := json.Unmarshal([]byte(cmdArgs(cmd)[1]), &spec); err != nil {
-				return fmt.Errorf("spec json: %w", err)
-			}
-			resources := make([]omnisdk.ManagedResource, 0, len(spec.Resources))
-			for _, r := range spec.Resources {
-				inbound := make([]omnisdk.Arrival, 0, len(r.Inbound))
-				for _, in := range r.Inbound {
-					inbound = append(inbound, omnisdk.Arrival{From: in.From, As: in.As})
+			raw := []byte(cmdArgs(cmd)[1])
+			if path, isFile := strings.CutPrefix(cmdArgs(cmd)[1], "@"); isFile {
+				b, err := os.ReadFile(path)
+				if err != nil {
+					return fmt.Errorf("spec file: %w", err)
 				}
-				resources = append(resources, omnisdk.NewResource(r.Key, r.Provider, r.Address,
-					[]byte(r.Desired), r.Params, inbound, r.ViaType, r.Via,
-					r.Identity, r.AddressedBy, r.CorrelationParam))
+				raw = b
+			}
+			var spec struct {
+				Name  string        `json:"name"`
+				State string        `json:"state"`
+				RunID string        `json:"run_id,omitempty"`
+				Args  *omnisdk.Args `json:"args,omitempty"`
+			}
+			// A file of resources alone is a list; it carries no collection, state or args.
+			if trimmed := bytes.TrimSpace(raw); len(trimmed) > 0 && trimmed[0] == '{' {
+				if err := json.Unmarshal(raw, &spec); err != nil {
+					return fmt.Errorf("spec json: %w", err)
+				}
+			}
+			resources, err := omnisdk.ParseResources(raw)
+			if err != nil {
+				return fmt.Errorf("spec: %w", err)
+			}
+			for flag, field := range map[string]*string{"name": &spec.Name, "state": &spec.State, "run-id": &spec.RunID} {
+				if v, _ := cmd.Flags().GetString(flag); v != "" {
+					*field = v
+				}
 			}
 			a := omnisdk.Args{}
 			if spec.Args != nil {
@@ -228,13 +227,17 @@ func main() {
 			if (a.Tuning == omnisdk.Tuning{}) {
 				a.Tuning = t.facade()
 			}
-			pl, err := omnisdk.Converge(cmdArgs(cmd)[0], spec.Name, spec.State, spec.RunID, resources, a)
+			pl, err := omnisdk.Prepare(cmdArgs(cmd)[0], omnisdk.DesiredState(resources),
+				omnisdk.NewLedger(spec.Name, spec.State, runIDOr(spec.RunID)), a)
 			if err != nil {
 				return err
 			}
 			return streamRows(pl, w)
 		}),
 	}
+	iacApply.Flags().String("name", "", "collection to apply under, over the spec's name")
+	iacApply.Flags().String("state", "", "directory holding the collection's ledger, over the spec's state")
+	iacApply.Flags().String("run-id", "", "journal name for this run, over the spec's (default: a UTC timestamp)")
 	root.AddCommand(iacApply)
 
 	iacCmd := &cobra.Command{
@@ -262,8 +265,8 @@ func main() {
 			a := omnisdk.Args{Params: map[string]string{"region": inputs["region"]}}
 			a.Endpoint, a.Log, a.Tuning = endpoint, logw, t.facade()
 			a.InsecureSkipTLSVerify = insecureTLS
-			pl, err := omnisdk.Converge(mustFlag(cmd, "registry"), mustFlag(cmd, "name"),
-				mustFlag(cmd, "state"), mustFlag(cmd, "run-id"), resources, a)
+			pl, err := omnisdk.Prepare(mustFlag(cmd, "registry"), omnisdk.DesiredState(resources),
+				omnisdk.NewLedger(mustFlag(cmd, "name"), mustFlag(cmd, "state"), runIDOr(mustFlag(cmd, "run-id"))), a)
 			if err != nil {
 				return err
 			}
@@ -282,6 +285,39 @@ func main() {
 		_ = iacCmd.MarkFlagRequired(f)
 	}
 	root.AddCommand(iacCmd)
+
+	iacDestroy := &cobra.Command{
+		Use:   "iac-destroy",
+		Short: "Destroy everything a collection's ledger holds, dependents first; DELETES REAL RESOURCES",
+		RunE: withSinks(func(cmd *cobra.Command, w, logw io.Writer) error {
+			a := omnisdk.Args{Params: map[string]string{}}
+			if p := mustFlag(cmd, "params"); p != "" {
+				if err := json.Unmarshal([]byte(p), &a.Params); err != nil {
+					return fmt.Errorf("--params: %w", err)
+				}
+			}
+			if _, given := a.Params["region"]; !given && awsRegion != "" {
+				a.Params["region"] = awsRegion
+			}
+			a.Endpoint, a.Log, a.Tuning = endpoint, logw, t.facade()
+			a.InsecureSkipTLSVerify = insecureTLS
+			pl, err := omnisdk.Prepare(mustFlag(cmd, "registry"), omnisdk.Destroy(),
+				omnisdk.NewLedger(mustFlag(cmd, "name"), mustFlag(cmd, "state"), runIDOr(mustFlag(cmd, "run-id"))), a)
+			if err != nil {
+				return err
+			}
+			return streamRows(pl, w)
+		}),
+	}
+	iacDestroy.Flags().String("registry", "", "provider-document registry root (required)")
+	iacDestroy.Flags().String("name", "", "collection to destroy (required)")
+	iacDestroy.Flags().String("state", "", "directory holding the collection's ledger (required)")
+	iacDestroy.Flags().String("params", "", `scope the deletes run in, as a JSON object, e.g. {"subscription_id":"…"}`)
+	iacDestroy.Flags().String("run-id", "", "journal name for this run (default: a UTC timestamp)")
+	for _, f := range []string{"registry", "name", "state"} {
+		_ = iacDestroy.MarkFlagRequired(f)
+	}
+	root.AddCommand(iacDestroy)
 
 	// ---- GCP ------------------------------------------------------------------
 	gcpCmd := &cobra.Command{
@@ -710,7 +746,7 @@ func main() {
 				return nil, err
 			}
 		}
-		return omnisdk.NewGraphSelectQuery(registry, g, a)
+		return omnisdk.NewGraphQuery(registry, g, a)
 	}
 	docGraph := &cobra.Command{
 		Use:   "doc-graph <dir> <graph-json>",
@@ -1086,4 +1122,13 @@ func columnRef(s string) (query.Column, error) {
 		return nil, fmt.Errorf("%q must be <alias>.<column>", s)
 	}
 	return query.NewColumn(q, c), nil
+}
+
+// runIDOr is the run id given, or one stamped from the clock: it names the run's journal, and the
+// CLI chooses it where the caller has not.
+func runIDOr(id string) string {
+	if id != "" {
+		return id
+	}
+	return time.Now().UTC().Format("20060102T150405Z")
 }

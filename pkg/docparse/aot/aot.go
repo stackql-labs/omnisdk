@@ -11,6 +11,8 @@
 // compiler makes against these interfaces.
 package aot
 
+import "time"
+
 // AOTExchange is one operation as the document declares it, ahead of any plan.
 type AOTExchange interface {
 	// Name identifies the exchange (the resource it serves, e.g. "instances").
@@ -27,6 +29,63 @@ type AOTExchange interface {
 	// a document that says its calls are SigV4-signed means every one of them, and requiring a caller
 	// to restate that per exchange is how signing gets forgotten.
 	Security() Security
+	// Beta is the call the document says must follow this one before what it made exists, false
+	// where it declares none.
+	Beta() (Beta, bool)
+	// Pushdown is what the call can do server-side that a query would otherwise do to the rows it
+	// returns, false where the document declares nothing.
+	Pushdown() (Pushdown, bool)
+}
+
+// Pushdown is a call's server-side query options: projection, filtering and a row cap. Each is
+// optional, and an option the call lacks is done client-side.
+type Pushdown interface {
+	Select() (PushdownOption, bool)
+	Filter() (PushdownOption, bool)
+	Top() (PushdownOption, bool)
+}
+
+// PushdownOption is one server-side query option as the document declares it.
+type PushdownOption interface {
+	// Dialect is the syntax family the option is written in: odata, or custom.
+	Dialect() string
+	// ParamName is the query parameter carrying it; empty where none is known.
+	ParamName() string
+	// Delimiter separates a projection's columns.
+	Delimiter() string
+	// MaxValue caps a row cap; zero is no cap.
+	MaxValue() int
+	// SupportsColumn and SupportsOperator report what the option may name; a document that lists
+	// none allows any.
+	SupportsColumn(name string) bool
+	SupportsOperator(op string) bool
+}
+
+// Beta is a β edge a document declares from an operation to the call that completes it: a create
+// answered with a long-running operation, and the get that reads that operation until it is done.
+// An operation declaring one has not finished when it answers; it has finished when Await says so.
+type Beta interface {
+	// Method is the call that follows.
+	Method() AOTExchange
+	// Bind maps each of Method's inputs to the field of this operation's response that supplies it.
+	// Inputs not named here are the same values this operation was called with — its scope.
+	Bind() map[string]string
+	Await() Await
+}
+
+// Await is when a followed call reports done. Every field is required: how long to wait is the
+// document's statement about its API, never a default.
+type Await interface {
+	// StatusPath is the dotted path of the status in Method's response.
+	StatusPath() string
+	// Done is the status value that means finished.
+	Done() string
+	// ErrorPath is the dotted path of an error a finished operation reports; empty where the API
+	// reports none. Finished with an error is failed.
+	ErrorPath() string
+	Interval() time.Duration
+	// MaxAttempts bounds the wait. Exhausting it says nothing about whether the operation succeeded.
+	MaxAttempts() int
 }
 
 // Scheme is a normalized authentication scheme — normalized because a document expresses it in its
@@ -114,6 +173,12 @@ type Request interface {
 	// document does not need to enumerate its fields for one to be sent. Saying the operation takes
 	// a body, and in what encoding, is the whole of what a compiler needs.
 	BodyMediaType() string
+	// Translate names how the described request is sent instead, empty where it is sent as
+	// described: get_query_to_post_form_utf_8 sends a GET's query as a form POST's body.
+	Translate() string
+	// Transpose names how a structured input is written into the query, empty where it is sent as one
+	// value: AWSCanonical writes a list as name.1, name.2 and a map as name.Key.
+	Transpose() string
 }
 
 // Parameter is one declared input and its location on the wire.
@@ -122,6 +187,9 @@ type Parameter interface {
 	// In is where the value goes: query, path, header or cookie.
 	In() string
 	Required() bool
+	// List reports whether the parameter takes several values — its schema is an array. How a list
+	// is written on the wire is the protocol's: AWS's Query protocol numbers each member, Name.1.
+	List() bool
 }
 
 // Parameter locations, as OpenAPI names them.
@@ -248,8 +316,11 @@ type Catalog interface {
 	Resources(service string) ([]string, error)
 	// Methods are a resource's methods, sorted.
 	Methods(service, resource string) ([]Method, error)
-	// Paths are every addressable exchange, sorted.
+	// Paths are every addressable exchange, sorted. Listing them parses every service's document.
 	Paths() []string
+	// Address is the published address of one resource of one service — the namespace included —
+	// or false where the service's document declares no such resource. Only that document is read.
+	Address(service, resource string) (string, bool)
 	// Exchange resolves one address to its first SELECT.
 	Exchange(path string) (AOTExchange, error)
 	// Operations returns every exchange a resource binds to one SQL verb, in the order the document

@@ -42,7 +42,8 @@ type Node interface {
 	// Fanout are inputs taking several values: the reference runs once per value, and once per
 	// combination where there are several — an IN list pushed down.
 	Fanout() map[string][]string
-	// Verb is what the reference does: "select", or "insert", "update" or "delete" for a mutation,
+	// Verb is what the reference does: "select", or "insert", "update", "replace" or "delete" for a
+	// mutation — replace being a write of the whole object, a PUT,
 	// whose request has an effect and whose rows are what it returns.
 	Verb() string
 	// Tuples are rows the node runs once each for, each binding its keys together — a multi-row
@@ -114,6 +115,20 @@ type node struct {
 	outer                bool
 	on                   []query.Predicate
 	tuples               []map[string]any
+	// What converging desired state states about a node beyond Node. pin is the method to run, where
+	// the graph rather than the analyzer chooses; whole takes the response whole rather than rows
+	// out of it; requires are inputs without which the node makes no request.
+	pin      string
+	whole    bool
+	requires []string
+}
+
+// tuningOf is what n states beyond Node, if it states anything.
+func tuningOf(n Node) (pin string, whole bool, requires []string) {
+	if x, ok := n.(node); ok {
+		return x.pin, x.whole, x.requires
+	}
+	return "", false, nil
 }
 
 func (n node) Tuples() []map[string]any { return n.tuples }
@@ -340,9 +355,9 @@ func NewGraphWithFilters(nodes []Node, wirings []Wiring, projections []Projectio
 			return nil, fmt.Errorf("omnisdk: a node has neither an alias nor an address")
 		case strings.ContainsRune(n.Alias(), 0):
 			return nil, fmt.Errorf("omnisdk: alias %q contains a NUL byte", n.Alias())
-		case n.Address() == "" && n.Verb() != verbRecall && n.Verb() != verbDiff && n.Verb() != verbFunction:
+		case n.Address() == "" && n.Verb() != verbRecall && n.Verb() != verbDiff && n.Verb() != verbFunction && n.Verb() != verbShape:
 			return nil, fmt.Errorf("omnisdk: node %q has no address", n.Alias())
-		case !contains([]string{"select", "insert", "update", "delete", verbRecall, verbDiff, verbFunction}, n.Verb()):
+		case !contains([]string{"select", "insert", "update", "replace", "delete", verbRecall, verbDiff, verbFunction, verbShape}, n.Verb()):
 			return nil, fmt.Errorf("omnisdk: node %q has unknown verb %q", n.Alias(), n.Verb())
 		case known[n.Alias()]:
 			return nil, fmt.Errorf("omnisdk: %q is referenced twice; give each reference an alias", n.Alias())
@@ -512,12 +527,13 @@ func (g graph) Wirings() []Wiring           { return g.wirings }
 func (g graph) Overrides() []Override       { return g.overrides }
 func (g graph) Projections() []Projection   { return g.projections }
 
-// NewGraphSelectQuery plans a multi-exchange query over a registry root or bundle directory.
+// NewGraphQuery plans a multi-exchange query over a registry root or bundle directory: reads and
+// writes alike.
 //
 // Every exchange is compiled exactly as a single-address run compiles one, so auth, signing and
 // response handling are unchanged. What the caller adds is the data flow between them — the part a
 // document cannot state, because it describes one provider and a relationship may span two.
-func NewGraphSelectQuery(dir string, g Graph, args Args) (Plan, error) {
+func NewGraphQuery(dir string, g Graph, args Args) (Plan, error) {
 	if err := checkEndpoint(args); err != nil {
 		return nil, err
 	}
@@ -684,7 +700,7 @@ func NewGraphSelectQuery(dir string, g Graph, args Args) (Plan, error) {
 					return nil, fmt.Errorf("omnisdk: diff %q reads %q, which must be an outer node declared before it, so an absent object still reaches the diff", alias, in.live)
 				}
 			}
-			spec, b, err := intrinsicSpec(name, in, args.managed, planned)
+			spec, b, err := intrinsicSpec(name, in, args.managed, planned, reg)
 			if err != nil {
 				return nil, err
 			}
@@ -763,15 +779,12 @@ func NewGraphSelectQuery(dir string, g Graph, args Args) (Plan, error) {
 		if err != nil {
 			return nil, err
 		}
-		candidates, err := c.Operations(addr, n.Verb())
-		if err != nil {
-			return nil, err
-		}
 		// Selection must count what ARRIVES, not only what the caller supplied. Azure's Subnets_list
 		// needs a resource group and a VNet name, both of which come over the edge — judged on
 		// supplied inputs alone, no select is satisfiable and the query fails before its wiring is
 		// ever considered.
-		ex, err := chooseExchange(candidates, arrivals)
+		pin, whole, requires := tuningOf(n)
+		ex, err := chooseExchange(c, principalOf(args), addr, n.Verb(), arrivals, sentBy(n), pin)
 		if err != nil {
 			return nil, fmt.Errorf("omnisdk: %s (%s): %w", alias, addr, err)
 		}
@@ -784,11 +797,49 @@ func NewGraphSelectQuery(dir string, g Graph, args Args) (Plan, error) {
 			// A mutation's reply is often undocumented; the effect is the point.
 			opts = append(opts, docx.WithoutResponseDecode())
 		}
+		if whole {
+			opts = append(opts, docx.WithWholeResponse())
+		}
+		// What the server can do instead of the rows: a projection, a filter, a cap. Each value is a
+		// constant of the run, bound through a slot of its own so its wire name is sent as written.
+		if n.Verb() == "select" {
+			needed := slices.Clone(emits[alias])
+			for _, p := range n.On() {
+				for _, c := range predicateColumns(p) {
+					if c.Qualifier() == alias {
+						needed = append(needed, c.Name())
+					}
+				}
+			}
+			if qp := pushdown(ex, g, alias, needed, args.Tuning.Limit); len(qp) > 0 {
+				slots := map[string]string{}
+				for i, wire := range slices.Sorted(maps.Keys(qp)) {
+					slot := fmt.Sprintf("pushdown_%d", i)
+					slots[wire] = slot
+					inputs[hidden(alias, slot)] = qp[wire]
+					betas = append(betas, plan.NewBetaEdge("", name, hidden(alias, slot), slot))
+				}
+				opts = append(opts, docx.WithQuerySlots(slots))
+			}
+		}
 		if body := n.Body(); len(body) > 0 {
 			opts = append(opts, docx.WithBodyFields(slices.Sorted(maps.Keys(body))...))
 		}
 		if names := bound[alias]; len(names) > 0 {
 			opts = append(opts, docx.WithBound(names...))
+		}
+		// A list parameter is sent indexed — TagSpecification.1.Tag.2.Key, Filter.1.Name — and a
+		// document declares the parameter, never its members, so placement by declared name would
+		// drop every member. They are the caller's values, so they are bound as well as placed.
+		var indexed []string
+		for k := range n.Params() {
+			if strings.Contains(k, ".") {
+				indexed = append(indexed, k)
+			}
+		}
+		if len(indexed) > 0 {
+			slices.Sort(indexed)
+			opts = append(opts, docx.WithBound(indexed...))
 		}
 		if names := provided[alias]; len(names) > 0 {
 			opts = append(opts, docx.WithProvided(names...))
@@ -866,7 +917,8 @@ func NewGraphSelectQuery(dir string, g Graph, args Args) (Plan, error) {
 			eff := effect{ExchangeSpec: spec, alias: alias, verb: n.Verb(), exchange: exchangeOf(addr, n.Verb()), journal: wal}
 			if run := args.managed; run != nil && run.ledger != nil {
 				if m, ok := run.nodes[alias]; ok {
-					eff.durable = &durable{run: run, resource: m, address: addr}
+					eff.durable = &durable{run: run, resource: m, address: addr, provider: c.Provider().Name(),
+						deletes: deleteInputs(c, addr), dependsOn: dependsOn(g, run.nodes, m)}
 				}
 			}
 			spec = eff
@@ -885,7 +937,7 @@ func NewGraphSelectQuery(dir string, g Graph, args Args) (Plan, error) {
 		}
 		// A required input with no value means nothing to ask about: the node has no match for that
 		// row, and no request is made. An optional input with no value is simply not sent.
-		if names := requiredOf(ex, wiredInputs(g, alias)); len(names) > 0 {
+		if names := append(requiredOf(ex, wiredInputs(g, alias)), requires...); len(names) > 0 {
 			spec = guarded{ExchangeSpec: spec, names: names}
 		}
 		if attrs := emits[alias]; len(attrs) > 0 {
@@ -1031,6 +1083,23 @@ func openJournal(g Graph, args Args) (facade.Journal, error) {
 		return nil, err
 	}
 	return journals.For(context.Background(), j.RunID)
+}
+
+// sentBy are the inputs a mutation node sets — its parameters, body fields, fanned-out and tupled
+// values — which the method chosen for it must accept. A read sends nothing it must be checked
+// against: its parameters narrow what comes back, and a run-wide one such as a region reaches every
+// node whether or not that node's method declares it.
+func sentBy(n Node) []string {
+	if n.Verb() == "select" {
+		return nil
+	}
+	var out []string
+	out = append(out, slices.Collect(maps.Keys(n.Params()))...)
+	out = append(out, slices.Collect(maps.Keys(n.Body()))...)
+	out = append(out, slices.Collect(maps.Keys(n.Fanout()))...)
+	out = append(out, tupleKeys(n)...)
+	slices.Sort(out)
+	return slices.Compact(out)
 }
 
 // tupleKeys are the keys a node's tuples bind, sorted; every tuple binds the same ones.

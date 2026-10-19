@@ -92,7 +92,7 @@ func fixture(t *testing.T, tgt *target, decls []semantics.Declaration, steps [][
 		if err != nil {
 			t.Fatalf("get: %v", err)
 		}
-		if err := log.Resolve(ctx, k, []byte("id-"+k), v); err != nil {
+		if err := log.Resolve(ctx, k, []byte("id-"+k), nil, v); err != nil {
 			t.Fatalf("resolve: %v", err)
 		}
 	}

@@ -47,8 +47,8 @@ func (c *calls) matching(prefix string) []string {
 func ec2Stub(t *testing.T, seen *calls) *httptest.Server {
 	t.Helper()
 	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		action := r.URL.Query().Get("Action")
-		seen.add(action + "|" + r.URL.Query().Get("Filter.1.Value.1"))
+		action := formValue(r, "Action")
+		seen.add(action + "|" + formValue(r, "Filter.1.Value.1"))
 		w.Header().Set("Content-Type", "text/xml")
 		switch action {
 		case "DescribeVpcs":
@@ -70,7 +70,7 @@ func runGraph(t *testing.T, srv *httptest.Server, g omnisdk.Graph) []omnisdk.Row
 // runGraphIn is runGraph with the functions of dialect d.
 func runGraphIn(t *testing.T, srv *httptest.Server, g omnisdk.Graph, d sqlfn.Dialect) []omnisdk.Row {
 	t.Helper()
-	pl, err := omnisdk.NewGraphSelectQuery(corpus, g, omnisdk.Args{
+	pl, err := omnisdk.NewGraphQuery(corpus, g, omnisdk.Args{
 		Endpoint: srv.URL,
 		Params:   map[string]string{"region": "us-east-1"},
 		Dialect:  d,
@@ -190,7 +190,7 @@ func TestSelectRefusesTwoRowProducingColumns(t *testing.T) {
 	if err != nil {
 		t.Fatalf("graph: %v", err)
 	}
-	_, err = omnisdk.NewGraphSelectQuery(corpus, g, omnisdk.Args{Params: map[string]string{"region": "us-east-1"}, Dialect: sqlfn.Postgres})
+	_, err = omnisdk.NewGraphQuery(corpus, g, omnisdk.Args{Params: map[string]string{"region": "us-east-1"}, Dialect: sqlfn.Postgres})
 	if err == nil || !strings.Contains(err.Error(), "two row-producing columns") {
 		t.Fatalf("want a refusal for two row-producing columns, got %v", err)
 	}

@@ -1,5 +1,12 @@
 # Known issues
 
+## Open: protections that refuse a delete
+
+A destroy reports a delete the provider refuses as outstanding, with the provider's reason, and never
+forces it. Flag-based protections — deletion protection, termination protection, a resource lock —
+are mostly knowable ahead of time but are not read before the delete; object lock, legal holds,
+retention and policy-driven denials are more varied still. Each is seen only as the refusal.
+
 ## Resolved: `schema_driven_xml` was named but not implemented
 
 Worth recording for its failure mode — silence rather than an error. AWS documents name `schema_driven_xml_v0.1.0` with no program body and declare

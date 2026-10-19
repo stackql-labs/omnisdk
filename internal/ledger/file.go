@@ -31,6 +31,7 @@ type state struct {
 	Plan      []byte             `json:"plan,omitempty"`
 	Proposed  []byte             `json:"proposed,omitempty"`
 	Identity  []byte             `json:"identity,omitempty"`
+	About     []byte             `json:"about,omitempty"`
 	Tombstone bool               `json:"tombstone,omitempty"`
 }
 
@@ -165,7 +166,7 @@ func (f *fileLedger) Get(_ context.Context, k facade.LedgerKey) (facade.LedgerEn
 	if err != nil || !found {
 		return nil, facade.LedgerVersionNone, false, err
 	}
-	return entry{key: k, phase: s.Phase, plan: s.Plan, proposed: s.Proposed, identity: s.Identity}, version(ver), true, nil
+	return entry{key: k, phase: s.Phase, plan: s.Plan, proposed: s.Proposed, identity: s.Identity, about: s.About}, version(ver), true, nil
 }
 
 func (f *fileLedger) List(_ context.Context, scope string) ([]facade.LedgerEntry, error) {
@@ -204,7 +205,7 @@ func (f *fileLedger) List(_ context.Context, scope string) ([]facade.LedgerEntry
 		if !found {
 			continue
 		}
-		out = append(out, entry{key: k, phase: s.Phase, plan: s.Plan, proposed: s.Proposed, identity: s.Identity})
+		out = append(out, entry{key: k, phase: s.Phase, plan: s.Plan, proposed: s.Proposed, identity: s.Identity, about: s.About})
 	}
 	return out, nil
 }
@@ -241,10 +242,10 @@ func (f *fileLedger) Begin(_ context.Context, k facade.LedgerKey, proposed []byt
 	}
 	// Plan carries through untouched: a call that has not returned may still fail, and n-1 is the
 	// one thing that cannot be reconstructed.
-	return f.commit(k, state{Phase: facade.LedgerPending, Plan: s.Plan, Proposed: clone(proposed)}, ver)
+	return f.commit(k, state{Phase: facade.LedgerPending, Plan: s.Plan, Proposed: clone(proposed), About: s.About}, ver)
 }
 
-func (f *fileLedger) Resolve(_ context.Context, k facade.LedgerKey, identity []byte, v facade.LedgerVersion) error {
+func (f *fileLedger) Resolve(_ context.Context, k facade.LedgerKey, identity, about []byte, v facade.LedgerVersion) error {
 	s, ver, found, err := f.guard(k, v)
 	if err != nil {
 		return err
@@ -255,7 +256,10 @@ func (f *fileLedger) Resolve(_ context.Context, k facade.LedgerKey, identity []b
 	if s.Phase != facade.LedgerPending {
 		return fmt.Errorf("%w: %s is live, expected pending", facade.ErrLedgerPhase, k)
 	}
-	return f.commit(k, state{Phase: facade.LedgerLive, Plan: s.Proposed, Identity: clone(identity)}, ver)
+	if about == nil {
+		about = s.About
+	}
+	return f.commit(k, state{Phase: facade.LedgerLive, Plan: s.Proposed, Identity: clone(identity), About: clone(about)}, ver)
 }
 
 func (f *fileLedger) Forget(_ context.Context, k facade.LedgerKey, v facade.LedgerVersion) error {

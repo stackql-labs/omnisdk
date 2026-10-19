@@ -5,6 +5,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"strings"
 	"testing"
@@ -97,12 +98,11 @@ func TestDocumentDrivenPlanListsInstances(t *testing.T) {
 	if rows[0]["region"] != "us-east-1" {
 		t.Fatalf("bound input missing from row: %v", rows[0])
 	}
-	// the request is the one the DOCUMENT describes — verb and all. This document declares GET, so
-	// asserting POST would be asserting the previous document rather than this one.
-	if gotMethod != "GET" {
-		t.Fatalf("method = %q", gotMethod)
+	// The document describes a GET and declares it sent as a form POST: the query travels as the
+	// body, and nothing rides in the URL.
+	if gotMethod != "POST" || !strings.Contains(gotBody, "Action=DescribeInstances") {
+		t.Fatalf("method = %q, body = %q; want a form POST carrying the action", gotMethod, gotBody)
 	}
-	_ = gotBody
 }
 
 // A non-2xx must fail loudly rather than read as an empty result.
@@ -195,4 +195,38 @@ func drain(t *testing.T, p plan.Plan) []map[string]any {
 		t.Fatalf("rows: %v", err)
 	}
 	return out
+}
+
+// A structured input to a Query-protocol call goes out as the members AWS reads: a list numbered, a
+// map's keys dotted, each nested in turn — in the form body, since the call is sent as a POST.
+func TestStructuredInputsAreTransposed(t *testing.T) {
+	var form url.Values
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = r.ParseForm()
+		form = r.PostForm
+		w.Header().Set("Content-Type", "text/xml")
+		_, _ = w.Write([]byte(`<DescribeVpcsResponse><vpcSet></vpcSet></DescribeVpcsResponse>`))
+	}))
+	defer srv.Close()
+
+	p, err := docx.SelectPlan(doc(t), "vpcs", map[string]any{
+		"region": "us-east-1",
+		"VpcId":  []any{"vpc-a", "vpc-b"},
+		"Filter": []any{map[string]any{"Name": "cidr", "Value": []any{"10.0.0.0/16"}}},
+	}, registry(t), docx.WithBaseURL(srv.URL), testCreds)
+	if err != nil {
+		t.Fatal(err)
+	}
+	drain(t, p)
+	want := map[string]string{"VpcId.1": "vpc-a", "VpcId.2": "vpc-b", "Filter.1.Name": "cidr", "Filter.1.Value.1": "10.0.0.0/16"}
+	for k, v := range want {
+		if form.Get(k) != v {
+			t.Errorf("%s = %q, want %q (form %v)", k, form.Get(k), v, form)
+		}
+	}
+	for _, flat := range []string{"VpcId", "Filter"} {
+		if form.Has(flat) {
+			t.Errorf("form carries %s whole: %v", flat, form)
+		}
+	}
 }

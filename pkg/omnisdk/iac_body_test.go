@@ -41,7 +41,7 @@ func TestGoogleCreateSendsTheIntentAsABody(t *testing.T) {
 			// out of an async Operation to know what was made.
 			"", "network", ""),
 	}
-	pl, err := omnisdk.Converge(corpus, "bodydemo", t.TempDir(), "run-1", res, omnisdk.Args{
+	pl, err := omnisdk.Prepare(corpus, omnisdk.DesiredState(res), omnisdk.NewLedger("bodydemo", t.TempDir(), "run-1"), omnisdk.Args{
 		Endpoint: srv.URL,
 		Params:   map[string]string{"project": "demo"},
 	})
@@ -83,7 +83,7 @@ func TestRerunConvergesRatherThanReportingDrift(t *testing.T) {
 	var creates int
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/xml")
-		switch r.URL.Query().Get("Action") {
+		switch formValue(r, "Action") {
 		case "CreateVpc":
 			creates++
 			fmt.Fprint(w, `<CreateVpcResponse><vpc><vpcId>vpc-1</vpcId><cidrBlock>10.0.0.0/16</cidrBlock></vpc></CreateVpcResponse>`)
@@ -101,7 +101,7 @@ func TestRerunConvergesRatherThanReportingDrift(t *testing.T) {
 	state := t.TempDir()
 	run := func(id string) []omnisdk.Row {
 		t.Helper()
-		pl, err := omnisdk.Converge(corpus, "converge", state, id, res, omnisdk.Args{
+		pl, err := omnisdk.Prepare(corpus, omnisdk.DesiredState(res), omnisdk.NewLedger("converge", state, id), omnisdk.Args{
 			Endpoint: srv.URL, Params: map[string]string{"region": "us-east-1"},
 		})
 		if err != nil {
@@ -129,4 +129,11 @@ func TestRerunConvergesRatherThanReportingDrift(t *testing.T) {
 	if creates != 1 {
 		t.Errorf("CreateVpc issued %d times, want 1 — the re-run should converge, not re-create or refuse", creates)
 	}
+}
+
+// formValue is a request input wherever it was sent: an AWS Query-protocol call goes as a form POST,
+// so its inputs are in the body.
+func formValue(r *http.Request, name string) string {
+	_ = r.ParseForm()
+	return r.Form.Get(name)
 }

@@ -48,13 +48,6 @@ func TestDeriveEC2FromDocuments(t *testing.T) {
 		t.Log("subnets now derives CreateSubnet; the ambiguity note can go")
 	}
 
-	// No update path is derived, so drift is refused rather than dispatched to whatever operation
-	// the document happens to map to the update verb.
-	for _, d := range docsem.Declarations(resources) {
-		if d.Update != "" {
-			t.Errorf("%s derived an update path %q; updates are not derivable", d.Exchange, d.Update)
-		}
-	}
 }
 
 // An operation the document describes incompletely is reported, not tolerated silently. The engine

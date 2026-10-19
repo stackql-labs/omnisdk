@@ -19,7 +19,7 @@ import (
 func vpcChainStub(t *testing.T, seen *calls) *httptest.Server {
 	t.Helper()
 	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		filter := r.URL.Query().Get("Filter.1.Value.1")
+		filter := formValue(r, "Filter.1.Value.1")
 		seen.add(signingRegion(r.Header.Get("Authorization")) + "|" + filter)
 		w.Header().Set("Content-Type", "text/xml")
 		if filter == "" {

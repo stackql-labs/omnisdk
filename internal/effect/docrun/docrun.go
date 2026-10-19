@@ -17,6 +17,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/stackql-labs/omnisdk/internal/analyze"
 	"github.com/stackql-labs/omnisdk/internal/docsem"
 	"github.com/stackql-labs/omnisdk/internal/system_g/bind"
 	"github.com/stackql-labs/omnisdk/internal/system_g/exchange/docx"
@@ -53,18 +54,20 @@ func NewResidue(identity, addressedBy, correlationParam string) Residue {
 	return residue{identity: identity, addressedBy: addressedBy, correlation: correlationParam}
 }
 
-// Effector performs effects against documents.
 type effector struct {
-	catalog aot.Catalog
-	dsl     dsl.Registry
-	residue map[string]Residue // resource address → residue
-	opts    []docx.Option
+	catalog   aot.Catalog
+	analyzer  facade.Analyzer
+	principal string
+	dsl       dsl.Registry
+	residue   map[string]Residue // resource address → residue
+	opts      []docx.Option
 }
 
-// New returns an Effector over one provider's catalog. opts carry credentials and any endpoint
-// override, exactly as a query would supply them.
-func New(cat aot.Catalog, dslReg dsl.Registry, residues map[string]Residue, opts ...docx.Option) facade.Effector {
-	return &effector{catalog: cat, dsl: dslReg, residue: residues, opts: opts}
+// New returns an Effector over one provider's catalog. The analyzer chooses each call's operation on
+// behalf of principal, so an effect is bound to a method by the same rule a query is. opts carry
+// credentials and any endpoint override, exactly as a query would supply them.
+func New(cat aot.Catalog, an facade.Analyzer, principal string, dslReg dsl.Registry, residues map[string]Residue, opts ...docx.Option) facade.Effector {
+	return &effector{catalog: cat, analyzer: an, principal: principal, dsl: dslReg, residue: residues, opts: opts}
 }
 
 // address splits an exchange name of the form "<provider>.<service>.<resource>:<verb>". The verb is
@@ -98,7 +101,7 @@ func (e *effector) Effect(ctx context.Context, exchange string, k facade.LedgerK
 	if bodied {
 		body = in.Mutation
 	}
-	row, err := e.run(ctx, addr, verb, inputs, body)
+	row, err := e.run(ctx, addr, verb, inputs, body, in.Params)
 	if err != nil {
 		return nil, fmt.Errorf("docrun: %s %s %s: %w", addr, verb, k, err)
 	}
@@ -147,7 +150,7 @@ func (e *effector) Read(ctx context.Context, exchange string, k facade.LedgerKey
 	}
 	// A read takes the whole response too: the caller is asking about one object, and the metadata
 	// travels with it rather than being dropped on the way to a row.
-	row, err := e.run(ctx, addr, "select", inputs, nil)
+	row, err := e.run(ctx, addr, "select", inputs, nil, in.Params)
 	if err != nil {
 		return nil, nil, false, fmt.Errorf("docrun: read %s: %w", k, err)
 	}
@@ -163,6 +166,35 @@ func (e *effector) Read(ctx context.Context, exchange string, k facade.LedgerKey
 		return nil, nil, false, err
 	}
 	return b, identity, true, nil
+}
+
+// choose binds a call to its operation. Everything in inputs is sent, so an operation must accept
+// all of it as well as find its required inputs there.
+func (e *effector) choose(ctx context.Context, addr, verb string, inputs map[string]any, scope map[string]string) (aot.AOTExchange, error) {
+	declared, err := e.declared(addr, verb)
+	if err != nil {
+		return nil, err
+	}
+	names := make([]string, 0, len(inputs))
+	var sent []string
+	for n := range inputs {
+		names = append(names, n)
+		// A run's scope value the operation does not declare — a region a call is signed into but
+		// never sends — is available to it, not something it must accept.
+		if _, isScope := scope[n]; isScope && !declared[baseName(n)] {
+			continue
+		}
+		sent = append(sent, n)
+	}
+	m, err := e.analyzer.Analyze(ctx, analyze.NewStatement(e.principal, addr, verb, names, sent, ""))
+	if err != nil {
+		return nil, err
+	}
+	ex, ok := docsem.Exchange(m)
+	if !ok {
+		return nil, fmt.Errorf("docrun: %s %s: method %s is not a document operation", addr, verb, m.Name())
+	}
+	return ex, nil
 }
 
 // inputs assembles what the operation needs: the mutation's fields, the caller's parameters, an
@@ -190,14 +222,55 @@ func (e *effector) inputs(addr string, k facade.LedgerKey, in facade.EffectInput
 		if res.AddressedBy() != "" && len(in.Identity) > 0 {
 			inputs[res.AddressedBy()] = string(in.Identity)
 		}
-		if res.CorrelationParam() != "" && verb != "delete" {
+		// The stamp goes on at create; an update addresses an object that already carries it.
+		if res.CorrelationParam() != "" && verb != "delete" && verb != "update" {
 			inputs[res.CorrelationParam()] = string(k)
 		}
 	}
+	// An update takes only the parameters an update operation declares. The rest are the create's
+	// arguments — a tag specification, say — and an operation that does not take one would be ruled
+	// out by being sent it, exactly as a read would.
+	var declared map[string]bool
+	if verb == "update" {
+		var err error
+		if declared, err = e.declared(addr, verb); err != nil {
+			return nil, err
+		}
+	}
 	for name, v := range in.Params {
+		if declared != nil && !declared[baseName(name)] {
+			continue
+		}
 		inputs[name] = v
 	}
 	return inputs, nil
+}
+
+// declared are the names any operation for verb on addr takes: its parameters and server variables.
+func (e *effector) declared(addr, verb string) (map[string]bool, error) {
+	ops, err := e.catalog.Operations(addr, verb)
+	if err != nil {
+		return nil, err
+	}
+	out := map[string]bool{}
+	for _, op := range ops {
+		for _, in := range op.Inputs() {
+			out[in] = true
+		}
+		for _, p := range op.Request().Parameters() {
+			out[p.Name()] = true
+		}
+	}
+	return out, nil
+}
+
+// baseName is the parameter an indexed name belongs to: TagSpecification.1.Tag.2.Key is a member of
+// TagSpecification.
+func baseName(name string) string {
+	if i := strings.Index(name, "."); i > 0 {
+		return name[:i]
+	}
+	return name
 }
 
 // run selects the operation by signature, compiles it, and drains the single row it yields.
@@ -263,12 +336,8 @@ func (e *effector) takesBody(addr, verb string) (bool, error) {
 	return ops[0].Request().BodyMediaType() != "", nil
 }
 
-func (e *effector) run(ctx context.Context, addr, verb string, inputs map[string]any, body []byte) (map[string]any, error) {
-	names := make([]string, 0, len(inputs))
-	for n := range inputs {
-		names = append(names, n)
-	}
-	ex, err := docsem.Select(e.catalog, addr, verb, names)
+func (e *effector) run(ctx context.Context, addr, verb string, inputs map[string]any, body []byte, scope map[string]string) (map[string]any, error) {
+	ex, err := e.choose(ctx, addr, verb, inputs, scope)
 	if err != nil {
 		return nil, err
 	}

@@ -207,7 +207,16 @@ func TestPgParityRegexBig(t *testing.T) {
 				pgCase{"regexp_replace", []any{s, p, "[\\&]", "g"}})
 		}
 	}
-	// Postgres's compile-space limit: the first of each pair compiles, the second is too complex.
+	checkPg(t, cases)
+}
+
+// TestPgParityRegexTooComplex runs patterns at Postgres's limit, where the first of each pair
+// compiles and the second is too complex. The limit is stack depth, and the frames the
+// implementation counts are those of stackql's image: another build of Postgres puts the boundary
+// elsewhere, so only that image is an oracle for it.
+func TestPgParityRegexTooComplex(t *testing.T) {
+	postgresImage(t)
+	var cases []pgCase
 	for _, p := range []string{"((a{1,50}){1,50}){1,34}", "((a{1,50}){1,50}){1,35}", "(a{1,255}){1,255}",
 		"((((a{1,100}){1,100}){1,100}){1,100})", "((.{1,30}){1,30}){1,30}", "([ab]{1,99}){1,99}"} {
 		cases = append(cases, pgCase{"regexp_match", []any{"aaa", p}})
