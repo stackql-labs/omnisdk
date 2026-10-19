@@ -109,6 +109,16 @@ func incomingOf(r ManagedResource) ([]string, error) {
 const unaddressable = "\x00unaddressable"
 
 func newDesiredPlan(registry, name, state, runID string, resources []ManagedResource, args Args) (Plan, error) {
+	// What the caller wrote is checked before anything is looked up on their behalf: an empty value
+	// is a value nobody gave — an unset environment variable, most often — and would otherwise
+	// surface far from its cause, as a credential or a method that cannot be found.
+	for _, r := range resources {
+		for _, k := range slices.Sorted(maps.Keys(r.Params())) {
+			if r.Params()[k] == "" {
+				return nil, fmt.Errorf("omnisdk: %s: parameter %q is empty", r.Key(), k)
+			}
+		}
+	}
 	effector, sem, err := providerWiring(registry, resources, args)
 	if err != nil {
 		return nil, err
@@ -126,13 +136,6 @@ func newDesiredPlan(registry, name, state, runID string, resources []ManagedReso
 			return nil, fmt.Errorf("omnisdk: %s appears twice", r.Key())
 		}
 		seen[r.Key()] = true
-		// An empty value is a value nobody gave — an unset environment variable, most often — and
-		// would surface far from its cause as a method that cannot be satisfied.
-		for _, k := range slices.Sorted(maps.Keys(r.Params())) {
-			if r.Params()[k] == "" {
-				return nil, fmt.Errorf("omnisdk: %s: parameter %q is empty", r.Key(), k)
-			}
-		}
 		cat, ok := catalogs[r.Provider()]
 		if !ok {
 			if cat, err = reg.Catalog(r.Provider()); err != nil {
