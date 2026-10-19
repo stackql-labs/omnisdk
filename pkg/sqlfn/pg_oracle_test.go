@@ -11,7 +11,8 @@ import (
 	"testing"
 	"time"
 
-	_ "github.com/jackc/pgx/v5/stdlib"
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/stdlib"
 )
 
 // The Postgres catalogue is checked against Postgres itself, the major version stackql pins
@@ -64,9 +65,23 @@ func postgresImage(t *testing.T) *sql.DB {
 	return db
 }
 
+// openPostgres connects with stackql's session settings. A server's defaults are its host's —
+// initdb takes the machine's timezone — and every date result depends on them, so the oracle is
+// pinned to what the implementation reproduces rather than to wherever the tests happen to run.
+func openPostgres(dsn string) (*sql.DB, error) {
+	cfg, err := pgx.ParseConfig(dsn)
+	if err != nil {
+		return nil, err
+	}
+	cfg.RuntimeParams["timezone"] = "Etc/UTC"
+	cfg.RuntimeParams["datestyle"] = "ISO, MDY"
+	cfg.RuntimeParams["intervalstyle"] = "postgres"
+	return stdlib.OpenDB(*cfg), nil
+}
+
 func startPostgres() {
 	if dsn := os.Getenv("OMNISDK_PG_DSN"); dsn != "" {
-		pgDB, pgErr = sql.Open("pgx", dsn)
+		pgDB, pgErr = openPostgres(dsn)
 		if pgErr == nil {
 			pgErr = checkVersion(pgDB)
 		}
@@ -119,7 +134,7 @@ func startPostgres() {
 		_ = os.RemoveAll(dir)
 		_ = os.RemoveAll(sock)
 	}
-	pgDB, pgErr = sql.Open("pgx", fmt.Sprintf("host=%s port=%s user=postgres dbname=postgres sslmode=disable", sock, port))
+	pgDB, pgErr = openPostgres(fmt.Sprintf("host=%s port=%s user=postgres dbname=postgres sslmode=disable", sock, port))
 	if pgErr != nil {
 		return
 	}

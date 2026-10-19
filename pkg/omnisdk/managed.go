@@ -17,10 +17,14 @@ import (
 	"github.com/stackql-labs/omnisdk/internal/lease"
 	"github.com/stackql-labs/omnisdk/internal/ledger"
 	"github.com/stackql-labs/omnisdk/internal/merge"
+	"github.com/stackql-labs/omnisdk/internal/semantics"
 	"github.com/stackql-labs/omnisdk/internal/system_g/bind"
+	"github.com/stackql-labs/omnisdk/internal/system_g/exchange/docx"
 	"github.com/stackql-labs/omnisdk/internal/system_g/facade"
 	"github.com/stackql-labs/omnisdk/internal/system_g/plan"
 	"github.com/stackql-labs/omnisdk/internal/system_g/retry"
+	"github.com/stackql-labs/omnisdk/pkg/docparse/aot"
+	"github.com/stackql-labs/omnisdk/pkg/docparse/dsl"
 	"github.com/stackql-labs/omnisdk/pkg/query"
 )
 
@@ -34,6 +38,7 @@ const (
 	verbRecall   = "recall"
 	verbDiff     = "diff"
 	verbFunction = "function"
+	verbShape    = "shape"
 )
 
 // Diff statuses: what a diff found, for a branch to choose on.
@@ -53,7 +58,18 @@ type intrinsicNode struct {
 	liveIdentity string
 	// call is a function node's table function, its arguments reading the rows before it.
 	call query.Call
+	// route, on a diff, chooses the update for a drifted object: the method that converges it, in
+	// column update, and the fields to send it. Nil sends the whole mutation and names no method.
+	route driftRoute
+	// A shape node's inbox, the program reshaping it, and the names the program provides.
+	inbox            []string
+	viaType, viaBody string
+	provides         []string
 }
+
+// driftRoute chooses the update for a drift: given the merged mutation and the live object, the
+// method to send and what to send it, or an error where no method converges it.
+type driftRoute func(mutation, live map[string]any) (method string, send map[string]any, err error)
 
 // newFunctionNode is a table function in FROM: call, run once per row before it, joined as outer
 // says — kept unmatched under a left join — and matched by on.
@@ -101,7 +117,21 @@ type managed struct {
 	aliases     []string
 	identity    string
 	addressedBy string
+	// For a resource lowered from desired state: identityPath is a dotted path into the create's
+	// whole response, where identity is a column of its row; intent is the desired document, which
+	// the ledger records as the resource's intent in place of the request's inputs.
+	identityPath string
+	intent       []byte
+	// about is what the ledger records the resource is, for acting on it from the ledger alone.
+	about []byte
+	// creates are the aliases whose effect makes the object, whatever their verb: a replace that
+	// makes an object is undone by deleting it, not by restoring an intent it never had.
+	creates map[string]bool
 }
+
+// identityAttr is the column a managed mutation adds to its row: the identity the ledger holds for
+// its resource once the mutation lands, for whatever depends on the resource to read.
+const identityAttr = "\x00identity"
 
 func (m managed) Key() string         { return m.key }
 func (m managed) Aliases() []string   { return m.aliases }
@@ -130,12 +160,27 @@ type appliedEffect struct {
 func (r *managedRun) keyOf(k string) facade.LedgerKey { return facade.LedgerKey(r.name + "/" + k) }
 
 // intrinsicSpec compiles a recall or diff node.
-func intrinsicSpec(name string, n intrinsicNode, run *managedRun, planned map[string]string) (plan.ExchangeSpec, []plan.BetaEdge, error) {
+func intrinsicSpec(name string, n intrinsicNode, run *managedRun, planned map[string]string, reg dsl.Registry) (plan.ExchangeSpec, []plan.BetaEdge, error) {
 	if run == nil {
 		return nil, nil, fmt.Errorf("omnisdk: %s: a %s node runs only in a converging graph (ConvergeGraph)", n.Alias(), n.Verb())
 	}
 	out := func(attr string) string { return hidden(n.Alias(), attr) }
 	switch n.Verb() {
+	case verbShape:
+		// T_in on its own: the inbox reshaped by the program, emitted as the names it provides for
+		// the nodes after it. It makes no request.
+		var outs []string
+		for _, p := range n.provides {
+			outs = append(outs, out(p))
+		}
+		spec := plan.NewExchangeSpec(name, n.inbox, outs, func(bound map[string]any) facade.Operator {
+			row := map[string]any{}
+			for _, p := range n.provides {
+				row[out(p)] = bound[p]
+			}
+			return staticOp{rows: []map[string]any{row}}
+		}, nil)
+		return plan.WithInbound(spec, docx.InboundProgram(reg, n.viaType, n.viaBody)), nil, nil
 	case verbRecall:
 		return plan.NewExchangeSpec(name, nil, []string{out("identity")}, func(map[string]any) facade.Operator {
 			row := map[string]any{out("identity"): ""}
@@ -229,9 +274,18 @@ func diffRow(run *managedRun, n intrinsicNode, fields []string, desired []byte, 
 	if same {
 		row[out("status")] = DiffMatch
 	}
-	var send map[string]any
-	if err := json.Unmarshal(mutation, &send); err != nil {
+	// Numbers stay as written: a value past float64's exact range is sent as it was asked for.
+	send, err := decodeObject(mutation)
+	if err != nil {
 		return nil, fmt.Errorf("omnisdk: diff %q: %w", n.Alias(), err)
+	}
+	if !same && n.route != nil {
+		method, routed, err := n.route(send, actual)
+		if err != nil {
+			return nil, fmt.Errorf("omnisdk: %s has drifted and no update path converges it: %w", n.key, err)
+		}
+		row[out("update")] = method
+		send = routed
 	}
 	for k, v := range send {
 		row[out(k)] = v
@@ -245,6 +299,88 @@ type durable struct {
 	run      *managedRun
 	resource Managed
 	address  string
+	// What the ledger records the resource is, where desired state has not already said: its
+	// provider, the inputs its delete declares, and the keys it reads from.
+	provider  string
+	deletes   map[string]bool
+	dependsOn []string
+}
+
+// aboutOf is what the ledger records a hand-written graph's resource is, from what its mutation was
+// bound with: enough for a destroy to delete it from the ledger alone, and after what depends on it.
+func (d durable) aboutOf(bound map[string]any) []byte {
+	rel := d.address
+	if i := strings.Index(rel, d.provider+"."); i >= 0 {
+		rel = rel[i+len(d.provider)+1:]
+	}
+	rec := aboutRecord{Provider: d.provider, Address: rel, AddressedBy: d.resource.AddressedBy()}
+	for k, v := range bound {
+		if d.deletes[k] && k != rec.AddressedBy && !strings.HasPrefix(k, "\x00") && v != nil {
+			if rec.Params == nil {
+				rec.Params = map[string]string{}
+			}
+			rec.Params[k] = fmt.Sprint(v)
+		}
+	}
+	for _, k := range d.dependsOn {
+		rec.DependsOn = append(rec.DependsOn, d.run.name+"/"+k)
+	}
+	b, _ := json.Marshal(rec)
+	return b
+}
+
+// deleteInputs are the inputs any delete operation on addr declares.
+func deleteInputs(c aot.Catalog, addr string) map[string]bool {
+	out := map[string]bool{}
+	ops, _ := c.Operations(addr, "delete")
+	for _, op := range ops {
+		for _, in := range op.Inputs() {
+			out[in] = true
+		}
+		for _, p := range op.Request().Parameters() {
+			out[p.Name()] = true
+		}
+	}
+	return out
+}
+
+// dependsOn are the resources m reads from: walking back from its mutations along the graph's
+// wirings, any node of another managed resource, or a recall of another key.
+func dependsOn(g Graph, owners map[string]Managed, m Managed) []string {
+	from := map[string][]string{}
+	for _, w := range g.Wirings() {
+		for _, in := range w.Inbound() {
+			from[w.To()] = append(from[w.To()], in.From())
+		}
+	}
+	recalls := map[string]string{}
+	for _, n := range g.Nodes() {
+		if in, ok := n.(intrinsicNode); ok && n.Verb() == verbRecall {
+			recalls[n.Alias()] = in.key
+		}
+	}
+	var out []string
+	seen := map[string]bool{}
+	queue := slices.Clone(m.Aliases())
+	for len(queue) > 0 {
+		a := queue[0]
+		queue = queue[1:]
+		if seen[a] {
+			continue
+		}
+		seen[a] = true
+		if o, ok := owners[a]; ok && o.Key() != m.Key() {
+			out = append(out, o.Key())
+			continue
+		}
+		if k, ok := recalls[a]; ok && k != m.Key() {
+			out = append(out, k)
+			continue
+		}
+		queue = append(queue, from[a]...)
+	}
+	slices.Sort(out)
+	return slices.Compact(out)
 }
 
 func (d durable) open(ctx context.Context, o effectOp) facade.Records {
@@ -256,15 +392,20 @@ func (d durable) open(ctx context.Context, o effectOp) facade.Records {
 	if !found {
 		v = facade.LedgerVersionNone
 	}
+	// Intent is what was asked for. Hidden plumbing and credentials travel on the row to make the
+	// request, and are not it: a bearer token in the ledger is a live credential on disk.
 	request := make(map[string]any, len(o.bound))
 	for name, val := range o.bound {
-		if !strings.HasPrefix(name, "\x00") {
+		if !strings.HasPrefix(name, "\x00") && !docx.IsCredential(name) {
 			request[name] = val
 		}
 	}
 	proposed, err := json.Marshal(request)
 	if err != nil {
 		return failed(err)
+	}
+	if m, ok := d.resource.(managed); ok && len(m.intent) > 0 {
+		proposed = m.intent
 	}
 	notAttempted := func(err error) facade.Records {
 		return failed(&EffectError{Outcome: ErrNotAttempted, Verb: o.e.verb, Alias: o.e.alias,
@@ -279,21 +420,33 @@ func (d durable) open(ctx context.Context, o effectOp) facade.Records {
 			return notAttempted(err)
 		}
 	}
-	if _, err := d.run.journal.Append(ctx, k, o.e.exchange, formOf(o.e.verb), prior); err != nil {
+	form := semantics.FormOf(o.e.verb)
+	if m, ok := d.resource.(managed); ok && m.creates[o.e.alias] {
+		form = facade.FormCreate
+	}
+	if _, err := d.run.journal.Append(ctx, k, o.e.exchange, form, prior); err != nil {
 		return notAttempted(err)
 	}
-	return &durableRecords{inner: effectRecords{Records: o.inner.Open(retryNever(ctx)), op: o}, d: d, key: k, entry: e, found: found}
+	// An object named by the caller is addressed by that name: it is its identity wherever the
+	// response reports none.
+	named := ""
+	if a := d.resource.AddressedBy(); a != "" && o.bound[a] != nil {
+		named = fmt.Sprint(o.bound[a])
+	}
+	return &durableRecords{inner: effectRecords{Records: o.inner.Open(retryNever(ctx)), op: o}, d: d, key: k, entry: e, found: found, named: named}
 }
 
 type durableRecords struct {
-	inner effectRecords
-	d     durable
-	key   facade.LedgerKey
-	entry facade.LedgerEntry
-	found bool
-	first map[string]any
-	done  bool
-	err   error
+	inner    effectRecords
+	d        durable
+	key      facade.LedgerKey
+	entry    facade.LedgerEntry
+	found    bool
+	first    map[string]any
+	identity string
+	named    string
+	done     bool
+	err      error
 }
 
 func (r *durableRecords) Next(ctx context.Context) bool {
@@ -303,12 +456,21 @@ func (r *durableRecords) Next(ctx context.Context) bool {
 	if r.inner.Next(ctx) {
 		if r.first == nil {
 			r.first, _ = bind.DocMap(r.inner.Record())
+			r.identity = r.identityOf()
 		}
 		return true
 	}
 	r.done = true
 	if err := r.inner.Err(); err != nil {
 		r.err = err
+		// The provider refused the create, so nothing was made: the intent recorded for it is
+		// withdrawn rather than left pending, where it would read as possibly applied. An update
+		// or a delete keeps its entry — the object it addresses still exists.
+		if errors.Is(err, ErrRejected) && !r.found {
+			if _, v, found, gerr := r.d.run.ledger.Get(ctx, r.key); gerr == nil && found {
+				_ = r.d.run.ledger.Forget(ctx, r.key, v)
+			}
+		}
 		return false
 	}
 	r.err = r.commit(ctx)
@@ -317,12 +479,9 @@ func (r *durableRecords) Next(ctx context.Context) bool {
 
 // commit records what landed: a create's identity, an update's new intent, a delete's absence.
 func (r *durableRecords) commit(ctx context.Context) error {
-	identity := ""
-	if r.found {
-		identity = string(r.entry.Identity())
-	}
-	if v, ok := r.first[r.d.resource.Identity()]; ok && v != nil && fmt.Sprint(v) != "" {
-		identity = fmt.Sprint(v)
+	identity := r.identity
+	if r.first == nil {
+		identity = r.identityOf()
 	}
 	_, ver, found, err := r.d.run.ledger.Get(ctx, r.key)
 	if err != nil {
@@ -340,7 +499,14 @@ func (r *durableRecords) commit(ctx context.Context) error {
 		if !found {
 			return fmt.Errorf("omnisdk: %s vanished between intent and commit", r.key)
 		}
-		if err := r.d.run.ledger.Resolve(ctx, r.key, []byte(identity), ver); err != nil {
+		var about []byte
+		if m, ok := r.d.resource.(managed); ok {
+			about = m.about
+		}
+		if about == nil && r.d.provider != "" {
+			about = r.d.aboutOf(r.inner.op.bound)
+		}
+		if err := r.d.run.ledger.Resolve(ctx, r.key, []byte(identity), about, ver); err != nil {
 			return err
 		}
 	}
@@ -351,9 +517,58 @@ func (r *durableRecords) commit(ctx context.Context) error {
 	return nil
 }
 
-func (r *durableRecords) Record() facade.Record { return r.inner.Record() }
-func (r *durableRecords) Err() error            { return r.err }
-func (r *durableRecords) Close() error          { return r.inner.Close() }
+// identityOf is the resource's identity after this mutation: what its response reports, else what
+// the ledger already held.
+func (r *durableRecords) identityOf() string {
+	identity := r.named
+	if r.found && len(r.entry.Identity()) > 0 {
+		identity = string(r.entry.Identity())
+	}
+	v, ok := r.first[r.d.resource.Identity()]
+	if m, lowered := r.d.resource.(managed); lowered && m.identityPath != "" {
+		v, ok = atPath(r.first, m.identityPath)
+	}
+	if ok && v != nil && fmt.Sprint(v) != "" {
+		identity = fmt.Sprint(v)
+	}
+	return identity
+}
+
+// Record is the mutation's row with the resource's identity beside it.
+func (r *durableRecords) Record() facade.Record {
+	rec := r.inner.Record()
+	m, ok := bind.DocMap(rec)
+	if !ok {
+		return rec
+	}
+	out := maps.Clone(m)
+	out[identityAttr] = r.identity
+	return bind.NewDocRecord(out)
+}
+
+// atPath walks a dotted path into a decoded response. A list of one is stepped through: a projected
+// response wraps the object a call concerns in a row list.
+func atPath(doc map[string]any, path string) (any, bool) {
+	var cur any = doc
+	for _, step := range strings.Split(path, ".") {
+		if list, isList := cur.([]any); isList && len(list) == 1 {
+			cur = list[0]
+		}
+		m, ok := cur.(map[string]any)
+		if !ok {
+			return nil, false
+		}
+		if cur, ok = m[step]; !ok {
+			return nil, false
+		}
+	}
+	if list, isList := cur.([]any); isList && len(list) == 1 {
+		cur = list[0]
+	}
+	return cur, true
+}
+func (r *durableRecords) Err() error   { return r.err }
+func (r *durableRecords) Close() error { return r.inner.Close() }
 
 // ConvergeGraph runs g as an IaC run over collection name, its ledger and journals under state. Every
 // mutation node must belong to one of managed. The collection is held for the run; intent is recorded
@@ -381,7 +596,7 @@ func ConvergeGraph(registry, name, state, runID string, g Graph, managed []Manag
 	}
 	for _, n := range g.Nodes() {
 		_, isManaged := nodes[n.Alias()]
-		mutating := n.Verb() != "select" && n.Verb() != verbRecall && n.Verb() != verbDiff
+		mutating := n.Verb() != "select" && n.Verb() != verbRecall && n.Verb() != verbDiff && n.Verb() != verbShape && n.Verb() != verbFunction
 		switch {
 		case mutating && !isManaged:
 			return nil, fmt.Errorf("omnisdk: %s %s belongs to no managed resource; a converging run records every mutation", n.Verb(), n.Alias())
@@ -397,7 +612,7 @@ func ConvergeGraph(registry, name, state, runID string, g Graph, managed []Manag
 	// Planned now, against no state, so a graph that cannot run is refused before anything is held.
 	probe := args
 	probe.managed = &managedRun{name: name, nodes: nodes}
-	if _, err := NewGraphSelectQuery(registry, g, probe); err != nil {
+	if _, err := NewGraphQuery(registry, g, probe); err != nil {
 		return nil, err
 	}
 	if runID == "" {
@@ -413,31 +628,51 @@ type convergeGraphPlan struct {
 	args                         Args
 }
 
-func (p *convergeGraphPlan) Open(ctx context.Context) (Rows, error) {
-	log, err := ledger.NewFile(filepath.Join(p.state, "ledger"))
+// held is a converging run's durable state, open and leased: the ledger, the run's journal, and the
+// collection held until release.
+type held struct {
+	log      facade.Ledger
+	journals facade.Journals
+	journal  facade.Journal
+	release  func()
+}
+
+// hold opens collection name's ledger and journals under state, and holds the collection for runID.
+func hold(ctx context.Context, state, name, runID string) (*held, error) {
+	log, err := ledger.NewFile(filepath.Join(state, "ledger"))
 	if err != nil {
 		return nil, err
 	}
-	journals, err := journal.NewFiles(filepath.Join(p.state, "journal"))
+	journals, err := journal.NewFiles(filepath.Join(state, "journal"))
 	if err != nil {
 		return nil, err
 	}
-	held, err := lease.NewLeaser(log, time.Now).Acquire(ctx, p.name, lease.All(), p.runID, leaseTTL)
+	l, err := lease.NewLeaser(log, time.Now).Acquire(ctx, name, lease.All(), runID, leaseTTL)
 	if errors.Is(err, facade.ErrLeaseHeld) {
-		return nil, fmt.Errorf("omnisdk: collection %q is busy with another run", p.name)
+		// How runs are kept apart is not the caller's business; that another is running is.
+		return nil, fmt.Errorf("omnisdk: collection %q is busy with another run", name)
 	}
 	if err != nil {
 		return nil, err
 	}
-	defer func() { _ = held.Release(ctx) }()
-	j, err := journals.For(ctx, p.runID)
+	j, err := journals.For(ctx, runID)
+	if err != nil {
+		_ = l.Release(ctx)
+		return nil, err
+	}
+	return &held{log: log, journals: journals, journal: j, release: func() { _ = l.Release(ctx) }}, nil
+}
+
+func (p *convergeGraphPlan) Open(ctx context.Context) (Rows, error) {
+	h, err := hold(ctx, p.state, p.name, p.runID)
 	if err != nil {
 		return nil, err
 	}
-	run := &managedRun{name: p.name, ledger: log, journal: j, nodes: p.nodes}
+	defer h.release()
+	run := &managedRun{name: p.name, ledger: h.log, journal: h.journal, nodes: p.nodes}
 	a := p.args
 	a.managed = run
-	pl, err := NewGraphSelectQuery(p.registry, p.g, a)
+	pl, err := NewGraphQuery(p.registry, p.g, a)
 	if err != nil {
 		return nil, err
 	}
@@ -507,7 +742,7 @@ func deleteOne(ctx context.Context, registry string, e appliedEffect, args Args)
 	if err != nil {
 		return err
 	}
-	pl, err := NewGraphSelectQuery(registry, g, args)
+	pl, err := NewGraphQuery(registry, g, args)
 	if err != nil {
 		return err
 	}

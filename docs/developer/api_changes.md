@@ -11,10 +11,26 @@ Migrating from `v0.1.3-alpha05`, the version stackql consumes, to the current tr
 | `Graph` interface | Gains `Terminations()`, `Branches()`, `Gates()` | Only a caller that implements `Graph` must add it; graphs from `NewGraph` are unaffected. |
 | `Functions(rowColumn string)` | `Functions(d sqlfn.Dialect)` | Name the SQL dialect. A table function's columns are its own — Postgres's OUT parameters or the function's name, SQLite's `json_each` columns — not a name the caller supplies. |
 | `sqlfn.Builtins()` | `sqlfn.BuiltinsFor(d, opts...) (Catalog, error)` | Name the dialect; an unknown one is an error. |
+| `Converge(registry, name, state, runID, resources, args)` | removed | `Prepare(registry, DesiredState(resources), NewLedger(name, state, runID), args)`. The run id is required: an empty one is refused, not stamped with the time. |
+| `NewGraphSelectQuery` | deprecated alias of `NewGraphQuery` | None needed; rename when convenient. A graph runs writes as well as reads. |
+| `aot.AOTExchange` | Gains `Beta() (Beta, bool)` | Only a caller that implements `AOTExchange` must add it. |
+| `aot.Parameter`, `aot.Request` | Gain `List() bool`, and `Translate()` and `Transpose()` | Only a caller that implements them must add them. |
+| `aot.AOTExchange` | Gains `Pushdown() (Pushdown, bool)` | Only a caller that implements `AOTExchange` must add it. |
 
 ## Additions
 
 No caller change needed.
+
+- **One entry point:** `Prepare(registry, statement, wal, args)`; statements `SQLStatement`,
+  `GraphStatement`, `DesiredState`; WAL configurations `NoWAL`, `NewJournal`, `NewLedger`.
+- **Caller identity and access control:** `Args.Principal`; `Args.RBAC`, accepted and not yet enforced.
+- **Awaited operations:** a method's `x-stackQL-beta` in a provider document, or a document patch.
+- **Server-side projection and filtering:** a document's `queryParamPushdown` select, filter and top.
+- **Destroy:** `Destroy()`, under `NewLedger`, deletes what the collection's ledger holds; the CLI's
+  `iac-destroy`.
+- **Graph verbs and bodies:** a mutation node may run `replace` (a whole-object PUT); an XML request
+  body is written from a JSON document. Desired state reads an object back by listing where a
+  document has no get, and takes a caller-given name as the identity where a create returns none.
 
 - **Queries:** `UnionAll`; `NewMatchedNode`; `query.Cross` and `query.Listed` join forms.
 - **Cycles:** `Termination` with `Rounds`, `Records`, `Within`, `AnyOf`, `AllOf`; `WithTermination`.

@@ -44,7 +44,7 @@ func runFirewallsIn(t *testing.T, srv *httptest.Server, d sqlfn.Dialect, from []
 	if err != nil {
 		t.Fatalf("resolve: %v", err)
 	}
-	pl, err := omnisdk.NewGraphSelectQuery(authRegistry, res.Graph(), omnisdk.Args{Endpoint: srv.URL, Params: res.Params(), Dialect: d})
+	pl, err := omnisdk.NewGraphQuery(authRegistry, res.Graph(), omnisdk.Args{Endpoint: srv.URL, Params: res.Params(), Dialect: d})
 	if err != nil {
 		t.Fatalf("plan: %v", err)
 	}
@@ -150,7 +150,7 @@ func TestTableFunctionHiddenColumns(t *testing.T) {
 	if err != nil {
 		t.Fatalf("resolve: %v", err)
 	}
-	pl, err := omnisdk.NewGraphSelectQuery(authRegistry, res.Graph(), omnisdk.Args{Endpoint: srv.URL, Params: res.Params()})
+	pl, err := omnisdk.NewGraphQuery(authRegistry, res.Graph(), omnisdk.Args{Endpoint: srv.URL, Params: res.Params()})
 	if err != nil {
 		t.Fatalf("plan: %v", err)
 	}

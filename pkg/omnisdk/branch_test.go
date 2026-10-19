@@ -53,7 +53,7 @@ func TestBranchGatesANode(t *testing.T) {
 	if g, err = omnisdk.WithBranch(g, br, omnisdk.NewGate("pick", "deep", "sub")); err != nil {
 		t.Fatal(err)
 	}
-	pl, err := omnisdk.NewGraphSelectQuery(authRegistry, g, omnisdk.Args{Endpoint: srv.URL})
+	pl, err := omnisdk.NewGraphQuery(authRegistry, g, omnisdk.Args{Endpoint: srv.URL})
 	if err != nil {
 		t.Fatalf("plan: %v", err)
 	}

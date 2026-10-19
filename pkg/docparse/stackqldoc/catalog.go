@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"io/fs"
 	"path"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -207,6 +208,17 @@ func (c *catalog) Exchange(addr string) (aot.AOTExchange, error) {
 
 // address is the dot-path for a resource: the document's own provider/service/resource, under the
 // document-derived namespace.
+func (c *catalog) Address(service, resource string) (string, bool) {
+	doc, err := c.doc(service)
+	if err != nil {
+		return "", false
+	}
+	if !slices.Contains(doc.Resources(), resource) {
+		return "", false
+	}
+	return c.address(service, resource), true
+}
+
 func (c *catalog) address(service, resource string) string {
 	return c.prefix + c.provider.Name() + "." + service + "." + resource
 }

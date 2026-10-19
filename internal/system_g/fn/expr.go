@@ -107,3 +107,18 @@ func RowProducing(r facade.FnRegistry, name string) (bool, error) {
 	}
 	return rows > 0, nil
 }
+
+// Fields are the row keys e reads, in the order it reads them.
+func Fields(e Expr) []string {
+	switch x := e.(type) {
+	case field:
+		return []string{x.name}
+	case call:
+		var out []string
+		for _, a := range x.args {
+			out = append(out, Fields(a)...)
+		}
+		return out
+	}
+	return nil
+}

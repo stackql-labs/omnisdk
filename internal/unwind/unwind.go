@@ -96,7 +96,7 @@ func (u *unwinder) restore(ctx context.Context, p pending) error {
 	if err != nil || !found {
 		return err
 	}
-	return u.log.Resolve(ctx, p.key, identity, v)
+	return u.log.Resolve(ctx, p.key, identity, nil, v)
 }
 
 func (u *unwinder) Unwind(ctx context.Context, runID string) (Outcome, error) {

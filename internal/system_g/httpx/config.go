@@ -13,6 +13,9 @@ const (
 	EncodingNone Encoding = "none"
 	EncodingForm Encoding = "form" // application/x-www-form-urlencoded
 	EncodingJSON Encoding = "json" // application/json
+	// EncodingXML writes the body as XML: each key an element, a map its children, a list one element
+	// per member under the list's own key — {"TagSet":{"Tag":[a,b]}} is <TagSet><Tag>a</Tag><Tag>b</Tag></TagSet>.
+	EncodingXML Encoding = "xml" // application/xml
 )
 
 // ContinuationKind selects how multi-response calls are driven.

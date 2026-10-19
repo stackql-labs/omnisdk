@@ -11,6 +11,7 @@ package docsem
 
 import (
 	"fmt"
+	"slices"
 	"strings"
 
 	"github.com/stackql-labs/omnisdk/internal/semantics"
@@ -96,10 +97,9 @@ func Derive(cat aot.Catalog, service string, names ...string) ([]Resource, error
 // a delete loses anything, so every derived inverse is lossy until something states otherwise, which
 // errs toward asking rather than assuming.
 //
-// The update path is deliberately NOT derived. A document maps several unrelated operations to the
-// update verb — AssociateSecurityGroupVpc is an update of a VPC in SQL terms and nothing like a
-// convergence of its own fields — and dispatching drift to one of those would apply a change nobody
-// asked for. An absent update path refuses drift instead, which is the safe direction.
+// No update path is declared here. Drift is routed when it is found, by the fields actually being
+// sent: a document maps several unrelated operations to the update verb — AssociateSecurityGroupVpc
+// is an update of a VPC in SQL terms — and only one that accepts every changed field qualifies.
 func Declarations(resources []Resource) []semantics.Declaration {
 	var out []semantics.Declaration
 	for _, r := range resources {
@@ -115,27 +115,59 @@ func Declarations(resources []Resource) []semantics.Declaration {
 	return out
 }
 
-// Select resolves one verb on one resource to a single operation, by the document's own rule: scan
-// the declarations in order and take the first whose signature the supplied inputs satisfy.
-//
-// A verb fans out — ec2.subnets declares both CreateSubnet and CreateDefaultSubnet under insert —
-// and the verb alone cannot say which is meant. The inputs can: only CreateSubnet accepts VpcId and
-// CidrBlock. Order breaks ties between operations that both match.
-func Select(cat aot.Catalog, path, verb string, inputs []string) (aot.AOTExchange, error) {
-	ops, err := cat.Operations(path, verb)
+// Capabilities states what each operation in cat can do, as a facade.Capabilities: its required
+// inputs, the inputs it accepts and whether it takes a body. The analyzer chooses among them; this
+// only reports what the document says.
+func Capabilities(cat aot.Catalog) facade.Capabilities { return capabilities{cat: cat} }
+
+type capabilities struct{ cat aot.Catalog }
+
+func (c capabilities) Methods(resource, verb string) ([]facade.Method, error) {
+	ops, err := c.cat.Operations(resource, verb)
 	if err != nil {
-		return nil, fmt.Errorf("docsem: %s %s: %w", path, verb, err)
+		return nil, fmt.Errorf("docsem: %s %s: %w", resource, verb, err)
 	}
-	supplied := make(map[string]bool, len(inputs))
-	for _, in := range inputs {
-		supplied[baseName(in)] = true
+	out := make([]facade.Method, len(ops))
+	for i, op := range ops {
+		out[i] = method{op: op}
 	}
-	for _, op := range ops {
-		if accepts(op, supplied) {
-			return op, nil
+	return out, nil
+}
+
+// Exchange is the operation behind a method these Capabilities returned, for compiling it.
+func Exchange(m facade.Method) (aot.AOTExchange, bool) {
+	dm, ok := m.(method)
+	if !ok {
+		return nil, false
+	}
+	return dm.op, true
+}
+
+type method struct{ op aot.AOTExchange }
+
+func (m method) Name() string    { return m.op.Name() }
+func (m method) TakesBody() bool { return m.op.Request().BodyMediaType() != "" }
+
+func (m method) Required() []string {
+	var out []string
+	for _, p := range m.op.Request().Parameters() {
+		if p.Required() {
+			out = append(out, p.Name())
 		}
 	}
-	return nil, fmt.Errorf("docsem: %s %s: no operation accepts %v", path, verb, inputs)
+	return out
+}
+
+// Accepts reports whether the operation declares somewhere for input to go. Inputs count alongside
+// parameters: a server variable such as a region is supplied by the caller exactly as a parameter
+// is, and it is not in the parameter list.
+func (m method) Accepts(input string) bool {
+	if m.TakesBody() {
+		return true
+	}
+	name := baseName(input)
+	return slices.Contains(m.op.Inputs(), name) ||
+		slices.ContainsFunc(m.op.Request().Parameters(), func(p aot.Parameter) bool { return p.Name() == name })
 }
 
 // baseName is the parameter a supplied name belongs to. A list parameter is sent indexed —
@@ -147,28 +179,6 @@ func baseName(name string) string {
 		return name[:i]
 	}
 	return name
-}
-
-// accepts reports whether an operation declares somewhere for every supplied input to go. An input
-// the operation does not know is what rules it out — sending it would either be dropped silently or
-// rejected, and both are worse than choosing the operation that declares it.
-//
-// Inputs count alongside parameters: a server variable such as a region is supplied by the caller
-// exactly as a parameter is, and it is not in the parameter list.
-func accepts(op aot.AOTExchange, supplied map[string]bool) bool {
-	declared := map[string]bool{}
-	for _, in := range op.Inputs() {
-		declared[in] = true
-	}
-	for _, p := range op.Request().Parameters() {
-		declared[p.Name()] = true
-	}
-	for in := range supplied {
-		if !declared[in] {
-			return false
-		}
-	}
-	return true
 }
 
 // Outlier is an operation a document describes incompletely. It is reported rather than tolerated

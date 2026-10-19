@@ -13,6 +13,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/stackql-labs/omnisdk/internal/semantics"
 	"github.com/stackql-labs/omnisdk/internal/system_g/bind"
 	"github.com/stackql-labs/omnisdk/internal/system_g/buffer"
 	"github.com/stackql-labs/omnisdk/internal/system_g/exchange/docx"
@@ -653,7 +654,7 @@ func (o effectOp) Open(ctx context.Context) facade.Records {
 	if j := o.e.journal; j != nil {
 		key, err := effectKey(o.e.alias, o.bound)
 		if err == nil {
-			_, err = j.Append(ctx, key, o.e.exchange, formOf(o.e.verb), nil)
+			_, err = j.Append(ctx, key, o.e.exchange, semantics.FormOf(o.e.verb), nil)
 		}
 		if err != nil {
 			return failed(&EffectError{Outcome: ErrNotAttempted, Verb: o.e.verb, Alias: o.e.alias,
@@ -728,18 +729,6 @@ func effectKey(alias string, bound map[string]any) (facade.LedgerKey, error) {
 	}
 	sum := sha256.Sum256(b)
 	return facade.LedgerKey(alias + "/" + hex.EncodeToString(sum[:8])), nil
-}
-
-func formOf(verb string) facade.FormClass {
-	switch verb {
-	case "insert":
-		return facade.FormCreate
-	case "update":
-		return facade.FormUpdate
-	case "delete":
-		return facade.FormDelete
-	}
-	return facade.FormRead
 }
 
 // failed is a cursor that yields nothing and err.

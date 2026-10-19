@@ -46,7 +46,7 @@ list flat (Google networks and subnetworks) would make the edge look optional, w
 opposite of what a transpiler has to reason about.
 
 Every clause lands in exactly one place, and the whole of it is three arguments to
-NewGraphSelectQuery: a directory, a Graph and Args. The graph is keyed by ALIAS, as the query is:
+NewGraphQuery: a directory, a Graph and Args. The graph is keyed by ALIAS, as the query is:
 u and p are the identities, the addresses are what they run.
 */
 func TestTranspileSimpleJoin(t *testing.T) {
@@ -140,7 +140,7 @@ func TestTranspileSimpleJoin(t *testing.T) {
 
 	// Composition is the last assertion: an exchange whose required input nothing supplies, or an
 	// edge onto a node the graph does not run, fails HERE — before a request is made.
-	if _, err := omnisdk.NewGraphSelectQuery(corpus, g, args); err != nil {
+	if _, err := omnisdk.NewGraphQuery(corpus, g, args); err != nil {
 		t.Fatalf("plan: %v", err)
 	}
 }
@@ -268,7 +268,7 @@ func TestRealWorldQueryEndToEnd(t *testing.T) {
 	if err != nil {
 		t.Fatalf("resolve: %v", err)
 	}
-	pl, err := omnisdk.NewGraphSelectQuery(corpus, res.Graph(), omnisdk.Args{Endpoint: srv.URL, Params: res.Params()})
+	pl, err := omnisdk.NewGraphQuery(corpus, res.Graph(), omnisdk.Args{Endpoint: srv.URL, Params: res.Params()})
 	if err != nil {
 		t.Fatalf("plan: %v", err)
 	}
@@ -360,7 +360,7 @@ func tryQueryWith(t *testing.T, q query.Unresolved, adjust func(*omnisdk.Args), 
 	if adjust != nil {
 		adjust(&args)
 	}
-	pl, err := omnisdk.NewGraphSelectQuery(corpus, res.Graph(), args)
+	pl, err := omnisdk.NewGraphQuery(corpus, res.Graph(), args)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -784,7 +784,7 @@ func TestInsertIntoAJSONBody(t *testing.T) {
 	if err != nil {
 		t.Fatalf("resolve: %v", err)
 	}
-	pl, err := omnisdk.NewGraphSelectQuery(corpus, res.Graph(), omnisdk.Args{Endpoint: srv.URL, Params: res.Params()})
+	pl, err := omnisdk.NewGraphQuery(corpus, res.Graph(), omnisdk.Args{Endpoint: srv.URL, Params: res.Params()})
 	if err != nil {
 		t.Fatalf("plan: %v", err)
 	}
@@ -1014,7 +1014,7 @@ func TestInsertSeveralRowsIntoAJSONBody(t *testing.T) {
 	if err != nil {
 		t.Fatalf("resolve: %v", err)
 	}
-	pl, err := omnisdk.NewGraphSelectQuery(corpus, res.Graph(), omnisdk.Args{Endpoint: srv.URL})
+	pl, err := omnisdk.NewGraphQuery(corpus, res.Graph(), omnisdk.Args{Endpoint: srv.URL})
 	if err != nil {
 		t.Fatalf("plan: %v", err)
 	}
@@ -1150,7 +1150,7 @@ func TestTiedMethodsPreferTheRead(t *testing.T) {
 		fmt.Fprint(w, `{"value":[{"name":"acct"}]}`)
 	}))
 	defer srv.Close()
-	pl, err := omnisdk.NewGraphSelectQuery(corpus, res.Graph(), omnisdk.Args{Endpoint: srv.URL, Params: res.Params()})
+	pl, err := omnisdk.NewGraphQuery(corpus, res.Graph(), omnisdk.Args{Endpoint: srv.URL, Params: res.Params()})
 	if err != nil {
 		t.Fatalf("plan: %v", err)
 	}
@@ -1204,7 +1204,7 @@ func TestS3RequestsCarryThePayloadHash(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	pl, err := omnisdk.NewGraphSelectQuery(corpus, g, omnisdk.Args{Endpoint: srv.URL, Params: map[string]string{"region": "us-east-1"}})
+	pl, err := omnisdk.NewGraphQuery(corpus, g, omnisdk.Args{Endpoint: srv.URL, Params: map[string]string{"region": "us-east-1"}})
 	if err != nil {
 		t.Fatalf("plan: %v", err)
 	}

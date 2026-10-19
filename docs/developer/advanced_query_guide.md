@@ -215,3 +215,22 @@ _now="$(date +%s)" && ./build/omnicli doc-graph test/corpus/registry '{
 }' --out "./cicd/out/create-poll-read-${_now}.jsonl" --log "./cicd/out/create-poll-read-${_now}.log"
 
 ```
+
+## Server-side projection and filtering
+
+Where a provider document declares `queryParamPushdown` — on a method, its resource, or the service's
+`x-stackQL-config`, the nearest winning — a read asks the server for less:
+
+- **select** — the columns the query reads from the node (its select list, and whatever an edge, a
+  filter or a join condition reads) go as the projection parameter, `$select` in OData. It is sent
+  only if the document allows every one of them; a partial projection would drop a column still
+  needed.
+- **filter** — each `WHERE` comparison of a column of that node alone with a constant (`=`, `<>`,
+  `<`, `<=`, `>`, `>=`) on a column the document allows goes into the filter parameter, `$filter`,
+  joined with `and`. Anything else — an `OR`, a function, a comparison across two nodes — is not sent.
+- **top** — `Tuning.Limit` goes as the cap parameter, `$top`, but only where nothing after the server
+  could drop a row: the query reads one node and every filter on it was sent.
+
+Every filter still runs on the rows that come back, so a server matching more loosely than SQL does
+cannot change the answer. Only the `odata` filter dialect is written; `select` and `top` work for
+any dialect that names its parameter.

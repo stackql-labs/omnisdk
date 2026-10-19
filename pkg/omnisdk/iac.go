@@ -1,27 +1,15 @@
 package omnisdk
 
 import (
-	"context"
-	"errors"
 	"fmt"
-	"maps"
 	"os"
-	"path/filepath"
 	"strings"
 	"time"
 
-	"github.com/stackql-labs/omnisdk/internal/apply"
 	"github.com/stackql-labs/omnisdk/internal/effect/dispatch"
 	"github.com/stackql-labs/omnisdk/internal/effect/docrun"
-	"github.com/stackql-labs/omnisdk/internal/journal"
-	"github.com/stackql-labs/omnisdk/internal/lease"
-	"github.com/stackql-labs/omnisdk/internal/ledger"
-	"github.com/stackql-labs/omnisdk/internal/merge"
 	"github.com/stackql-labs/omnisdk/internal/semantics"
-	"github.com/stackql-labs/omnisdk/internal/system_g/admit"
-	"github.com/stackql-labs/omnisdk/internal/system_g/exchange/docx"
 	"github.com/stackql-labs/omnisdk/internal/system_g/facade"
-	"github.com/stackql-labs/omnisdk/internal/unwind"
 	"github.com/stackql-labs/omnisdk/pkg/docparse/aot"
 	"github.com/stackql-labs/omnisdk/pkg/docparse/dsl"
 	"github.com/stackql-labs/omnisdk/pkg/docparse/dsl/gotemplate"
@@ -107,8 +95,9 @@ func (r resource) Params() map[string]string { return r.params }
 func (r resource) Inbound() []Arrival        { return r.inbound }
 func (r resource) Via() (string, string)     { return r.viaType, r.viaProgram }
 
-// Converge applies a set of resources as one collection, and is the whole IaC entry point: a client
-// issues the imperative and the system works out idempotence, ordering, concurrency and compensation.
+// converge applies a set of resources as one collection: the desired-state form of a converging
+// run, reached through Prepare with DesiredState and NewLedger. A client issues the imperative and the
+// system works out idempotence, ordering, concurrency and compensation.
 //
 //   - registry is the provider-document root. Every effect is compiled from the document that
 //     declares it, so a new service is a document plus its residue rather than Go code.
@@ -116,12 +105,12 @@ func (r resource) Via() (string, string)     { return r.viaType, r.viaProgram }
 //     correlation tag stamped on each object.
 //   - state holds the ledger and run journals. Local disk only — O_EXCL and link are unreliable on a
 //     network share. One state directory holds many collections, separated by name.
-//   - runID names this run's journal; empty means a UTC timestamp.
+//   - runID names this run's journal.
 //   - resources are what to converge. Order is irrelevant: dependencies travel through bindings.
 //   - args carries credentials, an endpoint override and tuning, exactly as a query does.
 //
 // Opening the returned Plan performs the run; the rows report what each key did.
-func Converge(registry, name, state, runID string, resources []ManagedResource, args Args) (Plan, error) {
+func converge(registry, name, state, runID string, resources []ManagedResource, args Args) (Plan, error) {
 	switch {
 	case name == "":
 		return nil, fmt.Errorf("omnisdk: collection name is required")
@@ -130,100 +119,91 @@ func Converge(registry, name, state, runID string, resources []ManagedResource, 
 	case len(resources) == 0:
 		return nil, fmt.Errorf("omnisdk: no resources to converge")
 	}
-	effector, sem, exchanges, err := providerWiring(registry, resources, args)
-	if err != nil {
-		return nil, err
-	}
-	if runID == "" {
-		runID = time.Now().UTC().Format("20060102T150405Z")
-	}
-	return &convergePlan{name: name, state: state, runID: runID, resources: resources,
-		effector: effector, semantics: sem, exchanges: exchanges, scope: args.Params, tuning: args.Tuning}, nil
+	return newDesiredPlan(registry, name, state, runID, resources, args)
 }
 
-// providerWiring builds an effector per provider the resources name, and the semantics derived from
-// their documents.
+// providerWiring builds an effector per provider the resources name, and the semantics declared over
+// them: what undoes a failed run through its journal.
 //
 // Nothing here is a table of known services: a resource states its provider, its document address
 // and the residue its document leaves unsaid, so a new service is data a caller supplies rather than
 // an entry someone adds to this package.
-func providerWiring(registry string, resources []ManagedResource, args Args) (facade.Effector, facade.Semantics, map[string]string, error) {
+func providerWiring(registry string, resources []ManagedResource, args Args) (facade.Effector, facade.Semantics, error) {
 	reg, err := openRegistry(registry)
 	if err != nil {
-		return nil, nil, nil, err
+		return nil, nil, err
 	}
 	dslReg, err := dsl.NewRegistry(append(gotemplate.Evaluators(), schemaxml.New())...)
 	if err != nil {
-		return nil, nil, nil, err
+		return nil, nil, err
 	}
 
 	// A resource names a KEY; the effector resolves a published ADDRESS. Translating here keeps a
 	// resource free of the registry's namespacing, so the same declaration survives a registry that
 	// renames its providers.
-	exchanges := map[string]string{}
 	residues := map[string]map[string]docrun.Residue{}
 	catalogs := map[string]aot.Catalog{}
 	var decls []semantics.Declaration
 
 	for _, r := range resources {
 		if r.Provider() == "" || r.Address() == "" {
-			return nil, nil, nil, fmt.Errorf("omnisdk: resource %q names no provider or address", r.Key())
+			return nil, nil, fmt.Errorf("omnisdk: resource %q names no provider or address", r.Key())
 		}
 		cat, ok := catalogs[r.Provider()]
 		if !ok {
 			cat, err = reg.Catalog(r.Provider())
 			if err != nil {
-				return nil, nil, nil, fmt.Errorf("omnisdk: provider %q: %w", r.Provider(), err)
+				return nil, nil, fmt.Errorf("omnisdk: provider %q: %w", r.Provider(), err)
 			}
 			catalogs[r.Provider()] = cat
 			residues[r.Provider()] = map[string]docrun.Residue{}
 		}
 		qualified, err := qualify(cat, r.Address())
 		if err != nil {
-			return nil, nil, nil, err
+			return nil, nil, err
 		}
 		residues[r.Provider()][qualified] = docrun.NewResidue(r.Identity(), r.AddressedBy(), r.CorrelationParam())
-		for _, verb := range []string{"insert", "update", "delete", "select"} {
-			exchanges[exchangeOf(r.Key(), verb)] = exchangeOf(qualified, verb)
+		// The inverse of a create is the same resource's delete, chosen by signature when it runs; a
+		// resource made by a whole-object PUT is undone the same way. Its absence in the document is
+		// what declares the create non-invertible. A document does not say whether a delete loses
+		// anything, so a derived inverse is lossy until something states otherwise — which errs
+		// toward asking.
+		for _, verb := range []string{"insert", "replace"} {
+			decls = append(decls, semantics.Declaration{
+				Exchange: exchangeOf(qualified, verb),
+				Form:     "insert",
+				Inverse:  exchangeOf(qualified, "delete"),
+				Fidelity: facade.FidelityLossy,
+			})
 		}
-		decls = append(decls, semantics.Declaration{
-			Exchange: exchangeOf(qualified, "insert"),
-			Form:     "insert",
-			// The inverse of a create is the same resource's delete, chosen by signature when it
-			// runs. Its absence in the document is what declares the create non-invertible.
-			Inverse: exchangeOf(qualified, "delete"),
-			// A document does not say whether a delete loses anything, so a derived inverse is lossy
-			// until something states otherwise — which errs toward asking.
-			Fidelity: facade.FidelityLossy,
-		})
 	}
 
 	routes := map[string]facade.Effector{}
 	for prov, cat := range catalogs {
 		opts, err := providerOptions(args, cat.Provider())
 		if err != nil {
-			return nil, nil, nil, err
+			return nil, nil, err
 		}
-		routes[prov] = docrun.New(cat, dslReg, residues[prov], opts...)
+		routes[prov] = docrun.New(cat, analyzerFor(cat), principalOf(args), dslReg, residues[prov], opts...)
 	}
 
 	sem, err := semantics.New(decls)
 	if err != nil {
-		return nil, nil, nil, err
+		return nil, nil, err
 	}
-	return byProvider(resources, routes), sem, exchanges, nil
+	return byProvider(resources, routes), sem, nil
 }
 
 // byProvider routes each key to the provider that declared it, so a collection spanning providers
 // reaches each one.
 func byProvider(resources []ManagedResource, routes map[string]facade.Effector) facade.Effector {
-	prefixes := map[string]facade.Effector{}
+	effects := map[string]facade.Effector{}
 	for _, r := range resources {
 		if eff, ok := routes[r.Provider()]; ok {
-			prefixes[r.Key()] = eff
+			effects[r.Key()] = eff
 		}
 	}
-	return dispatch.New(prefixes)
+	return dispatch.New(effects)
 }
 
 // exchangeOf names an operation: an address and the verb to run against it. Which concrete call that
@@ -237,13 +217,13 @@ func exchangeOf(addr, verb string) string { return addr + ":" + verb }
 // published list is the authority, and matching against it means a blueprint never states the
 // namespace.
 func qualify(cat aot.Catalog, addr string) (string, error) {
-	suffix := "." + addr
-	for _, p := range cat.Paths() {
-		if strings.HasSuffix(p, suffix) {
-			return p, nil
+	// Only the named service's document is read; listing every address would parse them all.
+	if service, resource, ok := strings.Cut(addr, "."); ok {
+		if a, ok := cat.Address(service, resource); ok {
+			return a, nil
 		}
 	}
-	return "", fmt.Errorf("omnisdk: the registry publishes no address ending %q", suffix)
+	return "", fmt.Errorf("omnisdk: the registry publishes no address ending %q", "."+addr)
 }
 
 // openRegistry resolves a registry root once per run.
@@ -259,123 +239,8 @@ func openRegistry(root string) (aot.Registry, error) {
 	return stackqldoc.OpenRegistry(os.DirFS(root), docCacheOption(root))
 }
 
-type convergePlan struct {
-	name      string
-	state     string
-	runID     string
-	resources []ManagedResource
-	effector  facade.Effector
-	semantics facade.Semantics
-	// exchanges translates a blueprint's resource-key exchange name into the registry address the
-	// effector resolves.
-	exchanges map[string]string
-	// scope is what the run supplies to every step — a region, a project, a subscription.
-	scope map[string]string
-	// tuning bounds the run: Parallelism keys converge at once, MaxPerHost requests per backend.
-	tuning Tuning
-}
-
 // leaseTTL bounds how long a dead run can hold the collection before another may break it.
 const leaseTTL = 5 * time.Minute
-
-func (p *convergePlan) Open(ctx context.Context) (Rows, error) {
-	log, err := ledger.NewFile(filepath.Join(p.state, "ledger"))
-	if err != nil {
-		return nil, err
-	}
-	journals, err := journal.NewFiles(filepath.Join(p.state, "journal"))
-	if err != nil {
-		return nil, err
-	}
-	runner := apply.New(log, journals, lease.NewLeaser(log, time.Now), merge.ThreeWay(),
-		p.effector, p.semantics, unwind.New(log, journals, p.semantics, p.effector), lease.All(), leaseTTL,
-		orInt(p.tuning.Parallelism, apply.DefaultParallelism))
-	// Keys converging at once share each backend's request budget, as a query's requests do.
-	ctx = admit.WithAdmissions(ctx, admit.PerScope(orInt(p.tuning.MaxPerHost, 8)))
-
-	dslReg, err := dsl.NewRegistry(append(gotemplate.Evaluators(), schemaxml.New())...)
-	if err != nil {
-		return nil, err
-	}
-	steps := make([]apply.Step, 0, len(p.resources))
-	for _, r := range p.resources {
-		inbound := make([]apply.Arrival, 0, len(r.Inbound()))
-		for _, in := range r.Inbound() {
-			name := in.As
-			if name == "" {
-				name = in.From
-			}
-			inbound = append(inbound, apply.Arrival{From: facade.LedgerKey(p.name + "/" + in.From), As: name})
-		}
-		exchange, ok := p.exchanges[exchangeOf(r.Key(), "insert")]
-		if !ok {
-			return nil, fmt.Errorf("omnisdk: no document operation for %q", r.Key())
-		}
-		// Scope travels with every step: a region or a project is stated once for the run, and the
-		// document declares it as a server variable each call needs. A resource's own parameters win,
-		// being the more specific statement.
-		params := make(map[string]string, len(p.scope)+len(r.Params()))
-		maps.Copy(params, p.scope)
-		maps.Copy(params, r.Params())
-		step := apply.Step{
-			Key:      facade.LedgerKey(p.name + "/" + r.Key()),
-			Exchange: exchange,
-			Desired:  r.Desired(),
-			Params:   params,
-			Inbound:  inbound,
-		}
-		if typ, body := r.Via(); typ != "" {
-			step.Via = docx.InboundProgram(dslReg, typ, body)
-		}
-		steps = append(steps, step)
-	}
-
-	res, err := runner.Apply(ctx, p.runID, p.name, steps)
-	if errors.Is(err, facade.ErrLeaseHeld) {
-		// How runs are kept apart is not the caller's business; that another is running is.
-		return nil, fmt.Errorf("omnisdk: collection %q is busy with another run", p.name)
-	}
-	if err != nil {
-		return nil, err
-	}
-	return convergeRows(ctx, log, res), nil
-}
-
-// convergeRows reports one row per key the run touched, and a final row when the run failed, so a
-// partial compensation is visible rather than implied by an absence.
-func convergeRows(ctx context.Context, log facade.Ledger, res apply.Result) Rows {
-	// A key applied and then compensated must not read as "applied": the run left nothing behind,
-	// and reporting otherwise sends someone looking for a resource that is gone.
-	undone := map[facade.LedgerKey]bool{}
-	if res.Unwound != nil {
-		for _, k := range res.Unwound.Compensated {
-			undone[k] = true
-		}
-	}
-	var out []Row
-	for _, k := range res.Applied {
-		row := Row{"key": string(k), "status": "applied"}
-		if undone[k] {
-			row["status"] = "applied, then compensated"
-		}
-		if e, _, found, err := log.Get(ctx, k); err == nil && found {
-			row["identity"] = string(e.Identity())
-		}
-		out = append(out, row)
-	}
-	if res.Err != nil {
-		row := Row{"key": string(res.Failed), "status": "failed", "error": res.Err.Error()}
-		if res.Unwound != nil {
-			row["compensated"] = keyStrings(res.Unwound.Compensated)
-			row["outstanding"] = keyStrings(res.Unwound.Outstanding)
-			if !res.Unwound.Complete() {
-				row["status"] = "failed; partially compensated"
-			}
-		}
-		out = append(out, row)
-	}
-	return &sliceRows{rows: out, i: -1}
-}
 
 func keyStrings(keys []facade.LedgerKey) []string {
 	out := make([]string, len(keys))

@@ -8,7 +8,6 @@ import (
 	"sort"
 	"strconv"
 
-	"github.com/stackql-labs/omnisdk/internal/effect/awsec2"
 	"github.com/stackql-labs/omnisdk/internal/kind"
 	"github.com/stackql-labs/omnisdk/internal/system_g/facade"
 )
@@ -161,6 +160,10 @@ func (b awsVpcSubnet) Resources(inputs map[string]string) ([]ManagedResource, er
 
 func cidrDoc(cidr string) []byte { return fmt.Appendf(nil, `{"CidrBlock":%q}`, cidr) }
 
+// correlationTag is the tag key stamped on every EC2 object a blueprint creates, linking it back to
+// its ledger key.
+const correlationTag = "omnisdk:key"
+
 // tagParams renders caller tags as the EC2 Query API's indexed tag specification.
 //
 // Index 1 is reserved for the correlation stamp, which the provider's residue supplies: that is the
@@ -169,7 +172,7 @@ func cidrDoc(cidr string) []byte { return fmt.Appendf(nil, `{"CidrBlock":%q}`, c
 func tagParams(resourceType string, tags map[string]string) map[string]string {
 	out := map[string]string{
 		"TagSpecification.1.ResourceType": resourceType,
-		"TagSpecification.1.Tag.1.Key":    awsec2.CorrelationTag,
+		"TagSpecification.1.Tag.1.Key":    correlationTag,
 	}
 	names := make([]string, 0, len(tags))
 	for k := range tags {

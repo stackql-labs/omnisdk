@@ -19,6 +19,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"slices"
 	"strings"
 	"time"
 
@@ -76,6 +77,9 @@ type options struct {
 	bodyFields map[string]bool
 	// poll re-requests until a status matures; nil sends once.
 	poll *httpx.Continuation
+	// querySlots place query parameters by wire name, each from the bound value of its slot: for a
+	// name a template cannot carry, such as OData's $filter.
+	querySlots map[string]string
 	// inbox names values T_in CONSUMES. They are bound — a producer emits each one — but never
 	// placed: they are raw material for the transform, not parameters the service has heard of.
 	inbox map[string]bool
@@ -112,6 +116,10 @@ func (m withMetadata) Apply(in facade.Page) (facade.Record, error) {
 		decoded, err := m.body.Apply(in)
 		if err != nil {
 			return nil, err
+		}
+		// An empty reply — a delete's 204 — decodes to nothing; the metadata is the whole response.
+		if decoded == nil {
+			return record.NewRecord(map[string]facade.Value{facade.AnonymousPayload: value.NewDocValue(doc)}), nil
 		}
 		if payload, ok := decoded.Doc(facade.AnonymousPayload); ok {
 			if fields, ok := payload.(map[string]any); ok {
@@ -251,6 +259,12 @@ func WithPoll(statusPath, done string, interval time.Duration, attempts int) Opt
 	}
 }
 
+// WithQuerySlots places each wire name in the query string with the value bound to its slot. A
+// wire name is sent exactly as given, $-prefixed included, which a {placeholder} could not be.
+func WithQuerySlots(slots map[string]string) Option {
+	return func(o *options) { o.querySlots = slots }
+}
+
 // WithBodyFields places named values as fields of the request body, bound per row like any input.
 // It exists because a document states that an operation takes a body and in what encoding, but not
 // the body's fields: a caller writing one names them, and they go into the body rather than the query.
@@ -381,18 +395,38 @@ func PlanFor(ex aot.AOTExchange, inputs map[string]any, reg dsl.Registry, opts .
 	// Auth κ inputs are plumbing, not data: a signed assertion and a bearer token travel on the row so
 	// the exchanges can bind them, and emitting them would put a live credential in every result.
 	return plan.NewPlan(specs, betas, nil, inputs,
-		[]facade.Transform{dropKeys{"assertion", "token"}}, encoder.NewJSONLEncoder()), nil
+		[]facade.Transform{dropKeys(credentials)}, encoder.NewJSONLEncoder()), nil
 }
 
 // Spec compiles one AOT exchange into the engine's exchange declaration. inputs are the values the
 // caller supplied: needed HERE, not merely validated later, because which optional parameters exist on
 // the wire depends on which were given — an unsupplied optional must not appear as an empty query
 // string, and a supplied one must not be silently dropped.
+//
+// An operation whose document declares an x-stackQL-beta is not finished when it answers, and compiles
+// to one that follows the declared call until it reports done.
 func Spec(ex aot.AOTExchange, inputs map[string]any, reg dsl.Registry, opts ...Option) (plan.ExchangeSpec, error) {
 	var o options
 	for _, opt := range opts {
 		opt(&o)
 	}
+	c, err := compile(ex, inputs, reg, o)
+	if err != nil {
+		return nil, err
+	}
+	b, ok := ex.Beta()
+	if !ok {
+		return c, nil
+	}
+	cc := c.(compiled)
+	if cc.spec, err = awaited(cc.spec, b, inputs, reg, o); err != nil {
+		return nil, err
+	}
+	return cc, nil
+}
+
+// compile is Spec for one call, beta aside.
+func compile(ex aot.AOTExchange, inputs map[string]any, reg dsl.Registry, o options) (plan.ExchangeSpec, error) {
 	req, resp := ex.Request(), ex.Response()
 	// A transform runs a PROGRAM only when the document ships one. Most declare a type with no body —
 	// naming a built-in decoding (golang_template_json_v0.3.0, schema_driven_xml_v0.1.0) rather than
@@ -462,7 +496,12 @@ func Spec(ex aot.AOTExchange, inputs map[string]any, reg dsl.Registry, opts ...O
 			if hreq.Query == nil {
 				hreq.Query = map[string]string{}
 			}
-			hreq.Query[p.Name()] = tmpl
+			wire := p.Name()
+			if p.List() && queryProtocol(req) {
+				// AWS's Query protocol writes a list as numbered members; a single value is the first.
+				wire += ".1"
+			}
+			hreq.Query[wire] = tmpl
 		case aot.InHeader:
 			if hreq.Headers == nil {
 				hreq.Headers = map[string]string{}
@@ -534,6 +573,13 @@ func Spec(ex aot.AOTExchange, inputs map[string]any, reg dsl.Registry, opts ...O
 	// fields into the query is how a create meant for a JSON API goes out as a query string.
 	if len(o.body) > 0 && req.BodyMediaType() != "" {
 		hreq.Body = httpx.Body{Encoding: bodyEncoding(req.BodyMediaType()), Raw: o.body}
+	}
+	for wire, slot := range o.querySlots {
+		if hreq.Query == nil {
+			hreq.Query = map[string]string{}
+		}
+		hreq.Query[wire] = "{" + slot + "}"
+		bindings = withInput(bindings, slot)
 	}
 	// Raw material for T_in: bound so a producer delivers it, never placed on the wire.
 	for name := range o.inbox {
@@ -614,6 +660,10 @@ func Spec(ex aot.AOTExchange, inputs map[string]any, reg dsl.Registry, opts ...O
 
 	spec := plan.NewExchangeSpec(ex.Name(), bindings, nil, func(bound map[string]any) facade.Operator {
 		var reqT []facade.Transform
+		if req.Translate() == httpx.GetQueryToPostFormUTF8 {
+			// Translated before it is signed, so what is signed is what is sent.
+			reqT = append(reqT, httpx.GetQueryToPostForm())
+		}
 		switch {
 		case o.noSign:
 		case o.signer != nil:
@@ -623,7 +673,11 @@ func Spec(ex aot.AOTExchange, inputs map[string]any, reg dsl.Registry, opts ...O
 			reqT = append(reqT, awsv4.NewSigV4Transform(
 				awsv4.NewSigV4Signer(str(bound["region"]), service, o.creds, signsPayload(service))))
 		}
-		send := httpx.Make(hreq, tokenDecoder(resp), reqT...)(bound)
+		rowReq, rowBound := hreq, bound
+		if req.Transpose() == AWSCanonical {
+			rowReq, rowBound = transposed(hreq, bound)
+		}
+		send := httpx.Make(rowReq, tokenDecoder(resp), reqT...)(rowBound)
 		// non-2xx fails loudly rather than looking like an empty result
 		checked := exchange.NewTransformExchange(0, send, httpx.NewRequireOK(), 1)
 		// the document's own program, moved from source to here — when it declares one
@@ -783,7 +837,13 @@ type programTransform struct {
 }
 
 func (t programTransform) Apply(in facade.Page) (facade.Record, error) {
-	out, err := t.reg.Eval(t.typ, t.ctx, t.body, in.Bytes(facade.AnonymousPayload))
+	raw := in.Bytes(facade.AnonymousPayload)
+	if len(bytes.TrimSpace(raw)) == 0 {
+		// An empty reply — S3's CreateBucket answers 200 with no body — has nothing to transform; it
+		// is an empty document, not a malformed one.
+		return record.NewRecord(map[string]facade.Value{facade.AnonymousPayload: value.NewBytesValue([]byte("{}"))}), nil
+	}
+	out, err := t.reg.Eval(t.typ, t.ctx, t.body, raw)
 	if err != nil {
 		return nil, err
 	}
@@ -1099,8 +1159,26 @@ func Expand(spec plan.ExchangeSpec) (auth plan.ExchangeSpec, inputs map[string]a
 	return c.auth, needed, true
 }
 
+// queryProtocol reports whether a request is AWS's Query protocol: the action it performs is a fixed
+// parameter of the request itself — in its body, or, for a GET, in its URL.
+func queryProtocol(req aot.Request) bool {
+	if _, ok := req.Params()["Action"]; ok {
+		return true
+	}
+	_, query, _ := strings.Cut(req.URL(), "?")
+	return slices.ContainsFunc(strings.Split(query, "&"), func(kv string) bool { return strings.HasPrefix(kv, "Action=") })
+}
+
 // TokenAttr is the attribute an auth exchange emits and the call it feeds binds.
 const TokenAttr = "token"
+
+// credentials are the attributes that carry a credential on a row: a signed assertion and the bearer
+// token it buys.
+var credentials = []string{"assertion", TokenAttr}
+
+// IsCredential reports whether a bound attribute carries a credential. Such a value is plumbing,
+// never data: nothing emits it in a result, and nothing records it as intent.
+func IsCredential(name string) bool { return slices.Contains(credentials, name) }
 
 // Rename returns the spec under a different name.
 //
@@ -1122,8 +1200,11 @@ func (r renamed) Name() string { return r.name }
 // the default: a document that states nothing about its request, yet declares body parameters, is
 // describing a JSON API — form encoding is always stated outright.
 func bodyEncoding(mediaType string) httpx.Encoding {
-	if strings.Contains(mediaType, "x-www-form-urlencoded") {
+	switch {
+	case strings.Contains(mediaType, "x-www-form-urlencoded"):
 		return httpx.EncodingForm
+	case strings.Contains(mediaType, "xml"):
+		return httpx.EncodingXML
 	}
 	return httpx.EncodingJSON
 }

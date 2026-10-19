@@ -39,7 +39,7 @@ if err != nil {
     return err
 }
 
-pl, err := omnisdk.NewGraphSelectQuery(registryRoot, g, omnisdk.Args{
+pl, err := omnisdk.NewGraphQuery(registryRoot, g, omnisdk.Args{
     AuthByProvider: map[string]*omnisdk.Auth{"aws": awsAuth},    // per provider; absent falls back to the env
     Params: map[string]string{"region": "us-east-1"},    // scope
 })
@@ -76,7 +76,7 @@ res := []omnisdk.ManagedResource{
     ),
 }
 
-pl, err := omnisdk.Converge(registryRoot, "scratch", stateDir, "" /* runID: timestamp */, res,
+pl, err := omnisdk.Prepare(registryRoot, omnisdk.DesiredState(res), omnisdk.NewLedger("scratch", stateDir, runID),
     omnisdk.Args{AuthByProvider: map[string]*omnisdk.Auth{"aws": awsAuth}, Params: map[string]string{"region": "us-east-1"}})
 if err != nil {
     return err
@@ -114,7 +114,7 @@ q, err := query.New(
 users, _ := omnisdk.DescribeTable(registryRoot, "stackql_unstable_aws.iam.users")
 keys, _ := omnisdk.DescribeTable(registryRoot, "stackql_unstable_aws.iam.access_keys")
 res, err := omnisdk.Resolve(q, map[string]omnisdk.Table{"u": users, "k": keys})
-pl, err := omnisdk.NewGraphSelectQuery(registryRoot, res.Graph(), omnisdk.Args{Params: res.Params()})
+pl, err := omnisdk.NewGraphQuery(registryRoot, res.Graph(), omnisdk.Args{Params: res.Params()})
 ```
 
 Join forms: `Inner` and `Left` send an `ON` value a table's methods take as a request per row;

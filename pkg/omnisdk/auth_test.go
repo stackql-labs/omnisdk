@@ -47,7 +47,7 @@ func TestEachProviderAuthenticatesItsOwnWay(t *testing.T) {
 	if err != nil {
 		t.Fatalf("graph: %v", err)
 	}
-	pl, err := omnisdk.NewGraphSelectQuery(authRegistry, g, omnisdk.Args{
+	pl, err := omnisdk.NewGraphQuery(authRegistry, g, omnisdk.Args{
 		Endpoint: srv.URL,
 		AuthByProvider: map[string]*omnisdk.Auth{
 			"stackql_unstable_bearp": {Credentials: "tok-b"},
@@ -104,7 +104,7 @@ func TestCredentialReachesOnlyItsProvider(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	pl, err := omnisdk.NewGraphSelectQuery(authRegistry, both, omnisdk.Args{Endpoint: srv.URL,
+	pl, err := omnisdk.NewGraphQuery(authRegistry, both, omnisdk.Args{Endpoint: srv.URL,
 		AuthByProvider: map[string]*omnisdk.Auth{"bearp": {Credentials: "tok-b"}}})
 	if err != nil {
 		t.Fatalf("plan: %v", err)
@@ -128,7 +128,7 @@ func TestCredentialReachesOnlyItsProvider(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = omnisdk.NewGraphSelectQuery(authRegistry, solo, omnisdk.Args{Endpoint: srv.URL,
+	_, err = omnisdk.NewGraphQuery(authRegistry, solo, omnisdk.Args{Endpoint: srv.URL,
 		AuthByProvider: map[string]*omnisdk.Auth{"keyed": {Credentials: "key-k"}}})
 	if err == nil || !strings.Contains(err.Error(), "bearp bearer credentials cannot be used") {
 		t.Errorf("err = %v, want bearp refused rather than sent keyed's credential", err)
@@ -142,7 +142,7 @@ func TestMissingCredentialIsRefused(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = omnisdk.NewGraphSelectQuery(authRegistry, g, omnisdk.Args{Endpoint: "http://127.0.0.1:9"})
+	_, err = omnisdk.NewGraphQuery(authRegistry, g, omnisdk.Args{Endpoint: "http://127.0.0.1:9"})
 	if err == nil || !strings.Contains(err.Error(), "bearp bearer credentials cannot be used") {
 		t.Errorf("err = %v, want the missing bearer credential named", err)
 	}
@@ -203,7 +203,7 @@ func runNodes(t *testing.T, args omnisdk.Args, nodes ...omnisdk.Node) {
 	if err != nil {
 		t.Fatalf("graph: %v", err)
 	}
-	pl, err := omnisdk.NewGraphSelectQuery(authRegistry, g, args)
+	pl, err := omnisdk.NewGraphQuery(authRegistry, g, args)
 	if err != nil {
 		t.Fatalf("plan: %v", err)
 	}
@@ -302,7 +302,7 @@ func TestKubeconfigContext(t *testing.T) {
 // A kubeconfig without a context is refused: which cluster's credentials to send is not a default.
 func TestKubeconfigNeedsAContext(t *testing.T) {
 	g, _ := omnisdk.NewGraph([]omnisdk.Node{omnisdk.NewNode("k", "stackql_unstable_kube.things.items", nil)}, nil)
-	_, err := omnisdk.NewGraphSelectQuery(authRegistry, g, omnisdk.Args{
+	_, err := omnisdk.NewGraphQuery(authRegistry, g, omnisdk.Args{
 		Params:         map[string]string{"cluster_addr": "x"},
 		AuthByProvider: map[string]*omnisdk.Auth{"kube": {Type: "kubeconfig", Credentials: "apiVersion: v1"}},
 	})
@@ -333,7 +333,7 @@ func iamUsersOnce(t *testing.T, args omnisdk.Args) string {
 		t.Fatal(err)
 	}
 	args.Endpoint, args.Params = srv.URL, map[string]string{"region": "us-east-1"}
-	pl, err := omnisdk.NewGraphSelectQuery(corpus, g, args)
+	pl, err := omnisdk.NewGraphQuery(corpus, g, args)
 	if err != nil {
 		t.Fatalf("plan: %v", err)
 	}
@@ -430,7 +430,7 @@ func bucketsOnce(t *testing.T, srv *httptest.Server, args omnisdk.Args) {
 		t.Fatal(err)
 	}
 	args.Endpoint, args.Params = srv.URL, map[string]string{"project": "demo"}
-	pl, err := omnisdk.NewGraphSelectQuery(corpus, g, args)
+	pl, err := omnisdk.NewGraphQuery(corpus, g, args)
 	if err != nil {
 		t.Fatalf("plan: %v", err)
 	}
@@ -528,7 +528,7 @@ func TestAzureCLICredential(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	pl, err := omnisdk.NewGraphSelectQuery(corpus, g, omnisdk.Args{Endpoint: srv.URL, Params: map[string]string{"subscription_id": "sub"}})
+	pl, err := omnisdk.NewGraphQuery(corpus, g, omnisdk.Args{Endpoint: srv.URL, Params: map[string]string{"subscription_id": "sub"}})
 	if err != nil {
 		t.Fatalf("plan: %v", err)
 	}
@@ -574,7 +574,7 @@ func TestResolvedQueryNeverCarriesCredentials(t *testing.T) {
 	for name, policy := range map[string]omnisdk.Redaction{
 		"unset": nil, "default": omnisdk.DefaultRedaction(), "none": omnisdk.RedactNone(),
 	} {
-		pl, err := omnisdk.NewGraphSelectQuery(corpus, res.Graph(),
+		pl, err := omnisdk.NewGraphQuery(corpus, res.Graph(),
 			omnisdk.Args{Endpoint: srv.URL, Params: res.Params(), Redaction: policy})
 		if err != nil {
 			t.Fatalf("%s: plan: %v", name, err)
@@ -654,7 +654,7 @@ func TestOneQueryAcrossThreeClouds(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	pl, err := omnisdk.NewGraphSelectQuery(corpus, g, omnisdk.Args{Endpoint: srv.URL, Params: map[string]string{
+	pl, err := omnisdk.NewGraphQuery(corpus, g, omnisdk.Args{Endpoint: srv.URL, Params: map[string]string{
 		"region": "us-east-1", "project": "demo", "subscription_id": "sub"}})
 	if err != nil {
 		t.Fatalf("plan: %v", err)

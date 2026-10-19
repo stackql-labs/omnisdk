@@ -121,6 +121,26 @@ func LimiterFrom(ctx context.Context) facade.Limiter {
 	return nil
 }
 
+type sectionKey struct{}
+
+// WithSectionLimiter bounds how many independent sections of a plan run at once (nil = unlimited).
+// It is a limiter of its own, never the fan-out one: a section holds its slot while the requests
+// inside it take fan-out slots, and one pool shared by both would deadlock when it ran out.
+func WithSectionLimiter(ctx context.Context, lim facade.Limiter) context.Context {
+	if lim == nil {
+		return ctx
+	}
+	return context.WithValue(ctx, sectionKey{}, lim)
+}
+
+// SectionLimiterFrom returns the section limiter carried on ctx, or nil (unlimited).
+func SectionLimiterFrom(ctx context.Context) facade.Limiter {
+	if l, ok := ctx.Value(sectionKey{}).(facade.Limiter); ok {
+		return l
+	}
+	return nil
+}
+
 // cyclic reports whether the dependency graph has a cycle (Kahn's fails to reach every node).
 func cyclic(nodes []Node, indeg map[string]int, dependents map[string][]string) bool {
 	deg := make(map[string]int, len(indeg))

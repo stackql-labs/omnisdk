@@ -14,6 +14,8 @@ var (
 
 const (
 	AnonymousPayload = "_anon"
+	// AnonymousPrincipal is who a statement is on behalf of when no caller is identified.
+	AnonymousPrincipal = "anonymous"
 )
 
 type systemG struct {
@@ -345,6 +347,10 @@ type LedgerEntry interface {
 	// Identity is everything the inverse call needs to address the object — not merely an id,
 	// since a compensation is derived from Plan and Identity alone.
 	Identity() []byte
+	// About is what the key is, recorded when it was last resolved: opaque to the ledger, written by
+	// whoever converged it — what it is in the documents, how it is addressed, what it depends on —
+	// so that the collection can be acted on from the ledger alone, a destroy above all.
+	About() []byte
 }
 
 // Ledger is the durable, per-key write-ahead log of resolved intent. Redo-only: a pending entry
@@ -364,7 +370,8 @@ type Ledger interface {
 	// with itself.
 	Begin(ctx context.Context, k LedgerKey, proposed []byte, v LedgerVersion) error
 	// Resolve commits: Proposed is promoted to Plan, identity is stored, phase becomes LedgerLive.
-	Resolve(ctx context.Context, k LedgerKey, identity []byte, v LedgerVersion) error
+	// about replaces what the entry records of itself; nil keeps what it had.
+	Resolve(ctx context.Context, k LedgerKey, identity, about []byte, v LedgerVersion) error
 	// Forget removes the entry after a successful delete.
 	Forget(ctx context.Context, k LedgerKey, v LedgerVersion) error
 }
@@ -490,11 +497,54 @@ type Semantics interface {
 	// a particular create may not be — deletion protection, scheduled destruction, object-lock,
 	// anything billable.
 	Inverse(exchange string) (InverseExchange, bool)
-	// Update reports the exchange that converges an object that already exists, or false where
-	// none is declared. This is the verb-to-lifecycle role: without it there is no way to tell an
-	// upsert, where re-issuing the create is correct, from a mint, where re-issuing produces a
-	// duplicate. Absence means drift needs a replace, which is refused rather than guessed.
-	Update(exchange string) (string, bool)
+}
+
+// Statement is one action asked of one resource, before it is bound to a method. It names a
+// resource and a verb; which method carries it out is the analyzer's decision, unless the caller
+// pinned one.
+type Statement interface {
+	// Principal is who the statement is on behalf of: what a Policy decides for.
+	Principal() string
+	// Resource is the document address, e.g. "aws.ec2.vpcs".
+	Resource() string
+	// Verb is the document's verb: select, insert, update or delete.
+	Verb() string
+	// Available are the inputs that will have a value when the method runs: what the caller
+	// supplied and what arrives from elsewhere. A method needing one that is not here cannot run.
+	Available() []string
+	// Sent are the inputs the statement sets. A method must accept every one: an input it does not
+	// declare is dropped or rejected, and either applies something other than what was asked.
+	Sent() []string
+	// Pinned is a method the caller named; empty means the analyzer chooses.
+	Pinned() string
+}
+
+// Method is one way the documents state of carrying out a verb on a resource.
+type Method interface {
+	Name() string
+	// Required are the inputs it cannot run without.
+	Required() []string
+	// Accepts reports whether it declares somewhere for input to go. A method taking a body accepts
+	// any field: the body's content is the caller's, and a document need not enumerate it.
+	Accepts(input string) bool
+	TakesBody() bool
+}
+
+// Capabilities are what the documents, and any declarations over them, say each method can do.
+type Capabilities interface {
+	// Methods are a resource's methods for one verb, in the order the document lists them.
+	Methods(resource, verb string) ([]Method, error)
+}
+
+// Policy permits or refuses a method chosen for a statement. It narrows what Capabilities allow and
+// never widens it: nothing a policy says makes a method accept an input it does not declare.
+type Policy interface {
+	Permit(ctx context.Context, s Statement, m Method) error
+}
+
+// Analyzer binds a statement to the method that carries it out, or says why none can.
+type Analyzer interface {
+	Analyze(ctx context.Context, s Statement) (Method, error)
 }
 
 // EffectInput is everything one wire effect needs beyond the exchange itself.

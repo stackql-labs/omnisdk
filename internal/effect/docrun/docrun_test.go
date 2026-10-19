@@ -9,6 +9,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/stackql-labs/omnisdk/internal/analyze"
+	"github.com/stackql-labs/omnisdk/internal/docsem"
 	"github.com/stackql-labs/omnisdk/internal/effect/docrun"
 	"github.com/stackql-labs/omnisdk/internal/system_g/awsv4"
 	"github.com/stackql-labs/omnisdk/internal/system_g/exchange/docx"
@@ -21,6 +23,12 @@ import (
 // fixture builds the effector the way a caller would: one provider catalog, the document's own
 // operations, and the residue the document does not state.
 func fixture(t *testing.T, srv *httptest.Server) (facade.Effector, string) {
+	t.Helper()
+	return fixtureAs(t, srv, facade.AnonymousPrincipal, analyze.PermitAll())
+}
+
+// fixtureAs is fixture acting on behalf of principal, under policy.
+func fixtureAs(t *testing.T, srv *httptest.Server, principal string, policy facade.Policy) (facade.Effector, string) {
 	t.Helper()
 	reg, err := stackqldoc.OpenRegistry(os.DirFS("../../../pkg/docparse/stackqldoc/testdata"))
 	if err != nil {
@@ -43,7 +51,7 @@ func fixture(t *testing.T, srv *httptest.Server) (facade.Effector, string) {
 	if err != nil {
 		t.Fatalf("dsl: %v", err)
 	}
-	eff := docrun.New(cat, dslReg,
+	eff := docrun.New(cat, analyze.New(docsem.Capabilities(cat), policy), principal, dslReg,
 		map[string]docrun.Residue{
 			addr: docrun.NewResidue("CreateVpcResponse.vpc.vpcId", "VpcId", ""),
 		},
@@ -59,7 +67,11 @@ func fixture(t *testing.T, srv *httptest.Server) (facade.Effector, string) {
 func TestCreateFromDocument(t *testing.T) {
 	var seen string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		seen = r.URL.Query().Get("Action") + "|" + r.URL.Query().Get("CidrBlock")
+		_ = r.ParseForm()
+		if r.Method != http.MethodPost || r.URL.RawQuery != "" {
+			t.Errorf("%s %s: want a form POST with nothing in the URL", r.Method, r.URL)
+		}
+		seen = r.PostForm.Get("Action") + "|" + r.PostForm.Get("CidrBlock")
 		w.Header().Set("Content-Type", "text/xml")
 		fmt.Fprint(w, `<CreateVpcResponse><vpc><vpcId>vpc-777</vpcId></vpc></CreateVpcResponse>`)
 	}))
@@ -86,7 +98,8 @@ func TestCreateFromDocument(t *testing.T) {
 func TestDeleteFromDocument(t *testing.T) {
 	var seen string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		seen = r.URL.Query().Get("Action") + "|" + r.URL.Query().Get("VpcId")
+		_ = r.ParseForm()
+		seen = r.PostForm.Get("Action") + "|" + r.PostForm.Get("VpcId")
 		w.Header().Set("Content-Type", "text/xml")
 		fmt.Fprint(w, `<DeleteVpcResponse><return>true</return></DeleteVpcResponse>`)
 	}))
@@ -134,5 +147,36 @@ func TestReadCarriesMetadataAndBody(t *testing.T) {
 	}
 	if string(identity) != "vpc-777" {
 		t.Errorf("identity = %s, want vpc-777", identity)
+	}
+}
+
+type onlyFor string
+
+func (p onlyFor) Permit(_ context.Context, s facade.Statement, _ facade.Method) error {
+	if s.Principal() != string(p) {
+		return fmt.Errorf("%s may not act", s.Principal())
+	}
+	return nil
+}
+
+// An effect is analyzed on behalf of the effector's principal, so a policy deciding for someone else
+// stops it before anything is sent.
+func TestEffectRunsOnBehalfOfItsPrincipal(t *testing.T) {
+	calls := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		w.Header().Set("Content-Type", "text/xml")
+		fmt.Fprint(w, `<CreateVpcResponse><vpc><vpcId>vpc-1</vpcId></vpc></CreateVpcResponse>`)
+	}))
+	defer srv.Close()
+	in := facade.EffectInput{Mutation: []byte(`{"CidrBlock":"10.0.0.0/16"}`), Params: map[string]string{"region": "us-east-1"}}
+
+	eff, addr := fixtureAs(t, srv, "bob", onlyFor("alice"))
+	if _, err := eff.Effect(context.Background(), addr+":insert", "demo/aws/ec2/vpc", in); err == nil || calls != 0 {
+		t.Errorf("bob: err = %v, calls = %d; want a refusal before the wire", err, calls)
+	}
+	eff, addr = fixtureAs(t, srv, "alice", onlyFor("alice"))
+	if _, err := eff.Effect(context.Background(), addr+":insert", "demo/aws/ec2/vpc", in); err != nil || calls != 1 {
+		t.Errorf("alice: err = %v, calls = %d; want one create", err, calls)
 	}
 }
