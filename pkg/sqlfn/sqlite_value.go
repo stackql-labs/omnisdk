@@ -5,6 +5,8 @@ import (
 	"math"
 	"strconv"
 	"strings"
+
+	"github.com/stackql-labs/omnisdk/pkg/encode"
 )
 
 // SQLite's value model, which the SQLite catalogue follows exactly: every value is NULL, INTEGER
@@ -57,7 +59,7 @@ func norm(v any) (class, any) {
 		f, _ := x.Float64()
 		return classReal, f
 	}
-	b, err := json.Marshal(v)
+	b, err := encode.JSON(v)
 	if err != nil {
 		return classText, ""
 	}

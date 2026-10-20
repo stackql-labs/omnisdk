@@ -20,6 +20,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/stackql-labs/omnisdk/pkg/encode"
 	"github.com/stackql-labs/omnisdk/pkg/omnisdk"
 	"github.com/stackql-labs/omnisdk/pkg/query"
 )
@@ -59,9 +60,8 @@ func main() {
 			return err
 		}
 		defer rows.Close()
-		enc := json.NewEncoder(w)
 		for rows.Next() {
-			if err := enc.Encode(rows.Row()); err != nil {
+			if err := writeLine(w, rows.Row()); err != nil {
 				return err
 			}
 		}
@@ -796,9 +796,8 @@ its ledger lives, over whatever the spec says; a file holding only resources nee
 			if err != nil {
 				return err
 			}
-			enc := json.NewEncoder(w)
 			for _, f := range findings {
-				if err := enc.Encode(f); err != nil {
+				if err := writeLine(w, f); err != nil {
 					return err
 				}
 			}
@@ -1012,13 +1011,28 @@ func mustFlag(cmd *cobra.Command, name string) string {
 	return v
 }
 
-// printJSON writes v as indented JSON to stdout (the discovery commands' output).
-func printJSON(v any) error {
-	b, err := json.MarshalIndent(v, "", "  ")
+// writeLine writes v as one JSON line, rendered as every omnisdk sink renders a value.
+func writeLine(w io.Writer, v any) error {
+	b, err := encode.JSON(v)
 	if err != nil {
 		return err
 	}
-	fmt.Println(string(b))
+	_, err = w.Write(append(b, '\n'))
+	return err
+}
+
+// printJSON writes v as indented JSON to stdout (the discovery commands' output), rendered as every
+// omnisdk sink renders a value and then indented.
+func printJSON(v any) error {
+	b, err := encode.JSON(v)
+	if err != nil {
+		return err
+	}
+	var out bytes.Buffer
+	if err := json.Indent(&out, b, "", "  "); err != nil {
+		return err
+	}
+	fmt.Println(out.String())
 	return nil
 }
 

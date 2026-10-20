@@ -6,6 +6,8 @@ import (
 	"math"
 	"strconv"
 	"strings"
+
+	"github.com/stackql-labs/omnisdk/pkg/encode"
 )
 
 // The Postgres catalogue's value model. Postgres is typed: which function a name means, and what it
@@ -154,7 +156,7 @@ func pgTextOf(v any) (string, bool) {
 		}
 		return pgArrayText(out), true
 	case map[string]any, []any:
-		b, err := json.Marshal(x)
+		b, err := encode.JSON(x)
 		if err != nil {
 			return "", false
 		}

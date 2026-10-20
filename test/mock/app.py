@@ -27,6 +27,7 @@ XML = "application/xml"
 app = Flask(__name__, template_folder=str(HERE / "templates"))
 BUCKETS = json.loads((COLL / "buckets.json").read_text())
 PROVISION = json.loads((COLL / "ec2" / "provision.json").read_text())
+GCS_BUCKETS = json.loads((COLL / "gcs" / "buckets.json").read_text())
 
 NOT_FOUND = (
     '<?xml version="1.0" encoding="UTF-8"?>'
@@ -323,13 +324,9 @@ def gcp_v3_projects():
 
 @app.get("/storage/v1/b")
 def gcp_storage_buckets():
-    return jsonify(items=[
-        {"name": "gcs-plain", "iamConfiguration": {"publicAccessPrevention": "inherited"},
-         "versioning": {"enabled": False}},  # no logging block: usage logs off
-        {"name": "gcs-cmek", "encryption": {"defaultKmsKeyName": "projects/p/locations/l/keyRings/r/cryptoKeys/k"},
-         "iamConfiguration": {"publicAccessPrevention": "enforced"}, "versioning": {"enabled": True},
-         "logging": {"logBucket": "gcs-usage-logs", "logObjectPrefix": "gcs/"}},
-    ])
+    # gcs-plain has no logging block: usage logs off. projectNumber is past 2^53, so a float64 decode
+    # would round it; the stream golden tests in pkg/stream read this same file.
+    return jsonify(GCS_BUCKETS)
 
 
 if __name__ == "__main__":

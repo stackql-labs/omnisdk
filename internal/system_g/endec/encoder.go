@@ -1,11 +1,11 @@
 package encoder
 
 import (
-	"encoding/json"
 	"io"
 
 	"github.com/stackql-labs/omnisdk/internal/system_g/facade"
 	"github.com/stackql-labs/omnisdk/internal/system_g/value"
+	"github.com/stackql-labs/omnisdk/pkg/encode"
 )
 
 type anonymousEncoder struct {
@@ -54,7 +54,7 @@ func (jsonlEncoder) Encode(w io.Writer, r facade.Record) (int64, error) {
 	}
 	var total int64
 	for _, row := range rows {
-		b, err := json.Marshal(row)
+		b, err := encode.JSON(row)
 		if err != nil {
 			return total, err
 		}
