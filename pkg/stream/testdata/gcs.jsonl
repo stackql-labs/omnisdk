@@ -1,0 +1,2 @@
+{"name":"gcs-plain","projectNumber":9007199254740993,"labels":{"env":"dev","team":"platform"},"versioning":{"enabled":false},"logging":null}
+{"name":"gcs-cmek","projectNumber":9007199254740993,"labels":{"cost-centre":"<cc-42>","env":"prod","team":"security"},"versioning":{"enabled":true},"logging":{"logBucket":"gcs-usage-logs","logObjectPrefix":"gcs/"}}

@@ -1,6 +1,7 @@
 package transform
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 
@@ -32,8 +33,12 @@ func (t jsonToAgnostic) Apply(in facade.Page) (facade.Record, error) {
 	if len(b) == 0 {
 		return nil, nil
 	}
+	// Numbers stay the text the provider sent: a 64-bit id — an account, a project number — is not
+	// a float64's approximation of it.
+	dec := json.NewDecoder(bytes.NewReader(b))
+	dec.UseNumber()
 	var doc any
-	if err := json.Unmarshal(b, &doc); err != nil {
+	if err := dec.Decode(&doc); err != nil {
 		return nil, err
 	}
 	return record.NewRecord(map[string]facade.Value{

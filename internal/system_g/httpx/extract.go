@@ -1,6 +1,7 @@
 package httpx
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"maps"
@@ -95,8 +96,11 @@ func (b statusBranch) Apply(in facade.Page) (facade.Record, error) {
 // decodeDoc turns a raw body into an agnostic document via the swappable decoder (nil = JSON).
 func decodeDoc(decode facade.Transform, raw []byte) (any, error) {
 	if decode == nil {
+		// Numbers stay the text the provider sent, so a 64-bit id survives.
+		dec := json.NewDecoder(bytes.NewReader(raw))
+		dec.UseNumber()
 		var doc any
-		if err := json.Unmarshal(raw, &doc); err != nil {
+		if err := dec.Decode(&doc); err != nil {
 			return nil, err
 		}
 		return doc, nil

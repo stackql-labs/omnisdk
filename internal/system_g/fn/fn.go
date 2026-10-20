@@ -5,12 +5,13 @@ package fn
 import (
 	"encoding/json"
 	"fmt"
-	"github.com/stackql-labs/omnisdk/pkg/sqlfn"
 	"sort"
 	"strconv"
 	"strings"
 
 	"github.com/stackql-labs/omnisdk/internal/system_g/facade"
+	"github.com/stackql-labs/omnisdk/pkg/encode"
+	"github.com/stackql-labs/omnisdk/pkg/sqlfn"
 )
 
 // registry is an immutable name → Fn lookup.
@@ -160,7 +161,7 @@ func lexeme(v any) ([]byte, error) {
 	case facade.Typed:
 		return t.Lexeme(), nil
 	}
-	b, err := json.Marshal(v)
+	b, err := encode.JSON(v)
 	if err != nil {
 		return nil, fmt.Errorf("cannot render %T as a value", v)
 	}

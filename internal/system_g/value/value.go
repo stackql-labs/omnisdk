@@ -2,11 +2,11 @@ package value
 
 import (
 	"bytes"
-	"encoding/json"
 	"io"
 
 	"github.com/stackql-labs/omnisdk/internal/system_g/facade"
 	"github.com/stackql-labs/omnisdk/internal/system_g/types"
+	"github.com/stackql-labs/omnisdk/pkg/encode"
 )
 
 var (
@@ -57,7 +57,7 @@ func Doc(v facade.Value) (any, bool) {
 }
 
 func (v docValue) WriteTo(w io.Writer) (int64, error) {
-	b, err := json.Marshal(v.doc)
+	b, err := encode.JSON(v.doc)
 	if err != nil {
 		return 0, err
 	}
@@ -66,7 +66,7 @@ func (v docValue) WriteTo(w io.Writer) (int64, error) {
 }
 
 func (v docValue) Reader() io.Reader {
-	b, err := json.Marshal(v.doc)
+	b, err := encode.JSON(v.doc)
 	if err != nil {
 		return bytes.NewReader(nil)
 	}

@@ -101,7 +101,9 @@ func (o *op) run(ctx context.Context, emit func(facade.Record) error) error {
 
 		doc := map[string]any{}
 		if out.Len() > 0 {
-			if err := json.Unmarshal(out.Bytes(), &doc); err != nil {
+			dec := json.NewDecoder(bytes.NewReader(out.Bytes()))
+			dec.UseNumber()
+			if err := dec.Decode(&doc); err != nil {
 				return fmt.Errorf("grpcx: decode response: %w", err)
 			}
 		}

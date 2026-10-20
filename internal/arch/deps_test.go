@@ -43,9 +43,25 @@ func TestFacadeDependsOnStdlibOnly(t *testing.T) {
 // query is what a front end builds. It must stay standard-library only, so a front end in another
 // language's toolchain depends on it and nothing else of the module.
 func TestQueryDependsOnStdlibOnly(t *testing.T) {
-	for _, pkg := range []string{"/pkg/query", "/pkg/sqlfn", "/pkg/cache"} {
+	for _, pkg := range []string{"/pkg/query", "/pkg/cache", "/pkg/encode"} {
 		if got := deps(t, module+pkg); len(got) > 0 {
 			t.Errorf("%s depends on %v, want stdlib only", pkg, got)
+		}
+	}
+	// sqlfn renders a value as every sink does, through encode — itself standard-library only.
+	for _, d := range deps(t, module+"/pkg/sqlfn") {
+		if d != module+"/pkg/encode" {
+			t.Errorf("pkg/sqlfn depends on %s, want pkg/encode and stdlib only", d)
+		}
+	}
+}
+
+// stream is what a host writes rows through. It sees the encoder and the standard library only,
+// so a host takes the sinks without taking the engine.
+func TestStreamDependsOnEncodeOnly(t *testing.T) {
+	for _, d := range deps(t, module+"/pkg/stream") {
+		if d != module+"/pkg/encode" {
+			t.Errorf("pkg/stream depends on %s, want pkg/encode and stdlib only", d)
 		}
 	}
 }

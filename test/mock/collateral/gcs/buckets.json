@@ -1,0 +1,20 @@
+{
+  "items": [
+    {
+      "name": "gcs-plain",
+      "projectNumber": 9007199254740993,
+      "labels": {"team": "platform", "env": "dev"},
+      "iamConfiguration": {"publicAccessPrevention": "inherited"},
+      "versioning": {"enabled": false}
+    },
+    {
+      "name": "gcs-cmek",
+      "projectNumber": 9007199254740993,
+      "labels": {"team": "security", "env": "prod", "cost-centre": "<cc-42>"},
+      "encryption": {"defaultKmsKeyName": "projects/p/locations/l/keyRings/r/cryptoKeys/k"},
+      "iamConfiguration": {"publicAccessPrevention": "enforced"},
+      "versioning": {"enabled": true},
+      "logging": {"logBucket": "gcs-usage-logs", "logObjectPrefix": "gcs/"}
+    }
+  ]
+}

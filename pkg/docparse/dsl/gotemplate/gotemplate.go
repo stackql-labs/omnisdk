@@ -90,8 +90,11 @@ func bindJSON(in []byte) (any, error) {
 	if len(bytes.TrimSpace(in)) == 0 {
 		return map[string]any{}, nil
 	}
+	// Numbers stay the text they were written as: a 64-bit id passes through a program exact.
+	dec := json.NewDecoder(bytes.NewReader(in))
+	dec.UseNumber()
 	var v any
-	if err := json.Unmarshal(in, &v); err != nil {
+	if err := dec.Decode(&v); err != nil {
 		return nil, fmt.Errorf("decode json: %w", err)
 	}
 	return v, nil

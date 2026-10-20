@@ -13,6 +13,8 @@ import (
 	"reflect"
 	"strings"
 	"text/template"
+
+	"github.com/stackql-labs/omnisdk/pkg/encode"
 )
 
 // Map is the helper set, ready for template.Funcs.
@@ -50,17 +52,13 @@ func Names() []string {
 // value, matching the other helpers here and Go template's own pipeline order.
 func Split(sep, s string) []string { return strings.Split(s, sep) }
 
-// ToJSON renders a value as JSON. Templates use it to emit a fragment verbatim, so HTML escaping
-// would corrupt the output — encoding/json's default escaping of <, > and & is disabled.
+// ToJSON renders a value as JSON, as every omnisdk sink renders it. Templates use it to emit a
+// fragment verbatim, so nothing is HTML-escaped and a number is never written in exponent form.
 func ToJSON(v any) (string, error) {
-	var b []byte
-	buf := &jsonBuffer{}
-	enc := json.NewEncoder(buf)
-	enc.SetEscapeHTML(false)
-	if err := enc.Encode(v); err != nil {
+	b, err := encode.JSON(v)
+	if err != nil {
 		return "", fmt.Errorf("toJson: %w", err)
 	}
-	b = buf.trimNewline()
 	return string(b), nil
 }
 
@@ -153,21 +151,4 @@ func Index(item any, keys ...any) any {
 		}
 	}
 	return cur
-}
-
-// jsonBuffer is a tiny sink so ToJSON can use an Encoder (for SetEscapeHTML) without importing bytes
-// semantics into the helper's signature.
-type jsonBuffer struct{ b []byte }
-
-func (w *jsonBuffer) Write(p []byte) (int, error) {
-	w.b = append(w.b, p...)
-	return len(p), nil
-}
-
-// trimNewline drops the newline Encoder.Encode appends.
-func (w *jsonBuffer) trimNewline() []byte {
-	if n := len(w.b); n > 0 && w.b[n-1] == '\n' {
-		return w.b[:n-1]
-	}
-	return w.b
 }

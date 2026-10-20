@@ -380,7 +380,7 @@ func buildBody(b Body, bound map[string]any) (body []byte, contentType string) {
 		case EncodingXML:
 			// The whole body is a document in JSON; XML is how this call takes it.
 			var doc map[string]any
-			if err := json.Unmarshal([]byte(subst(string(b.Raw), bound)), &doc); err != nil {
+			if err := decodeNumbers([]byte(subst(string(b.Raw), bound)), &doc); err != nil {
 				return []byte(subst(string(b.Raw), bound)), "application/xml"
 			}
 			return xmlDoc(doc), "application/xml"
@@ -461,7 +461,7 @@ func (o *op) docValue(raw []byte, path string) string {
 	}
 	var doc any
 	if o.decode == nil {
-		if json.Unmarshal(raw, &doc) != nil {
+		if decodeNumbers(raw, &doc) != nil {
 			return JSONPath(raw, path)
 		}
 	} else {
@@ -541,10 +541,18 @@ func JSONPath(body []byte, path string) string {
 		return ""
 	}
 	var m any
-	if err := json.Unmarshal(body, &m); err != nil {
+	if err := decodeNumbers(body, &m); err != nil {
 		return ""
 	}
 	return DocPath(m, path)
+}
+
+// decodeNumbers is json.Unmarshal keeping each number as the text it was written as, so a 64-bit
+// value — an id, a page token — is not rounded through a float64 nor written back in exponent form.
+func decodeNumbers(b []byte, v any) error {
+	dec := json.NewDecoder(bytes.NewReader(b))
+	dec.UseNumber()
+	return dec.Decode(v)
 }
 
 func emit(ctx context.Context, buf facade.Buffer, status int, body []byte, reqURL string) error {
