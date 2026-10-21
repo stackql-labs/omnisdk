@@ -1,6 +1,6 @@
 module github.com/stackql-labs/omnisdk
 
-go 1.27.2
+go 1.27.3
 
 require (
 	github.com/bufbuild/protocompile v0.14.1
