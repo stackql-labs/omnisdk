@@ -24,6 +24,7 @@ import (
 type Kind string
 
 const (
+	KindOCI               Kind = "oci_signing_v1"
 	KindNull              Kind = "null_auth"
 	KindBearer            Kind = "bearer"
 	KindAPIKey            Kind = "api_key"
@@ -44,6 +45,22 @@ const (
 // file, in that order: inline lets a programmatic caller (e.g. stackql) inject secrets per-request;
 // the env/file names default to the provider's canonical vars when omitted.
 type AuthStruct struct {
+	// OCI signing credentials.
+	TenancyOCID          string `json:"tenancy_ocid,omitempty"`
+	TenancyOCIDEnvVar    string `json:"tenancy_ocid_env_var,omitempty"`
+	UserOCID             string `json:"user_ocid,omitempty"`
+	UserOCIDEnvVar       string `json:"user_ocid_env_var,omitempty"`
+	Fingerprint          string `json:"fingerprint,omitempty"`
+	FingerprintEnvVar    string `json:"fingerprint_env_var,omitempty"`
+	PrivateKey           string `json:"private_key,omitempty"`
+	PrivateKeyEnvVar     string `json:"private_key_env_var,omitempty"`
+	PrivateKeyPath       string `json:"private_key_path,omitempty"`
+	PrivateKeyPathEnvVar string `json:"private_key_path_env_var,omitempty"`
+	Passphrase           string `json:"passphrase,omitempty"`
+	PassphraseEnvVar     string `json:"passphrase_env_var,omitempty"`
+	ConfigFilePath       string `json:"config_file_path,omitempty"`
+	Profile              string `json:"profile,omitempty"`
+
 	Type string `json:"type"`
 
 	// Credential-blob sourcing (SA JSON, api key, static/OIDC token) — inline value, env var, or file.
@@ -167,6 +184,8 @@ func newMethod(cfg AuthStruct) (Method, error) {
 			return nil, err
 		}
 		return static{kind: KindBasic, t: headerT{name: def(cfg.Name, "Authorization"), value: def(cfg.ValuePrefix, "Basic ") + enc}}, nil
+	case KindOCI:
+		return ociMethod(cfg)
 	case KindKubeconfig:
 		return kubeconfig(cfg)
 	case KindClientCredentials, KindServiceAccount:

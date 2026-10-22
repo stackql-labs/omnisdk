@@ -145,8 +145,9 @@ func Exchange(m facade.Method) (aot.AOTExchange, bool) {
 
 type method struct{ op aot.AOTExchange }
 
-func (m method) Name() string    { return m.op.Name() }
-func (m method) TakesBody() bool { return m.op.Request().BodyMediaType() != "" }
+func (m method) Name() string        { return m.op.Name() }
+func (m method) TakesBody() bool     { return m.op.Request().BodyMediaType() != "" }
+func (m method) PartialUpdate() bool { return strings.EqualFold(m.op.Request().Method(), "PATCH") }
 
 func (m method) Required() []string {
 	var out []string

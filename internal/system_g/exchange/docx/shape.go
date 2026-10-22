@@ -79,6 +79,20 @@ func coerceBody(key string, v any, schema aot.Schema) (any, error) {
 	fail := func() (any, error) {
 		return nil, fmt.Errorf("request body key '%s': value '%s' cannot be coerced to schema type '%s'", key, text, typed.Type())
 	}
+	// SQL string literals can carry structured JSON, but only a valid value of
+	// the schema's declared container type may enter the request body.
+	if typed.Type() == "array" || typed.Type() == "object" {
+		if text, ok := v.(string); ok {
+			if !json.Valid([]byte(text)) {
+				return fail()
+			}
+			decoder := json.NewDecoder(bytes.NewBufferString(text))
+			decoder.UseNumber()
+			if err := decoder.Decode(&v); err != nil {
+				return fail()
+			}
+		}
+	}
 	switch typed.Type() {
 	case "string":
 		switch v.(type) {
@@ -179,7 +193,41 @@ func (n rowNames) Apply(in facade.Page) (facade.Record, error) {
 	return bind.NewDocRecord(out), nil
 }
 
-func namedRows(op facade.Operator, req aot.Request) facade.Operator {
+type rowScope struct{ scope map[string]any }
+
+func (s rowScope) Apply(in facade.Page) (facade.Record, error) {
+	doc, ok := in.Doc(facade.AnonymousPayload)
+	if !ok {
+		return nil, fmt.Errorf("response row has no document")
+	}
+	row, ok := doc.(map[string]any)
+	if !ok {
+		return nil, fmt.Errorf("response row is not an object")
+	}
+	out := make(map[string]any, len(s.scope)+len(row))
+	for name, value := range s.scope {
+		out[name] = value
+	}
+	for name, value := range row {
+		out[name] = value
+	}
+	return bind.NewDocRecord(out), nil
+}
+
+func namedRows(op facade.Operator, req aot.Request, bindings ...map[string]any) facade.Operator {
+	if len(bindings) > 0 {
+		scope := map[string]any{}
+		for _, p := range req.Parameters() {
+			if p.In() == aot.InPath || p.In() == aot.InQuery || p.In() == aot.InBody {
+				if v, ok := bindings[0][p.Name()]; ok {
+					scope[p.Name()] = v
+				}
+			}
+		}
+		if len(scope) > 0 {
+			op = exchange.NewTransformExchange(0, op, rowScope{scope}, 1)
+		}
+	}
 	shape, ok := req.(aot.RequestShape)
 	if !ok || !shape.SnakeCaseAliases() {
 		return op

@@ -27,6 +27,8 @@ paths:
                 ItemCount: {type: integer}
                 Enabled: {type: boolean}
                 Label: {type: string}
+                Protocols: {type: array, items: {type: string}}
+                Options: {type: object, properties: {Retries: {type: integer}}}
       responses:
         '200':
           content:
@@ -50,6 +52,26 @@ components:
 		t.Fatal(err)
 	}
 	return ex.Request().(aot.RequestShape)
+}
+
+func TestBodyShapeParsesStructuredSQLStrings(t *testing.T) {
+	transform := bodyShape{requestShape(t)}
+	out, err := transform.Apply(httpx.NewRequestRecord("POST", "http://example.test/items", nil, []byte(`{"Protocols":"[\"SFTP\"]","Options":"{\"Retries\":\"2\"}"}`)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got map[string]any
+	if err := json.Unmarshal(httpx.ReqBody(out), &got); err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(got["Protocols"], []any{"SFTP"}) || !reflect.DeepEqual(got["Options"], map[string]any{"Retries": float64(2)}) {
+		t.Fatalf("body = %v", got)
+	}
+	for _, body := range []string{`{"Protocols":"{}"}`, `{"Protocols":"[1] trailing"}`, `{"Options":"[]"}`} {
+		if _, err := transform.Apply(httpx.NewRequestRecord("POST", "http://example.test/items", nil, []byte(body))); err == nil {
+			t.Errorf("accepted malformed container: %s", body)
+		}
+	}
 }
 
 func TestBodyShapeCoercesBeforeSending(t *testing.T) {

@@ -16,6 +16,7 @@ import (
 	"fmt"
 	"io"
 	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/stackql-labs/omnisdk/pkg/docparse/aot"
@@ -130,13 +131,28 @@ func extractRows(payload map[string]any, row Schema) ([]any, map[string]any) {
 	if looksLikeRow(payload, row) {
 		return []any{projectRow(payload, row)}, nil
 	}
-	// A single named wrapper — <vpc>…</vpc> — around one row.
-	if len(payload) == 1 {
-		for _, v := range payload {
-			if m, ok := v.(map[string]any); ok && looksLikeRow(m, row) {
-				return []any{projectRow(m, row)}, nil
+	// A named singleton can sit beside response metadata or continuation tokens.
+	var singleton map[string]any
+	var singletonKey string
+	for k, v := range payload {
+		if m, ok := v.(map[string]any); ok && looksLikeRow(m, row) {
+			if singleton != nil {
+				singleton = nil // Multiple candidates are not an unambiguous singleton.
+				break
+			}
+			singleton, singletonKey = m, k
+		}
+	}
+	if singleton != nil {
+		scalars := map[string]any{}
+		for k, v := range payload {
+			if k != singletonKey {
+				if _, object := v.(map[string]any); !object {
+					scalars[k] = v
+				}
 			}
 		}
+		return []any{projectRow(singleton, row)}, scalars
 	}
 	// A list member beside scalar siblings: <vpcSet><item>…</item></vpcSet> plus a token.
 	key, items := findListMember(payload, row)
@@ -228,6 +244,25 @@ func projectRow(m map[string]any, row Schema) map[string]any {
 	out := map[string]any{}
 	for _, name := range row.Properties() {
 		if v, ok := m[wireNameOf(row, name)]; ok {
+			if property, ok := row.Property(name); ok {
+				if typed, ok := property.(aot.TypedSchema); ok {
+					if text, ok := v.(string); ok {
+						switch typed.Type() {
+						case "integer", "number":
+							if len(text) > 0 && (text[0] == '-' || text[0] >= '0' && text[0] <= '9') && json.Valid([]byte(text)) {
+								var number json.Number
+								if json.Unmarshal([]byte(text), &number) == nil {
+									v = number
+								}
+							}
+						case "boolean":
+							if boolean, err := strconv.ParseBool(text); err == nil {
+								v = boolean
+							}
+						}
+					}
+				}
+			}
 			out[name] = v
 		}
 	}
@@ -249,9 +284,8 @@ func wireNameOf(row Schema, property string) string {
 
 // decode reads XML into nested maps, keeping every leaf as the text it was written as.
 //
-// No type casting anywhere: an identifier that is all digits must survive as those digits. Decoding
-// through a numeric type rewrites anything past float64's exact range, and an id is exactly the sort
-// of value that lands there.
+// Decoding preserves text. Projection converts only declared numeric and boolean
+// properties; string identifiers retain every digit, including beyond float64's range.
 func decode(in []byte) (map[string]any, error) {
 	dec := xml.NewDecoder(strings.NewReader(string(in)))
 	var root map[string]any

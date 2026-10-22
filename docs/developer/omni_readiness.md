@@ -1,96 +1,104 @@
 # Omni compatibility readiness
 
-The [earlier CI change](https://github.com/stackql/stackql-devel/actions/runs/39704194902?pr=140) improved **392/728 to 401/728**. It fixed pagination and bounded hangs;
-it did not complete the casing, body projection, and coercion work.
+Latest measured CI: **456/728 passed, 272 failed** in
+[run 39714700734](https://github.com/stackql/stackql-devel/actions/runs/39714700734/job/119637217455).
 
-The current local comparison is **368/728 to 427/728**. This is a comparison with the earlier
-local run, not with CI: the local harness has additional MCP, build-metadata, and fixture differences.
-The full run used all 728 existing scenarios with `{"unstable":true,"staging":true,"omni":"all"}`.
-The full run initially passed 425 cases; two final metadata reruns passed and are incorporated below.
-This remains a red readiness result.
+After the implemented compatibility fixes, **162 cases that failed in that CI job pass locally**.
+The verified local aggregate is **583/728 passed, 145 failed**: a full 728-case run
+plus targeted suite reruns after subsequent fixes. This is not a new CI result.
+
+There are 35 local failures among cases that passed in CI: 31 MCP cases and two CLI version
+cases, matching the already-observed local TLS/build-metadata differences, plus two SHOW METHODS
+formatting regressions under verification. Do not compare the raw
+local and CI totals as though they ran in the same environment. No tests were skipped, marked as
+expected failures, or given weaker assertions.
+
+## Implemented
+
+- Provider `resources` references and resource-only documents, including `serviceDoc` and external
+  operation pointers into `services-split` documents. The loader retains declared directories;
+  it no longer forces every reference into `services/<basename>`.
+- Operation-local schema and path-parameter resolution, immutable views of cached external
+  documents, file-metadata cache invalidation, and rejection of references outside the bundle.
+- Legacy SELECT method matching (`select`, `list`, `aggregatedList`, `get`), INSERT matching
+  (`insert`, `create`), and DELETE matching (`delete`) when no explicit verb mapping exists.
+  Explicit empty mappings remain disabled. No destructive methods are inferred from HTTP verbs.
+- Case-insensitive HTTP verb segments in operation pointers.
+- Qualified server-variable bindings, including variables retained after a private/mock URL rewrite.
+  Path/server scope bindings no longer discard rows by comparing short request identifiers against
+  same-named response URIs. Required server inputs remain enforced by the exchange, separately from
+  operation-signature selection.
+- Google service-account RSA private keys in both PKCS#8 and PKCS#1 PEM encodings.
+- StackQL adapter support for configured `srcPrefix` in both metadata and query execution.
+
+- OCI RSA signing, raw/profile credential validation, and adapter credential propagation.
+- GraphQL cursor/keyset/offset/page-info traversal with deadlines, error handling and row selection.
+- JSON property/wildcard/index/slice selection and selected row schemas; bounded `allOf` materialisation.
+- OData projection/filter/order/skip/count controls, preserving original SQL hints across staging
+  and acknowledging consumed offsets to prevent applying them twice.
+- XML singleton extraction beside metadata, transformed continuation tokens, and declared scalar types.
+- Provider service metadata and SQL-backend filtering for SHOW; canonical/native resource IDs.
+- Document/resource/method request translation and transposition inheritance, header defaults,
+  structured AWS query inputs, and JSON body input discovery.
+- Constant function values in mutations and request bindings; path scope echoed when absent from rows.
 
 ## Results by suite
 
-| Suite | Earlier local passes | Current local passes |
-|-------|----------------------|----------------------|
-| Mcp | 54/85 | 54/85 |
-| Body Coercion | 3/9 | 9/9 |
-| Casing | 15/32 | 32/32 |
-| Dependencies | 4/8 | 7/8 |
+| Suite | Latest CI passes | Verified local passes |
+|-------|------------------|-----------------------|
+| Mcp | 85/85 | 54/85 |
+| Body Coercion | 9/9 | 9/9 |
+| Casing | 32/32 | 32/32 |
+| Dependencies | 7/8 | 8/8 |
 | Exec | 3/3 | 3/3 |
 | Export | 8/8 | 8/8 |
-| From Cmd Line | 24/32 | 24/32 |
-| Function Projection | 3/8 | 5/8 |
-| Graphql Pagination | 0/9 | 0/9 |
-| Legacy Cli Surface | 15/25 | 15/25 |
-| Mocked From Cmd Line | 166/393 | 187/393 |
-| Oci Auth | 0/11 | 0/11 |
-| Odata Pushdown | 9/24 | 9/24 |
+| From Cmd Line | 26/32 | 28/32 |
+| Function Projection | 5/8 | 8/8 |
+| Graphql Pagination | 0/9 | 9/9 |
+| Legacy Cli Surface | 15/25 | 25/25 |
+| Mocked From Cmd Line | 184/393 | 286/393 |
+| Oci Auth | 0/11 | 11/11 |
+| Odata Pushdown | 9/24 | 24/24 |
 | Postgres Housekeeping | 6/6 | 6/6 |
-| Rest Pagination | 10/11 | 10/11 |
-| Server Variables | 1/6 | 4/6 |
-| Sessions | 32/35 | 34/35 |
+| Rest Pagination | 10/11 | 11/11 |
+| Server Variables | 3/6 | 3/6 |
+| Sessions | 34/35 | 35/35 |
 | Sessions Postgres | 8/8 | 8/8 |
-| Xml Walker | 7/15 | 12/15 |
+| Xml Walker | 12/15 | 15/15 |
 
-The casing and body-coercion suites now pass all **41/41**, previously **18/41**. Their fixes cover
-wire parameter aliases, response aliases, body-property names, scalar coercion, PUT replacement,
-literal INSERT SELECT, fallback bodies, and required method parameters. Native names remain usable.
-One SHOW METHODS assertion was updated from empty required-parameter cells to the document-declared
-`org` and `username` values; no tests were skipped or marked as expected failures.
+## Remaining failures
 
-## Failure families and evidence
+The document fixes remove all missing-service-document diagnostics seen in the latest local full
+run. Legacy SELECT diagnostics fall from 26 cases in CI to 15 locally; the PKCS#1 parsing diagnostic
+falls from nine cases to zero. These are diagnostic counts, not guaranteed independent pass gains:
+several formerly blocked calls now expose different failures.
 
-- **TLS propagation:** both StackQL Omni argument builders now honour `--tls.allowInsecure`.
-  The earlier local failures contained 51 untrusted-certificate diagnostics; the current full run
-  contains none. Some calls now reach a different, previously masked failure.
-- **Casing/body projection:** the parser now retains provider alias settings and method native casing.
-  SQL names resolve against declared wire names; JSON schema coercion runs before request transmission.
-  Previously blocked update tests now report the expected invalid body property and type.
-- **SQL result shape/format:** representative ordered pagination output matches any-sdk byte for byte
-  in both JSON-lines and table formats. This does not establish general SQL compatibility. Remaining
-  failures include metadata populated with placeholder service fields, unsupported query expressions,
-  and schema discovery. The current full run has 20 failing cases containing unresolved-column
-  diagnostics and 19 containing unknown-WHERE-symbol diagnostics; these are overlapping diagnostic
-  counts, not independent root-cause counts.
-- **Authentication:** nine current failures contain the PKCS#1 private-key parsing diagnostic.
-  OCI authentication still fails all 11 scenarios. These are separate from certificate verification.
-- **GraphQL:** all nine pagination scenarios still fail; operation GraphQL request/cursor declarations
-  are not implemented. HTTP transport alone does not implement those semantics.
-- **OData:** 15/24 scenarios still fail around filter functions, offset, select/count, and ordering
-  pushdown. The existing pushdown surface does not cover the full fixture grammar.
-- **XML:** naming improvements fix five cases. Singleton extraction and continuation handling remain
-  separate defects; the current suite still has three failures.
-- **Pagination:** REST remains 10/11; the remaining cursor-default-encoding scenario still fails.
-- **Server scope:** required server-variable metadata is now exposed. Environment-derived scope is
-  intentionally unsupported under the repository invariant requiring explicit scope inputs; supply
-  server bindings explicitly. The environment-fallback scenarios therefore remain incompatible.
-- **Local harness:** 31 MCP failures are unchanged from the earlier local run. They must not be counted
-  as regressions introduced by these SDK changes or silently subtracted to claim a CI pass rate.
+Remaining failures include resource/view SQL expansion, multi-step dataflow, SQL expression output,
+mutation return/await behavior, metadata fidelity, XML shapes, and server-variable integration.
+Document retry policies and REST partial-result error propagation are implemented. GraphQL (9/9), OCI (11/11), OData (24/24), XML walker
+(15/15), function projection (8/8), legacy CLI (25/25), and dependencies (8/8) pass their full suites.
+The remaining failures are not being treated as intentional differences or a cutover-ready result.
 
-Error prefixes are not byte-for-byte equivalent: invalid-update validation reports the same property
-and schema type, while Omni currently wraps that error in conservative mutation-effect uncertainty
-text. The resource request is not sent when its request-body transform rejects the value.
+## Validation and artifacts
 
-## Validation and reproduction
+SDK: `go build ./...`, `go vet ./...`, and `go test -race ./...`. New regressions cover split-file
+schemas/cache freshness, legacy priority/explicit disablement, bundle confinement, real JWT
+signature verification, and HTTP scope binding with original and rewritten server URLs.
+The StackQL intrinsic adapter also has its tests and vet checks run against the local SDK.
 
-SDK validation: `go build ./...`, `go vet ./...`, and `go test -race ./...`.
-The StackQL intrinsic adapter has separate tests and vet checks against the local SDK.
+- Full Robot run: `/private/tmp/omni-schema-readiness/output.xml`.
+- Latest mocked-suite run: `/private/tmp/omni-wire-media-robot/output.xml`.
+- GraphQL/OCI/OData: `/private/tmp/omni-read-controls-robot/output.xml`.
+- Metadata: `/private/tmp/omni-metadata-predicates-robot/output.xml`.
+- Merged results: `/private/tmp/omni-current-aggregate/output.xml`.
+- SDK checks: `/private/tmp/omni-final-checks.log` (final checks in progress).
 
-The Robot binary was built using a temporary Go modfile pointing at this SDK checkout; the
-companion checkout's `go.mod` was not changed. Both the SDK and companion adapter changes are
-required to reproduce these results. SDK API changes are documented relative to `v0.1.5-beta06` in
-[api_changes.md](api_changes.md).
+The local retry mock has an older Python IPv4 listener alongside Docker's IPv6 listener on port 1199.
+The final retry test uses `RETRY_MOCK_BASE_URL=http://localhost:1199`, matching the SDK request's host,
+so reset, request, and counter assertions hit the same mock. The existing Python process was left
+running; retry counts and expected output were not changed.
 
-Local artifacts:
-
-- Merged Robot report: `/private/tmp/omni-completion-final/report.html`.
-- Full Robot run: `/private/tmp/omni-completion-readiness/output.xml`.
-- Final metadata rerun: `/private/tmp/omni-completion-metadata-final/output.xml`.
-- Focused casing/body run: `/private/tmp/omni-completion-casing2/output.xml`.
-- any-sdk/Omni representative comparisons: `/private/tmp/omni-completion-parity.json` and
-  `/private/tmp/omni-completion-parity-table.json`.
-- Final SDK validation log: `/private/tmp/omni-completion-verified-go-tests.log`.
-
-The traffic light is a compatibility inventory. The remaining failures are open work, not intentional
-format changes or evidence that Omni is ready for cutover.
+Both checkouts contain required changes: the SDK, StackQL's intrinsic adapter, and its GraphQL
+registry URL rewriter. Testing used a temporary Go modfile pointing at the SDK checkout;
+the companion `go.mod` was not changed. CI must consume the updated SDK and adapter to measure the
+new result. API notes remain relative to `v0.1.5-beta06` in [api_changes.md](api_changes.md).

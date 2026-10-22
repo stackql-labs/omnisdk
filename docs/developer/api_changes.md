@@ -18,6 +18,11 @@ positional literals must account for added fields or switch to keyed fields.
 
 ## Additions
 
+- **Document request defaults:** declared header defaults and response `Accept` media types reach
+  the wire while explicit headers retain precedence. Vendor request content types survive body
+  encoding. `request.default` supplies an otherwise absent body; `request.base` fills missing
+  structured JSON fields. An explicit raw body remains complete and is not merged.
+
 - **Request deadlines:** `omnisdk.Tuning.RequestTimeout` bounds each outbound request, including
   HTTP response body reads and gRPC response consumption. `omnisdk.DefaultRequestTimeout` is
   **30 seconds**. Zero selects the fallback; a negative duration explicitly disables it.
@@ -50,6 +55,31 @@ args := omnisdk.Args{
   `aot.MethodInputs` interface exposes this metadata.
 - **Document request metadata:** optional `aot.RequestShape` and `aot.RequestDefaults` interfaces
   expose naming, body schema, and fallback body declarations without changing existing implementers.
+- **OCI authentication:** `omnisdk.Auth` accepts OCI tenancy/user OCIDs, fingerprint, RSA private
+  key, passphrase, configuration file and profile, including named environment variables for
+  credentials. Set `Type: "oci_signing_v1"`. Explicit raw credentials must be complete; partial raw
+  credentials fail instead of falling back to a profile. Document `oci_signing_v1` exchanges use
+  the existing request signing and deadline machinery.
+- **Read controls:** `Args.ReadHintsByAlias` carries original projection order, sort terms,
+  limit, offset and count intent as `ReadHints`/`ReadOrder` DTOs. Optional `ReadEffects` on returned
+  rows reports `AppliedOffset()`: a SQL adapter must subtract that offset from its local offset.
+  Unsupported filtering, joins, aggregation or ordering prevent unsafe offset pushdown. Existing
+  callers that omit hints retain local pagination. Optional `aot.ReadControls` and `aot.OrderSyntax`
+  describe document order/skip/count capabilities without extending mandatory interfaces.
+- **GraphQL documents:** optional `aot.GraphQLExchange`, `aot.GraphQL`, and `aot.SelectedSchema`
+  expose declared queries, continuation and selected row schemas. JSON selection supports property,
+  wildcard, array index and slice paths through `pkg/jsonpath.Selection`.
+- **Service discovery:** `DocServices` returns `DocService` metadata for all provider declarations,
+  including services without installed operation files. `DocCatalog` retains its existing meaning
+  of locally addressable exchanges. Colliding service names cannot replace separately keyed services.
+- **Document views:** `DocView` exposes an optional `aot.View` with its SQL definition, dialect
+  predicate and fallback. It performs no SQL execution. Optional `aot.RequiredSchema` and
+  `aot.ParameterDefault` expose required object fields and wire defaults.
+- **Document retries:** optional `aot.RetryExchange`/`aot.HTTPRetry` declarations inherit from
+  method, resource, then document. They retain the provider's shared retry governor. An explicit
+  provider `RetryTries` override wins; global settings supply the fallback when no declaration exists.
+- **HTTP errors:** `HTTPStatusError` exposes status, response body and request URL through
+  `errors.As`, preserving the distinction between a provider rejection and a transport failure.
 
 ## Behaviour changes
 
@@ -70,8 +100,50 @@ bindings remain supported.
 JSON bodies are coerced against declared schemas before transmission: numeric strings become
 numbers, integral values are required for integer properties, boolean strings become booleans, and
 scalar values for string properties become strings. Invalid values fail before the resource request.
-Undeclared fields are preserved. A declared `request.base` body is used only when the caller supplies
-no body fields.
+JSON strings for declared array/object fields are decoded and validated against that shape.
+Constant function expressions are accepted as mutation values without requiring a source table.
+Undeclared fields are preserved. A declared JSON `request.base` supplies missing fields when callers
+provide structured body fields. Explicit raw bodies retain precedence.
+
+### Registry layouts and legacy methods
+
+Provider `resources` references can now resolve resource-only documents alongside their `service`
+references. Operation pointers retain their declared `services/`, `resources/`, or `services-split/`
+paths and resolve schemas in the operation's own OpenAPI document. Referenced documents are cached
+by file size and modification time, and references cannot escape the provider bundle. Byte-only
+`Parse` callers still need a catalog to resolve external files.
+
+When a SQL verb has no explicit mapping, legacy method names are supported in this order:
+`select`, `list`, `aggregatedList`, `get` for SELECT; `insert`, `create` for INSERT; and `delete`
+for DELETE. An explicit empty mapping disables the verb. HTTP verb segments in operation references
+are case-insensitive. No new update or replacement methods are inferred.
+
+Document method signatures now include required server bindings. A path/server scope predicate
+binds the request without comparing its short identifier against a same-named response URI.
+Google service-account credentials accept RSA keys in both PKCS#8 and PKCS#1 PEM formats.
+
+GraphQL cursor, keyset, offset and page-info pagination use the shared HTTP client, signing,
+retry and timeout policies. Repeated cursors fail instead of looping. XML continuation paths
+are read from the document's transformed response, and singleton rows can sit beside metadata.
+OpenAPI `allOf` response schemas retain inherited properties and local overrides within the
+existing materialisation depth bound.
+Request translation and query transposition inherit from method, resource, then document. Declared
+JSON body properties join the request input vocabulary, including SQL `data__` bindings. Returned
+rows include explicitly bound path/server values when the response omits those fields; provider
+response fields retain precedence.
+Source-only WHERE filters run before dependent requests, while optional-side left-join filters retain
+their final evaluation. Qualified IN inputs count as known request inputs during dependency analysis.
+SQLite WHERE aliases retain source-column precedence, including through SQL staging. Constant false
+mutation predicates produce zero rows without sending a write. Tied UPDATE methods prefer a declared
+partial update; other ambiguities still fail and explicit method pins retain precedence.
+Declared header defaults, including routing headers, are applied when the caller supplies no value.
+Path/server scope is still explicit. Method `schema_override` declarations determine response columns;
+XML row selection follows nested envelopes before materialisation. Exact MXJ template version
+`golang_template_mxj_v0.1.0` is supported alongside the existing versions. SQLite's StackQL function
+catalog includes the `string(value)` constructor.
+
+Repeated REST continuation tokens or URLs now return an error rather than looping indefinitely.
+Requests use the declared response media type for Accept unless an explicit header overrides it.
 
 ## CLI
 

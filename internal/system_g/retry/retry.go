@@ -210,6 +210,15 @@ func New(cfg Config) facade.RetryPolicy {
 	return &policy{tries: cfg.Tries, class: cfg.Classifier, backoff: cfg.Backoff, gov: cfg.Governor}
 }
 
+// Override preserves the run's shared governor while applying a more specific
+// exchange policy. Changing attempt bounds must not create a fresh retry budget.
+func Override(base facade.RetryPolicy, cfg Config) facade.RetryPolicy {
+	if parent, ok := base.(*policy); ok && cfg.Governor == nil {
+		cfg.Governor = parent.gov
+	}
+	return New(cfg)
+}
+
 func (p *policy) Recover(_ context.Context, a facade.Attempt) (time.Duration, bool) {
 	if a.Index+1 >= p.tries {
 		return 0, false // backstop: out of attempts

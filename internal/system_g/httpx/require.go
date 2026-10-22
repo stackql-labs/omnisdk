@@ -26,6 +26,12 @@ type StatusError struct {
 	Body   string
 }
 
+func (e *StatusError) StatusCode() int      { return e.Status }
+func (e *StatusError) ResponseBody() string { return e.Body }
+func (e *StatusError) RequestURL() string   { return e.URL }
+
+var _ facade.HTTPStatusError = (*StatusError)(nil)
+
 func (e *StatusError) Error() string {
 	if e.URL != "" {
 		return fmt.Sprintf("httpx: request to %s failed: status %d: %s", e.URL, e.Status, e.Body)

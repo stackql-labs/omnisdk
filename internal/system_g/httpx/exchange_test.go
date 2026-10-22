@@ -214,3 +214,34 @@ func TestHTTPXOmitsAnInputWithNoValue(t *testing.T) {
 		t.Errorf("query = %q, want parent only", got)
 	}
 }
+
+func TestHTTPXContinuationCyclesStopBeforeCallerDeadline(t *testing.T) {
+	for _, kind := range []ContinuationKind{ContPaginate, ContFollow, ContLink} {
+		t.Run(string(kind), func(t *testing.T) {
+			calls := 0
+			var srv *httptest.Server
+			srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				calls++
+				next := srv.URL + "/same"
+				if kind == ContPaginate {
+					next = "same-token"
+				}
+				w.Header().Set("Link", "<"+next+">; rel=\"next\"")
+				fmt.Fprintf(w, `{"next":%q}`, next)
+			}))
+			defer srv.Close()
+			ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+			defer cancel()
+			rows := Make(Request{Method: "GET", URL: srv.URL, Continuation: Continuation{Kind: kind, NextTokenPath: "next", TokenParam: "page"}}, nil)(nil).Open(ctx)
+			defer rows.Close()
+			for rows.Next(ctx) {
+			}
+			if err := rows.Err(); err == nil || !strings.Contains(err.Error(), "did not advance") {
+				t.Fatalf("continuation error = %v", err)
+			}
+			if calls != 2 {
+				t.Fatalf("requests = %d, want 2", calls)
+			}
+		})
+	}
+}

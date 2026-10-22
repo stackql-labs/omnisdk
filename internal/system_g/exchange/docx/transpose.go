@@ -1,6 +1,7 @@
 package docx
 
 import (
+	"encoding/json"
 	"fmt"
 	"maps"
 	"strings"
@@ -27,6 +28,17 @@ func transposed(req httpx.Request, bound map[string]any) (httpx.Request, map[str
 			continue
 		}
 		v := bound[name]
+		if text, ok := v.(string); ok {
+			trimmed := strings.TrimSpace(text)
+			if len(trimmed) > 0 && (trimmed[0] == '[' || trimmed[0] == '{') && json.Valid([]byte(trimmed)) {
+				decoder := json.NewDecoder(strings.NewReader(trimmed))
+				decoder.UseNumber()
+				var structured any
+				if decoder.Decode(&structured) == nil {
+					v = structured
+				}
+			}
+		}
 		switch v.(type) {
 		case []any, map[string]any:
 		default:

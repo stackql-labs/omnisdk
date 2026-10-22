@@ -6,6 +6,8 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -131,6 +133,19 @@ func TestProviderTimeoutInheritanceAndIsolation(t *testing.T) {
 }
 
 func TestProviderRetryOverride(t *testing.T) {
+	registry := t.TempDir()
+	if err := os.CopyFS(registry, os.DirFS(filepath.Join(authRegistry, "linked", "v00.00.00000"))); err != nil {
+		t.Fatal(err)
+	}
+	file := filepath.Join(registry, "services", "things.yaml")
+	document, err := os.ReadFile(file)
+	if err != nil {
+		t.Fatal(err)
+	}
+	configured := strings.Replace(string(document), "x-stackQL-config:\n", "x-stackQL-config:\n  retry: {max_attempts: 5, initial_delay_ms: 1, max_delay_ms: 1}\n", 1)
+	if err := os.WriteFile(file, []byte(configured), 0644); err != nil {
+		t.Fatal(err)
+	}
 	for _, tries := range []int{0, 1} {
 		t.Run(fmt.Sprintf("provider tries=%d", tries), func(t *testing.T) {
 			var calls atomic.Int32
@@ -143,7 +158,7 @@ func TestProviderRetryOverride(t *testing.T) {
 			}))
 			defer srv.Close()
 			g, _ := omnisdk.NewGraph([]omnisdk.Node{omnisdk.NewNode("n", "stackql_unstable_linked.things.items", nil)}, nil)
-			pl, err := omnisdk.NewGraphQuery(authRegistry, g, omnisdk.Args{Endpoint: srv.URL,
+			pl, err := omnisdk.NewGraphQuery(registry, g, omnisdk.Args{Endpoint: srv.URL,
 				Tuning:           omnisdk.Tuning{RetryTries: 2},
 				TuningByProvider: map[string]omnisdk.ProviderTuning{"linked": {RetryTries: tries}},
 			})

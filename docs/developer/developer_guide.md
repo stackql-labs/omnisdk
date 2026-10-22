@@ -806,6 +806,52 @@ headers, query parameters, and JSON properties retain those wire names on the re
 
 JSON request bodies use the operation's declared schema for scalar coercion before sending. Invalid
 numbers, fractional integer values, and invalid boolean values return an error before the resource
-request. Unknown body properties are preserved. A method's `request.base` supplies a fallback only
-when no body is supplied. Replacement mutations use `query.NewReplace` and the resource's `replace`
+request. Unknown body properties are preserved. A method's JSON `request.base` supplies missing
+structured body fields; explicit fields override those defaults, and raw bodies remain complete
+payloads. Replacement mutations use `query.NewReplace` and the resource's `replace`
 method mapping; updates use its `update` mapping.
+
+When equally applicable UPDATE methods include a declared partial update, that operation is selected.
+Other tied mutation methods remain an error; an explicit method pin resolves the choice.
+
+### Split registry documents
+
+Open a provider bundle through the document catalog when it contains external references. The
+catalog follows provider `resources` references and method operation pointers into the declared
+OpenAPI files, including `services-split` layouts. Each operation uses its own document's schemas
+and path-level parameters. References stay within the provider bundle; remote references are not
+fetched. External document cache entries include file metadata so rewritten documents are reloaded.
+
+Legacy resources without an explicit SQL verb mapping use the registry's conventional method names.
+An explicit empty mapping stays disabled. Server variables remain explicit inputs, including when
+they are bound through a qualified table name.
+
+Request translation and query-parameter transposition use the nearest declaration: method,
+resource, then document. This includes AWS Query GET-to-POST translation before signing.
+Declared JSON request-body fields are addressable as inputs; SQL `data__` names identify body
+fields. Strings containing JSON arrays or objects are decoded when the schema requires that shape.
+Constant function expressions can supply mutation values and equality-bound request parameters.
+
+### OCI and GraphQL documents
+
+OCI documents declaring `oci_signing_v1` use RSA request signing through the shared HTTP transport.
+An `auth_by_provider` entry can supply `type: "oci_signing_v1"`, `tenancy_ocid`, `user_ocid`,
+`fingerprint`, and `private_key_path` (or inline `private_key`). Credential fields also accept named
+environment variables. Alternatively, supply `config_file_path` and `profile`. Partial explicit
+raw credentials return an error rather than switching to a configuration profile.
+
+GraphQL operations declaring `x-stackQL-graphQL` support cursor-after, keyset, offset and page-info
+continuation. Their HTTP requests share provider authentication, retries and request deadlines.
+JSON selection supports nested properties, wildcards, array indices and slices. A repeated cursor
+or a missing cursor while `hasNextPage` is true returns an error.
+
+### SQL adapter read hints
+
+`Args.ReadHintsByAlias` preserves SQL projection order, ORDER BY, LIMIT, OFFSET and count intent
+across an adapter's staging boundary. The SDK sends only controls the document declares and avoids
+remote OFFSET before local filtering, joins, aggregation or unsupported ordering. An adapter must
+check the optional `ReadEffects` interface on its returned rows and subtract `AppliedOffset()`
+from the offset it applies locally. Omitting hints retains the existing local behavior.
+
+`DocServices` returns declared provider service metadata, including services whose operation files
+are absent. `DocCatalog` continues to enumerate locally addressable services and exchanges.

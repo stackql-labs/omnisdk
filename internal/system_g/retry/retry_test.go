@@ -155,3 +155,26 @@ func TestRateGovernorConcurrent(t *testing.T) {
 		}
 	}
 }
+
+type singleRetryGovernor struct{ used bool }
+
+func (g *singleRetryGovernor) Reserve(time.Time) (time.Duration, bool) {
+	if g.used {
+		return 0, false
+	}
+	g.used = true
+	return 0, true
+}
+
+func TestExchangeOverridesShareTheParentRetryBudget(t *testing.T) {
+	governor := &singleRetryGovernor{}
+	parent := New(Config{Tries: 1, Governor: governor})
+	first, second := Override(parent, Config{Tries: 5}), Override(parent, Config{Tries: 5})
+	attempt := facade.Attempt{Status: 503}
+	if _, ok := first.Recover(context.Background(), attempt); !ok {
+		t.Fatal("first retry was refused")
+	}
+	if _, ok := second.Recover(context.Background(), attempt); ok {
+		t.Fatal("exchange override created a new retry budget")
+	}
+}

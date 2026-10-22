@@ -13,6 +13,38 @@ package aot
 
 import "time"
 
+// ParameterDefault exposes a declared wire default without making request
+// scope optional. Compilers may apply it to non-scope metadata such as headers.
+type ParameterDefault interface{ Default() any }
+
+// ServerBindings retains declared server variables after endpoint rewriting.
+type ServerBindings interface{ ServerVariables() []string }
+
+// RequestFallback supplies a complete body only when no body fields were supplied.
+type RequestFallback interface{ DefaultBody() string }
+
+// View is a document-declared SQL projection and its dialect fallback.
+type View interface {
+	DDL() string
+	Predicate() string
+	Fallback() (View, bool)
+}
+
+// RequiredSchema lists required fields of a declared object schema.
+type RequiredSchema interface{ RequiredProperties() []string }
+
+// HTTPRetry declares a document's retry bounds and transient statuses.
+type HTTPRetry interface {
+	Attempts() int
+	InitialDelay() time.Duration
+	MaxDelay() time.Duration
+	Multiplier() float64
+	Algorithm() string
+	Methods() []string
+	Statuses() []int
+}
+type RetryExchange interface{ Retry() (HTTPRetry, bool) }
+
 // AOTExchange is one operation as the document declares it, ahead of any plan.
 type AOTExchange interface {
 	// Name identifies the exchange (the resource it serves, e.g. "instances").
@@ -95,6 +127,7 @@ type Scheme string
 const (
 	// SchemeNone is an unauthenticated call, or one the document does not describe.
 	SchemeNone Scheme = ""
+	SchemeOCI  Scheme = "oci.signing_v1"
 	// SchemeAWSSigV4 is AWS Signature V4 request signing.
 	SchemeAWSSigV4 Scheme = "aws.sigv4"
 	// SchemeServiceAccount is a Google service-account key exchanged for an OAuth access token.
@@ -123,13 +156,17 @@ type TypedSchema interface {
 // goes, what prefixes it, and which environment variables hold the credentials. A caller's own
 // settings take precedence field by field; these fill what the caller left empty.
 type AuthDefaults struct {
-	Type              string
-	Name              string // header or query parameter carrying a key
-	Location          string // "header" (default) or "query"
-	ValuePrefix       string
-	CredentialsEnvVar string
-	UsernameEnvVar    string
-	PasswordEnvVar    string
+	TenancyOCIDEnvVar    string
+	UserOCIDEnvVar       string
+	FingerprintEnvVar    string
+	PrivateKeyPathEnvVar string
+	Type                 string
+	Name                 string // header or query parameter carrying a key
+	Location             string // "header" (default) or "query"
+	ValuePrefix          string
+	CredentialsEnvVar    string
+	UsernameEnvVar       string
+	PasswordEnvVar       string
 	// OAuth2 client credentials: where the id and secret are found, the token endpoint, and the
 	// scopes asked for. TokenURL may reference the environment as {{ .__env__NAME }}.
 	ClientIDEnvVar     string
@@ -370,3 +407,36 @@ type MethodInputs interface{ RequiredParams() []string }
 
 // RequestDefaults carries a fallback body used only when no body is supplied.
 type RequestDefaults interface{ BaseBody() string }
+
+// GraphQL describes the request program and continuation declared by an operation.
+type GraphQL interface {
+	URL() string
+	HTTPVerb() string
+	Query() string
+	Selection() string
+	CursorPath() string
+	CursorStrategy() string
+	CursorFormat() string
+	TerminationPath() string
+	PageSize() int
+}
+
+// GraphQLExchange optionally describes GraphQL acquisition on the ordinary HTTP exchange.
+type GraphQLExchange interface{ GraphQL() (GraphQL, bool) }
+
+// SelectedSchema optionally exposes the row schema reached by a response selection.
+type SelectedSchema interface{ RowSchema() Schema }
+
+// ReadControls optionally extends projection/filter/top pushdown with ordering,
+// offset and a total-count flag. Existing Pushdown implementations need not change.
+type ReadControls interface {
+	OrderBy() (PushdownOption, bool)
+	Skip() (PushdownOption, bool)
+	Count() (PushdownOption, bool)
+}
+
+// OrderSyntax describes how a declared ordering option names its terms.
+type OrderSyntax interface {
+	Syntax() string
+	FixedColumn() string
+}

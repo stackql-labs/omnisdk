@@ -72,6 +72,21 @@ import (
 // with the standard environment, while a consumer (e.g. stackql) can inject secrets per-request by
 // setting the inline values. The parenthesised names are the canonical defaults.
 type Auth struct {
+	// OCI signing credentials.
+	TenancyOCID          string `json:"tenancy_ocid,omitempty"`
+	TenancyOCIDEnvVar    string `json:"tenancy_ocid_env_var,omitempty"`
+	UserOCID             string `json:"user_ocid,omitempty"`
+	UserOCIDEnvVar       string `json:"user_ocid_env_var,omitempty"`
+	Fingerprint          string `json:"fingerprint,omitempty"`
+	FingerprintEnvVar    string `json:"fingerprint_env_var,omitempty"`
+	PrivateKey           string `json:"private_key,omitempty"`
+	PrivateKeyEnvVar     string `json:"private_key_env_var,omitempty"`
+	PrivateKeyPath       string `json:"private_key_path,omitempty"`
+	PrivateKeyPathEnvVar string `json:"private_key_path_env_var,omitempty"`
+	Passphrase           string `json:"passphrase,omitempty"`
+	PassphraseEnvVar     string `json:"passphrase_env_var,omitempty"`
+	ConfigFilePath       string `json:"config_file_path,omitempty"`
+
 	// Type selects the method for token/header auth (bearer, client_credentials); ignored for AWS/GCP,
 	// whose method is implied by the resource.
 	Type string `json:"type,omitempty"`
@@ -143,6 +158,21 @@ type TLS struct {
 
 func (a Auth) internal() auth.AuthStruct {
 	return auth.AuthStruct{
+		TenancyOCID:          a.TenancyOCID,
+		TenancyOCIDEnvVar:    a.TenancyOCIDEnvVar,
+		UserOCID:             a.UserOCID,
+		UserOCIDEnvVar:       a.UserOCIDEnvVar,
+		Fingerprint:          a.Fingerprint,
+		FingerprintEnvVar:    a.FingerprintEnvVar,
+		PrivateKey:           a.PrivateKey,
+		PrivateKeyEnvVar:     a.PrivateKeyEnvVar,
+		PrivateKeyPath:       a.PrivateKeyPath,
+		PrivateKeyPathEnvVar: a.PrivateKeyPathEnvVar,
+		Passphrase:           a.Passphrase,
+		PassphraseEnvVar:     a.PassphraseEnvVar,
+		ConfigFilePath:       a.ConfigFilePath,
+		Profile:              a.Profile,
+
 		Type: a.Type, Credentials: a.Credentials, CredentialsEnvVar: a.CredentialsEnvVar,
 		CredentialsFilePath: a.CredentialsFilePath, ValuePrefix: a.ValuePrefix, Name: a.Name,
 		Scopes: a.Scopes, TokenURL: a.TokenURL, ClientID: a.ClientID, ClientSecret: a.ClientSecret,
@@ -219,7 +249,9 @@ type Method struct {
 // Args are the inputs to run a resource: explicit scope Params, optional Auth (config-driven-auth
 // resources), an endpoint override, run Tuning, and an optional traffic log.
 type Args struct {
-	Params map[string]string
+	// ReadHintsByAlias carries advisory SQL controls for explicitly named graph nodes.
+	ReadHintsByAlias map[string]ReadHints `json:"read_hints_by_alias,omitempty"`
+	Params           map[string]string
 	// Journal opts a query's mutations into write-ahead intent: each effect is recorded, and on disk,
 	// before its request is sent. Nil runs them unjournaled. Reads ignore it.
 	Journal *Journal `json:"journal,omitempty"`
@@ -1206,8 +1238,39 @@ func DocCatalog(dir string, provider ...string) (services []string, addresses []
 	return c.Services(), c.Paths(), nil
 }
 
-// DocResources lists a service's resources — every one it declares, not only those with a runnable
-// SELECT.
+// DocService is discovery metadata declared by a provider, including services
+// whose operation documents are not installed locally.
+type DocService struct {
+	ID          string `json:"id"`
+	Name        string `json:"name"`
+	Title       string `json:"title"`
+	Description string `json:"description"`
+	Version     string `json:"version"`
+	Preferred   bool   `json:"preferred"`
+}
+
+// DocServices lists provider declarations rather than only runnable services.
+func DocServices(dir, provider string) ([]DocService, error) {
+	c, err := openDocs(dir, provider)
+	if err != nil {
+		return nil, err
+	}
+	out := []DocService{}
+	for _, s := range c.Provider().Services() {
+		entry := DocService{Name: s.Name(), Title: s.Title(), Version: s.Version()}
+		if metadata, ok := s.(interface {
+			ID() string
+			Description() string
+			Preferred() bool
+		}); ok {
+			entry.ID, entry.Description, entry.Preferred = metadata.ID(), metadata.Description(), metadata.Preferred()
+		}
+		out = append(out, entry)
+	}
+	return out, nil
+}
+
+// DocResources lists every declared resource, including those without a runnable SELECT.
 func DocResources(dir, provider, service string) ([]string, error) {
 	c, err := openDocs(dir, provider)
 	if err != nil {
@@ -1295,7 +1358,7 @@ func docInputs(args Args) map[string]any {
 // oauth reports that the provider's OAuth grant is already settled (a token URL of its own), so
 // Azure's is not wanted.
 func docOptions(args Args, sec aot.Security, oauth bool) ([]docx.Option, error) {
-	var opts []docx.Option
+	opts := []docx.Option{docx.WithQueryLimit(args.Tuning.Limit)}
 	if args.Endpoint != "" {
 		opts = append(opts, docx.WithBaseURL(args.Endpoint))
 	}
@@ -1405,6 +1468,14 @@ func providerOptions(args Args, p aot.Provider) ([]docx.Option, error) {
 		return nil, err
 	}
 	opts = append(append(base, opts...), docx.WithProviderSecurity(sec), docx.WithProvider(p.Name()))
+	providerName := strings.TrimPrefix(p.Name(), aot.DefaultProviderPrefix)
+	providerTuning, found := args.TuningByProvider[aot.DefaultProviderPrefix+providerName]
+	if !found {
+		providerTuning = args.TuningByProvider[providerName]
+	}
+	if providerTuning.RetryTries != 0 {
+		opts = append(opts, docx.WithRuntimeRetryOverride())
+	}
 	if sec.Scheme() == aot.SchemeServiceAccount && len(cfg.Scopes) > 0 {
 		opts = append(opts, docx.WithGoogleScopes(cfg.Scopes))
 	}
@@ -1460,6 +1531,12 @@ func overlay(cfg *auth.AuthStruct, d *aot.AuthDefaults) {
 	if d == nil {
 		return
 	}
+	if cfg.Type != string(auth.KindOCI) {
+		cfg.TenancyOCIDEnvVar = orStr(cfg.TenancyOCIDEnvVar, d.TenancyOCIDEnvVar)
+		cfg.UserOCIDEnvVar = orStr(cfg.UserOCIDEnvVar, d.UserOCIDEnvVar)
+		cfg.FingerprintEnvVar = orStr(cfg.FingerprintEnvVar, d.FingerprintEnvVar)
+		cfg.PrivateKeyPathEnvVar = orStr(cfg.PrivateKeyPathEnvVar, d.PrivateKeyPathEnvVar)
+	}
 	cfg.Name = orStr(cfg.Name, d.Name)
 	cfg.Location = orStr(cfg.Location, d.Location)
 	cfg.ValuePrefix = orStr(cfg.ValuePrefix, d.ValuePrefix)
@@ -1490,6 +1567,8 @@ func overlay(cfg *auth.AuthStruct, d *aot.AuthDefaults) {
 func requestAuth(p aot.Provider, sec aot.Security, cfg auth.AuthStruct) (auth.Method, error) {
 	if cfg.Type == "" {
 		switch sec.Scheme() {
+		case aot.SchemeOCI:
+			cfg.Type = string(auth.KindOCI)
 		case aot.SchemeBasic:
 			cfg.Type = string(auth.KindBasic)
 		case aot.SchemeBearer:
@@ -1504,7 +1583,7 @@ func requestAuth(p aot.Provider, sec aot.Security, cfg auth.AuthStruct) (auth.Me
 		}
 	}
 	switch auth.Kind(cfg.Type) {
-	case auth.KindBasic, auth.KindBearer, auth.KindAPIKey, auth.KindCustom, auth.KindKubeconfig, auth.KindNull:
+	case auth.KindOCI, auth.KindBasic, auth.KindBearer, auth.KindAPIKey, auth.KindCustom, auth.KindKubeconfig, auth.KindNull:
 	default:
 		return nil, nil
 	}
@@ -1723,9 +1802,10 @@ func gcpCreds(args Args) (sdk.GCPCredentials, error) {
 }
 
 type cannedPlan struct {
-	plan plan.Plan
-	args Args
-	echo map[string]any // the method's declared inputs, stamped onto every row (see withParams)
+	remoteOffset int
+	plan         plan.Plan
+	args         Args
+	echo         map[string]any // the method's declared inputs, stamped onto every row (see withParams)
 }
 
 func (c *cannedPlan) Open(parent context.Context) (Rows, error) {
@@ -1734,7 +1814,7 @@ func (c *cannedPlan) Open(parent context.Context) (Rows, error) {
 	// The engine runs on runCtx (cancelled by abort/limit/timeout to stop PRODUCERS). The cursor is
 	// read on the caller's ctx, so already-buffered rows are drained even after an internal abort —
 	// abort means "stop producing", not "discard produced rows".
-	return newRows(op.Open(runCtx), parent, cancel, c.echo), nil
+	return newRows(op.Open(runCtx), parent, cancel, c.echo, c.remoteOffset), nil
 }
 
 // decorate carries the run policies (retry, admission, fan-out, abort, result budget, trace) and an
@@ -1800,18 +1880,23 @@ func (m *mergedPlan) Open(parent context.Context) (Rows, error) {
 }
 
 type rows struct {
-	recs   facade.Records
-	read   context.Context
-	cancel context.CancelFunc
-	echo   map[string]any
+	remoteOffset int
+	recs         facade.Records
+	read         context.Context
+	cancel       context.CancelFunc
+	echo         map[string]any
 }
 
 // newRows is the cursor over a run. A cursor dropped without Close would leave the run parked on a
 // reader that never comes back — its producers bounded, its requests open — so once the cursor is
 // unreachable the run is cancelled, exactly as Close would. The cleanup holds only cancel, never the
 // cursor, so it cannot keep the cursor alive.
-func newRows(recs facade.Records, read context.Context, cancel context.CancelFunc, echo map[string]any) *rows {
-	r := &rows{recs: recs, read: read, cancel: cancel, echo: echo}
+func newRows(recs facade.Records, read context.Context, cancel context.CancelFunc, echo map[string]any, offsets ...int) *rows {
+	offset := 0
+	if len(offsets) > 0 {
+		offset = offsets[0]
+	}
+	r := &rows{recs: recs, read: read, cancel: cancel, echo: echo, remoteOffset: offset}
 	runtime.AddCleanup(r, func(cancel context.CancelFunc) { cancel() }, cancel)
 	return r
 }

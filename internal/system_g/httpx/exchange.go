@@ -111,6 +111,7 @@ func (o *op) poll(ctx context.Context, buf facade.Buffer) error {
 
 func (o *op) paginate(ctx context.Context, buf facade.Buffer) error {
 	token := ""
+	seen := map[string]bool{}
 	for {
 		status, body, reqURL, err := o.do(ctx, token, "")
 		if err != nil {
@@ -123,6 +124,10 @@ func (o *op) paginate(ctx context.Context, buf facade.Buffer) error {
 		if next == "" {
 			return nil
 		}
+		if seen[next] {
+			return fmt.Errorf("httpx: pagination token did not advance")
+		}
+		seen[next] = true
 		token = next
 	}
 }
@@ -160,6 +165,7 @@ func (o *op) pageNumber(ctx context.Context, buf facade.Buffer) error {
 // GCP nextPageToken-as-URL), rather than a token query param. NextTokenPath yields the link.
 func (o *op) follow(ctx context.Context, buf facade.Buffer) error {
 	next := ""
+	seen := map[string]bool{}
 	for {
 		status, body, reqURL, err := o.do(ctx, "", next)
 		if err != nil {
@@ -172,6 +178,10 @@ func (o *op) follow(ctx context.Context, buf facade.Buffer) error {
 		if next == "" {
 			return nil
 		}
+		if seen[next] {
+			return fmt.Errorf("httpx: pagination URL did not advance")
+		}
+		seen[next] = true
 	}
 }
 
@@ -182,6 +192,7 @@ func (o *op) link(ctx context.Context, buf facade.Buffer) error {
 		name = "Link"
 	}
 	next := ""
+	seen := map[string]bool{}
 	for {
 		status, body, reqURL, err := o.do(ctx, "", next)
 		if err != nil {
@@ -193,6 +204,10 @@ func (o *op) link(ctx context.Context, buf facade.Buffer) error {
 		if next = nextLink(o.lastHeader.Values(name)); next == "" {
 			return nil
 		}
+		if seen[next] {
+			return fmt.Errorf("httpx: pagination link did not advance")
+		}
+		seen[next] = true
 	}
 }
 
@@ -276,7 +291,7 @@ func (o *op) do(ctx context.Context, token, overrideURL string) (int, []byte, st
 	for k, v := range o.req.Headers {
 		header.Set(subst(k, o.bound), subst(v, o.bound))
 	}
-	if contentType != "" {
+	if contentType != "" && header.Get("Content-Type") == "" {
 		header.Set("Content-Type", contentType)
 	}
 

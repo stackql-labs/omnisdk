@@ -85,10 +85,17 @@ func Open(fsys fs.FS, opts ...Option) (aot.Catalog, error) {
 	// directory itself.
 	preferredSet := map[string]bool{}
 	for _, s := range p.Services() {
-		if s.Ref() == "" {
+		reference := s.Ref()
+		if split, ok := s.(interface{ ResourceRef() string }); ok && split.ResourceRef() != "" {
+			reference = split.ResourceRef()
+		}
+		if reference == "" {
 			continue
 		}
-		file := path.Join("services", path.Base(s.Ref()))
+		file, err := bundlePath(reference, "provider.yaml")
+		if err != nil {
+			return nil, err
+		}
 		if fi, err := fs.Stat(fsys, file); err != nil || !fi.Mode().IsRegular() {
 			if _, have := c.files[s.Name()]; !have {
 				c.missing[s.Name()] = file
@@ -278,6 +285,7 @@ func (c *catalog) doc(service string) (Doc, error) {
 		return nil, err
 	}
 	if parsed, ok := d.(*document); ok && c.provider != nil {
+		parsed.source, parsed.resolver = file, bundleResolver{catalog: c}
 		parsed.providerName = c.provider.Name()
 		if p, ok := c.provider.(*provider); ok {
 			parsed.snakeAliases = p.doc.Config.SnakeCaseAliases

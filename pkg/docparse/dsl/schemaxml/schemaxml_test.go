@@ -14,7 +14,11 @@ type schema struct {
 	props map[string]*schema
 	items *schema
 	wire  string
+	typ   string
 }
+
+func (s *schema) Type() string   { return s.typ }
+func (s *schema) Format() string { return "" }
 
 func (s *schema) Property(name string) (schemaxml.Schema, bool) {
 	p, ok := s.props[name]
@@ -111,6 +115,26 @@ func TestSingletonPayloadIsTheRow(t *testing.T) {
 	}
 	if rows[0].(map[string]any)["VpcId"] != "vpc-9" {
 		t.Errorf("row = %v, want vpc-9", rows[0])
+	}
+}
+
+func TestSingletonWithMetadataRetainsContinuation(t *testing.T) {
+	got := run(t, `<CreateVpcResponse><requestId>req-1</requestId><vpc><vpcId>vpc-9</vpcId></vpc><nextToken>page2</nextToken></CreateVpcResponse>`,
+		dsl.Context{Schema: vpcs(), ListProperty: "line_items", Protocol: "ec2"})
+	rows, _ := got["line_items"].([]any)
+	if len(rows) != 1 || rows[0].(map[string]any)["VpcId"] != "vpc-9" || got["nextToken"] != "page2" {
+		t.Fatalf("singleton and continuation = %v", got)
+	}
+}
+
+func TestDeclaredXMLScalarsRetainTheirTypes(t *testing.T) {
+	s := &schema{props: map[string]*schema{"rows": {items: &schema{props: map[string]*schema{
+		"id": {typ: "string"}, "size": {typ: "integer"}, "enabled": {typ: "boolean"},
+	}}}}}
+	got := run(t, `<Response><items><item><id>12345678901234567890</id><size>10</size><enabled>false</enabled></item></items></Response>`, dsl.Context{Schema: s, ListProperty: "rows"})
+	row := got["rows"].([]any)[0].(map[string]any)
+	if row["id"] != "12345678901234567890" || row["size"] != float64(10) || row["enabled"] != false {
+		t.Fatalf("typed row = %v", row)
 	}
 }
 

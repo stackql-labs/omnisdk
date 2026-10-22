@@ -39,19 +39,22 @@ import (
 	"github.com/stackql-labs/omnisdk/pkg/docparse/dsl"
 	"github.com/stackql-labs/omnisdk/pkg/docparse/dsl/schemaxml"
 	"github.com/stackql-labs/omnisdk/pkg/docparse/stackqldoc"
+	"github.com/stackql-labs/omnisdk/pkg/jsonpath"
 )
 
 // Option configures compilation.
 type Option func(*options)
 
 type options struct {
-	provider string
-	baseURL  string
-	creds    awsv4.Credentials
-	signer   facade.Transform
-	noSign   bool
-	security aot.Security
-	gcpCreds *sdk.GCPCredentials
+	ignoreDocumentRetry bool
+	queryLimit          int
+	provider            string
+	baseURL             string
+	creds               awsv4.Credentials
+	signer              facade.Transform
+	noSign              bool
+	security            aot.Security
+	gcpCreds            *sdk.GCPCredentials
 	// azureCreds is the client-credentials triple for a document declaring OAuth2.
 	azureCreds *azureCredentials
 	// clientCreds is a client-credentials grant at a stated token endpoint; it wins over azureCreds.
@@ -94,6 +97,9 @@ type options struct {
 	programBody      string
 	overrideResponse bool
 }
+
+// WithRuntimeRetryOverride retains an explicitly supplied provider retry policy.
+func WithRuntimeRetryOverride() Option { return func(o *options) { o.ignoreDocumentRetry = true } }
 
 // WithProvider scopes resource and authentication requests to this provider's policy.
 func WithProvider(name string) Option {
@@ -435,6 +441,17 @@ func Spec(ex aot.AOTExchange, inputs map[string]any, reg dsl.Registry, opts ...O
 // compile is Spec for one call, beta aside.
 func compile(ex aot.AOTExchange, inputs map[string]any, reg dsl.Registry, o options) (plan.ExchangeSpec, error) {
 	req, resp := ex.Request(), ex.Response()
+	var retrySettings aot.HTTPRetry
+	if declared, ok := ex.(aot.RetryExchange); ok && !o.ignoreDocumentRetry {
+		if settings, ok := declared.Retry(); ok {
+			retrySettings = settings
+		}
+	}
+	if retrySettings != nil {
+		if err := validateRetry(retrySettings); err != nil {
+			return nil, err
+		}
+	}
 	// A transform runs a PROGRAM only when the document ships one. Most declare a type with no body —
 	// naming a built-in decoding (golang_template_json_v0.3.0, schema_driven_xml_v0.1.0) rather than
 	// supplying code — and for those the body is used as it arrives, decoded by its media type.
@@ -469,6 +486,20 @@ func compile(ex aot.AOTExchange, inputs map[string]any, reg dsl.Registry, o opti
 	}
 	// The document states where the rows are, in one of two syntaxes it uses interchangeably.
 	rowPath := parseObjectKey(resp.ObjectKey())
+	var rowSelection facade.Transform = itemsAt(rowPath)
+	selectionPath := resp.ObjectKey()
+	if gx, ok := ex.(aot.GraphQLExchange); ok {
+		if g, ok := gx.GraphQL(); ok && g.Selection() != "" {
+			selectionPath = g.Selection()
+		}
+	}
+	if strings.HasPrefix(strings.TrimSpace(selectionPath), "$") {
+		selection, err := jsonpath.Parse(selectionPath)
+		if err != nil {
+			return nil, err
+		}
+		rowSelection = selectionRows{selection: selection}
+	}
 
 	url := retarget(req.URL(), o.baseURL)
 	hreq := httpx.Request{Method: req.Method(), URL: url}
@@ -494,6 +525,16 @@ func compile(ex aot.AOTExchange, inputs map[string]any, reg dsl.Registry, o opti
 	placed := map[string]bool{}
 	for _, p := range req.Parameters() {
 		_, supplied := inputs[p.Name()]
+		if !supplied && !o.bound[p.Name()] && !o.provided[p.Name()] && p.In() == aot.InHeader {
+			if declared, ok := p.(aot.ParameterDefault); ok && declared.Default() != nil {
+				if hreq.Headers == nil {
+					hreq.Headers = map[string]string{}
+				}
+				hreq.Headers[p.Name()] = str(declared.Default())
+				placed[p.Name()] = true
+				continue
+			}
+		}
 		if !supplied && !p.Required() && !o.bound[p.Name()] && !o.provided[p.Name()] {
 			continue // an optional parameter nobody supplied is absent, not empty
 		}
@@ -581,8 +622,28 @@ func compile(ex aot.AOTExchange, inputs map[string]any, reg dsl.Registry, o opti
 	if len(o.body) > 0 && req.BodyMediaType() != "" {
 		hreq.Body = httpx.Body{Encoding: bodyEncoding(req.BodyMediaType()), Raw: o.body}
 	}
-	if defaults, ok := req.(aot.RequestDefaults); ok && len(hreq.Body.Raw) == 0 && len(hreq.Body.Params) == 0 && defaults.BaseBody() != "" {
-		hreq.Body = httpx.Body{Encoding: bodyEncoding(req.BodyMediaType()), Raw: []byte(defaults.BaseBody())}
+	if fallback, ok := req.(aot.RequestFallback); ok && len(hreq.Body.Raw) == 0 && len(hreq.Body.Params) == 0 && fallback.DefaultBody() != "" {
+		hreq.Body = httpx.Body{Encoding: bodyEncoding(req.BodyMediaType()), Raw: []byte(fallback.DefaultBody())}
+	}
+	if defaults, ok := req.(aot.RequestDefaults); ok && len(hreq.Body.Raw) == 0 && defaults.BaseBody() != "" {
+		if len(hreq.Body.Params) == 0 {
+			hreq.Body = httpx.Body{Encoding: bodyEncoding(req.BodyMediaType()), Raw: []byte(defaults.BaseBody())}
+		} else if hreq.Body.Encoding == httpx.EncodingJSON {
+			if !json.Valid([]byte(defaults.BaseBody())) {
+				return nil, fmt.Errorf("docx: invalid JSON request base")
+			}
+			base := map[string]any{}
+			decoder := json.NewDecoder(strings.NewReader(defaults.BaseBody()))
+			decoder.UseNumber()
+			if err := decoder.Decode(&base); err != nil {
+				return nil, fmt.Errorf("docx: invalid JSON request base: %w", err)
+			}
+			for name, value := range base {
+				if _, supplied := hreq.Body.Params[name]; !supplied {
+					hreq.Body.Params[name] = value
+				}
+			}
+		}
 	}
 	for wire, slot := range o.querySlots {
 		if hreq.Query == nil {
@@ -590,6 +651,24 @@ func compile(ex aot.AOTExchange, inputs map[string]any, reg dsl.Registry, o opti
 		}
 		hreq.Query[wire] = "{" + slot + "}"
 		bindings = withInput(bindings, slot)
+	}
+	for header, media := range map[string]string{"Accept": resp.MediaType(), "Content-Type": req.MediaType()} {
+		if media == "" {
+			continue
+		}
+		haveAccept := false
+		for name := range hreq.Headers {
+			if strings.EqualFold(name, header) {
+				haveAccept = true
+				break
+			}
+		}
+		if !haveAccept {
+			if hreq.Headers == nil {
+				hreq.Headers = map[string]string{}
+			}
+			hreq.Headers[header] = media
+		}
 	}
 	// Raw material for T_in: bound so a producer delivers it, never placed on the wire.
 	for name := range o.inbox {
@@ -690,7 +769,19 @@ func compile(ex aot.AOTExchange, inputs map[string]any, reg dsl.Registry, o opti
 		if req.Transpose() == AWSCanonical {
 			rowReq, rowBound = transposed(hreq, bound)
 		}
-		send := httpx.Make(rowReq, tokenDecoder(resp), reqT...)(rowBound)
+		if gx, ok := ex.(aot.GraphQLExchange); ok {
+			if graph, ok := gx.GraphQL(); ok {
+				send := newGraphQLOperator(graph, resp.ObjectKey(), rowReq, rowBound, reqT, o.queryLimit, o.baseURL)
+				decoded := exchange.NewTransformExchange(0, send, decode, 1)
+				selected := exchange.NewTransformExchange(0, decoded, rowSelection, 1)
+				return withClient(withRetrySettings(namedRows(exchange.NewExplodeRows(selected, 1), req, rowBound), retrySettings, req.Method()), o.client)
+			}
+		}
+		tokens := tokenDecoder(resp)
+		if hasProgram {
+			tokens = continuationDecoder{program(reg, tr.Type(), tr.Body(), dslContext(resp, rowPath)), decode}
+		}
+		send := httpx.Make(rowReq, tokens, reqT...)(rowBound)
 		// non-2xx fails loudly rather than looking like an empty result
 		checked := exchange.NewTransformExchange(0, send, httpx.NewRequireOK(), 1)
 		// the document's own program, moved from source to here — when it declares one
@@ -703,10 +794,10 @@ func compile(ex aot.AOTExchange, inputs map[string]any, reg dsl.Registry, o opti
 			// A mutating call answers about ONE object, not a list. The document's objectKey
 			// describes where a SELECT finds its items, and applying it here explodes a reply that
 			// has no list — yielding zero rows for a call that plainly succeeded.
-			return withClient(namedRows(decoded, req), o.client)
+			return withClient(withRetrySettings(namedRows(decoded, req, rowBound), retrySettings, req.Method()), o.client)
 		}
-		listed := exchange.NewTransformExchange(0, decoded, itemsAt(rowPath), 1)
-		return withClient(namedRows(exchange.NewExplodeRows(listed, 1), req), o.client)
+		listed := exchange.NewTransformExchange(0, decoded, rowSelection, 1)
+		return withClient(withRetrySettings(namedRows(exchange.NewExplodeRows(listed, 1), req, rowBound), retrySettings, req.Method()), o.client)
 		// INNER, not left-outer: this is a SELECT, and an empty result set is zero rows. A left-outer
 		// would emit one row of bare inputs, which reads as "one instance with no fields".
 	}, bind.NewInnerFlatten())
@@ -866,6 +957,17 @@ func dslContext(resp aot.Response, rowPath []string) dsl.Context {
 		ctx.ListProperty = rowPath[0]
 	}
 	return ctx
+}
+
+// Continuation paths address the same transformed document as response rows.
+type continuationDecoder struct{ program, decode facade.Transform }
+
+func (t continuationDecoder) Apply(in facade.Page) (facade.Record, error) {
+	transformed, err := t.program.Apply(in)
+	if err != nil {
+		return nil, err
+	}
+	return t.decode.Apply(transformed)
 }
 
 type programTransform struct {
@@ -1247,3 +1349,6 @@ func bodyEncoding(mediaType string) httpx.Encoding {
 	}
 	return httpx.EncodingJSON
 }
+
+// WithQueryLimit supplies SQL LIMIT to an operation's request program.
+func WithQueryLimit(limit int) Option { return func(o *options) { o.queryLimit = limit } }
