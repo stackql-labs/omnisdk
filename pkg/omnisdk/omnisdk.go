@@ -249,6 +249,9 @@ type Method struct {
 // Args are the inputs to run a resource: explicit scope Params, optional Auth (config-driven-auth
 // resources), an endpoint override, run Tuning, and an optional traffic log.
 type Args struct {
+	// Relations binds opaque read handles resolved by the caller's analyzer.
+	// Handles take precedence over document lookup and cannot be mutation targets.
+	Relations map[string]Relation `json:"-"`
 	// ReadHintsByAlias carries advisory SQL controls for explicitly named graph nodes.
 	ReadHintsByAlias map[string]ReadHints `json:"read_hints_by_alias,omitempty"`
 	Params           map[string]string
@@ -1809,6 +1812,9 @@ type cannedPlan struct {
 }
 
 func (c *cannedPlan) Open(parent context.Context) (Rows, error) {
+	if err := parent.Err(); err != nil {
+		return nil, err
+	}
 	runCtx, cancel := c.decorate(parent)
 	op := plan.ComposeRows(1, c.plan)
 	// The engine runs on runCtx (cancelled by abort/limit/timeout to stop PRODUCERS). The cursor is

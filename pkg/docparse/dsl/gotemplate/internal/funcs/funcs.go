@@ -24,6 +24,8 @@ func Map() template.FuncMap {
 		"jsonMapFromString": JSONMapFromString,
 		"plus1":             Plus1,
 		"kindOf":            KindOf,
+		"toInt":             ToInt,
+		"toBool":            ToBool,
 		// index OVERRIDES the builtin. Documents index optional response fields several levels deep
 		// (index . "placement" "availabilityZone") on records that legitimately lack them; the builtin
 		// errors on indexing nil, which would turn an absent optional field into a failed audit rather
@@ -36,6 +38,40 @@ func Map() template.FuncMap {
 		// contains several — an ARM resource id carries the subscription and the resource group in
 		// its path — and a caller joining on one of those parts has no way to reach it otherwise.
 		"split": Split,
+	}
+}
+
+// ToInt implements the document helper's permissive conversion: absent or
+// unparseable values become zero and floating point values are truncated.
+func ToInt(v any) int {
+	switch number := v.(type) {
+	case string:
+		var result int
+		_, _ = fmt.Sscanf(number, "%d", &result)
+		return result
+	case float64:
+		return int(number)
+	case json.Number:
+		if integer, err := number.Int64(); err == nil {
+			return int(integer)
+		}
+		fraction, _ := number.Float64()
+		return int(fraction)
+	default:
+		return 0
+	}
+}
+
+// ToBool accepts booleans and the literal string "true", matching the
+// provider template helper. Other values, including absent fields, are false.
+func ToBool(v any) bool {
+	switch flag := v.(type) {
+	case bool:
+		return flag
+	case string:
+		return flag == "true"
+	default:
+		return false
 	}
 }
 

@@ -34,7 +34,8 @@ type Node interface {
 	// Alias names this reference; unique within a graph. It is the address when none is given, as
 	// an unaliased SQL table is referenced by its own name — so the same address twice needs aliases.
 	Alias() string
-	// Address is the exchange it runs, "<provider>.<service>.<resource>".
+	// Address is the exchange it runs: a provider resource address or an exact
+	// handle registered in Args.Relations.
 	Address() string
 	// Params are pushdown inputs for this reference alone. They take precedence over Args.Params,
 	// which is what lets two references to one address run with different values.
@@ -787,135 +788,154 @@ func NewGraphQuery(dir string, g Graph, args Args) (Plan, error) {
 			specs = append(specs, tupleSpec(name+"_values", alias, tuples))
 		}
 
-		c, err := openDocs(dir, addr)
-		if err != nil {
-			return nil, err
-		}
-		// Selection must count what ARRIVES, not only what the caller supplied. Azure's Subnets_list
-		// needs a resource group and a VNet name, both of which come over the edge — judged on
-		// supplied inputs alone, no select is satisfiable and the query fails before its wiring is
-		// ever considered.
+		var c aot.Catalog
+		var ex aot.AOTExchange
+		var spec plan.ExchangeSpec
 		pin, whole, requires := tuningOf(n)
-		ex, err := chooseExchange(c, principalOf(args), addr, n.Verb(), arrivals, sentBy(n), pin)
-		if err != nil {
-			return nil, fmt.Errorf("omnisdk: %s (%s): %w", alias, addr, err)
-		}
-		opts, err := providerOptions(args, c.Provider())
-		if err != nil {
-			return nil, err
-		}
 		mutating := n.Verb() != "select"
-		if mutating {
-			// A mutation's reply is often undocumented; the effect is the point.
-			opts = append(opts, docx.WithoutResponseDecode())
-		}
-		if whole {
-			opts = append(opts, docx.WithWholeResponse())
-		}
-		// What the server can do instead of the rows: a projection, a filter, a cap. Each value is a
-		// constant of the run, bound through a slot of its own so its wire name is sent as written.
-		if n.Verb() == "select" {
-			needed := slices.Clone(emits[alias])
-			for _, p := range n.On() {
-				for _, c := range predicateColumns(p) {
-					if c.Qualifier() == alias {
-						needed = append(needed, c.Name())
+		var required []string
+		if relation, supplied := args.Relations[addr]; supplied {
+			if relation == nil || relation.Address() != addr {
+				return nil, fmt.Errorf("omnisdk: invalid relation handle %q", addr)
+			}
+			if mutating || pin != "" || whole || len(n.Body()) > 0 {
+				return nil, fmt.Errorf("omnisdk: relation %s is a read-only handle", addr)
+			}
+			spec, required, err = relationSpec(name, relation, arrivals, wiredNames(g, alias))
+			if err != nil {
+				return nil, err
+			}
+		} else {
+			c, err = openDocs(dir, addr)
+			if err != nil {
+				return nil, err
+			}
+			// Selection must count what ARRIVES, not only what the caller supplied. Azure's Subnets_list
+			// needs a resource group and a VNet name, both of which come over the edge — judged on
+			// supplied inputs alone, no select is satisfiable and the query fails before its wiring is
+			// ever considered.
+			ex, err = chooseExchange(c, principalOf(args), addr, n.Verb(), arrivals, sentBy(n), pin)
+			if err != nil {
+				return nil, fmt.Errorf("omnisdk: %s (%s): %w", alias, addr, err)
+			}
+			opts, err := providerOptions(args, c.Provider())
+			if err != nil {
+				return nil, err
+			}
+			if mutating {
+				// A mutation's reply is often undocumented; the effect is the point.
+				opts = append(opts, docx.WithoutResponseDecode())
+			}
+			if whole {
+				opts = append(opts, docx.WithWholeResponse())
+			}
+			// What the server can do instead of the rows: a projection, a filter, a cap. Each value is a
+			// constant of the run, bound through a slot of its own so its wire name is sent as written.
+			if n.Verb() == "select" {
+				needed := slices.Clone(emits[alias])
+				for _, p := range n.On() {
+					for _, c := range predicateColumns(p) {
+						if c.Qualifier() == alias {
+							needed = append(needed, c.Name())
+						}
 					}
 				}
-			}
-			if qp, offset := pushdown(ex, g, alias, needed, args.Tuning.Limit, args.ReadHintsByAlias[alias]); len(qp) > 0 {
-				if offset > 0 {
-					remoteOffset = offset
+				if qp, offset := pushdown(ex, g, alias, needed, args.Tuning.Limit, args.ReadHintsByAlias[alias]); len(qp) > 0 {
+					if offset > 0 {
+						remoteOffset = offset
+					}
+					slots := map[string]string{}
+					for i, wire := range slices.Sorted(maps.Keys(qp)) {
+						slot := fmt.Sprintf("pushdown_%d", i)
+						slots[wire] = slot
+						inputs[hidden(alias, slot)] = qp[wire]
+						betas = append(betas, plan.NewBetaEdge("", name, hidden(alias, slot), slot))
+					}
+					opts = append(opts, docx.WithQuerySlots(slots))
 				}
-				slots := map[string]string{}
-				for i, wire := range slices.Sorted(maps.Keys(qp)) {
-					slot := fmt.Sprintf("pushdown_%d", i)
-					slots[wire] = slot
-					inputs[hidden(alias, slot)] = qp[wire]
-					betas = append(betas, plan.NewBetaEdge("", name, hidden(alias, slot), slot))
+			}
+			if body := n.Body(); len(body) > 0 {
+				opts = append(opts, docx.WithBodyFields(slices.Sorted(maps.Keys(body))...))
+			}
+			if names := bound[alias]; len(names) > 0 {
+				opts = append(opts, docx.WithBound(names...))
+			}
+			// A list parameter is sent indexed — TagSpecification.1.Tag.2.Key, Filter.1.Name — and a
+			// document declares the parameter, never its members, so placement by declared name would
+			// drop every member. They are the caller's values, so they are bound as well as placed.
+			var indexed []string
+			for k := range n.Params() {
+				if strings.Contains(k, ".") {
+					indexed = append(indexed, k)
 				}
-				opts = append(opts, docx.WithQuerySlots(slots))
 			}
-		}
-		if body := n.Body(); len(body) > 0 {
-			opts = append(opts, docx.WithBodyFields(slices.Sorted(maps.Keys(body))...))
-		}
-		if names := bound[alias]; len(names) > 0 {
-			opts = append(opts, docx.WithBound(names...))
-		}
-		// A list parameter is sent indexed — TagSpecification.1.Tag.2.Key, Filter.1.Name — and a
-		// document declares the parameter, never its members, so placement by declared name would
-		// drop every member. They are the caller's values, so they are bound as well as placed.
-		var indexed []string
-		for k := range n.Params() {
-			if strings.Contains(k, ".") {
-				indexed = append(indexed, k)
+			if len(indexed) > 0 {
+				slices.Sort(indexed)
+				opts = append(opts, docx.WithBound(indexed...))
 			}
-		}
-		if len(indexed) > 0 {
-			slices.Sort(indexed)
-			opts = append(opts, docx.WithBound(indexed...))
-		}
-		if names := provided[alias]; len(names) > 0 {
-			opts = append(opts, docx.WithProvided(names...))
-		}
-		if names := inbox[alias]; len(names) > 0 {
-			opts = append(opts, docx.WithInbox(names...))
-		}
-		for _, o := range g.Overrides() {
-			if o.Address() != addr {
-				continue
+			if names := provided[alias]; len(names) > 0 {
+				opts = append(opts, docx.WithProvided(names...))
 			}
-			if o.ObjectKey() != "" {
-				opts = append(opts, docx.WithObjectKey(o.ObjectKey()))
+			if names := inbox[alias]; len(names) > 0 {
+				opts = append(opts, docx.WithInbox(names...))
 			}
-			if o.MediaType() != "" {
-				opts = append(opts, docx.WithMediaType(o.MediaType()))
+			for _, o := range g.Overrides() {
+				if o.Address() != addr {
+					continue
+				}
+				if o.ObjectKey() != "" {
+					opts = append(opts, docx.WithObjectKey(o.ObjectKey()))
+				}
+				if o.MediaType() != "" {
+					opts = append(opts, docx.WithMediaType(o.MediaType()))
+				}
+				if typ, body := o.Program(); typ != "" {
+					opts = append(opts, docx.WithResponseProgram(typ, body))
+				}
+				if p := o.Poll(); p.StatusPath != "" {
+					opts = append(opts, docx.WithPoll(p.StatusPath, p.Done, p.Interval, p.MaxAttempts))
+				}
 			}
-			if typ, body := o.Program(); typ != "" {
-				opts = append(opts, docx.WithResponseProgram(typ, body))
+			spec, err = docx.Spec(ex, local, reg, opts...)
+			if err != nil {
+				return nil, fmt.Errorf("omnisdk: %s (%s): %w", alias, addr, err)
 			}
-			if p := o.Poll(); p.StatusPath != "" {
-				opts = append(opts, docx.WithPoll(p.StatusPath, p.Done, p.Interval, p.MaxAttempts))
+			// Renaming happens BEFORE the auth edge is built, or the edge points at a name the plan no
+			// longer has.
+			// A document that declares service-account auth compiles to two exchanges — a token exchange
+			// and the call, joined by a β edge carrying the bearer. A single-address run gets that wiring
+			// for free; composing several means doing it per exchange, or the plan cannot build because
+			// nothing supplies the token.
+			if auth, authInputs, needs := docx.Expand(spec); needs {
+				auth = docx.Rename(auth, name+"_auth")
+				for _, attr := range auth.Out() {
+					plumbing[attr] = true
+				}
+				// The token, too, is read from the exchange that made it: two providers' tokens share a
+				// name on the row, and a call must carry its own.
+				authAlias := name + "_auth"
+				specs = append(specs, tagged{ExchangeSpec: auth, alias: authAlias, attrs: []string{docx.TokenAttr}, extracted: true})
+				betas = append(betas, plan.NewBetaEdge(auth.Name(), name, hidden(authAlias, docx.TokenAttr), docx.TokenAttr))
+				// A token exchange's inputs are this node's alone: two providers exchanging tokens in
+				// one query each bind their own client id and secret, never whichever merged last.
+				for k, v := range authInputs {
+					key := hidden(authAlias, k)
+					inputs[key] = v
+					betas = append(betas, plan.NewBetaEdge("", auth.Name(), key, k))
+				}
 			}
+			spec = docx.Rename(spec, name)
+			// T_in is attached LAST. Wrapping the spec hides the compiled form Expand reads, so a
+			// consumer with an inbound transform would silently lose its auth exchange — and the plan
+			// would refuse to build for want of a token.
+			if w, ok := wiringFor(g, alias); ok {
+				if typ, body := w.Via(); typ != "" {
+					spec = plan.WithInbound(spec, docx.InboundProgram(reg, typ, body))
+				}
+			}
+			required = requiredOf(ex, wiredInputs(g, alias))
 		}
-		spec, err := docx.Spec(ex, local, reg, opts...)
-		if err != nil {
-			return nil, fmt.Errorf("omnisdk: %s (%s): %w", alias, addr, err)
-		}
-		// Renaming happens BEFORE the auth edge is built, or the edge points at a name the plan no
-		// longer has.
-		// A document that declares service-account auth compiles to two exchanges — a token exchange
-		// and the call, joined by a β edge carrying the bearer. A single-address run gets that wiring
-		// for free; composing several means doing it per exchange, or the plan cannot build because
-		// nothing supplies the token.
-		if auth, authInputs, needs := docx.Expand(spec); needs {
-			auth = docx.Rename(auth, name+"_auth")
-			for _, attr := range auth.Out() {
-				plumbing[attr] = true
-			}
-			// The token, too, is read from the exchange that made it: two providers' tokens share a
-			// name on the row, and a call must carry its own.
-			authAlias := name + "_auth"
-			specs = append(specs, tagged{ExchangeSpec: auth, alias: authAlias, attrs: []string{docx.TokenAttr}, extracted: true})
-			betas = append(betas, plan.NewBetaEdge(auth.Name(), name, hidden(authAlias, docx.TokenAttr), docx.TokenAttr))
-			// A token exchange's inputs are this node's alone: two providers exchanging tokens in
-			// one query each bind their own client id and secret, never whichever merged last.
-			for k, v := range authInputs {
-				key := hidden(authAlias, k)
-				inputs[key] = v
-				betas = append(betas, plan.NewBetaEdge("", auth.Name(), key, k))
-			}
-		}
-		spec = docx.Rename(spec, name)
-		// T_in is attached LAST. Wrapping the spec hides the compiled form Expand reads, so a
-		// consumer with an inbound transform would silently lose its auth exchange — and the plan
-		// would refuse to build for want of a token.
-		if w, ok := wiringFor(g, alias); ok {
-			if typ, body := w.Via(); typ != "" {
-				spec = plan.WithInbound(spec, docx.InboundProgram(reg, typ, body))
-			}
-		}
+
 		// The select list is applied to this node's rows before they travel an edge, so a join
 		// may be on a value a function computed. Attached after T_in for the same reason T_in is
 		// attached last: wrapping Make hides the compiled form the auth expansion reads.
@@ -960,7 +980,7 @@ func NewGraphQuery(dir string, g Graph, args Args) (Plan, error) {
 		}
 		// A required input with no value means nothing to ask about: the node has no match for that
 		// row, and no request is made. An optional input with no value is simply not sent.
-		if names := append(requiredOf(ex, wiredInputs(g, alias)), requires...); len(names) > 0 {
+		if names := append(required, requires...); len(names) > 0 {
 			spec = guarded{ExchangeSpec: spec, names: names}
 		}
 		if attrs := emits[alias]; len(attrs) > 0 {

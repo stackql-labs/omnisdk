@@ -18,6 +18,22 @@ positional literals must account for added fields or switch to keyed fields.
 
 ## Additions
 
+- **Template conversions:** document Go templates now provide `toInt` and `toBool`, including
+  XML-to-JSON programs for transformed volumes. Their absent-value defaults are zero and false.
+
+- **Analyzer-resolved read relations:** `omnisdk.Relation` combines table metadata with
+  `Open(context.Context, map[string]any) (Rows, error)`. `NewRelation` builds an immutable
+  declaration from explicit input and column metadata plus an opener. `Args.Relations` registers
+  handles by exact address for `NewGraphQuery`, bypassing provider-document lookup for those
+  addresses. Supply the same relations to `ResolveIn` as tables. They support ordinary graph
+  bindings, projections, filters and joins, and reject mutation targets. Planning performs no
+  calls to the opener. Each execution owns its cursor and closes it; openers must honor the
+  supplied context and support independent concurrent executions. This is a read seam, not a
+  SQL parser, database connector or recursive-CTE executor.
+
+Opening a graph plan with an already-canceled context now returns the cancellation error immediately
+without invoking read handles or provider exchanges.
+
 - **Document request defaults:** declared header defaults and response `Accept` media types reach
   the wire while explicit headers retain precedence. Vendor request content types survive body
   encoding. `request.default` supplies an otherwise absent body; `request.base` fills missing
