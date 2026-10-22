@@ -31,18 +31,23 @@ type providerDoc struct {
 	Version  string                     `yaml:"version"`
 	Services map[string]providerService `yaml:"providerServices"`
 	Config   struct {
-		Auth authConfig `yaml:"auth"`
+		SnakeCaseAliases bool       `yaml:"snake_case_aliases"`
+		Auth             authConfig `yaml:"auth"`
 	} `yaml:"config"`
 }
 
 type providerService struct {
-	ID      string `yaml:"id"`
-	Name    string `yaml:"name"`
-	Title   string `yaml:"title"`
-	Version string `yaml:"version"`
+	ID          string `yaml:"id"`
+	Name        string `yaml:"name"`
+	Title       string `yaml:"title"`
+	Description string `yaml:"description"`
+	Version     string `yaml:"version"`
 	// Preferred marks the entry to use where a provider lists one service at several versions.
 	Preferred bool `yaml:"preferred"`
-	Service   struct {
+	Resources struct {
+		Ref string `yaml:"$ref"`
+	} `yaml:"resources"`
+	Service struct {
 		Ref string `yaml:"$ref"`
 	} `yaml:"service"`
 }
@@ -56,7 +61,8 @@ func (p *provider) Version() string { return p.doc.Version }
 func (p *provider) Services() []aot.Service {
 	out := make([]aot.Service, 0, len(p.doc.Services))
 	for key, s := range p.doc.Services {
-		if s.Name == "" {
+		_, collides := p.doc.Services[s.Name]
+		if s.Name == "" || (s.Name != key && collides) {
 			s.Name = key // the map key is the service's name when the entry omits it
 		}
 		out = append(out, service{s})
@@ -70,7 +76,8 @@ func (p *provider) Service(name string) (aot.Service, bool) {
 	if !ok {
 		return nil, false
 	}
-	if s.Name == "" {
+	_, collides := p.doc.Services[s.Name]
+	if s.Name == "" || (s.Name != name && collides) {
 		s.Name = name
 	}
 	return service{s}, true
@@ -81,6 +88,8 @@ func (p *provider) Service(name string) (aot.Service, bool) {
 func (p *provider) Security() aot.Security {
 	t := p.doc.Config.Auth.Type
 	switch strings.ToLower(t) {
+	case "oci_signing_v1":
+		return security{scheme: aot.SchemeOCI, name: t}
 	case "aws_signing_v4":
 		return security{scheme: aot.SchemeAWSSigV4, name: t}
 	case "service_account":
@@ -100,27 +109,31 @@ func (p *provider) Security() aot.Security {
 
 // authConfig is a provider's config.auth, as stackql documents write it.
 type authConfig struct {
-	Type               string      `yaml:"type"`
-	CredentialsEnvVar  string      `yaml:"credentialsenvvar"`
-	KeyIDEnvVar        string      `yaml:"keyIDenvvar"`
-	Name               string      `yaml:"name"`
-	Location           string      `yaml:"location"`
-	ValuePrefix        string      `yaml:"valuePrefix"`
-	UsernameVar        string      `yaml:"username_var"`
-	PasswordVar        string      `yaml:"password_var"`
-	ClientIDEnvVar     string      `yaml:"client_id_env_var"`
-	ClientSecretEnvVar string      `yaml:"client_secret_env_var"`
-	TokenURL           string      `yaml:"token_url"`
-	Scopes             []string    `yaml:"scopes"`
-	GrantType          string      `yaml:"grant_type"`
-	Successor          *authConfig `yaml:"successor"`
+	TenancyOCIDEnvVar    string      `yaml:"tenancy_ocid_envvar"`
+	UserOCIDEnvVar       string      `yaml:"user_ocid_envvar"`
+	FingerprintEnvVar    string      `yaml:"oci_fingerprint_envvar"`
+	PrivateKeyPathEnvVar string      `yaml:"oci_private_key_path_envvar"`
+	Type                 string      `yaml:"type"`
+	CredentialsEnvVar    string      `yaml:"credentialsenvvar"`
+	KeyIDEnvVar          string      `yaml:"keyIDenvvar"`
+	Name                 string      `yaml:"name"`
+	Location             string      `yaml:"location"`
+	ValuePrefix          string      `yaml:"valuePrefix"`
+	UsernameVar          string      `yaml:"username_var"`
+	PasswordVar          string      `yaml:"password_var"`
+	ClientIDEnvVar       string      `yaml:"client_id_env_var"`
+	ClientSecretEnvVar   string      `yaml:"client_secret_env_var"`
+	TokenURL             string      `yaml:"token_url"`
+	Scopes               []string    `yaml:"scopes"`
+	GrantType            string      `yaml:"grant_type"`
+	Successor            *authConfig `yaml:"successor"`
 }
 
 func (a *authConfig) defaults() *aot.AuthDefaults {
 	if a == nil {
 		return nil
 	}
-	return &aot.AuthDefaults{Type: a.Type, Name: a.Name, Location: a.Location, ValuePrefix: a.ValuePrefix,
+	return &aot.AuthDefaults{TenancyOCIDEnvVar: a.TenancyOCIDEnvVar, UserOCIDEnvVar: a.UserOCIDEnvVar, FingerprintEnvVar: a.FingerprintEnvVar, PrivateKeyPathEnvVar: a.PrivateKeyPathEnvVar, Type: a.Type, Name: a.Name, Location: a.Location, ValuePrefix: a.ValuePrefix,
 		CredentialsEnvVar: a.CredentialsEnvVar, UsernameEnvVar: a.UsernameVar, PasswordEnvVar: a.PasswordVar,
 		ClientIDEnvVar: a.ClientIDEnvVar, ClientSecretEnvVar: a.ClientSecretEnvVar,
 		TokenURL: strings.TrimSpace(a.TokenURL), Scopes: a.Scopes, GrantType: a.GrantType,
@@ -136,11 +149,14 @@ func (p *provider) Credentials() aot.CredentialSource {
 
 type service struct{ s providerService }
 
-func (s service) Name() string    { return s.s.Name }
-func (s service) Title() string   { return s.s.Title }
-func (s service) Version() string { return s.s.Version }
-func (s service) Ref() string     { return s.s.Service.Ref }
-func (s service) Preferred() bool { return s.s.Preferred }
+func (s service) Name() string        { return s.s.Name }
+func (s service) Title() string       { return s.s.Title }
+func (s service) Version() string     { return s.s.Version }
+func (s service) Ref() string         { return s.s.Service.Ref }
+func (s service) ResourceRef() string { return s.s.Resources.Ref }
+func (s service) Preferred() bool     { return s.s.Preferred }
+func (s service) ID() string          { return s.s.ID }
+func (s service) Description() string { return s.s.Description }
 
 type credentials struct{ keyID, secret string }
 

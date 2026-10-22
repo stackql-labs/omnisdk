@@ -76,7 +76,16 @@ func ParseGCPCredentials(saJSON []byte) (GCPCredentials, error) {
 	if block == nil {
 		return GCPCredentials{}, fmt.Errorf("gcp: no PEM private_key in service-account json")
 	}
-	k, err := x509.ParsePKCS8PrivateKey(block.Bytes)
+	var k any
+	var err error
+	switch block.Type {
+	case "RSA PRIVATE KEY":
+		k, err = x509.ParsePKCS1PrivateKey(block.Bytes)
+	case "PRIVATE KEY":
+		k, err = x509.ParsePKCS8PrivateKey(block.Bytes)
+	default:
+		return GCPCredentials{}, fmt.Errorf("gcp: unsupported private key PEM type %q", block.Type)
+	}
 	if err != nil {
 		return GCPCredentials{}, fmt.Errorf("gcp: parse private key: %w", err)
 	}

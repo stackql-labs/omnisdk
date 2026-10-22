@@ -22,11 +22,12 @@ const (
 type ContinuationKind string
 
 const (
-	ContNone     ContinuationKind = "none"
-	ContPaginate ContinuationKind = "paginate" // re-request with a next-token query param until absent
-	ContPoll     ContinuationKind = "poll"     // re-request until a status field reaches DoneValue
-	ContFollow   ContinuationKind = "follow"   // follow an absolute next-link URL until absent (Azure nextLink)
-	ContLink     ContinuationKind = "link"     // follow a response header's rel="next" URL until absent (RFC 8288 Link)
+	ContNone       ContinuationKind = "none"
+	ContPaginate   ContinuationKind = "paginate"    // re-request with a next-token query param until absent
+	ContPageNumber ContinuationKind = "page_number" // increment current page until total pages
+	ContPoll       ContinuationKind = "poll"        // re-request until a status field reaches DoneValue
+	ContFollow     ContinuationKind = "follow"      // follow an absolute next-link URL until absent (Azure nextLink)
+	ContLink       ContinuationKind = "link"        // follow a response header's rel="next" URL until absent (RFC 8288 Link)
 )
 
 // Body is the request body: an encoding and templated params (string values are substituted;
@@ -46,8 +47,11 @@ type Continuation struct {
 
 	// paginate: read NextTokenPath from each response; if present, re-request sending it as
 	// query/body param TokenParam, until absent.
-	NextTokenPath string
-	TokenParam    string
+	NextTokenPath  string
+	TerminatorPath string
+	TokenParam     string
+	// TokenEncoding "none" preserves the token's bytes in the query string.
+	TokenEncoding string
 	// TokenInBody sends the token as a request-body field rather than a query parameter (AWS's JSON
 	// protocols).
 	TokenInBody bool

@@ -6,11 +6,61 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/stackql-labs/omnisdk/internal/system_g/facade"
 )
+
+func TestHTTPXPageNumberRejectsRepeatedPage(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprint(w, `{"page":1,"total":3}`)
+	}))
+	defer srv.Close()
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	req := Request{Method: http.MethodGet, URL: srv.URL, Continuation: Continuation{
+		Kind: ContPageNumber, TokenParam: "page", NextTokenPath: "page", TerminatorPath: "total",
+	}}
+	rows := Make(req, nil)(nil).Open(ctx)
+	defer rows.Close()
+	for rows.Next(ctx) {
+	}
+	if err := rows.Err(); err == nil || !strings.Contains(err.Error(), "did not advance") {
+		t.Fatalf("error=%v, want repeated-page error", err)
+	}
+}
+
+func TestHTTPXCursorEncoding(t *testing.T) {
+	for _, encoding := range []string{"", "none"} {
+		t.Run("encoding="+encoding, func(t *testing.T) {
+			calls := 0
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				calls++
+				if calls == 1 {
+					fmt.Fprint(w, `{"next":"page_AAAA=="}`)
+					return
+				}
+				want := "group_by=project+id&page=page_AAAA%3D%3D"
+				if encoding == "none" {
+					want = "group_by=project+id&page=page_AAAA=="
+				}
+				if r.URL.RawQuery != want {
+					t.Errorf("query=%q, want %q", r.URL.RawQuery, want)
+				}
+				fmt.Fprint(w, `{}`)
+			}))
+			defer srv.Close()
+			req := Request{Method: http.MethodGet, URL: srv.URL,
+				Query:        map[string]string{"group_by": "project id"},
+				Continuation: Continuation{Kind: ContPaginate, NextTokenPath: "next", TokenParam: "page", TokenEncoding: encoding}}
+			if bodies := drive(t, Make(req, nil)(nil)); len(bodies) != 2 {
+				t.Fatalf("got %d pages, want 2", len(bodies))
+			}
+		})
+	}
+}
 
 func drive(t *testing.T, op facade.Operator) []string {
 	t.Helper()
@@ -162,5 +212,36 @@ func TestHTTPXOmitsAnInputWithNoValue(t *testing.T) {
 	drive(t, Make(req, nil)(map[string]any{"base": srv.URL, "parent": "root"}))
 	if got != "parent=root" {
 		t.Errorf("query = %q, want parent only", got)
+	}
+}
+
+func TestHTTPXContinuationCyclesStopBeforeCallerDeadline(t *testing.T) {
+	for _, kind := range []ContinuationKind{ContPaginate, ContFollow, ContLink} {
+		t.Run(string(kind), func(t *testing.T) {
+			calls := 0
+			var srv *httptest.Server
+			srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				calls++
+				next := srv.URL + "/same"
+				if kind == ContPaginate {
+					next = "same-token"
+				}
+				w.Header().Set("Link", "<"+next+">; rel=\"next\"")
+				fmt.Fprintf(w, `{"next":%q}`, next)
+			}))
+			defer srv.Close()
+			ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+			defer cancel()
+			rows := Make(Request{Method: "GET", URL: srv.URL, Continuation: Continuation{Kind: kind, NextTokenPath: "next", TokenParam: "page"}}, nil)(nil).Open(ctx)
+			defer rows.Close()
+			for rows.Next(ctx) {
+			}
+			if err := rows.Err(); err == nil || !strings.Contains(err.Error(), "did not advance") {
+				t.Fatalf("continuation error = %v", err)
+			}
+			if calls != 2 {
+				t.Fatalf("requests = %d, want 2", calls)
+			}
+		})
 	}
 }

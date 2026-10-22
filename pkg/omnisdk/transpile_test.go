@@ -561,7 +561,7 @@ func rowKeys(row string) []string {
 	return out
 }
 
-var usersColumns = []string{"Arn", "CreateDate", "PasswordLastUsed", "Path", "PermissionsBoundary", "Tags", "UserId", "UserName"}
+var usersColumns = []string{"arn", "create_date", "password_last_used", "path", "permissions_boundary", "tags", "user_id", "user_name"}
 
 // SELECT * FROM aws.iam.users u WHERE region = 'us-east-1'
 // The star is the columns the document declares for the row.
@@ -580,7 +580,7 @@ func TestSelectStar(t *testing.T) {
 			t.Errorf("columns = %v, want %v", got, usersColumns)
 		}
 	}
-	if !strings.Contains(rows[0], "UserName=alice") || !strings.Contains(rows[1], "UserName=bob") {
+	if !strings.Contains(rows[0], "user_name=alice") || !strings.Contains(rows[1], "user_name=bob") {
 		t.Errorf("rows = %v", rows)
 	}
 }
@@ -649,6 +649,17 @@ func mustMutation(t *testing.T, tg query.Target, from []query.Join, where []quer
 }
 
 // INSERT INTO aws.iam.users (UserName) VALUES ('carol') RETURNING UserName, Arn
+func TestInsertConstantFunction(t *testing.T) {
+	q := mustMutation(t,
+		query.NewInsert(users("t"), query.NewAssignment("UserName", query.NewCall("lower", query.NewLiteral("CAROL")))),
+		nil, []query.Predicate{regionEq()}, nil,
+	)
+	_, made := runQuery(t, q)
+	if want := []string{"CreateUser|us-east-1|carol"}; !reflect.DeepEqual(made, want) {
+		t.Errorf("calls = %v, want %v", made, want)
+	}
+}
+
 func TestInsertValuesReturning(t *testing.T) {
 	q := mustMutation(t,
 		query.NewInsert(users("t"), query.NewAssignment("UserName", query.NewLiteral("carol"))),
@@ -1321,5 +1332,79 @@ func TestOperatorFunctionsOnTheQueryPath(t *testing.T) {
 		query.NewOutput("tag", query.NewCall("||", name, query.NewLiteral("-"), query.NewCall("cast", query.NewLiteral("7.0"), query.NewLiteral("integer")))))
 	if !reflect.DeepEqual(got, []string{"tag=bob-7"}) {
 		t.Errorf("|| and cast: rows = %v", got)
+	}
+}
+
+func TestSourceOnlyFilterPreventsDependentRequests(t *testing.T) {
+	q := mustQuery(t, []query.Join{
+		query.NewJoin(users("u"), query.Base),
+		query.NewJoin(users("v"), query.Inner, query.NewEq(query.NewColumn("v", "UserName"), query.NewColumn("u", "UserName"))),
+	}, []query.Predicate{regionEq(), query.NewCompare(query.Ne, query.NewColumn("u", "UserName"), query.NewLiteral("alice"))}, []query.Output{query.NewOutput("UserName", query.NewColumn("v", "UserName"))})
+	rows, calls, err := tryQueryWith(t, q, nil, func(r *http.Request) {
+		if r.Form.Get("Action") == "GetUser" && r.Form.Get("UserName") == "alice" {
+			t.Error("rejected source row triggered a dependent request")
+		}
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(rows, []string{"UserName=bob"}) || !reflect.DeepEqual(calls, []string{"GetUser|us-east-1", "ListUsers|us-east-1"}) {
+		t.Fatalf("rows=%v calls=%v", rows, calls)
+	}
+}
+
+func TestOptionalSideWhereDoesNotFabricateUnmatchedRows(t *testing.T) {
+	withoutPolicies = "bob"
+	defer func() { withoutPolicies = "" }()
+	q := mustQuery(t, []query.Join{
+		query.NewJoin(users("u"), query.Base),
+		query.NewJoin(query.NewResource("p", "aws.iam.attached_user_policies"), query.Left, query.NewEq(query.NewColumn("p", "UserName"), query.NewColumn("u", "UserName"))),
+	}, []query.Predicate{regionEq(), query.NewEq(query.NewCall("coalesce", query.NewColumn("p", "PolicyName"), query.NewLiteral("missing")), query.NewLiteral("missing"))}, []query.Output{query.NewOutput("UserName", query.NewColumn("u", "UserName"))})
+	rows, _ := runQuery(t, q)
+	if !reflect.DeepEqual(rows, []string{"UserName=bob"}) {
+		t.Fatalf("optional-side WHERE rows = %v", rows)
+	}
+}
+
+func TestSQLiteWhereAliasesRespectSourceColumnPrecedence(t *testing.T) {
+	for _, alias := range []string{"upper_name", "UserName"} {
+		t.Run(alias, func(t *testing.T) {
+			value := "ALICE"
+			if alias == "UserName" {
+				value = "alice"
+			}
+			q := mustQuery(t, []query.Join{query.NewJoin(users("u"), query.Base)}, []query.Predicate{regionEq(), query.NewEq(query.NewColumn("", alias), query.NewLiteral(value))}, []query.Output{query.NewOutput(alias, query.NewCall("upper", query.NewColumn("u", "UserName")))})
+			rows, _ := runQuery(t, q)
+			if !reflect.DeepEqual(rows, []string{alias + "=ALICE"}) {
+				t.Fatalf("alias WHERE rows = %v", rows)
+			}
+		})
+	}
+}
+
+func TestQualifiedFanoutInputFeedsDependentRequest(t *testing.T) {
+	q := mustQuery(t, []query.Join{
+		query.NewJoin(query.NewResource("p", "aws.iam.attached_user_policies"), query.Base),
+		query.NewJoin(users("u"), query.Inner, query.NewEq(query.NewColumn("u", "UserName"), query.NewColumn("p", "UserName"))),
+	}, []query.Predicate{regionEq(), query.NewIn(query.NewColumn("p", "UserName"), query.NewCollection(query.NewLiteral("alice"), query.NewLiteral("bob")))}, []query.Output{query.NewOutput("UserName", query.NewColumn("u", "UserName"))})
+	rows, calls := runQuery(t, q)
+	if !reflect.DeepEqual(rows, []string{"UserName=alice", "UserName=bob"}) {
+		t.Fatalf("qualified fanout rows = %v, calls=%v", rows, calls)
+	}
+}
+
+func TestConstantMutationPredicateRunsBeforeEffects(t *testing.T) {
+	for _, value := range []int{0, 1} {
+		t.Run(fmt.Sprint(value), func(t *testing.T) {
+			q := mustMutation(t, query.NewInsert(users("t"), query.NewAssignment("UserName", query.NewLiteral("carol"))), nil, []query.Predicate{regionEq(), query.NewEq(query.NewLiteral(value), query.NewLiteral(1))}, []query.Output{query.NewOutput("UserName", query.NewColumn("t", "UserName"))})
+			rows, calls := runQuery(t, q)
+			if value == 0 {
+				if len(rows) != 0 || len(calls) != 0 {
+					t.Fatalf("false predicate produced rows=%v, requests=%v", rows, calls)
+				}
+			} else if !reflect.DeepEqual(rows, []string{"UserName=carol"}) || !reflect.DeepEqual(calls, []string{"CreateUser|us-east-1|carol"}) {
+				t.Fatalf("true predicate rows=%v requests=%v", rows, calls)
+			}
+		})
 	}
 }

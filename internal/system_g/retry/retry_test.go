@@ -19,7 +19,8 @@ func TestDefaultTransientClassification(t *testing.T) {
 		{facade.Attempt{Status: 500}, false}, // bare 500 = likely a bug, not backpressure
 		{facade.Attempt{Status: 404}, false},
 		{facade.Attempt{Status: 200}, false},
-		{facade.Attempt{Err: context.DeadlineExceeded}, true}, // transport error
+		{facade.Attempt{Err: context.DeadlineExceeded}, false},
+		{facade.Attempt{Err: context.Canceled}, false},
 	}
 	for _, tc := range cases {
 		if got := c.Transient(tc.a); got != tc.want {
@@ -152,5 +153,28 @@ func TestRateGovernorConcurrent(t *testing.T) {
 		if !<-done {
 			t.Fatal("every concurrent reservation should be admitted")
 		}
+	}
+}
+
+type singleRetryGovernor struct{ used bool }
+
+func (g *singleRetryGovernor) Reserve(time.Time) (time.Duration, bool) {
+	if g.used {
+		return 0, false
+	}
+	g.used = true
+	return 0, true
+}
+
+func TestExchangeOverridesShareTheParentRetryBudget(t *testing.T) {
+	governor := &singleRetryGovernor{}
+	parent := New(Config{Tries: 1, Governor: governor})
+	first, second := Override(parent, Config{Tries: 5}), Override(parent, Config{Tries: 5})
+	attempt := facade.Attempt{Status: 503}
+	if _, ok := first.Recover(context.Background(), attempt); !ok {
+		t.Fatal("first retry was refused")
+	}
+	if _, ok := second.Recover(context.Background(), attempt); ok {
+		t.Fatal("exchange override created a new retry budget")
 	}
 }

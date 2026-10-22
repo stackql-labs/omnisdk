@@ -150,3 +150,17 @@ func TestDuplicateEvaluatorRejected(t *testing.T) {
 		t.Fatal("two implementations of one language must be rejected")
 	}
 }
+
+func TestMXJVersionOneUsesDeclaredXMLBinding(t *testing.T) {
+	evaluator, ok := registry(t).Get(gotemplate.TypeMXJ1)
+	if !ok {
+		t.Fatal("MXJ v0.1.0 is unavailable")
+	}
+	result, err := evaluator.Eval(dsl.Context{}, `{{ toJson . }}`, []byte(`<Response><id>12345678901234567890</id></Response>`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(result), `"id":"12345678901234567890"`) {
+		t.Fatalf("XML binding = %s", result)
+	}
+}

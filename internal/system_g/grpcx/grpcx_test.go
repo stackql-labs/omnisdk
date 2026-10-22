@@ -3,11 +3,45 @@ package grpcx_test
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/stackql-labs/omnisdk/internal/system_g/bind"
 	"github.com/stackql-labs/omnisdk/internal/system_g/grpcx"
 	"github.com/stackql-labs/omnisdk/internal/system_g/grpcx/grpctest"
+	"github.com/stackql-labs/omnisdk/internal/system_g/requestpolicy"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/grpc/status"
 )
+
+func TestRequestDeadline(t *testing.T) {
+	d, err := grpcx.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	ctx = requestpolicy.WithTimeout(ctx, 20*time.Millisecond)
+	op := grpcx.Make(d, grpcx.Request{Target: "localhost:1", Method: "google.storage.v2.Storage.ListBuckets"},
+		grpc.WithTransportCredentials(insecure.NewCredentials()),
+		grpc.WithUnaryInterceptor(func(ctx context.Context, method string, req, reply any, cc *grpc.ClientConn, invoke grpc.UnaryInvoker, opts ...grpc.CallOption) error {
+			<-ctx.Done()
+			return status.FromContextError(ctx.Err()).Err()
+		}),
+	)(nil)
+	start := time.Now()
+	rows := op.Open(ctx)
+	defer rows.Close()
+	for rows.Next(ctx) {
+	}
+	if status.Code(rows.Err()) != codes.DeadlineExceeded {
+		t.Fatalf("error=%v, want deadline exceeded", rows.Err())
+	}
+	if time.Since(start) > 500*time.Millisecond {
+		t.Fatal("request policy did not bound the call")
+	}
+}
 
 // TestDynamicRoundTrip proves the transport end to end with NO generated code on either side: the
 // server serves the embedded proto dynamically (grpctest/dynamicpb), and the grpcurl-based client

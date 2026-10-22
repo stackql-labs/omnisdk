@@ -45,6 +45,39 @@ func countRows(t *testing.T, dir, address string, args omnisdk.Args) int {
 	return n
 }
 
+func TestPageNumberPagination(t *testing.T) {
+	for _, terminated := range []bool{true, false} {
+		t.Run(fmt.Sprintf("terminator=%t", terminated), func(t *testing.T) {
+			var calls atomic.Int32
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				page := r.URL.Query().Get("page")
+				call := calls.Add(1)
+				if page != strconv.Itoa(int(call)) || call > 3 {
+					t.Errorf("request %d has page=%q; want successive pages", call, page)
+					http.Error(w, "page repeated", http.StatusBadRequest)
+					return
+				}
+				terminator := ""
+				if terminated {
+					terminator = `,"total_pages":3`
+				}
+				fmt.Fprintf(w, `{"items":[{"id":"%s"}],"result_info":{"page":%s%s}}`, page, page, terminator)
+			}))
+			defer srv.Close()
+			want := 1
+			if terminated {
+				want = 3
+			}
+			got := countRows(t, authRegistry, "stackql_unstable_numbered.things.items", omnisdk.Args{
+				Endpoint: srv.URL, Tuning: omnisdk.Tuning{Timeout: 2 * time.Second, RetryTries: 1},
+			})
+			if got != want || calls.Load() != int32(want) {
+				t.Fatalf("rows=%d requests=%d, want %d of each", got, calls.Load(), want)
+			}
+		})
+	}
+}
+
 // A document declaring Link-header pagination follows rel="next" until there is none.
 func TestPaginationFollowsTheLinkHeader(t *testing.T) {
 	var srv *httptest.Server

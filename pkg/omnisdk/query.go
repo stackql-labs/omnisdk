@@ -53,10 +53,10 @@ type ParamSignature interface {
 func DescribeTable(dir, address string) (Table, error) { return describeTable(dir, address, "select") }
 
 // DescribeMutation reads what the documents under dir say about an address's methods for a
-// mutating verb: "insert", "update" or "delete".
+// mutating verb: "insert", "update", "replace" or "delete".
 func DescribeMutation(dir, address, verb string) (Table, error) {
 	switch verb {
-	case "insert", "update", "delete":
+	case "insert", "update", "delete", "replace":
 		return describeTable(dir, address, verb)
 	}
 	return nil, fmt.Errorf("omnisdk: %q is not a mutating verb", verb)
@@ -93,10 +93,37 @@ func (s docSignature) TakesBody() bool { return s.ex.Request().BodyMediaType() !
 
 func (s docSignature) Params() []ParamSignature {
 	var out []ParamSignature
+	seen := map[string]bool{}
 	for _, p := range s.ex.Request().Parameters() {
 		out = append(out, p)
+		seen[p.Name()] = true
+	}
+	for _, name := range s.ex.Inputs() {
+		if !seen[name] {
+			out = append(out, serverInput{name})
+		}
 	}
 	return out
+}
+
+type serverInput struct{ name string }
+
+func (p serverInput) Name() string   { return p.name }
+func (p serverInput) Required() bool { return true }
+func (p serverInput) In() string     { return aot.InPath }
+
+// A path/server binding selects the request's scope. A same-named response
+// property may contain a full URI, so comparing it to the short scope identifier
+// would discard rows returned by the correctly scoped request.
+func scopeInput(t Table, name string) bool {
+	for _, m := range t.Methods() {
+		for _, p := range m.Params() {
+			if p.Name() == name && p.In() == aot.InPath {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // Columns walks the response schema to the row: down the object key, then into an array's items.
@@ -105,7 +132,56 @@ func (s docSignature) Columns() []string {
 	if row == nil {
 		return nil
 	}
-	return row.Properties()
+	out := append([]string(nil), row.Properties()...)
+	for i := range out {
+		out[i] = s.surface(out[i])
+	}
+	return out
+}
+
+func (s docSignature) surface(name string) string {
+	if shape, ok := s.ex.Request().(aot.RequestShape); ok {
+		return namespace.NewNaming(shape.NativeCasing(), shape.SnakeCaseAliases()).Surface(name)
+	}
+	return name
+}
+
+func canonicalName(t Table, name string) string {
+	if t == nil {
+		return name
+	}
+	if bodyName, prefixed := strings.CutPrefix(name, "data__"); prefixed {
+		for _, method := range t.Methods() {
+			for _, p := range method.Params() {
+				if p.In() == aot.InBody && p.Name() == bodyName {
+					return bodyName
+				}
+			}
+		}
+	}
+	for _, method := range t.Methods() {
+		s, ok := method.(docSignature)
+		if !ok {
+			continue
+		}
+		shape, ok := s.ex.Request().(aot.RequestShape)
+		if !ok {
+			continue
+		}
+		naming := namespace.NewNaming(shape.NativeCasing(), true)
+		for _, p := range s.ex.Request().Parameters() {
+			wire := p.Name()
+			if name == wire || (shape.NativeCasing() != "" && name == naming.Surface(wire)) {
+				return p.Name()
+			}
+		}
+		if shape.SnakeCaseAliases() && s.row() != nil {
+			if _, ok := s.row().Property(name); ok {
+				return s.surface(name)
+			}
+		}
+	}
+	return name
 }
 
 func (s docSignature) ColumnTypes() map[string]ColumnType {
@@ -120,7 +196,7 @@ func (s docSignature) ColumnTypes() map[string]ColumnType {
 			continue
 		}
 		if ts, ok := p.(aot.TypedSchema); ok && (ts.Type() != "" || ts.Format() != "") {
-			out[name] = ColumnType{Type: ts.Type(), Format: ts.Format()}
+			out[s.surface(name)] = ColumnType{Type: ts.Type(), Format: ts.Format()}
 		}
 	}
 	return out
@@ -128,10 +204,46 @@ func (s docSignature) ColumnTypes() map[string]ColumnType {
 
 // row is the schema of one row: the response schema, down the object key, into an array's items.
 func (s docSignature) row() aot.Schema {
+	if selected, ok := s.ex.Response().(aot.SelectedSchema); ok && selected.RowSchema() != nil {
+		return selected.RowSchema()
+	}
 	resp := s.ex.Response()
 	sch := resp.Schema()
 	if sch == nil {
 		return nil
+	}
+	if strings.HasPrefix(resp.ObjectKey(), "/") {
+		for _, segment := range strings.Split(resp.ObjectKey(), "/") {
+			if segment == "" {
+				continue
+			}
+			if segment == "*" {
+				// Some schemas model the protocol root; others start at its payload.
+				if names := sch.Properties(); len(names) == 1 && (strings.HasSuffix(names[0], "Response") || strings.HasSuffix(names[0], "Result")) {
+					sch, _ = sch.Property(names[0])
+				}
+				continue
+			}
+			if next, ok := sch.Property(segment); ok {
+				sch = next
+				continue
+			}
+			if segment == "item" || segment == "member" {
+				if item, ok := sch.Items(); ok {
+					sch = item
+					continue
+				}
+			}
+			// Query-protocol Result wrappers need not be repeated in OpenAPI.
+			if strings.HasSuffix(segment, "Result") || strings.HasSuffix(segment, "Response") {
+				continue
+			}
+			return nil
+		}
+		if item, ok := sch.Items(); ok {
+			sch = item
+		}
+		return sch
 	}
 	for _, seg := range strings.Split(strings.TrimPrefix(strings.TrimPrefix(resp.ObjectKey(), "$"), "."), ".") {
 		if seg == "" {
@@ -184,7 +296,7 @@ func Resolve(q query.Unresolved, tables map[string]Table) (Resolution, error) {
 // ResolveIn is Resolve for a query written in dialect d, which decides the columns of a table
 // function in its FROM clause.
 func ResolveIn(q query.Unresolved, tables map[string]Table, d sqlfn.Dialect) (Resolution, error) {
-	r := resolver{tables: map[string]Table{}, params: map[string]string{}, nodeParams: map[string]map[string]string{},
+	r := resolver{dialect: d, tables: map[string]Table{}, params: map[string]string{}, nodeParams: map[string]map[string]string{},
 		fanout: map[string]map[string][]string{}, wide: map[string][]string{}, arrivals: map[string][]arrival{}, retain: map[string][]string{},
 		computed: map[string][]SelectColumn{}, body: map[string]any{},
 		outer: map[string][]query.Predicate{}, on: map[string][]query.Predicate{}, funcs: map[string]query.Call{}}
@@ -226,11 +338,37 @@ func ResolveIn(q query.Unresolved, tables map[string]Table, d sqlfn.Dialect) (Re
 			return nil, err
 		}
 	}
-	conjuncts = append(conjuncts, q.Where()...)
+	for _, predicate := range q.Where() {
+		if q.Target() == nil && (d == "" || d == sqlfn.SQLite) {
+			predicate = r.whereAliases(predicate, q.Select())
+		}
+		conjuncts = append(conjuncts, predicate)
+	}
 
 	// Constant bindings first: they decide what each table can run without the others.
 	var rest []query.Predicate
 	for _, p := range conjuncts {
+		constant := false
+		switch predicate := p.(type) {
+		case query.Compare:
+			_, left := predicate.Left().(query.Literal)
+			_, right := predicate.Right().(query.Literal)
+			constant = left && right
+		case query.Test:
+			_, constant = predicate.Cond().(query.Literal)
+		}
+		if constant {
+			functions, err := fn.Builtins(d)
+			if err != nil {
+				return nil, err
+			}
+			truth, err := (filterTransform{fns: functions}).eval(p, nil)
+			if err != nil {
+				return nil, err
+			}
+			r.empty = r.empty || truth != isTrue
+			continue
+		}
 		placed, err := r.bindConstant(p)
 		if err != nil {
 			return nil, err
@@ -389,6 +527,11 @@ func (r *resolver) target(t query.Target, tables map[string]Table) error {
 		return r.valuesRows(alias, tbl, ns, rows)
 	}
 	for _, a := range t.Set() {
+		value, err := r.constant(a.Value())
+		if err != nil {
+			return fmt.Errorf("omnisdk: %s = %s: %w", a.Column(), describeExpr(a.Value()), err)
+		}
+		a = query.NewAssignment(a.Column(), value)
 		name, inBody, err := placeAssignment(ns, tbl, a.Column())
 		if err != nil {
 			return fmt.Errorf("omnisdk: %s %s: %w", r.verb, alias, err)
@@ -458,12 +601,22 @@ func requestNamespace(t Table) (namespace.Namespace, error) {
 // parameter declares; that is a body field where the method takes a body, and has nowhere to go
 // where it does not. It returns the name as the wire knows it.
 func placeAssignment(ns namespace.Namespace, t Table, column string) (string, bool, error) {
+	column = canonicalName(t, column)
 	if a, err := ns.Resolve(column); err == nil {
 		return a.Name(), a.Space() == namespace.Body, nil
 	}
-	name := strings.TrimPrefix(column, string(namespace.Body)+".")
+	name := strings.TrimPrefix(strings.TrimPrefix(column, string(namespace.Body)+"."), "data__")
 	for _, m := range t.Methods() {
 		if m.TakesBody() {
+			if s, ok := m.(docSignature); ok {
+				if shape, ok := s.ex.Request().(aot.RequestShape); ok && shape.BodySchema() != nil {
+					wire, err := namespace.NewNaming(shape.NativeCasing(), shape.SnakeCaseAliases()).Native(name, shape.BodySchema().Properties())
+					if err != nil {
+						return "", false, err
+					}
+					name = wire
+				}
+			}
 			return name, true, nil
 		}
 	}
@@ -476,7 +629,11 @@ func (r *resolver) valuesRows(alias string, tbl Table, ns namespace.Namespace, r
 	for i, row := range rows {
 		tuple := make(map[string]any, len(row))
 		for _, a := range row {
-			lit, ok := a.Value().(query.Literal)
+			value, err := r.constant(a.Value())
+			if err != nil {
+				return err
+			}
+			lit, ok := value.(query.Literal)
 			if !ok {
 				return fmt.Errorf("omnisdk: %s %s: VALUES row %d: %s = %s is not a literal; read values from a table with INSERT … SELECT",
 					r.verb, alias, i+1, a.Column(), describeExpr(a.Value()))
@@ -577,6 +734,8 @@ func columnsOf(t Table) []string {
 }
 
 type resolver struct {
+	empty      bool
+	dialect    sqlfn.Dialect
 	tables     map[string]Table
 	order      []string
 	params     map[string]string
@@ -616,6 +775,15 @@ func (r *resolver) bindConstant(p query.Predicate) (bool, error) {
 	var values []string
 	switch p := p.(type) {
 	case query.Compare:
+		left, err := r.constant(p.Left())
+		if err != nil {
+			return false, err
+		}
+		right, err := r.constant(p.Right())
+		if err != nil {
+			return false, err
+		}
+		p = query.NewCompare(p.Op(), left, right)
 		c, lit, ok := columnAndLiteral(p)
 		if !ok || p.Op() != query.Eq {
 			return false, nil
@@ -641,7 +809,24 @@ func (r *resolver) bindConstant(p query.Predicate) (bool, error) {
 	alias := col.Qualifier()
 	if alias == "" {
 		owners := r.owners(col.Name())
-		if len(owners) != 1 {
+		shared := false
+		for _, table := range r.tables {
+			provider, _, _ := strings.Cut(table.Address(), ".")
+			if col.Name() == "region" && strings.TrimPrefix(provider, aot.DefaultProviderPrefix) == "aws" {
+				shared = true
+			}
+			for _, method := range table.Methods() {
+				if signature, ok := method.(docSignature); ok {
+					if contains(signature.ex.Inputs(), col.Name()) || (col.Name() == "region" && signature.ex.Security().Scheme() == aot.SchemeAWSSigV4) {
+						shared = true
+					}
+				}
+			}
+		}
+		if len(owners) == 0 && !shared {
+			return false, fmt.Errorf("could not locate symbol: %s", col.Name())
+		}
+		if len(owners) != 1 || shared {
 			if len(values) == 1 {
 				r.params[col.Name()] = values[0]
 			} else {
@@ -651,6 +836,7 @@ func (r *resolver) bindConstant(p query.Predicate) (bool, error) {
 		}
 		alias = owners[0]
 	}
+	col = query.NewColumn(alias, canonicalName(r.tables[alias], col.Name()))
 	if !accepts(r.tables[alias], col.Name()) {
 		return false, nil
 	}
@@ -665,12 +851,33 @@ func (r *resolver) bindConstant(p query.Predicate) (bool, error) {
 		}
 		r.fanout[alias][col.Name()] = values
 	}
-	if r.mutating == "" && hasColumn(r.tables[alias], col.Name()) {
+	if r.mutating == "" && hasColumn(r.tables[alias], col.Name()) && !scopeInput(r.tables[alias], col.Name()) {
 		if err := r.filter(p); err != nil {
 			return false, err
 		}
 	}
 	return true, nil
+}
+
+// constant evaluates only expressions without row references. Expressions
+// containing a column remain predicates or dataflow computations.
+func (r *resolver) constant(e query.Expr) (query.Expr, error) {
+	if _, call := e.(query.Call); !call || len(exprColumns(e)) != 0 {
+		return e, nil
+	}
+	x, err := engineExpr(e, nil)
+	if err != nil {
+		return nil, err
+	}
+	registry, err := fn.Builtins(r.dialect)
+	if err != nil {
+		return nil, err
+	}
+	value, err := x.Eval(nil, registry)
+	if err != nil {
+		return nil, err
+	}
+	return query.NewLiteral(value), nil
 }
 
 // bindJoin places column = column across two tables as an edge onto the side that needs the value.
@@ -1107,6 +1314,11 @@ func (r *resolver) build(sel []query.Output) (Resolution, error) {
 	if err != nil {
 		return nil, err
 	}
+	if r.empty {
+		empty := g.(graph)
+		empty.empty = true
+		g = empty
+	}
 	return resolution{graph: g, params: r.params}, nil
 }
 
@@ -1140,13 +1352,13 @@ func (r *resolver) projected(e query.Expr) (string, Expression, error) {
 // qualify gives an unqualified column the one table whose rows have it.
 func (r *resolver) qualify(c query.Column) (query.Column, error) {
 	if c.Qualifier() != "" {
-		return c, nil
+		return query.NewColumn(c.Qualifier(), canonicalName(r.tables[c.Qualifier()], c.Name())), nil
 	}
 	switch owners := r.owners(c.Name()); len(owners) {
 	case 1:
-		return query.NewColumn(owners[0], c.Name()), nil
+		return query.NewColumn(owners[0], canonicalName(r.tables[owners[0]], c.Name())), nil
 	case 0:
-		return nil, fmt.Errorf("no table has a column %q", c.Name())
+		return nil, fmt.Errorf("no such column: %s (no table has a column %q)", c.Name(), c.Name())
 	default:
 		return nil, fmt.Errorf("%q is ambiguous between %v; qualify it", c.Name(), owners)
 	}
@@ -1175,10 +1387,14 @@ func (r *resolver) known(alias string) map[string]bool {
 	for name := range r.nodeParams[alias] {
 		k[name] = true
 	}
+	for name := range r.fanout[alias] {
+		k[name] = true
+	}
 	return k
 }
 
 func hasColumn(t Table, name string) bool {
+	name = canonicalName(t, name)
 	for _, m := range t.Methods() {
 		if contains(m.Columns(), name) {
 			return true
@@ -1189,6 +1405,7 @@ func hasColumn(t Table, name string) bool {
 
 // accepts reports whether any method takes the parameter.
 func accepts(t Table, name string) bool {
+	name = canonicalName(t, name)
 	for _, m := range t.Methods() {
 		for _, p := range m.Params() {
 			if p.Name() == name {

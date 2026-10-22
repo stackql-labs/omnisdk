@@ -59,3 +59,24 @@ func TestStackqlExtensionGoldenVectors(t *testing.T) {
 		}
 	}
 }
+
+func TestStackqlStringConstructor(t *testing.T) {
+	cat := sqliteCatalog(t)
+	function, ok := cat.Get("string")
+	if !ok {
+		t.Fatal("string constructor missing")
+	}
+	for _, value := range []any{`{"BucketName":"my-bucket"}`, "", nil, int64(10)} {
+		got, err := function.Call([]any{value})
+		if err != nil {
+			t.Fatal(err)
+		}
+		want := value
+		if _, number := value.(int64); number {
+			want = "10"
+		}
+		if got != want {
+			t.Fatalf("string(%v) = %v, want %v", value, got, want)
+		}
+	}
+}

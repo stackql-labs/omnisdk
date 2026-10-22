@@ -117,3 +117,22 @@ func TestPinnedIsStillChecked(t *testing.T) {
 		t.Error("a pin naming no method was honoured")
 	}
 }
+
+type partialMethod struct{ facade.Method }
+
+func (partialMethod) PartialUpdate() bool { return true }
+
+func TestUpdateSelectsDeclaredPartialUpdateOverReplacement(t *testing.T) {
+	patch := partialMethod{method{name: "patch", required: []string{"id"}, body: true}}
+	put := method{name: "put", required: []string{"id"}, body: true}
+	c := caps{"update": {put, patch}, "replace": {put}}
+	if got, err := analyze1(t, c, analyze.PermitAll(), "update", []string{"id"}, []string{"id", "labels"}, ""); err != nil || got != "patch" {
+		t.Fatalf("UPDATE selected %q: %v", got, err)
+	}
+	if got, err := analyze1(t, c, analyze.PermitAll(), "replace", []string{"id"}, []string{"id", "labels"}, ""); err != nil || got != "put" {
+		t.Fatalf("REPLACE selected %q: %v", got, err)
+	}
+	if got, err := analyze1(t, c, analyze.PermitAll(), "update", []string{"id"}, nil, "put"); err != nil || got != "put" {
+		t.Fatalf("explicit pin selected %q: %v", got, err)
+	}
+}
