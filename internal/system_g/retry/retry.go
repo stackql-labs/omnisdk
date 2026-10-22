@@ -11,6 +11,7 @@ package retry
 
 import (
 	"context"
+	"errors"
 	"math/rand/v2"
 	"sync"
 	"time"
@@ -45,6 +46,7 @@ type Governor interface {
 type statusClassifier struct{ transient map[int]bool }
 
 // NewStatusClassifier treats a transport error, or any of the given statuses, as transient.
+// Cancellation and exceeded deadlines are terminal: retrying must not defeat the timeout.
 func NewStatusClassifier(statuses ...int) Classifier {
 	m := make(map[int]bool, len(statuses))
 	for _, s := range statuses {
@@ -54,6 +56,9 @@ func NewStatusClassifier(statuses ...int) Classifier {
 }
 
 func (c statusClassifier) Transient(a facade.Attempt) bool {
+	if errors.Is(a.Err, context.DeadlineExceeded) || errors.Is(a.Err, context.Canceled) {
+		return false
+	}
 	if a.Err != nil {
 		return true // a transport error never produced a status — assume transient
 	}

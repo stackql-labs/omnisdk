@@ -19,7 +19,8 @@ func TestDefaultTransientClassification(t *testing.T) {
 		{facade.Attempt{Status: 500}, false}, // bare 500 = likely a bug, not backpressure
 		{facade.Attempt{Status: 404}, false},
 		{facade.Attempt{Status: 200}, false},
-		{facade.Attempt{Err: context.DeadlineExceeded}, true}, // transport error
+		{facade.Attempt{Err: context.DeadlineExceeded}, false},
+		{facade.Attempt{Err: context.Canceled}, false},
 	}
 	for _, tc := range cases {
 		if got := c.Transient(tc.a); got != tc.want {

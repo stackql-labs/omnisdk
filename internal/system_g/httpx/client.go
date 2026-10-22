@@ -5,6 +5,9 @@ import (
 	"crypto/tls"
 	"net/http"
 	"sync"
+	"time"
+
+	"github.com/stackql-labs/omnisdk/internal/system_g/requestpolicy"
 )
 
 // The HTTP client is a RUN policy, carried on ctx alongside retry, admission and the result budget —
@@ -13,6 +16,22 @@ import (
 // otherwise care about.
 
 type clientKey struct{}
+
+// DefaultRequestTimeout bounds a request, including reading its response body.
+const DefaultRequestTimeout = requestpolicy.DefaultTimeout
+
+// WithRequestTimeout sets the default deadline for each HTTP exchange, including
+// reading its body. An explicit client timeout takes precedence.
+func WithRequestTimeout(ctx context.Context, timeout time.Duration) context.Context {
+	return requestpolicy.WithTimeout(ctx, timeout)
+}
+
+func requestContext(ctx context.Context, client *http.Client) (context.Context, context.CancelFunc) {
+	if client.Timeout > 0 {
+		ctx = requestpolicy.WithTimeout(ctx, client.Timeout)
+	}
+	return requestpolicy.Context(ctx)
+}
 
 // WithClient carries the client every exchange in this run should send with.
 func WithClient(ctx context.Context, c *http.Client) context.Context {

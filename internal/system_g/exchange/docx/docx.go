@@ -32,6 +32,7 @@ import (
 	"github.com/stackql-labs/omnisdk/internal/system_g/httpx"
 	"github.com/stackql-labs/omnisdk/internal/system_g/plan"
 	"github.com/stackql-labs/omnisdk/internal/system_g/record"
+	"github.com/stackql-labs/omnisdk/internal/system_g/requestpolicy"
 	"github.com/stackql-labs/omnisdk/internal/system_g/transform"
 	"github.com/stackql-labs/omnisdk/internal/system_g/value"
 	"github.com/stackql-labs/omnisdk/pkg/docparse/aot"
@@ -44,6 +45,7 @@ import (
 type Option func(*options)
 
 type options struct {
+	provider string
 	baseURL  string
 	creds    awsv4.Credentials
 	signer   facade.Transform
@@ -91,6 +93,11 @@ type options struct {
 	programType      string
 	programBody      string
 	overrideResponse bool
+}
+
+// WithProvider scopes resource and authentication requests to this provider's policy.
+func WithProvider(name string) Option {
+	return func(o *options) { o.provider = name }
 }
 
 // MetadataKey is where a response's own report about itself sits within the response document:
@@ -698,9 +705,9 @@ func compile(ex aot.AOTExchange, inputs map[string]any, reg dsl.Registry, o opti
 		// would emit one row of bare inputs, which reads as "one instance with no fields".
 	}, bind.NewInnerFlatten())
 	if authSpec != nil {
-		return compiled{spec: spec, auth: authSpec, assertion: assertion, authInputs: authInputs}, nil
+		return compiled{spec: spec, auth: providerSpec{ExchangeSpec: authSpec, provider: o.provider}, assertion: assertion, authInputs: authInputs, provider: o.provider}, nil
 	}
-	return compiled{spec: spec}, nil
+	return compiled{spec: spec, provider: o.provider}, nil
 }
 
 // continuation drives a document's pagination: a next URL (a Link header, or a body property such as
@@ -712,6 +719,11 @@ func continuation(p aot.Pagination) (httpx.Continuation, bool) {
 	}
 	reqKey, reqLoc := p.RequestToken()
 	respKey, respLoc := p.ResponseToken()
+	if p.Algorithm() == "page_number" {
+		terminator, _ := p.ResponseTerminator()
+		return httpx.Continuation{Kind: httpx.ContPageNumber, NextTokenPath: respKey,
+			TerminatorPath: terminator, TokenParam: reqKey, TokenInBody: strings.EqualFold(reqLoc, "body")}, true
+	}
 	switch {
 	case strings.EqualFold(respLoc, "header"):
 		return httpx.Continuation{Kind: httpx.ContLink, LinkHeader: respKey}, true
@@ -721,7 +733,7 @@ func continuation(p aot.Pagination) (httpx.Continuation, bool) {
 		return httpx.Continuation{Kind: httpx.ContFollow, NextTokenPath: respKey}, true
 	}
 	return httpx.Continuation{Kind: httpx.ContPaginate, NextTokenPath: respKey, TokenParam: reqKey,
-		TokenInBody: strings.EqualFold(reqLoc, "body")}, true
+		TokenEncoding: p.RequestTokenEncoding(), TokenInBody: strings.EqualFold(reqLoc, "body")}, true
 }
 
 // tokenDecoder reads a page's continuation token out of an XML body; JSON needs none.
@@ -759,6 +771,7 @@ func (o clientOp) Open(ctx context.Context) facade.Records {
 // compiled carries an exchange plus the auth exchange it depends on, so PlanFor can wire both into
 // one plan. A token exchange is part of the plan, not of the request.
 type compiled struct {
+	provider  string
 	spec      plan.ExchangeSpec
 	auth      plan.ExchangeSpec
 	assertion string
@@ -767,12 +780,32 @@ type compiled struct {
 	authInputs map[string]any
 }
 
-func (c compiled) Name() string                              { return c.spec.Name() }
-func (c compiled) In() []string                              { return c.spec.In() }
-func (c compiled) Out() []string                             { return c.spec.Out() }
-func (c compiled) Make(bound map[string]any) facade.Operator { return c.spec.Make(bound) }
-func (c compiled) Flatten() facade.Transform                 { return c.spec.Flatten() }
-func (c compiled) Inbound() facade.Transform                 { return c.spec.Inbound() }
+func (c compiled) Name() string  { return c.spec.Name() }
+func (c compiled) In() []string  { return c.spec.In() }
+func (c compiled) Out() []string { return c.spec.Out() }
+func (c compiled) Make(bound map[string]any) facade.Operator {
+	return providerOp{op: c.spec.Make(bound), provider: c.provider}
+}
+func (c compiled) Flatten() facade.Transform { return c.spec.Flatten() }
+func (c compiled) Inbound() facade.Transform { return c.spec.Inbound() }
+
+type providerSpec struct {
+	plan.ExchangeSpec
+	provider string
+}
+
+func (s providerSpec) Make(bound map[string]any) facade.Operator {
+	return providerOp{op: s.ExchangeSpec.Make(bound), provider: s.provider}
+}
+
+type providerOp struct {
+	op       facade.Operator
+	provider string
+}
+
+func (o providerOp) Open(ctx context.Context) facade.Records {
+	return o.op.Open(requestpolicy.ForProvider(ctx, o.provider))
+}
 
 // dropKeys removes named attributes on the way out.
 type dropKeys []string

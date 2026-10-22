@@ -53,6 +53,7 @@ import (
 	"github.com/stackql-labs/omnisdk/internal/system_g/grpcx"
 	"github.com/stackql-labs/omnisdk/internal/system_g/httpx"
 	"github.com/stackql-labs/omnisdk/internal/system_g/plan"
+	"github.com/stackql-labs/omnisdk/internal/system_g/requestpolicy"
 	"github.com/stackql-labs/omnisdk/internal/system_g/retry"
 	"github.com/stackql-labs/omnisdk/internal/system_g/schedule"
 	"github.com/stackql-labs/omnisdk/internal/system_g/secret"
@@ -232,6 +233,9 @@ type Args struct {
 	// one provider: a provider absent here authenticates from its document's defaults and the
 	// environment, never with another provider's entry.
 	AuthByProvider map[string]*Auth `json:"auth_by_provider,omitempty"`
+	// TuningByProvider overrides request settings for providers,
+	// keyed like AuthByProvider. Unset fields inherit Tuning and library defaults.
+	TuningByProvider map[string]ProviderTuning `json:"tuning_by_provider,omitempty"`
 	// cred is the entry for the provider being resolved, set by withCredential; authOf reads it.
 	cred *Auth
 	// managed is the converging run a graph is planned for, nil for a query.
@@ -334,6 +338,11 @@ type Tuning struct {
 	RetryRate   float64
 	Limit       int
 	Timeout     time.Duration
+	// RequestTimeout bounds each outbound request, including response body
+	// reads. Zero uses DefaultRequestTimeout; negative disables it.
+	// An explicit service client timeout takes precedence;
+	// the parent context and Timeout still bound the whole run.
+	RequestTimeout time.Duration
 	// RowsAhead is how many rows each stage may produce before its reader takes them, and PagesAhead
 	// how many responses a request may fetch ahead. They bound memory by the reader's pace rather than
 	// the result's size. Zero is the default (1024 rows, 2 pages); negative is unbounded, which never
@@ -1044,7 +1053,7 @@ func buildPlans(method string, args Args, seen map[string]bool) ([]plan.Plan, er
 		if err != nil {
 			return nil, err
 		}
-		return []plan.Plan{pl}, nil
+		return []plan.Plan{providerPlan{Plan: pl, provider: def.provider}}, nil
 	}
 	seen[method] = true
 	defer delete(seen, method)
@@ -1391,7 +1400,7 @@ func providerOptions(args Args, p aot.Provider) ([]docx.Option, error) {
 	if err != nil {
 		return nil, err
 	}
-	opts = append(append(base, opts...), docx.WithProviderSecurity(sec))
+	opts = append(append(base, opts...), docx.WithProviderSecurity(sec), docx.WithProvider(p.Name()))
 	if sec.Scheme() == aot.SchemeServiceAccount && len(cfg.Scopes) > 0 {
 		opts = append(opts, docx.WithGoogleScopes(cfg.Scopes))
 	}
@@ -1732,6 +1741,8 @@ func (c *cannedPlan) decorate(parent context.Context) (context.Context, context.
 	if c.args.Tuning.Timeout > 0 {
 		ctx, timeoutCancel = context.WithTimeout(parent, c.args.Tuning.Timeout)
 	}
+	ctx = httpx.WithRequestTimeout(ctx, c.args.Tuning.RequestTimeout)
+	ctx = requestpolicy.WithPolicy(ctx, newProviderPolicies(c.args))
 	// The HTTP client is a run policy like the rest: set once here, obeyed by every exchange, so a
 	// document-compiled plan and a hand-authored one behave identically.
 	if c.args.InsecureSkipTLSVerify {

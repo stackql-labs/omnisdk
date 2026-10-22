@@ -127,6 +127,29 @@ A method's **response schema carries its own input params as columns**, so signa
 
 Tuning (any subcommand): `--parallelism` (fan-out concurrency), `--max-per-host`, `--retry-tries`, `--retry-rate`, `--limit` (stop cleanly after N output records, 0 = unlimited; a GLOBAL cap even across the multi-provider audit's disjoint DAGs).
 
+Request settings resolve from `Args.TuningByProvider` to global `Args.Tuning`,
+then library defaults. Provider keys accept `google` or `stackql_unstable_google`;
+the namespaced entry wins if both are present. Provider overrides cover
+`RequestTimeout`, `RetryTries`, `RetryRate`, and `MaxPerHost`. Zero fields inherit.
+Whole-query deadlines, row limits, buffering, and total parallelism remain global.
+
+`RequestTimeout` defaults to **30 seconds**, including HTTP response body reads
+and gRPC response consumption. A negative duration explicitly disables it.
+Each pagination request gets a fresh deadline. Deadline and cancellation errors
+are terminal under the default retry policy, so a stalled request finishes before
+the 120-second process guard. Parent/query deadlines and explicit HTTP client
+timeouts still apply. An explicitly longer timeout can exceed the process guard.
+
+```go
+args := omnisdk.Args{
+    Tuning: omnisdk.Tuning{RequestTimeout: 30 * time.Second},
+    TuningByProvider: map[string]omnisdk.ProviderTuning{
+        "google": {RequestTimeout: 60 * time.Second, RetryTries: 2},
+        "aws":    {MaxPerHost: 4}, // inherits the global timeout
+    },
+}
+```
+
 > `--limit` is a budget, **not a sample**: it has no fairness across legs, so any value below the full result set biases toward whichever provider emits first. On a real org-wide run, `"tuning":{"Limit":25}` returned 24 GCP + 1 Azure rows and **zero** AWS — the AWS leg fans out three detail calls per bucket before its first row, and the budget was gone. To bound a multi-cloud look, run the legs separately with their own limits.
 Credentials resolve direct flag → env var → file; env vars are never required. Scope (e.g. `--project`) is **required and never inferred** — no env or key-embedded fallback.
 

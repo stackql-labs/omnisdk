@@ -61,11 +61,8 @@ type document struct {
 	// Config is the document-wide stackql configuration; its pagination applies to every method
 	// that states none of its own.
 	Config struct {
-		Pagination struct {
-			RequestToken  tokenSpec `yaml:"requestToken"`
-			ResponseToken tokenSpec `yaml:"responseToken"`
-		} `yaml:"pagination"`
-		QueryParamPushdown *pushdownSpec `yaml:"queryParamPushdown"`
+		Pagination         paginationSpec `yaml:"pagination"`
+		QueryParamPushdown *pushdownSpec  `yaml:"queryParamPushdown"`
 	} `yaml:"x-stackQL-config"`
 	// A path item holds verbs alongside non-operation keys (an OpenAPI path-level `parameters`
 	// list, vendor extensions), so verbs are decoded on demand rather than assumed.
@@ -108,7 +105,8 @@ type resource struct {
 	Methods  map[string]method `yaml:"methods"`
 	SQLVerbs map[string][]ref  `yaml:"sqlVerbs"`
 	Config   struct {
-		QueryParamPushdown *pushdownSpec `yaml:"queryParamPushdown"`
+		Pagination         paginationSpec `yaml:"pagination"`
+		QueryParamPushdown *pushdownSpec  `yaml:"queryParamPushdown"`
 	} `yaml:"config"`
 }
 
@@ -125,11 +123,8 @@ type method struct {
 		QueryParamTranspose struct {
 			Algorithm string `yaml:"algorithm"`
 		} `yaml:"queryParamTranspose"`
-		QueryParamPushdown *pushdownSpec `yaml:"queryParamPushdown"`
-		Pagination         struct {
-			RequestToken  tokenSpec `yaml:"requestToken"`
-			ResponseToken tokenSpec `yaml:"responseToken"`
-		} `yaml:"pagination"`
+		QueryParamPushdown *pushdownSpec  `yaml:"queryParamPushdown"`
+		Pagination         paginationSpec `yaml:"pagination"`
 	} `yaml:"config"`
 	Request struct {
 		MediaType string `yaml:"mediaType"`
@@ -168,6 +163,14 @@ type transformSpec struct {
 type tokenSpec struct {
 	Key      string `yaml:"key"`
 	Location string `yaml:"location"`
+	Encoding string `yaml:"encoding"`
+}
+
+type paginationSpec struct {
+	Algorithm          string    `yaml:"algorithm"`
+	ResponseTerminator tokenSpec `yaml:"responseTerminator"`
+	RequestToken       tokenSpec `yaml:"requestToken"`
+	ResponseToken      tokenSpec `yaml:"responseToken"`
 }
 
 type pathOp struct {
@@ -301,6 +304,9 @@ func (d *document) resolve(name, mName string, withBeta bool) (aot.AOTExchange, 
 		return nil, fmt.Errorf("stackqldoc: resource %q method %q: %w", name, mName, err)
 	}
 	op.Parameters = params
+	if p := m.Config.Pagination; p.Algorithm == "" && p.RequestToken.Key == "" && p.ResponseToken.Key == "" {
+		m.Config.Pagination = res.Config.Pagination
+	}
 	ex := d.build(mName, httpVerb, path, op, m)
 	// The nearest declaration wins: the method's, else its resource's, else the document's.
 	for _, spec := range []*pushdownSpec{m.Config.QueryParamPushdown, res.Config.QueryParamPushdown, d.Config.QueryParamPushdown} {
@@ -508,7 +514,8 @@ func (d *document) build(name, verb, path string, op pathOp, m method) aot.AOTEx
 }
 
 // pagination is how a method's results continue past the first page, as the document states it:
-// the method's own declaration; else the document's; else Microsoft's x-ms-pageable next link; else
+// the method's own declaration (or its resource's); else the document's; else Microsoft's
+// x-ms-pageable next link; else
 // the pageToken / nextPageToken pair a list method visibly declares (Google's), or AWS's Marker /
 // NextToken. Where the document states nothing, any-sdk's defaults apply, by provider name as any-sdk
 // applies them (any-sdk public/providerinvokers/anysdkhttp/invoker.go, inferNextPageResponseElement
@@ -516,10 +523,10 @@ func (d *document) build(name, verb, path string, op pathOp, m method) aot.AOTEx
 // sends a body nextPageToken back as the pageToken query parameter. A reply without the token is the
 // last page, so a method that does not page costs nothing.
 func (d *document) pagination(m method, op pathOp, schema aot.Schema, verb string) pagination {
-	if p := (pagination{req: m.Config.Pagination.RequestToken, resp: m.Config.Pagination.ResponseToken}); p.Declared() {
+	if p := (pagination{req: m.Config.Pagination.RequestToken, resp: m.Config.Pagination.ResponseToken, algorithm: m.Config.Pagination.Algorithm, terminator: m.Config.Pagination.ResponseTerminator}); p.Declared() {
 		return p
 	}
-	if p := (pagination{req: d.Config.Pagination.RequestToken, resp: d.Config.Pagination.ResponseToken}); p.Declared() {
+	if p := (pagination{req: d.Config.Pagination.RequestToken, resp: d.Config.Pagination.ResponseToken, algorithm: d.Config.Pagination.Algorithm, terminator: d.Config.Pagination.ResponseTerminator}); p.Declared() {
 		return p
 	}
 	if op.MsPageable != nil && op.MsPageable.NextLinkName != nil && *op.MsPageable.NextLinkName != "" {
@@ -859,11 +866,21 @@ func transformDecl(t transformSpec) transformDeclType {
 func (t transformDeclType) Type() string { return t.typ }
 func (t transformDeclType) Body() string { return t.body }
 
-type pagination struct{ req, resp tokenSpec }
+type pagination struct {
+	req, resp  tokenSpec
+	algorithm  string
+	terminator tokenSpec
+}
+
+func (p pagination) Algorithm() string { return p.algorithm }
+func (p pagination) ResponseTerminator() (string, string) {
+	return p.terminator.Key, p.terminator.Location
+}
 
 func (p pagination) RequestToken() (string, string)  { return p.req.Key, p.req.Location }
+func (p pagination) RequestTokenEncoding() string    { return p.req.Encoding }
 func (p pagination) ResponseToken() (string, string) { return p.resp.Key, p.resp.Location }
-func (p pagination) Declared() bool                  { return p.req.Key != "" || p.resp.Key != "" }
+func (p pagination) Declared() bool                  { return p.algorithm != "" || p.req.Key != "" || p.resp.Key != "" }
 
 // pushdownSpec is a queryParamPushdown declaration: the server-side query options a call offers, as
 // any-sdk reads them.

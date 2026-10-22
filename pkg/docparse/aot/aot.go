@@ -251,8 +251,14 @@ type Transform interface {
 // Pagination is how the document says pages continue. Token keys are paths into the TRANSFORMED
 // body, and locations say whether a token travels in the body or the query.
 type Pagination interface {
+	// Algorithm distinguishes a current page number from an opaque next token.
+	Algorithm() string
+	// ResponseTerminator is the page-count key and location for page_number.
+	ResponseTerminator() (key, location string)
 	// RequestToken is the key and location the next-page token is SENT as.
 	RequestToken() (key, location string)
+	// RequestTokenEncoding is "none" when a query token must be sent verbatim.
+	RequestTokenEncoding() string
 	// ResponseToken is the key and location the next-page token is READ from.
 	ResponseToken() (key, location string)
 	// Declared reports whether the document specifies pagination at all.

@@ -1,33 +1,61 @@
 # API changes
 
-Migrating from `v0.1.5-alpha03` to the current tree.
+Migrating from `v0.1.5-beta06` to the current tree.
 
 ## Compile-time breaks
 
-None.
+Custom implementations of `pkg/docparse/aot.Pagination` must implement three additional methods:
+
+| Method | Return to retain the previous token-pagination behaviour |
+|--------|---------------------------------------------------------|
+| `Algorithm() string` | `""` |
+| `ResponseTerminator() (key, location string)` | `"", ""` |
+| `RequestTokenEncoding() string` | `""` (normal query escaping) |
+
+The supplied StackQL document parser implements these methods. Callers using that parser need no
+source changes. Keyed `omnisdk.Args` and `omnisdk.Tuning` literals remain compatible; positional
+`Tuning` literals must account for the added field or switch to keyed fields.
 
 ## Additions
 
-No caller change needed.
+- **Request deadlines:** `omnisdk.Tuning.RequestTimeout` bounds each outbound request, including
+  HTTP response body reads and gRPC response consumption. `omnisdk.DefaultRequestTimeout` is
+  **30 seconds**. Zero selects the fallback; a negative duration explicitly disables it.
+- **Provider overrides:** `omnisdk.Args.TuningByProvider` (`tuning_by_provider` in JSON) maps provider
+  names to `omnisdk.ProviderTuning`. Its fields are `RequestTimeout`, `RetryTries`, `RetryRate`, and
+  `MaxPerHost`; zero fields inherit the global `Args.Tuning` value, then library defaults. Keys
+  accept `google` or `stackql_unstable_google`; the namespaced entry wins when both exist.
+  Overrides apply to provider authentication exchanges as well as resource calls, in document-backed
+  and built-in plans. Retry and per-host admission state is shared across a provider's exchanges
+  within a run. Retry and per-host concurrency settings govern HTTP exchanges.
 
-- **Value encoding:** package `pkg/encode` — `Text`, `JSON`, `AsInt64`, `NonFinite` — the one
-  rendering of a cell: never exponent form, a `json.Number` verbatim, keys sorted, no HTML escaping,
-  NaN and infinities as null. A host rendering rows itself calls `Text` and matches every sink.
-- **Output streams:** package `pkg/stream` — `NewJSONL`, `NewDelimited` (csv, tsv, any single-rune
-  delimiter, RFC 4180 quoting), `NewOTelLogs` (OTLP/JSON, int64-fitting numbers as `intValue`),
-  `NewTable`; `Options.BatchSize` and `Options.FlushInterval`; `Copy(w, rows)`, which writes what was
-  produced before returning a failure. `omnisdk.Rows` is a `stream.Source`.
+Whole-query `Timeout`, `Limit`, `Parallelism`, and buffering settings remain global. Duration values
+are Go `time.Duration` values; numeric JSON durations are in nanoseconds.
+
+```go
+args := omnisdk.Args{
+    Tuning: omnisdk.Tuning{RequestTimeout: 30 * time.Second},
+    TuningByProvider: map[string]omnisdk.ProviderTuning{
+        "google": {RequestTimeout: 60 * time.Second, RetryTries: 2},
+        "aws":    {MaxPerHost: 4}, // inherits the global timeout
+    },
+}
+```
 
 ## Behaviour changes
 
 | Change | Who is affected |
 |--------|-----------------|
-| A JSON number in a response is kept as the text the provider sent (`json.Number`), not a `float64`: a 64-bit id — an AWS account, a GCP project number — is exact, and `12000000` is not `1.2e+07`. | A caller type-asserting a row value to `float64`: assert `json.Number`, or render through `encode.Text`. |
-| An integral provider number is an SQLite `integer`, as SQLite's own JSON functions read one; it was a `real`. | Queries on `typeof(x)`, or on its text: `5`, where it was `5.0`. |
-| Every output renders values through `pkg/encode`: rows from the engine's JSONL encoder, a document value's bytes, a map or array as SQL text (SQLite and Postgres), a template's `toJson`. `<`, `>` and `&` are no longer escaped, and NaN and infinities are null rather than an error. | Anyone matching `<`-style escapes, or relying on a NaN failing the row. |
+| Requests without an explicit timeout now have a 30-second deadline instead of being unbounded. Each retry or pagination request gets a fresh deadline. Parent/query deadlines still bound the whole run, and explicit HTTP client timeouts retain precedence. | Callers with slow synchronous APIs: set a longer global or provider `RequestTimeout`. Use a negative duration to opt out explicitly. |
+| Cancellation and deadline errors are terminal under the default retry classification. Other configured transient transport errors and statuses remain retryable. | Callers relying on retries after a timed-out request. A stalled default request now returns after 30 seconds rather than repeating until a process guard terminates it. |
+| `page_number` pagination sends page 1, then advances the reported current page until it reaches `responseTerminator`. A missing or invalid page/count stops pagination; a non-advancing page before the terminator returns an error. | Documents declaring `algorithm: page_number`: the current page is no longer reused as an opaque next-page token, which could loop on page 1. |
+| Pagination configuration is resolved from method, then resource, then document. | Resources declaring `config.pagination`, including Link-header pagination and differently named continuation headers: their declarations are now honoured. |
+| A query pagination token with `requestToken.encoding: none` is sent verbatim. Other query parameters retain normal escaping. | APIs issuing tokens such as padded base64 cursors. With no encoding override, normal escaping is unchanged. |
 
 ## CLI
 
-| `v0.1.5-alpha03` | Now |
-|------------------|-----|
-| Rows, `doc-lint` findings and discovery output written by `encoding/json` | Written by `pkg/encode`: nothing HTML-escaped, no exponent form, 64-bit numbers exact. |
+No new `omnicli` flags. CLI requests inherit the finite request timeout and pagination fixes above.
+The existing retry flags do not make cancellation or deadline errors retryable under the default
+classification.
+
+Value encoding and output-stream APIs already present in `v0.1.5-beta06` are unchanged by this work.

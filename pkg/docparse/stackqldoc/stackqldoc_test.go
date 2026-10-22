@@ -21,6 +21,56 @@ func load(t *testing.T) stackqldoc.Doc {
 	return d
 }
 
+func TestPaginationDeclarationPrecedence(t *testing.T) {
+	const doc = `openapi: 3.0.0
+servers: [{url: 'https://example.com'}]
+x-stackQL-config:
+  pagination: {responseToken: {key: DocumentLink, location: header}}
+paths:
+  /items:
+    get:
+      responses: {}
+components:
+  x-stackQL-resources:
+    items:
+      RESOURCE_CONFIG
+      methods:
+        list:
+          METHOD_CONFIG
+          operation: {$ref: '#/paths/~1items/get'}
+      sqlVerbs:
+        select: [{$ref: '#/components/x-stackQL-resources/items/methods/list'}]
+`
+	for _, tc := range []struct{ resource, method, want string }{
+		{"", "", "DocumentLink"},
+		{"ResourceLink", "", "ResourceLink"},
+		{"ResourceLink", "MethodLink", "MethodLink"},
+	} {
+		t.Run(tc.want, func(t *testing.T) {
+			config := func(key string) string {
+				if key == "" {
+					return ""
+				}
+				return "config: {pagination: {responseToken: {key: " + key + ", location: header}}}"
+			}
+			data := strings.ReplaceAll(doc, "RESOURCE_CONFIG", config(tc.resource))
+			data = strings.ReplaceAll(data, "METHOD_CONFIG", config(tc.method))
+			d, err := stackqldoc.Parse([]byte(data))
+			if err != nil {
+				t.Fatal(err)
+			}
+			ex, err := d.Select("items")
+			if err != nil {
+				t.Fatal(err)
+			}
+			key, loc := ex.Response().Pagination().ResponseToken()
+			if key != tc.want || loc != "header" {
+				t.Fatalf("response token=%s/%s, want %s/header", key, loc, tc.want)
+			}
+		})
+	}
+}
+
 // The whole point: document bytes in, a runnable exchange out. Everything asserted here was RESOLVED
 // from the document by following its own $refs — none of it is knowledge this package holds about EC2.
 func TestSelectInstancesResolvesFromDocument(t *testing.T) {
