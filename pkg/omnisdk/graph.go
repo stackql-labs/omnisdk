@@ -480,6 +480,7 @@ func deliverOn(nodes []Node, wirings []Wiring, known map[string]bool) ([]Wiring,
 }
 
 type graph struct {
+	empty       bool
 	nodes       []Node
 	wirings     []Wiring
 	overrides   []Override
@@ -491,6 +492,8 @@ type graph struct {
 	branches    []Branch
 	gates       []Gate
 }
+
+func (g graph) Empty() bool { return g.empty }
 
 func (g graph) Outputs() []query.Output { return g.outputs }
 
@@ -545,6 +548,15 @@ func NewGraphQuery(dir string, g Graph, args Args) (Plan, error) {
 	if err != nil {
 		return nil, err
 	}
+	for alias := range args.ReadHintsByAlias {
+		if !slices.ContainsFunc(g.Nodes(), func(n Node) bool { return n.Alias() == alias }) {
+			return nil, fmt.Errorf("omnisdk: read hints name unknown alias %q", alias)
+		}
+	}
+	if empty, ok := g.(facade.EmptyRelation); ok && empty.Empty() {
+		return emptyPlan{}, nil
+	}
+	remoteOffset := 0
 	inputs := docInputs(args)
 	wal, err := openJournal(g, args)
 	if err != nil {
@@ -811,7 +823,10 @@ func NewGraphQuery(dir string, g Graph, args Args) (Plan, error) {
 					}
 				}
 			}
-			if qp := pushdown(ex, g, alias, needed, args.Tuning.Limit); len(qp) > 0 {
+			if qp, offset := pushdown(ex, g, alias, needed, args.Tuning.Limit, args.ReadHintsByAlias[alias]); len(qp) > 0 {
+				if offset > 0 {
+					remoteOffset = offset
+				}
 				slots := map[string]string{}
 				for i, wire := range slices.Sorted(maps.Keys(qp)) {
 					slot := fmt.Sprintf("pushdown_%d", i)
@@ -910,6 +925,14 @@ func NewGraphQuery(dir string, g Graph, args Args) (Plan, error) {
 				return nil, fmt.Errorf("omnisdk: %s (%s): %w", alias, addr, err)
 			}
 			spec = plan.WithProject(spec, t)
+		}
+		// Reject source-only WHERE rows before they feed dependent requests.
+		// Optional sides retain final WHERE evaluation: filtering them here could
+		// fabricate an unmatched left-join row that the original WHERE accepts.
+		if n.Verb() == "select" && !n.Outer() {
+			if filters, _ := ownFilters(g, alias); len(filters) > 0 {
+				spec = matched{ExchangeSpec: spec, alias: alias, on: filters, fns: fns}
+			}
 		}
 		// Nothing wired in means the same inputs for every upstream row: run once, replay the rest.
 		switch consumer := requestWired(g, alias); {
@@ -1011,7 +1034,7 @@ func NewGraphQuery(dir string, g Graph, args Args) (Plan, error) {
 		}
 		return nil, fmt.Errorf("omnisdk: %s", strings.TrimPrefix(msg, "plan: "))
 	}
-	return &cannedPlan{plan: pl, args: args}, nil
+	return &cannedPlan{plan: pl, args: args, remoteOffset: remoteOffset}, nil
 }
 
 // cyclicArrival reports whether every value arriving at alias as name comes from alias's own cycle:

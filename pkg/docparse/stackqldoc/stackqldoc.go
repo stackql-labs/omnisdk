@@ -11,6 +11,7 @@
 package stackqldoc
 
 import (
+	"encoding/json"
 	"fmt"
 	"slices"
 	"sort"
@@ -20,6 +21,7 @@ import (
 	"gopkg.in/yaml.v3"
 
 	"github.com/stackql-labs/omnisdk/pkg/docparse/aot"
+	"github.com/stackql-labs/omnisdk/pkg/namespace"
 )
 
 // Doc is a parsed provider document.
@@ -46,6 +48,9 @@ func Parse(b []byte) (Doc, error) {
 		return nil, fmt.Errorf("stackqldoc: parse: %w", err)
 	}
 	if len(d.Components.Resources) == 0 {
+		d.Components.Resources = d.ResourcesRoot
+	}
+	if len(d.Components.Resources) == 0 {
 		return nil, fmt.Errorf("stackqldoc: no x-stackQL-resources in document")
 	}
 	return &d, nil
@@ -54,18 +59,23 @@ func Parse(b []byte) (Doc, error) {
 // ---- document shape (only the parts an exchange needs) ----------------------
 
 type document struct {
+	source        string
+	resolver      documentResolver
+	ResourcesRoot map[string]resource `yaml:"resources"`
+	ServiceDoc    ref                 `yaml:"serviceDoc"`
 	// providerName is the provider the document belongs to, set by the catalog that read it. It
 	// matters only where the document says nothing: see pagination.
 	providerName string
+	snakeAliases bool
 	Servers      []server `yaml:"servers"`
 	// Config is the document-wide stackql configuration; its pagination applies to every method
 	// that states none of its own.
 	Config struct {
-		Pagination struct {
-			RequestToken  tokenSpec `yaml:"requestToken"`
-			ResponseToken tokenSpec `yaml:"responseToken"`
-		} `yaml:"pagination"`
-		QueryParamPushdown *pushdownSpec `yaml:"queryParamPushdown"`
+		Retry               *retrySpec     `yaml:"retry"`
+		RequestTranslate    algorithmSpec  `yaml:"requestTranslate"`
+		QueryParamTranspose algorithmSpec  `yaml:"queryParamTranspose"`
+		Pagination          paginationSpec `yaml:"pagination"`
+		QueryParamPushdown  *pushdownSpec  `yaml:"queryParamPushdown"`
 	} `yaml:"x-stackQL-config"`
 	// A path item holds verbs alongside non-operation keys (an OpenAPI path-level `parameters`
 	// list, vendor extensions), so verbs are decoded on demand rather than assumed.
@@ -108,7 +118,12 @@ type resource struct {
 	Methods  map[string]method `yaml:"methods"`
 	SQLVerbs map[string][]ref  `yaml:"sqlVerbs"`
 	Config   struct {
-		QueryParamPushdown *pushdownSpec `yaml:"queryParamPushdown"`
+		Retry               *retrySpec           `yaml:"retry"`
+		Views               map[string]*viewSpec `yaml:"views"`
+		RequestTranslate    algorithmSpec        `yaml:"requestTranslate"`
+		QueryParamTranspose algorithmSpec        `yaml:"queryParamTranspose"`
+		Pagination          paginationSpec       `yaml:"pagination"`
+		QueryParamPushdown  *pushdownSpec        `yaml:"queryParamPushdown"`
 	} `yaml:"config"`
 }
 
@@ -116,25 +131,27 @@ type ref struct {
 	Ref string `yaml:"$ref"`
 }
 
+type algorithmSpec struct {
+	Algorithm string `yaml:"algorithm"`
+}
+
 type method struct {
 	Operation ref `yaml:"operation"`
 	Config    struct {
-		RequestTranslate struct {
-			Algorithm string `yaml:"algorithm"`
-		} `yaml:"requestTranslate"`
-		QueryParamTranspose struct {
-			Algorithm string `yaml:"algorithm"`
-		} `yaml:"queryParamTranspose"`
-		QueryParamPushdown *pushdownSpec `yaml:"queryParamPushdown"`
-		Pagination         struct {
-			RequestToken  tokenSpec `yaml:"requestToken"`
-			ResponseToken tokenSpec `yaml:"responseToken"`
-		} `yaml:"pagination"`
+		Retry               *retrySpec     `yaml:"retry"`
+		RequestTranslate    algorithmSpec  `yaml:"requestTranslate"`
+		QueryParamTranspose algorithmSpec  `yaml:"queryParamTranspose"`
+		QueryParamPushdown  *pushdownSpec  `yaml:"queryParamPushdown"`
+		Pagination          paginationSpec `yaml:"pagination"`
 	} `yaml:"config"`
 	Request struct {
-		MediaType string `yaml:"mediaType"`
+		Default      string `yaml:"default"`
+		Base         string `yaml:"base"`
+		MediaType    string `yaml:"mediaType"`
+		NativeCasing string `yaml:"nativeCasing"`
 	} `yaml:"request"`
 	Response struct {
+		SchemaOverride    yaml.Node     `yaml:"schema_override"`
 		MediaType         string        `yaml:"mediaType"`
 		OverrideMediaType string        `yaml:"overrideMediaType"`
 		ObjectKey         string        `yaml:"objectKey"`
@@ -168,19 +185,30 @@ type transformSpec struct {
 type tokenSpec struct {
 	Key      string `yaml:"key"`
 	Location string `yaml:"location"`
+	Encoding string `yaml:"encoding"`
+}
+
+type paginationSpec struct {
+	Algorithm          string    `yaml:"algorithm"`
+	ResponseTerminator tokenSpec `yaml:"responseTerminator"`
+	RequestToken       tokenSpec `yaml:"requestToken"`
+	ResponseToken      tokenSpec `yaml:"responseToken"`
 }
 
 type pathOp struct {
-	OperationID string      `yaml:"operationId"`
-	Parameters  []pathParam `yaml:"parameters"`
+	GraphQL     *graphQLSpec `yaml:"x-stackQL-graphQL"`
+	OperationID string       `yaml:"operationId"`
+	Parameters  []pathParam  `yaml:"parameters"`
 	// MsPageable is Microsoft's pagination declaration: the body property holding the next page's URL.
 	MsPageable *struct {
 		NextLinkName *string `yaml:"nextLinkName"`
 	} `yaml:"x-ms-pageable"`
-	// RequestBody says the operation takes one, and how it is written. The fields are the caller's
-	// to supply, so only the media type is read.
+	// RequestBody declares the media type and schema used to validate caller-supplied fields.
 	RequestBody struct {
-		Content map[string]struct{} `yaml:"content"`
+		Required bool `yaml:"required"`
+		Content  map[string]struct {
+			Schema yaml.Node `yaml:"schema"`
+		} `yaml:"content"`
 	} `yaml:"requestBody"`
 	// Responses carry the declared response shape. Only the success response is read: an error
 	// response describes a failure, and projecting rows out of one would be reporting a fault as
@@ -203,8 +231,9 @@ type pathParam struct {
 	In       string `yaml:"in"`
 	Required bool   `yaml:"required"`
 	Schema   struct {
-		Type string `yaml:"type"`
-		Ref  string `yaml:"$ref"`
+		Default any    `yaml:"default"`
+		Type    string `yaml:"type"`
+		Ref     string `yaml:"$ref"`
 	} `yaml:"schema"`
 	// Ref points at a shared declaration under components/parameters, in place of the fields.
 	Ref string `yaml:"$ref"`
@@ -245,12 +274,16 @@ func (d *document) Verb(name, verb string) ([]aot.AOTExchange, error) {
 	if !ok {
 		return nil, fmt.Errorf("stackqldoc: no resource %q", name)
 	}
-	sel := res.SQLVerbs[verb]
+	sel, explicit := res.SQLVerbs[verb]
+	if !explicit {
+		for _, key := range defaultMethodKeys(verb) {
+			if _, exists := res.Methods[key]; exists {
+				sel = append(sel, ref{Ref: "#/methods/" + key})
+			}
+		}
+	}
 	if len(sel) == 0 {
 		return nil, fmt.Errorf("stackqldoc: resource %q declares no %s verb", name, verb)
-	}
-	if len(d.Servers) == 0 {
-		return nil, fmt.Errorf("stackqldoc: document declares no servers")
 	}
 	var out []aot.AOTExchange
 	var firstErr error
@@ -284,6 +317,17 @@ func (d *document) resolve(name, mName string, withBeta bool) (aot.AOTExchange, 
 	if !ok {
 		return nil, fmt.Errorf("stackqldoc: resource %q references unknown method %q", name, mName)
 	}
+	target, resolved, err := d.operationDocument(name, mName, m)
+	if err != nil {
+		return nil, err
+	}
+	if target != d {
+		return target.resolve(name, mName, withBeta)
+	}
+	m = resolved
+	if len(d.Servers) == 0 {
+		return nil, fmt.Errorf("stackqldoc: document declares no servers")
+	}
 	path, httpVerb, err := splitOperationRef(m.Operation.Ref)
 	if err != nil {
 		return nil, fmt.Errorf("stackqldoc: resource %q method %q: %w", name, mName, err)
@@ -301,7 +345,28 @@ func (d *document) resolve(name, mName string, withBeta bool) (aot.AOTExchange, 
 		return nil, fmt.Errorf("stackqldoc: resource %q method %q: %w", name, mName, err)
 	}
 	op.Parameters = params
+	if m.Config.RequestTranslate.Algorithm == "" {
+		m.Config.RequestTranslate = res.Config.RequestTranslate
+		if m.Config.RequestTranslate.Algorithm == "" {
+			m.Config.RequestTranslate = d.Config.RequestTranslate
+		}
+	}
+	if m.Config.QueryParamTranspose.Algorithm == "" {
+		m.Config.QueryParamTranspose = res.Config.QueryParamTranspose
+		if m.Config.QueryParamTranspose.Algorithm == "" {
+			m.Config.QueryParamTranspose = d.Config.QueryParamTranspose
+		}
+	}
+	if p := m.Config.Pagination; p.Algorithm == "" && p.RequestToken.Key == "" && p.ResponseToken.Key == "" {
+		m.Config.Pagination = res.Config.Pagination
+	}
 	ex := d.build(mName, httpVerb, path, op, m)
+	for _, retry := range []*retrySpec{m.Config.Retry, res.Config.Retry, d.Config.Retry} {
+		if retry != nil {
+			ex.(*aotExchange).retry = retry
+			break
+		}
+	}
 	// The nearest declaration wins: the method's, else its resource's, else the document's.
 	for _, spec := range []*pushdownSpec{m.Config.QueryParamPushdown, res.Config.QueryParamPushdown, d.Config.QueryParamPushdown} {
 		if spec != nil {
@@ -440,7 +505,49 @@ func (d *document) Methods(name string) ([]aot.Method, error) {
 	}
 	out := make([]aot.Method, 0, len(res.Methods))
 	for mName, m := range res.Methods {
-		out = append(out, methodInfo{name: mName, verb: verbOf[mName], opID: d.operationID(m)})
+		verb := verbOf[mName]
+		if verb == "" {
+			for _, candidate := range []string{"select", "insert", "delete"} {
+				if _, explicit := res.SQLVerbs[candidate]; !explicit && slices.Contains(defaultMethodKeys(candidate), mName) {
+					verb = candidate
+					break
+				}
+			}
+		}
+		info := methodInfo{name: mName, verb: verb, opID: d.operationID(m)}
+		if ex, err := d.resolve(name, mName, false); err == nil {
+			info.opID = ex.OperationID()
+			naming := namespace.NewNaming(m.Request.NativeCasing, d.snakeAliases && m.Request.NativeCasing != "")
+			var variables []string
+			if declared, ok := ex.Request().(aot.ServerBindings); ok {
+				variables = declared.ServerVariables()
+			}
+			var bodyRequired []string
+			for _, p := range ex.Request().Parameters() {
+				if p.Required() && !slices.Contains(variables, p.Name()) {
+					name := naming.Surface(p.Name())
+					if p.In() == aot.InBody {
+						bodyRequired = append(bodyRequired, "data__"+name)
+						continue
+					}
+					if !slices.Contains(info.required, name) {
+						info.required = append(info.required, name)
+					}
+				}
+			}
+			sort.Strings(info.required)
+			info.required = append(info.required, bodyRequired...)
+			for _, input := range append(variables, ex.Inputs()...) {
+				name := naming.Surface(input)
+				if !slices.Contains(info.required, name) {
+					info.required = append(info.required, name)
+				}
+			}
+		}
+		out = append(out, info)
+	}
+	if res.Config.Views["select"] != nil {
+		out = append(out, methodInfo{name: "__view__", verb: "select"})
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Name() < out[j].Name() })
 	return out, nil
@@ -464,7 +571,12 @@ func (d *document) operationID(m method) string {
 	return op.OperationID
 }
 
-type methodInfo struct{ name, verb, opID string }
+type methodInfo struct {
+	name, verb, opID string
+	required         []string
+}
+
+func (m methodInfo) RequiredParams() []string { return append([]string(nil), m.required...) }
 
 func (m methodInfo) Name() string        { return m.name }
 func (m methodInfo) SQLVerb() string     { return m.verb }
@@ -479,24 +591,94 @@ func (d *document) build(name, verb, path string, op pathOp, m method) aot.AOTEx
 	// drop_double_underscore_params says they are NOT query parameters: with a form request they are
 	// the body that names the action. Stripping the marker prefix recovers the real call.
 	route, params := splitPseudoParams(path)
-	schema := d.responseSchema(op, m.Response.OpenAPIDocKey)
+	if m.Config.RequestTranslate.Algorithm == "drop_double_underscore_params" {
+		params = nil
+	}
+	schema := d.responseSchemaAt(op, m.Response.OpenAPIDocKey, "", &m.Response.SchemaOverride)
+	var graph aot.GraphQL
+	var rowSchema aot.Schema
+	if m.Response.ObjectKey != "" {
+		rowSchema = d.responseSchemaAt(op, m.Response.OpenAPIDocKey, m.Response.ObjectKey, &m.Response.SchemaOverride)
+	}
+	if op.GraphQL != nil {
+		graph = graphQL{op.GraphQL}
+		selection := graph.Selection()
+		if selection == "" {
+			selection = m.Response.ObjectKey
+		}
+		rowSchema = d.responseSchemaAt(op, m.Response.OpenAPIDocKey, selection, &m.Response.SchemaOverride)
+	}
+	parameters := d.operationParams(op)
+	// A mock or private-endpoint override can replace the host while retaining
+	// declared server variables. They remain accepted scope bindings even when
+	// the rewritten URL no longer needs them.
+	variableNames := make([]string, 0, len(srv.Variables))
+	for name := range srv.Variables {
+		variableNames = append(variableNames, name)
+	}
+	sort.Strings(variableNames)
+	for _, name := range variableNames {
+		if !slices.ContainsFunc(parameters, func(p aot.Parameter) bool { return p.Name() == name }) {
+			parameters = append(parameters, parameter{p: pathParam{Name: name, In: aot.InPath}})
+		}
+	}
+	url := strings.TrimRight(serverURL(srv.URL), "/") + route
+	var bodySchema aot.Schema
+	var bodyTypes []string
+	for media := range op.RequestBody.Content {
+		bodyTypes = append(bodyTypes, media)
+	}
+	sort.Strings(bodyTypes)
+	for _, media := range bodyTypes {
+		node := op.RequestBody.Content[media].Schema
+		components := map[string]*yaml.Node{}
+		for name, value := range d.Components.Schemas {
+			v := value
+			components[name] = &v
+		}
+		bodySchema = newSchema(&node, components)
+		break
+	}
+	if bodySchema != nil {
+		base := map[string]any{}
+		_ = json.Unmarshal([]byte(m.Request.Base), &base)
+		var required []string
+		if shape, ok := bodySchema.(aot.RequiredSchema); ok && op.RequestBody.Required {
+			required = shape.RequiredProperties()
+		}
+		for _, name := range bodySchema.Properties() {
+			if !slices.ContainsFunc(parameters, func(p aot.Parameter) bool { return p.Name() == name && p.In() == aot.InBody }) {
+				property, _ := bodySchema.Property(name)
+				_, list := property.Items()
+				parameters = append(parameters, parameter{p: pathParam{Name: name, In: aot.InBody, Required: slices.Contains(required, name) && base[name] == nil}, list: list})
+			}
+		}
+	}
 
 	return &aotExchange{
-		name:   name,
-		sec:    d.security(),
-		inputs: serverVars(srv),
-		opID:   op.OperationID,
+		graphQL: graph,
+		name:    name,
+		sec:     d.security(),
+		inputs:  serverVars(srv),
+		opID:    op.OperationID,
 		req: request{
-			method:        strings.ToUpper(verb),
-			url:           strings.TrimRight(serverURL(srv.URL), "/") + route,
-			mediaType:     m.Request.MediaType,
-			params:        params,
-			parameters:    d.operationParams(op),
-			bodyMediaType: bodyMediaType(op),
-			translate:     m.Config.RequestTranslate.Algorithm,
-			transpose:     m.Config.QueryParamTranspose.Algorithm,
+			defaultBody:     m.Request.Default,
+			method:          strings.ToUpper(verb),
+			url:             url,
+			mediaType:       m.Request.MediaType,
+			params:          params,
+			parameters:      parameters,
+			baseBody:        m.Request.Base,
+			nativeCasing:    m.Request.NativeCasing,
+			snakeAliases:    d.snakeAliases,
+			serverVariables: variableNames,
+			bodySchema:      bodySchema,
+			bodyMediaType:   bodyMediaType(op),
+			translate:       m.Config.RequestTranslate.Algorithm,
+			transpose:       m.Config.QueryParamTranspose.Algorithm,
 		},
 		resp: response{
+			rowSchema:  rowSchema,
 			mediaType:  m.Response.MediaType,
 			override:   m.Response.OverrideMediaType,
 			objectKey:  m.Response.ObjectKey,
@@ -508,7 +690,8 @@ func (d *document) build(name, verb, path string, op pathOp, m method) aot.AOTEx
 }
 
 // pagination is how a method's results continue past the first page, as the document states it:
-// the method's own declaration; else the document's; else Microsoft's x-ms-pageable next link; else
+// the method's own declaration (or its resource's); else the document's; else Microsoft's
+// x-ms-pageable next link; else
 // the pageToken / nextPageToken pair a list method visibly declares (Google's), or AWS's Marker /
 // NextToken. Where the document states nothing, any-sdk's defaults apply, by provider name as any-sdk
 // applies them (any-sdk public/providerinvokers/anysdkhttp/invoker.go, inferNextPageResponseElement
@@ -516,10 +699,10 @@ func (d *document) build(name, verb, path string, op pathOp, m method) aot.AOTEx
 // sends a body nextPageToken back as the pageToken query parameter. A reply without the token is the
 // last page, so a method that does not page costs nothing.
 func (d *document) pagination(m method, op pathOp, schema aot.Schema, verb string) pagination {
-	if p := (pagination{req: m.Config.Pagination.RequestToken, resp: m.Config.Pagination.ResponseToken}); p.Declared() {
+	if p := (pagination{req: m.Config.Pagination.RequestToken, resp: m.Config.Pagination.ResponseToken, algorithm: m.Config.Pagination.Algorithm, terminator: m.Config.Pagination.ResponseTerminator}); p.Declared() {
 		return p
 	}
-	if p := (pagination{req: d.Config.Pagination.RequestToken, resp: d.Config.Pagination.ResponseToken}); p.Declared() {
+	if p := (pagination{req: d.Config.Pagination.RequestToken, resp: d.Config.Pagination.ResponseToken, algorithm: d.Config.Pagination.Algorithm, terminator: d.Config.Pagination.ResponseTerminator}); p.Declared() {
 		return p
 	}
 	if op.MsPageable != nil && op.MsPageable.NextLinkName != nil && *op.MsPageable.NextLinkName != "" {
@@ -573,10 +756,16 @@ func bodyMediaType(op pathOp) string {
 // other instructions, so this is what makes one runnable — and its absence is why a document naming
 // such a transform silently yields nothing.
 func (d *document) responseSchema(op pathOp, key string) aot.Schema {
+	return d.responseSchemaAt(op, key, "")
+}
+func (d *document) responseSchemaAt(op pathOp, key, selection string, overrides ...*yaml.Node) aot.Schema {
 	components := map[string]*yaml.Node{}
 	for name := range d.Components.Schemas {
 		node := d.Components.Schemas[name]
 		components[name] = &node
+	}
+	if len(overrides) > 0 && overrides[0] != nil && overrides[0].Kind != 0 {
+		return schemaAtSelection(overrides[0], components, selection)
 	}
 	// The method names the response it reads; failing that, the first success response. A range
 	// (2XX) counts, as OpenAPI allows.
@@ -604,7 +793,7 @@ func (d *document) responseSchema(op pathOp, key string) aot.Schema {
 			if node.Kind == 0 {
 				continue
 			}
-			return newSchema(&node, components)
+			return schemaAtSelection(&node, components, selection)
 		}
 	}
 	return nil
@@ -718,7 +907,7 @@ func splitOperationRef(r string) (path, verb string, err error) {
 	if i < 0 {
 		return "", "", fmt.Errorf("operation $ref %q names no verb", r)
 	}
-	return unescapePointer(rest[:i]), rest[i+1:], nil
+	return unescapePointer(rest[:i]), strings.ToLower(rest[i+1:]), nil
 }
 
 // unescapePointer reverses RFC 6901 token escaping (~1 → "/", ~0 → "~"), in that order.
@@ -737,6 +926,8 @@ func lastSegment(ref string) string {
 // ---- AOT exchange -----------------------------------------------------------
 
 type aotExchange struct {
+	retry    aot.HTTPRetry
+	graphQL  aot.GraphQL
 	name     string
 	sec      security
 	inputs   []string
@@ -746,6 +937,10 @@ type aotExchange struct {
 	beta     aot.Beta
 	pushdown *pushdownSpec
 }
+
+func (e *aotExchange) Retry() (aot.HTTPRetry, bool) { return e.retry, e.retry != nil }
+
+func (e *aotExchange) GraphQL() (aot.GraphQL, bool) { return e.graphQL, e.graphQL != nil }
 
 func (e *aotExchange) Name() string           { return e.name }
 func (e *aotExchange) Inputs() []string       { return e.inputs }
@@ -801,21 +996,40 @@ type parameter struct {
 	list bool
 }
 
-func (p parameter) Name() string   { return p.p.Name }
-func (p parameter) In() string     { return p.p.In }
-func (p parameter) Required() bool { return p.p.Required }
-func (p parameter) List() bool     { return p.list }
+func (p parameter) Name() string { return p.p.Name }
+func (p parameter) In() string   { return p.p.In }
+func (p parameter) Required() bool {
+	return p.p.Required && !(p.p.In == aot.InHeader && p.p.Schema.Default != nil)
+}
+func (p parameter) List() bool   { return p.list }
+func (p parameter) Default() any { return p.p.Schema.Default }
 
 type request struct {
-	method        string
-	url           string
-	mediaType     string
-	params        map[string]string
-	parameters    []aot.Parameter
-	bodyMediaType string
-	translate     string
-	transpose     string
+	defaultBody     string
+	serverVariables []string
+	baseBody        string
+	nativeCasing    string
+	snakeAliases    bool
+	bodySchema      aot.Schema
+	method          string
+	url             string
+	mediaType       string
+	params          map[string]string
+	parameters      []aot.Parameter
+	bodyMediaType   string
+	translate       string
+	transpose       string
 }
+
+func (r request) DefaultBody() string { return r.defaultBody }
+
+func (r request) ServerVariables() []string { return slices.Clone(r.serverVariables) }
+
+func (r request) BaseBody() string { return r.baseBody }
+
+func (r request) NativeCasing() string   { return r.nativeCasing }
+func (r request) SnakeCaseAliases() bool { return r.snakeAliases }
+func (r request) BodySchema() aot.Schema { return r.bodySchema }
 
 func (r request) Parameters() []aot.Parameter { return r.parameters }
 func (r request) BodyMediaType() string       { return r.bodyMediaType }
@@ -835,6 +1049,7 @@ func (r request) Params() map[string]string {
 }
 
 type response struct {
+	rowSchema  aot.Schema
 	mediaType  string
 	override   string
 	objectKey  string
@@ -859,19 +1074,36 @@ func transformDecl(t transformSpec) transformDeclType {
 func (t transformDeclType) Type() string { return t.typ }
 func (t transformDeclType) Body() string { return t.body }
 
-type pagination struct{ req, resp tokenSpec }
+type pagination struct {
+	req, resp  tokenSpec
+	algorithm  string
+	terminator tokenSpec
+}
+
+func (p pagination) Algorithm() string { return p.algorithm }
+func (p pagination) ResponseTerminator() (string, string) {
+	return p.terminator.Key, p.terminator.Location
+}
 
 func (p pagination) RequestToken() (string, string)  { return p.req.Key, p.req.Location }
+func (p pagination) RequestTokenEncoding() string    { return p.req.Encoding }
 func (p pagination) ResponseToken() (string, string) { return p.resp.Key, p.resp.Location }
-func (p pagination) Declared() bool                  { return p.req.Key != "" || p.resp.Key != "" }
+func (p pagination) Declared() bool                  { return p.algorithm != "" || p.req.Key != "" || p.resp.Key != "" }
 
 // pushdownSpec is a queryParamPushdown declaration: the server-side query options a call offers, as
 // any-sdk reads them.
 type pushdownSpec struct {
-	SelectSpec *pushdownOption `yaml:"select"`
-	FilterSpec *pushdownOption `yaml:"filter"`
-	TopSpec    *pushdownOption `yaml:"top"`
+	OrderBySpec *pushdownOption `yaml:"orderBy"`
+	SkipSpec    *pushdownOption `yaml:"skip"`
+	CountSpec   *pushdownOption `yaml:"count"`
+	SelectSpec  *pushdownOption `yaml:"select"`
+	FilterSpec  *pushdownOption `yaml:"filter"`
+	TopSpec     *pushdownOption `yaml:"top"`
 }
+
+func (p *pushdownSpec) OrderBy() (aot.PushdownOption, bool) { return p.OrderBySpec.opt("$orderby") }
+func (p *pushdownSpec) Skip() (aot.PushdownOption, bool)    { return p.SkipSpec.opt("$skip") }
+func (p *pushdownSpec) Count() (aot.PushdownOption, bool)   { return p.CountSpec.opt("$count") }
 
 func (p *pushdownSpec) Select() (aot.PushdownOption, bool) { return p.SelectSpec.opt("$select") }
 func (p *pushdownSpec) Filter() (aot.PushdownOption, bool) { return p.FilterSpec.opt("$filter") }
@@ -896,6 +1128,7 @@ func (o *pushdownOption) opt(odataParam string) (aot.PushdownOption, bool) {
 }
 
 type pushdownOption struct {
+	SyntaxName         string   `yaml:"syntax"`
 	DialectName        string   `yaml:"dialect"`
 	Param              string   `yaml:"paramName"`
 	Delim              string   `yaml:"delimiter"`
@@ -916,4 +1149,33 @@ func (o pushdownOption) SupportsOperator(op string) bool { return supported(op, 
 
 func supported(item string, list []string) bool {
 	return len(list) == 0 || slices.Contains(list, "*") || slices.Contains(list, item)
+}
+
+// defaultMethodKeys retains legacy registry matching only when a verb has no
+// explicit mapping. An explicit empty mapping disables that SQL verb.
+func defaultMethodKeys(verb string) []string {
+	switch verb {
+	case "select":
+		return []string{"select", "list", "aggregatedList", "get"}
+	case "insert":
+		return []string{"insert", "create"}
+	case "delete":
+		return []string{"delete"}
+	}
+	return nil
+}
+
+func (r response) RowSchema() aot.Schema { return r.rowSchema }
+
+func (o pushdownOption) Syntax() string {
+	if o.SyntaxName != "" {
+		return o.SyntaxName
+	}
+	return "odata"
+}
+func (o pushdownOption) FixedColumn() string {
+	if len(o.SupportedColumns) == 1 && o.SupportedColumns[0] != "*" {
+		return o.SupportedColumns[0]
+	}
+	return ""
 }

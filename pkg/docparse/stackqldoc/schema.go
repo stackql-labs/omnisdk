@@ -1,6 +1,7 @@
 package stackqldoc
 
 import (
+	"slices"
 	"sort"
 
 	"gopkg.in/yaml.v3"
@@ -15,13 +16,16 @@ import (
 // schema would carry the document it came from — exactly what resolving an exchange exists to avoid.
 // Only what the response actually reaches is kept.
 type materialised struct {
-	props map[string]*materialised
-	names []string
-	items *materialised
-	wire  string
-	typ   string
-	fmt   string
+	props    map[string]*materialised
+	names    []string
+	items    *materialised
+	wire     string
+	typ      string
+	fmt      string
+	required []string
 }
+
+func (m *materialised) RequiredProperties() []string { return slices.Clone(m.required) }
 
 func (m *materialised) Type() string   { return m.typ }
 func (m *materialised) Format() string { return m.fmt }
@@ -61,6 +65,10 @@ func newSchema(node *yaml.Node, components map[string]*yaml.Node) aot.Schema {
 }
 
 func materialise(node *yaml.Node, components map[string]*yaml.Node, depth int) *materialised {
+	return materialiseActive(node, components, depth, map[*yaml.Node]bool{})
+}
+
+func materialiseActive(node *yaml.Node, components map[string]*yaml.Node, depth int, active map[*yaml.Node]bool) *materialised {
 	if node == nil || depth > maxSchemaDepth {
 		return nil
 	}
@@ -71,26 +79,68 @@ func materialise(node *yaml.Node, components map[string]*yaml.Node, depth int) *
 	if resolved == nil {
 		return out
 	}
+	if active[resolved] {
+		return out
+	}
+	active[resolved] = true
+	defer delete(active, resolved)
+	// allOf adds constraints at the same object depth. Copy each branch's
+	// declared fields, with local properties taking precedence over inherited ones.
+	if branches := field(resolved, "allOf"); branches != nil {
+		for _, branch := range branches.Content {
+			base := materialiseActive(branch, components, depth, active)
+			if base == nil {
+				continue
+			}
+			if out.props == nil {
+				out.props = map[string]*materialised{}
+			}
+			for name, property := range base.props {
+				out.props[name] = property
+			}
+			if base.typ != "" {
+				out.typ = base.typ
+			}
+			if base.fmt != "" {
+				out.fmt = base.fmt
+			}
+			if base.items != nil {
+				out.items = base.items
+			}
+			out.required = append(out.required, base.required...)
+		}
+	}
 	if t := field(resolved, "type"); t != nil {
 		out.typ = t.Value
 	}
 	if f := field(resolved, "format"); f != nil {
 		out.fmt = f.Value
 	}
+	if required := field(resolved, "required"); required != nil {
+		for _, name := range required.Content {
+			out.required = append(out.required, name.Value)
+		}
+	}
+	slices.Sort(out.required)
+	out.required = slices.Compact(out.required)
 	if items := field(resolved, "items"); items != nil {
-		out.items = materialise(items, components, depth+1)
+		out.items = materialiseActive(items, components, depth+1, active)
 	}
 	props := field(resolved, "properties")
-	if props == nil {
+	if props == nil && len(out.props) == 0 {
 		return out
 	}
-	out.props = map[string]*materialised{}
-	for i := 0; i+1 < len(props.Content); i += 2 {
+	if out.props == nil {
+		out.props = map[string]*materialised{}
+	}
+	for i := 0; props != nil && i+1 < len(props.Content); i += 2 {
 		name := props.Content[i].Value
-		if child := materialise(props.Content[i+1], components, depth+1); child != nil {
+		if child := materialiseActive(props.Content[i+1], components, depth+1, active); child != nil {
 			out.props[name] = child
-			out.names = append(out.names, name)
 		}
+	}
+	for name := range out.props {
+		out.names = append(out.names, name)
 	}
 	sort.Strings(out.names)
 	return out

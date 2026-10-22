@@ -19,6 +19,12 @@ import (
 
 func stackqlExtensions() []Func {
 	return []Func{
+		NewScalar("string", 1, 1, func(a []any) (any, error) {
+			if text, ok := extText(a[0]); ok {
+				return text, nil
+			}
+			return nil, nil
+		}),
 		NewScalar("split_part", 3, 3, func(a []any) (any, error) { return extSplitPart(a[0], a[1], a[2]) }),
 		NewScalar("regexp_like", 2, 2, func(a []any) (any, error) { return extRegexpLike(a[0], a[1]) }),
 		NewScalar("regexp", 2, 2, func(a []any) (any, error) { return extRegexpLike(a[1], a[0]) }),

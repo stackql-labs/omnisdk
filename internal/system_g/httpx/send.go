@@ -100,6 +100,9 @@ func (e *sendExchange) Open(ctx context.Context) facade.Records {
 
 // send performs one already-signed request record; no signing happens here.
 func (e *sendExchange) send(ctx context.Context, rec facade.Record) (int, []byte, error) {
+	client := ClientFrom(ctx, e.client)
+	ctx, cancel := requestContext(ctx, client)
+	defer cancel()
 	req, err := http.NewRequestWithContext(ctx, Method(rec), URL(rec), bytes.NewReader(ReqBody(rec)))
 	if err != nil {
 		return 0, nil, err
@@ -109,7 +112,7 @@ func (e *sendExchange) send(ctx context.Context, rec facade.Record) (int, []byte
 			req.Header.Add(name, v)
 		}
 	}
-	resp, err := ClientFrom(ctx, e.client).Do(req)
+	resp, err := client.Do(req)
 	if err != nil {
 		return 0, nil, err
 	}

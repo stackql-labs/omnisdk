@@ -71,3 +71,38 @@ func TestGCPSignedJWT(t *testing.T) {
 }
 
 const testScope = "https://www.googleapis.com/auth/compute"
+
+func TestGCPPKCS1KeySignsVerifiableJWT(t *testing.T) {
+	key, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, err := json.Marshal(map[string]string{
+		"client_email": "svc@example.test",
+		"private_key":  string(pem.EncodeToMemory(&pem.Block{Type: "RSA PRIVATE KEY", Bytes: x509.MarshalPKCS1PrivateKey(key)})),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	creds, err := ParseGCPCredentials(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	jwt, err := creds.signedJWT("https://token.example.test", "scope", time.Unix(1000, 0))
+	if err != nil {
+		t.Fatal(err)
+	}
+	parts := strings.Split(jwt, ".")
+	sum := sha256.Sum256([]byte(parts[0] + "." + parts[1]))
+	sig, err := base64.RawURLEncoding.DecodeString(parts[2])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := rsa.VerifyPKCS1v15(&key.PublicKey, crypto.SHA256, sum[:], sig); err != nil {
+		t.Fatal(err)
+	}
+	bad, _ := json.Marshal(map[string]string{"private_key": string(pem.EncodeToMemory(&pem.Block{Type: "RSA PRIVATE KEY", Bytes: []byte("invalid")}))})
+	if _, err := ParseGCPCredentials(bad); err == nil {
+		t.Fatal("invalid PKCS1 key accepted")
+	}
+}

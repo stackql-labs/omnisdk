@@ -127,6 +127,29 @@ A method's **response schema carries its own input params as columns**, so signa
 
 Tuning (any subcommand): `--parallelism` (fan-out concurrency), `--max-per-host`, `--retry-tries`, `--retry-rate`, `--limit` (stop cleanly after N output records, 0 = unlimited; a GLOBAL cap even across the multi-provider audit's disjoint DAGs).
 
+Request settings resolve from `Args.TuningByProvider` to global `Args.Tuning`,
+then library defaults. Provider keys accept `google` or `stackql_unstable_google`;
+the namespaced entry wins if both are present. Provider overrides cover
+`RequestTimeout`, `RetryTries`, `RetryRate`, and `MaxPerHost`. Zero fields inherit.
+Whole-query deadlines, row limits, buffering, and total parallelism remain global.
+
+`RequestTimeout` defaults to **30 seconds**, including HTTP response body reads
+and gRPC response consumption. A negative duration explicitly disables it.
+Each pagination request gets a fresh deadline. Deadline and cancellation errors
+are terminal under the default retry policy, so a stalled request finishes before
+the 120-second process guard. Parent/query deadlines and explicit HTTP client
+timeouts still apply. An explicitly longer timeout can exceed the process guard.
+
+```go
+args := omnisdk.Args{
+    Tuning: omnisdk.Tuning{RequestTimeout: 30 * time.Second},
+    TuningByProvider: map[string]omnisdk.ProviderTuning{
+        "google": {RequestTimeout: 60 * time.Second, RetryTries: 2},
+        "aws":    {MaxPerHost: 4}, // inherits the global timeout
+    },
+}
+```
+
 > `--limit` is a budget, **not a sample**: it has no fairness across legs, so any value below the full result set biases toward whichever provider emits first. On a real org-wide run, `"tuning":{"Limit":25}` returned 24 GCP + 1 Azure rows and **zero** AWS — the AWS leg fans out three detail calls per bucket before its first row, and the budget was gone. To bound a multi-cloud look, run the legs separately with their own limits.
 Credentials resolve direct flag → env var → file; env vars are never required. Scope (e.g. `--project`) is **required and never inferred** — no env or key-embedded fallback.
 
@@ -773,3 +796,62 @@ _now="$(date +%s)" && ./build/omnicli run omni.storage.buckets.list \
   '{"params":{"region":"'"${_AWS_REGION}"'","org":"'"${_GOOGLE_ORG_ID}"'"}}' \
   --out "./cicd/out/dto-omni-org-${_now}.jsonl"
 ```
+
+### Document naming and JSON request bodies
+
+A provider's `config.snake_case_aliases` controls response column presentation, including `SELECT *`.
+Native response names remain usable in explicit projections and graph bindings. A method's
+`request.nativeCasing` enables resolving snake parameter and body keys against declared wire names;
+headers, query parameters, and JSON properties retain those wire names on the request.
+
+JSON request bodies use the operation's declared schema for scalar coercion before sending. Invalid
+numbers, fractional integer values, and invalid boolean values return an error before the resource
+request. Unknown body properties are preserved. A method's JSON `request.base` supplies missing
+structured body fields; explicit fields override those defaults, and raw bodies remain complete
+payloads. Replacement mutations use `query.NewReplace` and the resource's `replace`
+method mapping; updates use its `update` mapping.
+
+When equally applicable UPDATE methods include a declared partial update, that operation is selected.
+Other tied mutation methods remain an error; an explicit method pin resolves the choice.
+
+### Split registry documents
+
+Open a provider bundle through the document catalog when it contains external references. The
+catalog follows provider `resources` references and method operation pointers into the declared
+OpenAPI files, including `services-split` layouts. Each operation uses its own document's schemas
+and path-level parameters. References stay within the provider bundle; remote references are not
+fetched. External document cache entries include file metadata so rewritten documents are reloaded.
+
+Legacy resources without an explicit SQL verb mapping use the registry's conventional method names.
+An explicit empty mapping stays disabled. Server variables remain explicit inputs, including when
+they are bound through a qualified table name.
+
+Request translation and query-parameter transposition use the nearest declaration: method,
+resource, then document. This includes AWS Query GET-to-POST translation before signing.
+Declared JSON request-body fields are addressable as inputs; SQL `data__` names identify body
+fields. Strings containing JSON arrays or objects are decoded when the schema requires that shape.
+Constant function expressions can supply mutation values and equality-bound request parameters.
+
+### OCI and GraphQL documents
+
+OCI documents declaring `oci_signing_v1` use RSA request signing through the shared HTTP transport.
+An `auth_by_provider` entry can supply `type: "oci_signing_v1"`, `tenancy_ocid`, `user_ocid`,
+`fingerprint`, and `private_key_path` (or inline `private_key`). Credential fields also accept named
+environment variables. Alternatively, supply `config_file_path` and `profile`. Partial explicit
+raw credentials return an error rather than switching to a configuration profile.
+
+GraphQL operations declaring `x-stackQL-graphQL` support cursor-after, keyset, offset and page-info
+continuation. Their HTTP requests share provider authentication, retries and request deadlines.
+JSON selection supports nested properties, wildcards, array indices and slices. A repeated cursor
+or a missing cursor while `hasNextPage` is true returns an error.
+
+### SQL adapter read hints
+
+`Args.ReadHintsByAlias` preserves SQL projection order, ORDER BY, LIMIT, OFFSET and count intent
+across an adapter's staging boundary. The SDK sends only controls the document declares and avoids
+remote OFFSET before local filtering, joins, aggregation or unsupported ordering. An adapter must
+check the optional `ReadEffects` interface on its returned rows and subtract `AppliedOffset()`
+from the offset it applies locally. Omitting hints retains the existing local behavior.
+
+`DocServices` returns declared provider service metadata, including services whose operation files
+are absent. `DocCatalog` continues to enumerate locally addressable services and exchanges.

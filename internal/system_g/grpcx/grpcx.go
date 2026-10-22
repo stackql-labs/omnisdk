@@ -17,6 +17,7 @@ import (
 	"github.com/stackql-labs/omnisdk/internal/system_g/bind"
 	"github.com/stackql-labs/omnisdk/internal/system_g/buffer"
 	"github.com/stackql-labs/omnisdk/internal/system_g/facade"
+	"github.com/stackql-labs/omnisdk/internal/system_g/requestpolicy"
 	"github.com/stackql-labs/omnisdk/internal/system_g/trace"
 )
 
@@ -90,7 +91,9 @@ func (o *op) run(ctx context.Context, emit func(facade.Record) error) error {
 		}
 		var out bytes.Buffer
 		h := &grpcurl.DefaultEventHandler{Out: &out, Formatter: formatter}
-		err = grpcurl.InvokeRPC(ctx, o.d.src, conn, method, headers, h, rp.Next)
+		callCtx, cancel := requestpolicy.Context(ctx)
+		err = grpcurl.InvokeRPC(callCtx, o.d.src, conn, method, headers, h, rp.Next)
+		cancel()
 		logWire(ctx, method, h.Status, err)
 		if err != nil {
 			return fmt.Errorf("grpcx: invoke %s: %w", method, err)

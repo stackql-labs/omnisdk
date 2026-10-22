@@ -68,6 +68,8 @@ func (o *op) Open(ctx context.Context) facade.Records {
 			cerr = o.poll(ctx, buf)
 		case ContPaginate:
 			cerr = o.paginate(ctx, buf)
+		case ContPageNumber:
+			cerr = o.pageNumber(ctx, buf)
 		case ContFollow:
 			cerr = o.follow(ctx, buf)
 		case ContLink:
@@ -109,6 +111,7 @@ func (o *op) poll(ctx context.Context, buf facade.Buffer) error {
 
 func (o *op) paginate(ctx context.Context, buf facade.Buffer) error {
 	token := ""
+	seen := map[string]bool{}
 	for {
 		status, body, reqURL, err := o.do(ctx, token, "")
 		if err != nil {
@@ -121,7 +124,40 @@ func (o *op) paginate(ctx context.Context, buf facade.Buffer) error {
 		if next == "" {
 			return nil
 		}
+		if seen[next] {
+			return fmt.Errorf("httpx: pagination token did not advance")
+		}
+		seen[next] = true
 		token = next
+	}
+}
+
+// pageNumber reads the current page and total count from the same response.
+// A missing terminator is a single page, as on the any-sdk path.
+func (o *op) pageNumber(ctx context.Context, buf facade.Buffer) error {
+	c := o.req.Continuation
+	token := "1"
+	for {
+		status, body, reqURL, err := o.do(ctx, token, "")
+		if err != nil {
+			return err
+		}
+		if err := emit(ctx, buf, status, body, reqURL); err != nil {
+			return err
+		}
+		current, err := strconv.ParseInt(o.docValue(body, c.NextTokenPath), 10, 64)
+		if err != nil {
+			return nil
+		}
+		total, err := strconv.ParseInt(o.docValue(body, c.TerminatorPath), 10, 64)
+		if err != nil || current >= total {
+			return nil
+		}
+		requested, _ := strconv.ParseInt(token, 10, 64)
+		if current < requested {
+			return fmt.Errorf("httpx: page_number response did not advance: requested %s, received %d", token, current)
+		}
+		token = strconv.FormatInt(current+1, 10)
 	}
 }
 
@@ -129,6 +165,7 @@ func (o *op) paginate(ctx context.Context, buf facade.Buffer) error {
 // GCP nextPageToken-as-URL), rather than a token query param. NextTokenPath yields the link.
 func (o *op) follow(ctx context.Context, buf facade.Buffer) error {
 	next := ""
+	seen := map[string]bool{}
 	for {
 		status, body, reqURL, err := o.do(ctx, "", next)
 		if err != nil {
@@ -141,6 +178,10 @@ func (o *op) follow(ctx context.Context, buf facade.Buffer) error {
 		if next == "" {
 			return nil
 		}
+		if seen[next] {
+			return fmt.Errorf("httpx: pagination URL did not advance")
+		}
+		seen[next] = true
 	}
 }
 
@@ -151,6 +192,7 @@ func (o *op) link(ctx context.Context, buf facade.Buffer) error {
 		name = "Link"
 	}
 	next := ""
+	seen := map[string]bool{}
 	for {
 		status, body, reqURL, err := o.do(ctx, "", next)
 		if err != nil {
@@ -162,6 +204,10 @@ func (o *op) link(ctx context.Context, buf facade.Buffer) error {
 		if next = nextLink(o.lastHeader.Values(name)); next == "" {
 			return nil
 		}
+		if seen[next] {
+			return fmt.Errorf("httpx: pagination link did not advance")
+		}
+		seen[next] = true
 	}
 }
 
@@ -215,10 +261,21 @@ func (o *op) do(ctx context.Context, token, overrideURL string) (int, []byte, st
 			}
 			q.Set(subst(k, o.bound), subst(v, o.bound))
 		}
-		if token != "" && o.req.Continuation.TokenParam != "" {
+		verbatim := token != "" && o.req.Continuation.TokenParam != "" && o.req.Continuation.TokenEncoding == "none"
+		if token != "" && o.req.Continuation.TokenParam != "" && !verbatim {
 			q.Set(o.req.Continuation.TokenParam, token)
 		}
-		if len(q) > 0 {
+		if verbatim {
+			q.Del(o.req.Continuation.TokenParam)
+		}
+		encoded := q.Encode()
+		if verbatim {
+			if encoded != "" {
+				encoded += "&"
+			}
+			encoded += url.QueryEscape(o.req.Continuation.TokenParam) + "=" + token
+		}
+		if encoded != "" {
 			// A URL that already carries a query gets its parameters appended, not a second "?".
 			// Every AWS Query-API operation is declared as "/?Action=…&Version=…", so joining with
 			// "?" unconditionally produced a path the service reads as one long parameter.
@@ -226,7 +283,7 @@ func (o *op) do(ctx context.Context, token, overrideURL string) (int, []byte, st
 			if strings.Contains(u, "?") {
 				sep = "&"
 			}
-			u += sep + q.Encode()
+			u += sep + encoded
 		}
 	}
 
@@ -234,7 +291,7 @@ func (o *op) do(ctx context.Context, token, overrideURL string) (int, []byte, st
 	for k, v := range o.req.Headers {
 		header.Set(subst(k, o.bound), subst(v, o.bound))
 	}
-	if contentType != "" {
+	if contentType != "" && header.Get("Content-Type") == "" {
 		header.Set("Content-Type", contentType)
 	}
 
@@ -316,6 +373,9 @@ func logWire(ctx context.Context, method, rawURL string, status int, err error, 
 
 // sendOnce performs exactly one request and returns the status, body, and response header.
 func (o *op) sendOnce(ctx context.Context, rec facade.Record) (int, []byte, http.Header, error) {
+	client := ClientFrom(ctx, o.client)
+	ctx, cancel := requestContext(ctx, client)
+	defer cancel()
 	req, err := http.NewRequestWithContext(ctx, Method(rec), URL(rec), bytes.NewReader(ReqBody(rec)))
 	if err != nil {
 		return 0, nil, nil, err
@@ -325,7 +385,7 @@ func (o *op) sendOnce(ctx context.Context, rec facade.Record) (int, []byte, http
 			req.Header.Add(k, v)
 		}
 	}
-	resp, err := ClientFrom(ctx, o.client).Do(req)
+	resp, err := client.Do(req)
 	if err != nil {
 		return 0, nil, nil, err
 	}

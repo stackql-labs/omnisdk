@@ -18,10 +18,10 @@ import (
 
 // pushdown is the query parameters node alias's read can carry, by wire name. needed are the columns
 // anything other than its select list reads from it: an edge, a filter, a join condition.
-func pushdown(ex aot.AOTExchange, g Graph, alias string, needed []string, limit int) map[string]string {
+func pushdown(ex aot.AOTExchange, g Graph, alias string, needed []string, limit int, hint ReadHints) (map[string]string, int) {
 	pd, ok := ex.Pushdown()
 	if !ok {
-		return nil
+		return nil, 0
 	}
 	out := map[string]string{}
 	filters, all := ownFilters(g, alias)
@@ -30,14 +30,14 @@ func pushdown(ex aot.AOTExchange, g Graph, alias string, needed []string, limit 
 		var terms []string
 		pushed := 0
 		for _, c := range filters {
-			col, op, lit, ok := comparison(c)
-			if !ok || !f.SupportsColumn(col) || !f.SupportsOperator(op) {
+			col, term, ok := odataTerm(c, f)
+			if !ok {
 				continue
 			}
 			if len(terms) == 1 && !f.SupportsOperator("and") {
 				continue
 			}
-			terms = append(terms, fmt.Sprintf("%s %s %s", col, op, odataLiteral(lit)))
+			terms = append(terms, term)
 			filtered = append(filtered, col)
 			pushed++
 		}
@@ -49,7 +49,16 @@ func pushdown(ex aot.AOTExchange, g Graph, alias string, needed []string, limit 
 		all = all && len(filters) == 0
 	}
 	if s, ok := pd.Select(); ok && s.ParamName() != "" {
-		if cols, ok := projected(g, alias); ok {
+		if cols, ok := projected(g, alias); ok && !hint.AllColumns {
+			// Hints order the fields actually consumed by the plan; request
+			// bindings mentioned in WHERE are not necessarily response columns.
+			orderedColumns := []string{}
+			for _, name := range hint.Columns {
+				if slices.Contains(cols, name) || slices.Contains(needed, name) || slices.Contains(filtered, name) {
+					orderedColumns = append(orderedColumns, name)
+				}
+			}
+			cols = append(orderedColumns, cols...)
 			// The server is asked for exactly what is read: the select list, and whatever else
 			// reads this node. A column the option cannot name means the projection is not sent at
 			// all — a partial one would drop a column something still needs.
@@ -57,23 +66,69 @@ func pushdown(ex aot.AOTExchange, g Graph, alias string, needed []string, limit 
 			// A private name is the query's own — a kept or a computed column — made from the
 			// row's fields, which the select list already names.
 			want = slices.DeleteFunc(want, func(c string) bool { return strings.HasPrefix(c, "\x00") })
-			slices.Sort(want)
-			want = slices.Compact(want)
+			if len(hint.Columns) == 0 {
+				slices.Sort(want)
+				want = slices.Compact(want)
+			} else {
+				seen := map[string]bool{}
+				unique := want[:0]
+				for _, name := range want {
+					if !seen[name] {
+						unique = append(unique, name)
+						seen[name] = true
+					}
+				}
+				want = unique
+			}
 			if !slices.ContainsFunc(want, func(c string) bool { return !s.SupportsColumn(c) }) {
 				out[s.ParamName()] = strings.Join(want, s.Delimiter())
 			}
 		}
 	}
+	appliedOffset := 0
+	ordered := len(hint.OrderBy) == 0
+	if controls, ok := pd.(aot.ReadControls); ok {
+		if count, ok := controls.Count(); ok && hint.Count && count.ParamName() != "" {
+			out[count.ParamName()] = "true"
+		}
+		if order, ok := controls.OrderBy(); ok && !hint.DisableRowControls && order.ParamName() != "" && len(hint.OrderBy) > 0 {
+			if rendered, ok := renderOrder(order, hint.OrderBy); ok {
+				out[order.ParamName()] = rendered
+				ordered = true
+				if syntax, ok := order.(aot.OrderSyntax); ok && syntax.Syntax() == "column_only" {
+					ordered = false
+				}
+			}
+		}
+		// OFFSET cannot precede local row rejection, joins, or an unpushed sort.
+		if skip, ok := controls.Skip(); ok && !hint.DisableRowControls && hint.Offset > 0 && len(filters) == 0 && all && len(g.Nodes()) == 1 && ordered && skip.ParamName() != "" {
+			out[skip.ParamName()] = strconv.Itoa(hint.Offset)
+			appliedOffset = hint.Offset
+		}
+	}
+	if hint.Limit > 0 && !hint.DisableRowControls {
+		limit = hint.Limit
+	}
+	if hint.DisableRowControls {
+		limit = 0
+	}
+	if appliedOffset == 0 && hint.Offset > 0 && limit > 0 {
+		if hint.Offset > int(^uint(0)>>1)-limit {
+			limit = 0
+		} else {
+			limit += hint.Offset
+		}
+	}
 	// A cap on rows is only the run's limit where nothing after the server could drop a row: this is
 	// the graph's only read, and every filter on it was sent.
-	if t, ok := pd.Top(); ok && t.ParamName() != "" && limit > 0 && all && reads(g) == 1 {
+	if t, ok := pd.Top(); ok && t.ParamName() != "" && limit > 0 && all && ordered && reads(g) == 1 {
 		v := limit
 		if m := t.MaxValue(); m > 0 && v > m {
 			v = m
 		}
 		out[t.ParamName()] = strconv.Itoa(v)
 	}
-	return out
+	return out, appliedOffset
 }
 
 // ownFilters are g's filters that read alias alone. all is false where some filter reads alias
@@ -168,4 +223,98 @@ func reads(g Graph) int {
 		}
 	}
 	return n
+}
+
+func odataTerm(p query.Predicate, f aot.PushdownOption) (string, string, bool) {
+	col, op, lit, ok := comparison(p)
+	if ok && f.SupportsColumn(col) && f.SupportsOperator(op) {
+		return col, fmt.Sprintf("%s %s %s", col, op, odataLiteral(lit)), true
+	}
+	test, ok := p.(query.Test)
+	if !ok {
+		return "", "", false
+	}
+	call, ok := test.Cond().(query.Call)
+	if !ok || !strings.EqualFold(call.Func(), "like") || len(call.Args()) != 2 {
+		return "", "", false
+	}
+	var column query.Column
+	var pattern string
+	for _, arg := range call.Args() {
+		if c, ok := arg.(query.Column); ok {
+			column = c
+		}
+		if l, ok := arg.(query.Literal); ok {
+			pattern, _ = l.Value().(string)
+		}
+	}
+	if column == nil || strings.ContainsAny(pattern, "_\\") {
+		return "", "", false
+	}
+	name, ok := serverColumn(column)
+	if !ok || !f.SupportsColumn(name) {
+		return "", "", false
+	}
+	prefix, suffix := strings.HasPrefix(pattern, "%"), strings.HasSuffix(pattern, "%")
+	text := strings.TrimSuffix(strings.TrimPrefix(pattern, "%"), "%")
+	if strings.Contains(text, "%") {
+		return "", "", false
+	}
+	function := "eq"
+	switch {
+	case prefix && suffix:
+		function = "contains"
+	case prefix:
+		function = "endswith"
+	case suffix:
+		function = "startswith"
+	}
+	if !f.SupportsOperator(function) {
+		return "", "", false
+	}
+	if function == "eq" {
+		return name, name + " eq " + odataLiteral(text), true
+	}
+	return name, fmt.Sprintf("%s(%s,%s)", function, name, odataLiteral(text)), true
+}
+
+func renderOrder(option aot.PushdownOption, terms []ReadOrder) (string, bool) {
+	syntax := "odata"
+	fixed := ""
+	if style, ok := option.(aot.OrderSyntax); ok {
+		syntax = style.Syntax()
+		fixed = style.FixedColumn()
+	}
+	out := make([]string, 0, len(terms))
+	for _, term := range terms {
+		if !option.SupportsColumn(term.Column) {
+			return "", false
+		}
+		direction := "asc"
+		if term.Descending {
+			direction = "desc"
+		}
+		switch syntax {
+		case "direction_only":
+			if len(terms) != 1 || fixed != term.Column {
+				return "", false
+			}
+			out = append(out, direction)
+		case "column_only":
+			out = append(out, term.Column)
+		case "prefix":
+			prefix := ""
+			if term.Descending {
+				prefix = "-"
+			}
+			out = append(out, prefix+term.Column)
+		case "suffix":
+			out = append(out, term.Column+":"+direction)
+		case "odata", "":
+			out = append(out, term.Column+" "+direction)
+		default:
+			return "", false
+		}
+	}
+	return strings.Join(out, option.Delimiter()), len(out) > 0
 }

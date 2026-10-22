@@ -72,6 +72,17 @@ func (a analyzer) Analyze(ctx context.Context, s facade.Statement) (facade.Metho
 			best = reads
 		}
 	}
+	if len(best) > 1 && s.Verb() == "update" {
+		// UPDATE changes supplied fields. A declared partial update matches
+		// that intent more closely than a whole-resource replacement.
+		partial := slices.DeleteFunc(slices.Clone(best), func(method facade.Method) bool {
+			semantics, ok := method.(facade.PartialUpdateMethod)
+			return !ok || !semantics.PartialUpdate()
+		})
+		if len(partial) > 0 {
+			best = partial
+		}
+	}
 	switch len(best) {
 	case 0:
 		return nil, fmt.Errorf("no satisfiable %s method (%s)", s.Verb(), strings.Join(reasons, "; "))

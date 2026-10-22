@@ -32,24 +32,29 @@ import (
 	"github.com/stackql-labs/omnisdk/internal/system_g/httpx"
 	"github.com/stackql-labs/omnisdk/internal/system_g/plan"
 	"github.com/stackql-labs/omnisdk/internal/system_g/record"
+	"github.com/stackql-labs/omnisdk/internal/system_g/requestpolicy"
 	"github.com/stackql-labs/omnisdk/internal/system_g/transform"
 	"github.com/stackql-labs/omnisdk/internal/system_g/value"
 	"github.com/stackql-labs/omnisdk/pkg/docparse/aot"
 	"github.com/stackql-labs/omnisdk/pkg/docparse/dsl"
 	"github.com/stackql-labs/omnisdk/pkg/docparse/dsl/schemaxml"
 	"github.com/stackql-labs/omnisdk/pkg/docparse/stackqldoc"
+	"github.com/stackql-labs/omnisdk/pkg/jsonpath"
 )
 
 // Option configures compilation.
 type Option func(*options)
 
 type options struct {
-	baseURL  string
-	creds    awsv4.Credentials
-	signer   facade.Transform
-	noSign   bool
-	security aot.Security
-	gcpCreds *sdk.GCPCredentials
+	ignoreDocumentRetry bool
+	queryLimit          int
+	provider            string
+	baseURL             string
+	creds               awsv4.Credentials
+	signer              facade.Transform
+	noSign              bool
+	security            aot.Security
+	gcpCreds            *sdk.GCPCredentials
 	// azureCreds is the client-credentials triple for a document declaring OAuth2.
 	azureCreds *azureCredentials
 	// clientCreds is a client-credentials grant at a stated token endpoint; it wins over azureCreds.
@@ -91,6 +96,14 @@ type options struct {
 	programType      string
 	programBody      string
 	overrideResponse bool
+}
+
+// WithRuntimeRetryOverride retains an explicitly supplied provider retry policy.
+func WithRuntimeRetryOverride() Option { return func(o *options) { o.ignoreDocumentRetry = true } }
+
+// WithProvider scopes resource and authentication requests to this provider's policy.
+func WithProvider(name string) Option {
+	return func(o *options) { o.provider = name }
 }
 
 // MetadataKey is where a response's own report about itself sits within the response document:
@@ -428,6 +441,17 @@ func Spec(ex aot.AOTExchange, inputs map[string]any, reg dsl.Registry, opts ...O
 // compile is Spec for one call, beta aside.
 func compile(ex aot.AOTExchange, inputs map[string]any, reg dsl.Registry, o options) (plan.ExchangeSpec, error) {
 	req, resp := ex.Request(), ex.Response()
+	var retrySettings aot.HTTPRetry
+	if declared, ok := ex.(aot.RetryExchange); ok && !o.ignoreDocumentRetry {
+		if settings, ok := declared.Retry(); ok {
+			retrySettings = settings
+		}
+	}
+	if retrySettings != nil {
+		if err := validateRetry(retrySettings); err != nil {
+			return nil, err
+		}
+	}
 	// A transform runs a PROGRAM only when the document ships one. Most declare a type with no body —
 	// naming a built-in decoding (golang_template_json_v0.3.0, schema_driven_xml_v0.1.0) rather than
 	// supplying code — and for those the body is used as it arrives, decoded by its media type.
@@ -462,6 +486,20 @@ func compile(ex aot.AOTExchange, inputs map[string]any, reg dsl.Registry, o opti
 	}
 	// The document states where the rows are, in one of two syntaxes it uses interchangeably.
 	rowPath := parseObjectKey(resp.ObjectKey())
+	var rowSelection facade.Transform = itemsAt(rowPath)
+	selectionPath := resp.ObjectKey()
+	if gx, ok := ex.(aot.GraphQLExchange); ok {
+		if g, ok := gx.GraphQL(); ok && g.Selection() != "" {
+			selectionPath = g.Selection()
+		}
+	}
+	if strings.HasPrefix(strings.TrimSpace(selectionPath), "$") {
+		selection, err := jsonpath.Parse(selectionPath)
+		if err != nil {
+			return nil, err
+		}
+		rowSelection = selectionRows{selection: selection}
+	}
 
 	url := retarget(req.URL(), o.baseURL)
 	hreq := httpx.Request{Method: req.Method(), URL: url}
@@ -487,6 +525,16 @@ func compile(ex aot.AOTExchange, inputs map[string]any, reg dsl.Registry, o opti
 	placed := map[string]bool{}
 	for _, p := range req.Parameters() {
 		_, supplied := inputs[p.Name()]
+		if !supplied && !o.bound[p.Name()] && !o.provided[p.Name()] && p.In() == aot.InHeader {
+			if declared, ok := p.(aot.ParameterDefault); ok && declared.Default() != nil {
+				if hreq.Headers == nil {
+					hreq.Headers = map[string]string{}
+				}
+				hreq.Headers[p.Name()] = str(declared.Default())
+				placed[p.Name()] = true
+				continue
+			}
+		}
 		if !supplied && !p.Required() && !o.bound[p.Name()] && !o.provided[p.Name()] {
 			continue // an optional parameter nobody supplied is absent, not empty
 		}
@@ -574,12 +622,53 @@ func compile(ex aot.AOTExchange, inputs map[string]any, reg dsl.Registry, o opti
 	if len(o.body) > 0 && req.BodyMediaType() != "" {
 		hreq.Body = httpx.Body{Encoding: bodyEncoding(req.BodyMediaType()), Raw: o.body}
 	}
+	if fallback, ok := req.(aot.RequestFallback); ok && len(hreq.Body.Raw) == 0 && len(hreq.Body.Params) == 0 && fallback.DefaultBody() != "" {
+		hreq.Body = httpx.Body{Encoding: bodyEncoding(req.BodyMediaType()), Raw: []byte(fallback.DefaultBody())}
+	}
+	if defaults, ok := req.(aot.RequestDefaults); ok && len(hreq.Body.Raw) == 0 && defaults.BaseBody() != "" {
+		if len(hreq.Body.Params) == 0 {
+			hreq.Body = httpx.Body{Encoding: bodyEncoding(req.BodyMediaType()), Raw: []byte(defaults.BaseBody())}
+		} else if hreq.Body.Encoding == httpx.EncodingJSON {
+			if !json.Valid([]byte(defaults.BaseBody())) {
+				return nil, fmt.Errorf("docx: invalid JSON request base")
+			}
+			base := map[string]any{}
+			decoder := json.NewDecoder(strings.NewReader(defaults.BaseBody()))
+			decoder.UseNumber()
+			if err := decoder.Decode(&base); err != nil {
+				return nil, fmt.Errorf("docx: invalid JSON request base: %w", err)
+			}
+			for name, value := range base {
+				if _, supplied := hreq.Body.Params[name]; !supplied {
+					hreq.Body.Params[name] = value
+				}
+			}
+		}
+	}
 	for wire, slot := range o.querySlots {
 		if hreq.Query == nil {
 			hreq.Query = map[string]string{}
 		}
 		hreq.Query[wire] = "{" + slot + "}"
 		bindings = withInput(bindings, slot)
+	}
+	for header, media := range map[string]string{"Accept": resp.MediaType(), "Content-Type": req.MediaType()} {
+		if media == "" {
+			continue
+		}
+		haveAccept := false
+		for name := range hreq.Headers {
+			if strings.EqualFold(name, header) {
+				haveAccept = true
+				break
+			}
+		}
+		if !haveAccept {
+			if hreq.Headers == nil {
+				hreq.Headers = map[string]string{}
+			}
+			hreq.Headers[header] = media
+		}
 	}
 	// Raw material for T_in: bound so a producer delivers it, never placed on the wire.
 	for name := range o.inbox {
@@ -660,6 +749,9 @@ func compile(ex aot.AOTExchange, inputs map[string]any, reg dsl.Registry, o opti
 
 	spec := plan.NewExchangeSpec(ex.Name(), bindings, nil, func(bound map[string]any) facade.Operator {
 		var reqT []facade.Transform
+		if shape, ok := req.(aot.RequestShape); ok && strings.Contains(req.BodyMediaType(), "json") {
+			reqT = append(reqT, bodyShape{shape: shape})
+		}
 		if req.Translate() == httpx.GetQueryToPostFormUTF8 {
 			// Translated before it is signed, so what is signed is what is sent.
 			reqT = append(reqT, httpx.GetQueryToPostForm())
@@ -677,7 +769,19 @@ func compile(ex aot.AOTExchange, inputs map[string]any, reg dsl.Registry, o opti
 		if req.Transpose() == AWSCanonical {
 			rowReq, rowBound = transposed(hreq, bound)
 		}
-		send := httpx.Make(rowReq, tokenDecoder(resp), reqT...)(rowBound)
+		if gx, ok := ex.(aot.GraphQLExchange); ok {
+			if graph, ok := gx.GraphQL(); ok {
+				send := newGraphQLOperator(graph, resp.ObjectKey(), rowReq, rowBound, reqT, o.queryLimit, o.baseURL)
+				decoded := exchange.NewTransformExchange(0, send, decode, 1)
+				selected := exchange.NewTransformExchange(0, decoded, rowSelection, 1)
+				return withClient(withRetrySettings(namedRows(exchange.NewExplodeRows(selected, 1), req, rowBound), retrySettings, req.Method()), o.client)
+			}
+		}
+		tokens := tokenDecoder(resp)
+		if hasProgram {
+			tokens = continuationDecoder{program(reg, tr.Type(), tr.Body(), dslContext(resp, rowPath)), decode}
+		}
+		send := httpx.Make(rowReq, tokens, reqT...)(rowBound)
 		// non-2xx fails loudly rather than looking like an empty result
 		checked := exchange.NewTransformExchange(0, send, httpx.NewRequireOK(), 1)
 		// the document's own program, moved from source to here — when it declares one
@@ -690,17 +794,17 @@ func compile(ex aot.AOTExchange, inputs map[string]any, reg dsl.Registry, o opti
 			// A mutating call answers about ONE object, not a list. The document's objectKey
 			// describes where a SELECT finds its items, and applying it here explodes a reply that
 			// has no list — yielding zero rows for a call that plainly succeeded.
-			return withClient(decoded, o.client)
+			return withClient(withRetrySettings(namedRows(decoded, req, rowBound), retrySettings, req.Method()), o.client)
 		}
-		listed := exchange.NewTransformExchange(0, decoded, itemsAt(rowPath), 1)
-		return withClient(exchange.NewExplodeRows(listed, 1), o.client)
+		listed := exchange.NewTransformExchange(0, decoded, rowSelection, 1)
+		return withClient(withRetrySettings(namedRows(exchange.NewExplodeRows(listed, 1), req, rowBound), retrySettings, req.Method()), o.client)
 		// INNER, not left-outer: this is a SELECT, and an empty result set is zero rows. A left-outer
 		// would emit one row of bare inputs, which reads as "one instance with no fields".
 	}, bind.NewInnerFlatten())
 	if authSpec != nil {
-		return compiled{spec: spec, auth: authSpec, assertion: assertion, authInputs: authInputs}, nil
+		return compiled{spec: spec, auth: providerSpec{ExchangeSpec: authSpec, provider: o.provider}, assertion: assertion, authInputs: authInputs, provider: o.provider}, nil
 	}
-	return compiled{spec: spec}, nil
+	return compiled{spec: spec, provider: o.provider}, nil
 }
 
 // continuation drives a document's pagination: a next URL (a Link header, or a body property such as
@@ -712,6 +816,11 @@ func continuation(p aot.Pagination) (httpx.Continuation, bool) {
 	}
 	reqKey, reqLoc := p.RequestToken()
 	respKey, respLoc := p.ResponseToken()
+	if p.Algorithm() == "page_number" {
+		terminator, _ := p.ResponseTerminator()
+		return httpx.Continuation{Kind: httpx.ContPageNumber, NextTokenPath: respKey,
+			TerminatorPath: terminator, TokenParam: reqKey, TokenInBody: strings.EqualFold(reqLoc, "body")}, true
+	}
 	switch {
 	case strings.EqualFold(respLoc, "header"):
 		return httpx.Continuation{Kind: httpx.ContLink, LinkHeader: respKey}, true
@@ -721,7 +830,7 @@ func continuation(p aot.Pagination) (httpx.Continuation, bool) {
 		return httpx.Continuation{Kind: httpx.ContFollow, NextTokenPath: respKey}, true
 	}
 	return httpx.Continuation{Kind: httpx.ContPaginate, NextTokenPath: respKey, TokenParam: reqKey,
-		TokenInBody: strings.EqualFold(reqLoc, "body")}, true
+		TokenEncoding: p.RequestTokenEncoding(), TokenInBody: strings.EqualFold(reqLoc, "body")}, true
 }
 
 // tokenDecoder reads a page's continuation token out of an XML body; JSON needs none.
@@ -759,6 +868,7 @@ func (o clientOp) Open(ctx context.Context) facade.Records {
 // compiled carries an exchange plus the auth exchange it depends on, so PlanFor can wire both into
 // one plan. A token exchange is part of the plan, not of the request.
 type compiled struct {
+	provider  string
 	spec      plan.ExchangeSpec
 	auth      plan.ExchangeSpec
 	assertion string
@@ -767,12 +877,32 @@ type compiled struct {
 	authInputs map[string]any
 }
 
-func (c compiled) Name() string                              { return c.spec.Name() }
-func (c compiled) In() []string                              { return c.spec.In() }
-func (c compiled) Out() []string                             { return c.spec.Out() }
-func (c compiled) Make(bound map[string]any) facade.Operator { return c.spec.Make(bound) }
-func (c compiled) Flatten() facade.Transform                 { return c.spec.Flatten() }
-func (c compiled) Inbound() facade.Transform                 { return c.spec.Inbound() }
+func (c compiled) Name() string  { return c.spec.Name() }
+func (c compiled) In() []string  { return c.spec.In() }
+func (c compiled) Out() []string { return c.spec.Out() }
+func (c compiled) Make(bound map[string]any) facade.Operator {
+	return providerOp{op: c.spec.Make(bound), provider: c.provider}
+}
+func (c compiled) Flatten() facade.Transform { return c.spec.Flatten() }
+func (c compiled) Inbound() facade.Transform { return c.spec.Inbound() }
+
+type providerSpec struct {
+	plan.ExchangeSpec
+	provider string
+}
+
+func (s providerSpec) Make(bound map[string]any) facade.Operator {
+	return providerOp{op: s.ExchangeSpec.Make(bound), provider: s.provider}
+}
+
+type providerOp struct {
+	op       facade.Operator
+	provider string
+}
+
+func (o providerOp) Open(ctx context.Context) facade.Records {
+	return o.op.Open(requestpolicy.ForProvider(ctx, o.provider))
+}
 
 // dropKeys removes named attributes on the way out.
 type dropKeys []string
@@ -827,6 +957,17 @@ func dslContext(resp aot.Response, rowPath []string) dsl.Context {
 		ctx.ListProperty = rowPath[0]
 	}
 	return ctx
+}
+
+// Continuation paths address the same transformed document as response rows.
+type continuationDecoder struct{ program, decode facade.Transform }
+
+func (t continuationDecoder) Apply(in facade.Page) (facade.Record, error) {
+	transformed, err := t.program.Apply(in)
+	if err != nil {
+		return nil, err
+	}
+	return t.decode.Apply(transformed)
 }
 
 type programTransform struct {
@@ -1208,3 +1349,6 @@ func bodyEncoding(mediaType string) httpx.Encoding {
 	}
 	return httpx.EncodingJSON
 }
+
+// WithQueryLimit supplies SQL LIMIT to an operation's request program.
+func WithQueryLimit(limit int) Option { return func(o *options) { o.queryLimit = limit } }
