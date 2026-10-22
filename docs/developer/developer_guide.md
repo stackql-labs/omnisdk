@@ -855,3 +855,23 @@ from the offset it applies locally. Omitting hints retains the existing local be
 
 `DocServices` returns declared provider service metadata, including services whose operation files
 are absent. `DocCatalog` continues to enumerate locally addressable services and exchanges.
+
+### Analyzer-resolved relations
+
+A front end can resolve a subquery, database table or another read source before handing a graph
+to Omni. Declare its output columns and explicit inputs with `NewRelation`, supplying an opener
+with signature `func(context.Context, map[string]any) (Rows, error)`. Use the returned relation as
+a `Table` during `ResolveIn`, and register it under its exact address in `Args.Relations` when
+calling `NewGraphQuery`. That address does not require a provider bundle.
+
+The opener runs only during execution and receives declared inputs, including values bound from
+upstream exchanges. Internal join keys and unrelated query inputs are not passed to it. The caller
+must honor cancellation, support independent concurrent opens, and return a cursor whose `Close`
+releases its resources. Omni owns that cursor after a successful open. Errors remain query errors;
+registered read handles cannot be mutation targets.
+
+A thin subquery relation can open another Omni plan. A relation containing aggregation, DISTINCT,
+window functions, or ORDER BY/LIMIT must implement those operations inside its own boundary before
+returning rows. Registering a handle does not authorize flattening that boundary or executing a
+recursive CTE through an acyclic graph. SQL parsing, name resolution and database metadata remain
+the front end's responsibility.

@@ -20,6 +20,20 @@ func registry(t *testing.T) dsl.Registry {
 	return r
 }
 
+func TestXMLTemplateScalarConversions(t *testing.T) {
+	program := `{"size":{{toInt (index . "Volume" "size")}},"encrypted":{{toBool (index . "Volume" "encrypted")}},"missing":{{toInt (index . "Volume" "missing")}},"missing_flag":{{toBool (index . "Volume" "missing")}}}`
+	for _, typ := range []string{gotemplate.TypeMXJ, "golang_template_mxj_v0.1.0"} {
+		out, err := registry(t).Eval(typ, dsl.Context{}, program,
+			[]byte(`<Volume><size>8</size><encrypted>true</encrypted></Volume>`))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if string(out) != `{"size":8,"encrypted":true,"missing":0,"missing_flag":false}` {
+			t.Fatalf("%s result = %s", typ, out)
+		}
+	}
+}
+
 // The one that matters: take the program the DOCUMENT ships for DescribeInstances, run it over
 // EC2-shaped XML, and get the document's own JSON shape out. Nothing here is a fixture program —
 // it is read straight from ec2.yaml.

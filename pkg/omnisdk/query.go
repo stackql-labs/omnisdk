@@ -13,15 +13,14 @@ import (
 	"github.com/stackql-labs/omnisdk/pkg/query"
 )
 
-// Table is what the documents say about one resource: the address it resolves to and the select
-// methods it can run. It is what a query cannot state and resolution needs.
+// Table describes a read source's address and select signatures. A provider
+// document or a caller-resolved Relation can supply it without executing a read.
 type Table interface {
 	Address() string
 	Methods() []MethodSignature
 }
 
-// MethodSignature is one select method, as its document declares it: what it takes and the columns
-// each row has.
+// MethodSignature describes one read: its inputs and the columns each row has.
 type MethodSignature interface {
 	Method() string
 	Params() []ParamSignature
@@ -45,7 +44,8 @@ type ColumnType struct {
 type ParamSignature interface {
 	Name() string
 	Required() bool
-	// In is where it goes on the wire: query, path, header or body.
+	// In is where it goes: query, path, header, body, or relation for an
+	// analyzer-resolved read handle's inputs.
 	In() string
 }
 
