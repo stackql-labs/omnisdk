@@ -1219,9 +1219,10 @@ func DocResources(dir, provider, service string) ([]string, error) {
 // DocMethod is a method as a document declares it: its name, the SQL verb it is bound to (empty when
 // none), and the operation behind it.
 type DocMethod struct {
-	Name        string `json:"name"`
-	SQLVerb     string `json:"sql_verb,omitempty"`
-	OperationID string `json:"operation_id,omitempty"`
+	RequiredParams []string `json:"required_params,omitempty"`
+	Name           string   `json:"name"`
+	SQLVerb        string   `json:"sql_verb,omitempty"`
+	OperationID    string   `json:"operation_id,omitempty"`
 }
 
 // DocMethods lists a resource's methods.
@@ -1237,6 +1238,9 @@ func DocMethods(dir, provider, service, resource string) ([]DocMethod, error) {
 	out := make([]DocMethod, len(ms))
 	for i, m := range ms {
 		out[i] = DocMethod{Name: m.Name(), SQLVerb: m.SQLVerb(), OperationID: m.OperationID()}
+		if inputs, ok := m.(aot.MethodInputs); ok {
+			out[i].RequiredParams = inputs.RequiredParams()
+		}
 	}
 	return out, nil
 }

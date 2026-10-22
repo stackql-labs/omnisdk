@@ -31,7 +31,8 @@ type providerDoc struct {
 	Version  string                     `yaml:"version"`
 	Services map[string]providerService `yaml:"providerServices"`
 	Config   struct {
-		Auth authConfig `yaml:"auth"`
+		SnakeCaseAliases bool       `yaml:"snake_case_aliases"`
+		Auth             authConfig `yaml:"auth"`
 	} `yaml:"config"`
 }
 

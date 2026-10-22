@@ -796,3 +796,16 @@ _now="$(date +%s)" && ./build/omnicli run omni.storage.buckets.list \
   '{"params":{"region":"'"${_AWS_REGION}"'","org":"'"${_GOOGLE_ORG_ID}"'"}}' \
   --out "./cicd/out/dto-omni-org-${_now}.jsonl"
 ```
+
+### Document naming and JSON request bodies
+
+A provider's `config.snake_case_aliases` controls response column presentation, including `SELECT *`.
+Native response names remain usable in explicit projections and graph bindings. A method's
+`request.nativeCasing` enables resolving snake parameter and body keys against declared wire names;
+headers, query parameters, and JSON properties retain those wire names on the request.
+
+JSON request bodies use the operation's declared schema for scalar coercion before sending. Invalid
+numbers, fractional integer values, and invalid boolean values return an error before the resource
+request. Unknown body properties are preserved. A method's `request.base` supplies a fallback only
+when no body is supplied. Replacement mutations use `query.NewReplace` and the resource's `replace`
+method mapping; updates use its `update` mapping.

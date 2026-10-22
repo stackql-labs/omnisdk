@@ -561,7 +561,7 @@ func rowKeys(row string) []string {
 	return out
 }
 
-var usersColumns = []string{"Arn", "CreateDate", "PasswordLastUsed", "Path", "PermissionsBoundary", "Tags", "UserId", "UserName"}
+var usersColumns = []string{"arn", "create_date", "password_last_used", "path", "permissions_boundary", "tags", "user_id", "user_name"}
 
 // SELECT * FROM aws.iam.users u WHERE region = 'us-east-1'
 // The star is the columns the document declares for the row.
@@ -580,7 +580,7 @@ func TestSelectStar(t *testing.T) {
 			t.Errorf("columns = %v, want %v", got, usersColumns)
 		}
 	}
-	if !strings.Contains(rows[0], "UserName=alice") || !strings.Contains(rows[1], "UserName=bob") {
+	if !strings.Contains(rows[0], "user_name=alice") || !strings.Contains(rows[1], "user_name=bob") {
 		t.Errorf("rows = %v", rows)
 	}
 }

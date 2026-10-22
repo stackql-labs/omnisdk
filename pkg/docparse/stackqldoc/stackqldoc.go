@@ -20,6 +20,7 @@ import (
 	"gopkg.in/yaml.v3"
 
 	"github.com/stackql-labs/omnisdk/pkg/docparse/aot"
+	"github.com/stackql-labs/omnisdk/pkg/namespace"
 )
 
 // Doc is a parsed provider document.
@@ -57,6 +58,7 @@ type document struct {
 	// providerName is the provider the document belongs to, set by the catalog that read it. It
 	// matters only where the document says nothing: see pagination.
 	providerName string
+	snakeAliases bool
 	Servers      []server `yaml:"servers"`
 	// Config is the document-wide stackql configuration; its pagination applies to every method
 	// that states none of its own.
@@ -127,7 +129,9 @@ type method struct {
 		Pagination         paginationSpec `yaml:"pagination"`
 	} `yaml:"config"`
 	Request struct {
-		MediaType string `yaml:"mediaType"`
+		Base         string `yaml:"base"`
+		MediaType    string `yaml:"mediaType"`
+		NativeCasing string `yaml:"nativeCasing"`
 	} `yaml:"request"`
 	Response struct {
 		MediaType         string        `yaml:"mediaType"`
@@ -180,10 +184,11 @@ type pathOp struct {
 	MsPageable *struct {
 		NextLinkName *string `yaml:"nextLinkName"`
 	} `yaml:"x-ms-pageable"`
-	// RequestBody says the operation takes one, and how it is written. The fields are the caller's
-	// to supply, so only the media type is read.
+	// RequestBody declares the media type and schema used to validate caller-supplied fields.
 	RequestBody struct {
-		Content map[string]struct{} `yaml:"content"`
+		Content map[string]struct {
+			Schema yaml.Node `yaml:"schema"`
+		} `yaml:"content"`
 	} `yaml:"requestBody"`
 	// Responses carry the declared response shape. Only the success response is read: an error
 	// response describes a failure, and projecting rows out of one would be reporting a fault as
@@ -446,7 +451,21 @@ func (d *document) Methods(name string) ([]aot.Method, error) {
 	}
 	out := make([]aot.Method, 0, len(res.Methods))
 	for mName, m := range res.Methods {
-		out = append(out, methodInfo{name: mName, verb: verbOf[mName], opID: d.operationID(m)})
+		info := methodInfo{name: mName, verb: verbOf[mName], opID: d.operationID(m)}
+		if ex, err := d.resolve(name, mName, false); err == nil {
+			naming := namespace.NewNaming(m.Request.NativeCasing, d.snakeAliases && m.Request.NativeCasing != "")
+			for _, input := range ex.Inputs() {
+				info.required = append(info.required, naming.Surface(input))
+			}
+			for _, p := range ex.Request().Parameters() {
+				if p.Required() {
+					info.required = append(info.required, naming.Surface(p.Name()))
+				}
+			}
+			sort.Strings(info.required)
+			info.required = slices.Compact(info.required)
+		}
+		out = append(out, info)
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Name() < out[j].Name() })
 	return out, nil
@@ -470,7 +489,12 @@ func (d *document) operationID(m method) string {
 	return op.OperationID
 }
 
-type methodInfo struct{ name, verb, opID string }
+type methodInfo struct {
+	name, verb, opID string
+	required         []string
+}
+
+func (m methodInfo) RequiredParams() []string { return append([]string(nil), m.required...) }
 
 func (m methodInfo) Name() string        { return m.name }
 func (m methodInfo) SQLVerb() string     { return m.verb }
@@ -486,6 +510,24 @@ func (d *document) build(name, verb, path string, op pathOp, m method) aot.AOTEx
 	// the body that names the action. Stripping the marker prefix recovers the real call.
 	route, params := splitPseudoParams(path)
 	schema := d.responseSchema(op, m.Response.OpenAPIDocKey)
+	parameters := d.operationParams(op)
+	url := strings.TrimRight(serverURL(srv.URL), "/") + route
+	var bodySchema aot.Schema
+	var bodyTypes []string
+	for media := range op.RequestBody.Content {
+		bodyTypes = append(bodyTypes, media)
+	}
+	sort.Strings(bodyTypes)
+	for _, media := range bodyTypes {
+		node := op.RequestBody.Content[media].Schema
+		components := map[string]*yaml.Node{}
+		for name, value := range d.Components.Schemas {
+			v := value
+			components[name] = &v
+		}
+		bodySchema = newSchema(&node, components)
+		break
+	}
 
 	return &aotExchange{
 		name:   name,
@@ -494,10 +536,14 @@ func (d *document) build(name, verb, path string, op pathOp, m method) aot.AOTEx
 		opID:   op.OperationID,
 		req: request{
 			method:        strings.ToUpper(verb),
-			url:           strings.TrimRight(serverURL(srv.URL), "/") + route,
+			url:           url,
 			mediaType:     m.Request.MediaType,
 			params:        params,
-			parameters:    d.operationParams(op),
+			parameters:    parameters,
+			baseBody:      m.Request.Base,
+			nativeCasing:  m.Request.NativeCasing,
+			snakeAliases:  d.snakeAliases,
+			bodySchema:    bodySchema,
 			bodyMediaType: bodyMediaType(op),
 			translate:     m.Config.RequestTranslate.Algorithm,
 			transpose:     m.Config.QueryParamTranspose.Algorithm,
@@ -814,6 +860,10 @@ func (p parameter) Required() bool { return p.p.Required }
 func (p parameter) List() bool     { return p.list }
 
 type request struct {
+	baseBody      string
+	nativeCasing  string
+	snakeAliases  bool
+	bodySchema    aot.Schema
 	method        string
 	url           string
 	mediaType     string
@@ -823,6 +873,12 @@ type request struct {
 	translate     string
 	transpose     string
 }
+
+func (r request) BaseBody() string { return r.baseBody }
+
+func (r request) NativeCasing() string   { return r.nativeCasing }
+func (r request) SnakeCaseAliases() bool { return r.snakeAliases }
+func (r request) BodySchema() aot.Schema { return r.bodySchema }
 
 func (r request) Parameters() []aot.Parameter { return r.parameters }
 func (r request) BodyMediaType() string       { return r.bodyMediaType }

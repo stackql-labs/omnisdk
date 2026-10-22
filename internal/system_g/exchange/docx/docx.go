@@ -581,6 +581,9 @@ func compile(ex aot.AOTExchange, inputs map[string]any, reg dsl.Registry, o opti
 	if len(o.body) > 0 && req.BodyMediaType() != "" {
 		hreq.Body = httpx.Body{Encoding: bodyEncoding(req.BodyMediaType()), Raw: o.body}
 	}
+	if defaults, ok := req.(aot.RequestDefaults); ok && len(hreq.Body.Raw) == 0 && len(hreq.Body.Params) == 0 && defaults.BaseBody() != "" {
+		hreq.Body = httpx.Body{Encoding: bodyEncoding(req.BodyMediaType()), Raw: []byte(defaults.BaseBody())}
+	}
 	for wire, slot := range o.querySlots {
 		if hreq.Query == nil {
 			hreq.Query = map[string]string{}
@@ -667,6 +670,9 @@ func compile(ex aot.AOTExchange, inputs map[string]any, reg dsl.Registry, o opti
 
 	spec := plan.NewExchangeSpec(ex.Name(), bindings, nil, func(bound map[string]any) facade.Operator {
 		var reqT []facade.Transform
+		if shape, ok := req.(aot.RequestShape); ok && strings.Contains(req.BodyMediaType(), "json") {
+			reqT = append(reqT, bodyShape{shape: shape})
+		}
 		if req.Translate() == httpx.GetQueryToPostFormUTF8 {
 			// Translated before it is signed, so what is signed is what is sent.
 			reqT = append(reqT, httpx.GetQueryToPostForm())
@@ -697,10 +703,10 @@ func compile(ex aot.AOTExchange, inputs map[string]any, reg dsl.Registry, o opti
 			// A mutating call answers about ONE object, not a list. The document's objectKey
 			// describes where a SELECT finds its items, and applying it here explodes a reply that
 			// has no list — yielding zero rows for a call that plainly succeeded.
-			return withClient(decoded, o.client)
+			return withClient(namedRows(decoded, req), o.client)
 		}
 		listed := exchange.NewTransformExchange(0, decoded, itemsAt(rowPath), 1)
-		return withClient(exchange.NewExplodeRows(listed, 1), o.client)
+		return withClient(namedRows(exchange.NewExplodeRows(listed, 1), req), o.client)
 		// INNER, not left-outer: this is a SELECT, and an empty result set is zero rows. A left-outer
 		// would emit one row of bare inputs, which reads as "one instance with no fields".
 	}, bind.NewInnerFlatten())

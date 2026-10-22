@@ -13,8 +13,8 @@ Custom implementations of `pkg/docparse/aot.Pagination` must implement three add
 | `RequestTokenEncoding() string` | `""` (normal query escaping) |
 
 The supplied StackQL document parser implements these methods. Callers using that parser need no
-source changes. Keyed `omnisdk.Args` and `omnisdk.Tuning` literals remain compatible; positional
-`Tuning` literals must account for the added field or switch to keyed fields.
+source changes. Keyed `omnisdk.Args`, `omnisdk.Tuning`, and `omnisdk.DocMethod` literals remain compatible;
+positional literals must account for added fields or switch to keyed fields.
 
 ## Additions
 
@@ -42,6 +42,15 @@ args := omnisdk.Args{
 }
 ```
 
+- **Replacement mutations:** `query.Replace` and `query.NewReplace` use the resource's `replace`
+  mapping, keeping complete replacement distinct from a partial `update`. `DescribeMutation` accepts
+  `"replace"`.
+- **Required method parameters:** `omnisdk.DocMethod.RequiredParams` lists required parameters using
+  the method's SQL presentation names, including unresolved required server variables. The optional
+  `aot.MethodInputs` interface exposes this metadata.
+- **Document request metadata:** optional `aot.RequestShape` and `aot.RequestDefaults` interfaces
+  expose naming, body schema, and fallback body declarations without changing existing implementers.
+
 ## Behaviour changes
 
 | Change | Who is affected |
@@ -51,6 +60,18 @@ args := omnisdk.Args{
 | `page_number` pagination sends page 1, then advances the reported current page until it reaches `responseTerminator`. A missing or invalid page/count stops pagination; a non-advancing page before the terminator returns an error. | Documents declaring `algorithm: page_number`: the current page is no longer reused as an opaque next-page token, which could loop on page 1. |
 | Pagination configuration is resolved from method, then resource, then document. | Resources declaring `config.pagination`, including Link-header pagination and differently named continuation headers: their declarations are now honoured. |
 | A query pagination token with `requestToken.encoding: none` is sent verbatim. Other query parameters retain normal escaping. | APIs issuing tokens such as padded base64 cursors. With no encoding override, normal escaping is unchanged. |
+
+Providers declaring `config.snake_case_aliases` now expose response columns and star projections
+in snake case. Native response names remain addressable. Methods declaring `request.nativeCasing`
+resolve snake parameter and body keys to the schema's declared wire names. Unknown WHERE symbols
+are rejected instead of silently retained as unused parameters; explicit server and signing scope
+bindings remain supported.
+
+JSON bodies are coerced against declared schemas before transmission: numeric strings become
+numbers, integral values are required for integer properties, boolean strings become booleans, and
+scalar values for string properties become strings. Invalid values fail before the resource request.
+Undeclared fields are preserved. A declared `request.base` body is used only when the caller supplies
+no body fields.
 
 ## CLI
 

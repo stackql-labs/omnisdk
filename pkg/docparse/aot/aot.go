@@ -181,6 +181,13 @@ type Request interface {
 	Transpose() string
 }
 
+// RequestShape carries optional schema and naming declarations for an operation.
+type RequestShape interface {
+	NativeCasing() string
+	SnakeCaseAliases() bool
+	BodySchema() Schema
+}
+
 // Parameter is one declared input and its location on the wire.
 type Parameter interface {
 	Name() string
@@ -357,3 +364,9 @@ type Registry interface {
 	// Exchange resolves a "<provider>.<service>.<resource>" address against whichever provider it names.
 	Exchange(address string) (AOTExchange, error)
 }
+
+// MethodInputs exposes the SQL presentation names of required method parameters.
+type MethodInputs interface{ RequiredParams() []string }
+
+// RequestDefaults carries a fallback body used only when no body is supplied.
+type RequestDefaults interface{ BaseBody() string }

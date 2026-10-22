@@ -36,6 +36,7 @@ const (
 	Insert Verb = iota + 1
 	Update
 	Delete
+	Replace
 )
 
 func (v Verb) String() string {
@@ -46,6 +47,8 @@ func (v Verb) String() string {
 		return "update"
 	case Delete:
 		return "delete"
+	case Replace:
+		return "replace"
 	}
 	return fmt.Sprintf("Verb(%d)", int(v))
 }
@@ -228,7 +231,7 @@ func NewMutation(t Target, from []Join, where []Predicate, returning []Output) (
 	switch {
 	case t == nil:
 		return nil, fmt.Errorf("query: a mutation needs a target")
-	case t.Verb() != Insert && t.Verb() != Update && t.Verb() != Delete:
+	case t.Verb() != Insert && t.Verb() != Update && t.Verb() != Delete && t.Verb() != Replace:
 		return nil, fmt.Errorf("query: unknown verb %s", t.Verb())
 	case t.Resource().Alias() == "":
 		return nil, fmt.Errorf("query: the target has neither an alias nor a handle")
@@ -411,6 +414,9 @@ func columnsOf(row []Assignment) string {
 
 // NewUpdate targets r with UPDATE … SET.
 func NewUpdate(r Resource, set ...Assignment) Target { return target{verb: Update, r: r, set: set} }
+
+// NewReplace targets r with a complete replacement using the document's replace method.
+func NewReplace(r Resource, set ...Assignment) Target { return target{verb: Replace, r: r, set: set} }
 
 // NewDelete targets r with DELETE.
 func NewDelete(r Resource) Target { return target{verb: Delete, r: r} }

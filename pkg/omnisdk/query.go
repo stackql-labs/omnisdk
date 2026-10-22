@@ -53,10 +53,10 @@ type ParamSignature interface {
 func DescribeTable(dir, address string) (Table, error) { return describeTable(dir, address, "select") }
 
 // DescribeMutation reads what the documents under dir say about an address's methods for a
-// mutating verb: "insert", "update" or "delete".
+// mutating verb: "insert", "update", "replace" or "delete".
 func DescribeMutation(dir, address, verb string) (Table, error) {
 	switch verb {
-	case "insert", "update", "delete":
+	case "insert", "update", "delete", "replace":
 		return describeTable(dir, address, verb)
 	}
 	return nil, fmt.Errorf("omnisdk: %q is not a mutating verb", verb)
@@ -105,7 +105,47 @@ func (s docSignature) Columns() []string {
 	if row == nil {
 		return nil
 	}
-	return row.Properties()
+	out := append([]string(nil), row.Properties()...)
+	for i := range out {
+		out[i] = s.surface(out[i])
+	}
+	return out
+}
+
+func (s docSignature) surface(name string) string {
+	if shape, ok := s.ex.Request().(aot.RequestShape); ok {
+		return namespace.NewNaming(shape.NativeCasing(), shape.SnakeCaseAliases()).Surface(name)
+	}
+	return name
+}
+
+func canonicalName(t Table, name string) string {
+	if t == nil {
+		return name
+	}
+	for _, method := range t.Methods() {
+		s, ok := method.(docSignature)
+		if !ok {
+			continue
+		}
+		shape, ok := s.ex.Request().(aot.RequestShape)
+		if !ok {
+			continue
+		}
+		naming := namespace.NewNaming(shape.NativeCasing(), true)
+		for _, p := range s.ex.Request().Parameters() {
+			wire := p.Name()
+			if name == wire || (shape.NativeCasing() != "" && name == naming.Surface(wire)) {
+				return p.Name()
+			}
+		}
+		if shape.SnakeCaseAliases() && s.row() != nil {
+			if _, ok := s.row().Property(name); ok {
+				return s.surface(name)
+			}
+		}
+	}
+	return name
 }
 
 func (s docSignature) ColumnTypes() map[string]ColumnType {
@@ -120,7 +160,7 @@ func (s docSignature) ColumnTypes() map[string]ColumnType {
 			continue
 		}
 		if ts, ok := p.(aot.TypedSchema); ok && (ts.Type() != "" || ts.Format() != "") {
-			out[name] = ColumnType{Type: ts.Type(), Format: ts.Format()}
+			out[s.surface(name)] = ColumnType{Type: ts.Type(), Format: ts.Format()}
 		}
 	}
 	return out
@@ -458,12 +498,22 @@ func requestNamespace(t Table) (namespace.Namespace, error) {
 // parameter declares; that is a body field where the method takes a body, and has nowhere to go
 // where it does not. It returns the name as the wire knows it.
 func placeAssignment(ns namespace.Namespace, t Table, column string) (string, bool, error) {
+	column = canonicalName(t, column)
 	if a, err := ns.Resolve(column); err == nil {
 		return a.Name(), a.Space() == namespace.Body, nil
 	}
-	name := strings.TrimPrefix(column, string(namespace.Body)+".")
+	name := strings.TrimPrefix(strings.TrimPrefix(column, string(namespace.Body)+"."), "data__")
 	for _, m := range t.Methods() {
 		if m.TakesBody() {
+			if s, ok := m.(docSignature); ok {
+				if shape, ok := s.ex.Request().(aot.RequestShape); ok && shape.BodySchema() != nil {
+					wire, err := namespace.NewNaming(shape.NativeCasing(), shape.SnakeCaseAliases()).Native(name, shape.BodySchema().Properties())
+					if err != nil {
+						return "", false, err
+					}
+					name = wire
+				}
+			}
 			return name, true, nil
 		}
 	}
@@ -641,7 +691,24 @@ func (r *resolver) bindConstant(p query.Predicate) (bool, error) {
 	alias := col.Qualifier()
 	if alias == "" {
 		owners := r.owners(col.Name())
-		if len(owners) != 1 {
+		shared := false
+		for _, table := range r.tables {
+			provider, _, _ := strings.Cut(table.Address(), ".")
+			if col.Name() == "region" && strings.TrimPrefix(provider, aot.DefaultProviderPrefix) == "aws" {
+				shared = true
+			}
+			for _, method := range table.Methods() {
+				if signature, ok := method.(docSignature); ok {
+					if contains(signature.ex.Inputs(), col.Name()) || (col.Name() == "region" && signature.ex.Security().Scheme() == aot.SchemeAWSSigV4) {
+						shared = true
+					}
+				}
+			}
+		}
+		if len(owners) == 0 && !shared {
+			return false, fmt.Errorf("could not locate symbol: %s", col.Name())
+		}
+		if len(owners) != 1 || shared {
 			if len(values) == 1 {
 				r.params[col.Name()] = values[0]
 			} else {
@@ -651,6 +718,7 @@ func (r *resolver) bindConstant(p query.Predicate) (bool, error) {
 		}
 		alias = owners[0]
 	}
+	col = query.NewColumn(alias, canonicalName(r.tables[alias], col.Name()))
 	if !accepts(r.tables[alias], col.Name()) {
 		return false, nil
 	}
@@ -1140,13 +1208,13 @@ func (r *resolver) projected(e query.Expr) (string, Expression, error) {
 // qualify gives an unqualified column the one table whose rows have it.
 func (r *resolver) qualify(c query.Column) (query.Column, error) {
 	if c.Qualifier() != "" {
-		return c, nil
+		return query.NewColumn(c.Qualifier(), canonicalName(r.tables[c.Qualifier()], c.Name())), nil
 	}
 	switch owners := r.owners(c.Name()); len(owners) {
 	case 1:
-		return query.NewColumn(owners[0], c.Name()), nil
+		return query.NewColumn(owners[0], canonicalName(r.tables[owners[0]], c.Name())), nil
 	case 0:
-		return nil, fmt.Errorf("no table has a column %q", c.Name())
+		return nil, fmt.Errorf("no such column: %s (no table has a column %q)", c.Name(), c.Name())
 	default:
 		return nil, fmt.Errorf("%q is ambiguous between %v; qualify it", c.Name(), owners)
 	}
@@ -1179,6 +1247,7 @@ func (r *resolver) known(alias string) map[string]bool {
 }
 
 func hasColumn(t Table, name string) bool {
+	name = canonicalName(t, name)
 	for _, m := range t.Methods() {
 		if contains(m.Columns(), name) {
 			return true
@@ -1189,6 +1258,7 @@ func hasColumn(t Table, name string) bool {
 
 // accepts reports whether any method takes the parameter.
 func accepts(t Table, name string) bool {
+	name = canonicalName(t, name)
 	for _, m := range t.Methods() {
 		for _, p := range m.Params() {
 			if p.Name() == name {

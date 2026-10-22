@@ -256,10 +256,14 @@ func (c *catalog) doc(service string) (Doc, error) {
 		return nil, fmt.Errorf("stackqldoc: service %q has no document in this bundle (have %d services)",
 			service, len(known))
 	}
+	aliases := false
+	if p, ok := c.provider.(*provider); ok {
+		aliases = p.doc.Config.SnakeCaseAliases
+	}
 	var key string
 	if c.docs != nil {
 		if fi, err := fs.Stat(c.fsys, file); err == nil {
-			key = fmt.Sprintf("%s/%s\x00%d\x00%d", c.docKey, file, fi.Size(), fi.ModTime().UnixNano())
+			key = fmt.Sprintf("%s/%s\x00%d\x00%d\x00%t", c.docKey, file, fi.Size(), fi.ModTime().UnixNano(), aliases)
 			if d, ok := c.docs.Get(key); ok {
 				return d, nil
 			}
@@ -275,6 +279,9 @@ func (c *catalog) doc(service string) (Doc, error) {
 	}
 	if parsed, ok := d.(*document); ok && c.provider != nil {
 		parsed.providerName = c.provider.Name()
+		if p, ok := c.provider.(*provider); ok {
+			parsed.snakeAliases = p.doc.Config.SnakeCaseAliases
+		}
 	}
 	if key != "" {
 		c.docs.Put(key, d, int64(len(b))*docCost)
