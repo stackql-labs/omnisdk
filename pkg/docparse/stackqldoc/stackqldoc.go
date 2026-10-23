@@ -151,10 +151,12 @@ type method struct {
 		Pagination           paginationSpec `yaml:"pagination"`
 	} `yaml:"config"`
 	Request struct {
-		Default      string `yaml:"default"`
-		Base         string `yaml:"base"`
-		MediaType    string `yaml:"mediaType"`
-		NativeCasing string `yaml:"nativeCasing"`
+		XMLDeclaration    string `yaml:"xmlDeclaration"`
+		XMLRootAnnotation string `yaml:"xmlRootAnnotation"`
+		Default           string `yaml:"default"`
+		Base              string `yaml:"base"`
+		MediaType         string `yaml:"mediaType"`
+		NativeCasing      string `yaml:"nativeCasing"`
 	} `yaml:"request"`
 	Response struct {
 		SchemaOverride    yaml.Node     `yaml:"schema_override"`
@@ -630,6 +632,7 @@ func (d *document) build(name, verb, path string, op pathOp, m method) aot.AOTEx
 	}
 	url := strings.TrimRight(serverURL(srv.URL), "/") + route
 	var bodySchema aot.Schema
+	var bodyRootName string
 	var bodyTypes []string
 	for media := range op.RequestBody.Content {
 		bodyTypes = append(bodyTypes, media)
@@ -643,6 +646,12 @@ func (d *document) build(name, verb, path string, op pathOp, m method) aot.AOTEx
 			components[name] = &v
 		}
 		bodySchema = newSchema(&node, components)
+		bodyRootName = schemaXMLName(&node, components, 0)
+		if bodyRootName == "" {
+			if title := schemaField(&node, components, "title", 0); title != nil {
+				bodyRootName = title.Value
+			}
+		}
 		break
 	}
 	if bodySchema != nil {
@@ -668,6 +677,9 @@ func (d *document) build(name, verb, path string, op pathOp, m method) aot.AOTEx
 		inputs:  serverVars(srv),
 		opID:    op.OperationID,
 		req: request{
+			xmlRootName:     bodyRootName,
+			xmlDeclaration:  m.Request.XMLDeclaration,
+			xmlAnnotation:   m.Request.XMLRootAnnotation,
 			bodyTranslation: m.Config.RequestBodyTranslate.Algorithm,
 			signingService:  cmp.Or(m.ServiceName, d.Info.ServiceName),
 			defaultBody:     m.Request.Default,
@@ -1013,6 +1025,9 @@ func (p parameter) List() bool   { return p.list }
 func (p parameter) Default() any { return p.p.Schema.Default }
 
 type request struct {
+	xmlRootName     string
+	xmlDeclaration  string
+	xmlAnnotation   string
 	bodyTranslation string
 	signingService  string
 	defaultBody     string
@@ -1030,6 +1045,10 @@ type request struct {
 	translate       string
 	transpose       string
 }
+
+func (r request) XMLRootName() string       { return r.xmlRootName }
+func (r request) XMLDeclaration() string    { return r.xmlDeclaration }
+func (r request) XMLRootAnnotation() string { return r.xmlAnnotation }
 
 func (r request) SigningService() string { return r.signingService }
 

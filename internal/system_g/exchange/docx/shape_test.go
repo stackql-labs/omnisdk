@@ -127,3 +127,21 @@ func TestBodyShapeCoercesBeforeSending(t *testing.T) {
 		}
 	}
 }
+
+func TestBodyReadControlPreservesDeclaredDefaults(t *testing.T) {
+	declaration := requestShape(t).(aot.Request)
+	request := httpx.Request{Body: httpx.Body{Raw: []byte(`{"Filters":{},"Enabled":true}`)}}
+	if err := bodyControlSlot(&request, declaration, "ItemCount", "read_limit"); err != nil {
+		t.Fatal(err)
+	}
+	if len(request.Body.Raw) != 0 || request.Body.Params["ItemCount"] != "{read_limit}" || request.Body.Params["Enabled"] != true {
+		t.Fatalf("body=%#v", request.Body)
+	}
+	filters, ok := request.Body.Params["Filters"].(map[string]any)
+	if !ok || len(filters) != 0 {
+		t.Fatalf("defaults lost: %#v", request.Body.Params)
+	}
+	if len(request.Query) != 0 {
+		t.Fatalf("body control leaked into query: %#v", request.Query)
+	}
+}

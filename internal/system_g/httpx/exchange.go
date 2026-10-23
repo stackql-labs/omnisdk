@@ -112,7 +112,7 @@ func (o *op) poll(ctx context.Context, buf facade.Buffer) error {
 func (o *op) paginate(ctx context.Context, buf facade.Buffer) error {
 	token := ""
 	seen := map[string]bool{}
-	for {
+	for page := 0; WithinPageLimit(ctx, page); page++ {
 		status, body, reqURL, err := o.do(ctx, token, "")
 		if err != nil {
 			return err
@@ -130,6 +130,7 @@ func (o *op) paginate(ctx context.Context, buf facade.Buffer) error {
 		seen[next] = true
 		token = next
 	}
+	return nil
 }
 
 // pageNumber reads the current page and total count from the same response.
@@ -137,7 +138,7 @@ func (o *op) paginate(ctx context.Context, buf facade.Buffer) error {
 func (o *op) pageNumber(ctx context.Context, buf facade.Buffer) error {
 	c := o.req.Continuation
 	token := "1"
-	for {
+	for page := 0; WithinPageLimit(ctx, page); page++ {
 		status, body, reqURL, err := o.do(ctx, token, "")
 		if err != nil {
 			return err
@@ -159,6 +160,7 @@ func (o *op) pageNumber(ctx context.Context, buf facade.Buffer) error {
 		}
 		token = strconv.FormatInt(current+1, 10)
 	}
+	return nil
 }
 
 // follow paginates by following an absolute next-link URL from each response (Azure nextLink,
@@ -166,7 +168,7 @@ func (o *op) pageNumber(ctx context.Context, buf facade.Buffer) error {
 func (o *op) follow(ctx context.Context, buf facade.Buffer) error {
 	next := ""
 	seen := map[string]bool{}
-	for {
+	for page := 0; WithinPageLimit(ctx, page); page++ {
 		status, body, reqURL, err := o.do(ctx, "", next)
 		if err != nil {
 			return err
@@ -183,6 +185,7 @@ func (o *op) follow(ctx context.Context, buf facade.Buffer) error {
 		}
 		seen[next] = true
 	}
+	return nil
 }
 
 // link paginates by following the rel="next" URL in a response header, until a response has none.
@@ -193,7 +196,7 @@ func (o *op) link(ctx context.Context, buf facade.Buffer) error {
 	}
 	next := ""
 	seen := map[string]bool{}
-	for {
+	for page := 0; WithinPageLimit(ctx, page); page++ {
 		status, body, reqURL, err := o.do(ctx, "", next)
 		if err != nil {
 			return err
@@ -209,6 +212,7 @@ func (o *op) link(ctx context.Context, buf facade.Buffer) error {
 		}
 		seen[next] = true
 	}
+	return nil
 }
 
 // nextLink is the rel="next" target among Link header values, "" where there is none.

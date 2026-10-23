@@ -20,6 +20,12 @@ type Fn interface {
 	Call(sig int, args []Typed) (any, error)
 }
 
+// LazyFn evaluates only the argument thunks its semantics require. It owns
+// arity validation; unselected branches must never be evaluated.
+type LazyFn interface {
+	CallLazy(args []func() (any, error)) (any, error)
+}
+
 // Signature is one accepted argument list and what it yields. An optional trailing argument is a
 // second signature, not a flag.
 type Signature interface {

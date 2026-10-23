@@ -16,7 +16,7 @@ func TestSQLiteParityOperators(t *testing.T) {
 		{name: "is_null", sql: "? IS NULL", arity: []int{1}},
 		{name: "between", sql: "? BETWEEN ? AND ?", arity: []int{3}},
 	}
-	for _, op := range []string{"=", "!=", "<>", "<", "<=", ">", ">="} {
+	for _, op := range []string{"=", "!=", "<>", "<", "<=", ">", ">=", "+", "-", "*", "/", "%"} {
 		specs = append(specs, parity{name: op, sql: "? " + op + " ?", arity: []int{2}})
 	}
 	checkParity(t, sqliteCatalog(t), specs)
@@ -70,5 +70,28 @@ func TestCatalogRefusesDuplicates(t *testing.T) {
 	f, _ := c.Get("lower")
 	if _, err := sqlfn.With(c, f); err == nil {
 		t.Error("accepted a second lower")
+	}
+}
+
+func TestSimpleCaseEvaluatesBaseOnce(t *testing.T) {
+	f, ok := sqliteCatalog(t).Get("case_value")
+	if !ok {
+		t.Fatal("missing simple CASE")
+	}
+	lazy, ok := f.(sqlfn.LazyFunc)
+	if !ok {
+		t.Fatal("simple CASE must be lazy")
+	}
+	calls := 0
+	value, err := lazy.CallLazy([]func() (any, error){
+		func() (any, error) { calls++; return int64(2), nil },
+		func() (any, error) { return int64(1), nil },
+		func() (any, error) { t.Fatal("evaluated unmatched result"); return nil, nil },
+		func() (any, error) { return int64(2), nil },
+		func() (any, error) { return "matched", nil },
+		func() (any, error) { t.Fatal("evaluated fallback"); return nil, nil },
+	})
+	if err != nil || value != "matched" || calls != 1 {
+		t.Fatalf("value=%#v calls=%d error=%v", value, calls, err)
 	}
 }

@@ -3,16 +3,36 @@
 Latest measured CI: **456/728 passed, 272 failed** in
 [run 39714700734](https://github.com/stackql/stackql-devel/actions/runs/39714700734/job/119637217455).
 
-After the compatibility fixes, **198 cases that failed in that CI job pass locally**.
-The verified local aggregate is **625/732 passed, 107 failed**: a full 731-case run plus a
-397-case rerun after the final CTE, concatenation and depth-limit corrections. This is not a new CI result.
+After the compatibility fixes, **203 cases that failed in that CI job pass locally**.
+The verified fresh full local run is **631/733 passed, 102 failed**. This is not a new CI result.
 
-Compared with the previous verified local aggregate (**600/730**), this branch recovers **23 existing
-failures**, adds passing stored-relation and CTE regressions, and retains **every previously passing case**.
+Compared with the previous verified local aggregate (**625/732**), this batch recovers **five
+existing failures**, adds a passing CASE-join regression, and retains **every previously passing case**.
 There are 33 local failures among cases that passed in CI: 31 MCP cases and two CLI version cases,
-including local TLS/client-output and build-metadata differences. That leaves **74 of the original
+including local TLS/client-output and build-metadata differences. That leaves **69 of the original
 272 CI failures unresolved**. Do not compare raw local and CI totals as identical environments.
 No tests were skipped, marked as expected failures, or given weaker assertions.
+
+The migration order is behavioral parity first, removal of the `any-sdk` dependency second,
+and semantic improvements afterward. Existing SQLite boolean representation (`0`/`1`) remains
+part of the parity target for this work.
+
+## Current compatibility batch
+
+The mocked suite now passes **334/398**, compared with **328/397** before this batch.
+Five existing failures recover, the new CASE-join regression passes, and no previously passing
+mocked case regresses. The recovered cases are both Route53 XML record creations, the explicit
+GitHub page-limit case, and both transformed JSON/XML CASE joins. A previously intermittent
+view/TVF case is not counted as recovered.
+
+This batch adds lazy conditional evaluation, SQLite arithmetic, projection evaluation after
+filtering, declared XML request envelopes and validated fragments, per-provider page budgets,
+and placement of body-bound read controls without losing body defaults. RDBMS work remains in
+the host adapter, behind relation interfaces.
+
+Full evidence: `/private/tmp/omni-batch-full-robot/output.xml`; mocked evidence:
+`/private/tmp/omni-batch2-robot/output.xml`. The full run confirms the same five recoveries and
+zero regressions. SDK build, vet, and full race tests pass; adapter race tests and lint pass.
 
 ## Implemented
 
@@ -122,13 +142,15 @@ CTE scope and relational boundaries. Adapter lint reports zero issues.
 
 - Previous full baseline: `/private/tmp/omni-final-readiness/output.xml` (587/728).
 - Previous verified aggregate: `/private/tmp/omni-relations-aggregate/output.xml` (600/730).
-- Current full Robot run: `/private/tmp/omni-coverage3-robot/output.xml` (623/731).
-- Final mocked rerun: `/private/tmp/omni-coverage5-robot/output.xml` (328/397).
-- Merged results: `/private/tmp/omni-coverage-aggregate/output.xml` (625/732).
+- Previous full Robot run: `/private/tmp/omni-coverage3-robot/output.xml` (623/731).
+- Previous mocked rerun: `/private/tmp/omni-coverage5-robot/output.xml` (328/397).
+- Previous merged results: `/private/tmp/omni-coverage-aggregate/output.xml` (625/732).
+- Current full Robot run: `/private/tmp/omni-batch-full-robot/output.xml` (631/733).
+- Current comparison: `/private/tmp/omni-batch-comparison.json`.
 - Remaining failure details: `/private/tmp/omni-coverage-final-failures.json`.
-- SDK checks: `/private/tmp/omni-coverage-full-sdk.log`.
-- Adapter race tests: `/private/tmp/omni-coverage-final-adapter-tests.log`.
-- Adapter lint: `/private/tmp/omni-coverage-final-adapter-lint.log`.
+- SDK checks: `/private/tmp/omni-batch-final-sdk.log`.
+- Adapter race tests: `/private/tmp/omni-batch-host-race.log`.
+- Adapter lint: `/private/tmp/omni-batch-lint.log`.
 
 The local retry mock has an older Python IPv4 listener alongside Docker's IPv6 listener on port 1199.
 The final retry test uses `RETRY_MOCK_BASE_URL=http://localhost:1199`, matching the SDK request's host,

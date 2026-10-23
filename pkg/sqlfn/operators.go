@@ -151,9 +151,16 @@ func sqliteRealSameAsInt(r float64, i int64) bool {
 }
 
 func pgOperators(env pgEnv) []Func {
-	return append(comparisonOperators(func(x, y any, op string) (*int, error) {
+	comparisons := comparisonOperators(func(x, y any, op string) (*int, error) {
 		return pgCompareNullable(env, x, y, op)
-	}, func(b bool) any { return b }), []Func{
+	}, func(b bool) any { return b })
+	functions := append(comparisons, booleanFunctions(pgTruth, func(value bool) any { return value })...)
+	return append(functions, []Func{
+		newChoice("case_when", 3, true, pgTruth),
+		newSimpleCase(func(left, right any) (bool, error) {
+			comparison, err := pgCompareNullable(env, left, right, "=")
+			return comparison != nil && *comparison == 0, err
+		}),
 		NewScalar("||", 2, -1, func(a []any) (any, error) {
 			acc := a[0]
 			for _, v := range a[1:] {

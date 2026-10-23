@@ -18,6 +18,21 @@ positional literals must account for added fields or switch to keyed fields.
 
 ## Additions
 
+- **Conditional expressions:** the function catalogue supports lazy searched and simple CASE
+  (`case_when`, `case_value`) plus three-valued `and`, `or`, and `not`. SQLite `if` and `iif`
+  skip unselected branches. Optional `sqlfn.LazyFunc` lets custom functions request deferred
+  argument evaluation; existing `Func` implementations remain compatible. Scalar query outputs
+  are evaluated after filtering, so rejected rows cannot trigger projection errors.
+- **SQLite arithmetic:** scalar `+`, `-`, `*`, `/`, and `%` follow SQLite numeric conversion,
+  integer division, overflow promotion, and NULL-on-division-by-zero behavior.
+- **XML requests:** optional `aot.XMLRequest` exposes declared root names, declarations, and
+  root attributes. The StackQL parser supplies these automatically. Structured XML fragments
+  are validated; scalar strings remain escaped.
+- **Read controls:** `Tuning.PageLimit` caps pages per resource read and ends cleanly at the cap.
+  Global zero or negative means unlimited; provider zero inherits and negative removes the cap.
+  Retries and polling are separate. Document-declared body controls remain in the JSON body
+  and preserve existing defaults instead of becoming query parameters.
+
 - **Template conversions:** document Go templates now provide `toInt` and `toBool`, including
   XML-to-JSON programs for transformed volumes. Their absent-value defaults are zero and false.
 
@@ -44,7 +59,7 @@ without invoking read handles or provider exchanges.
   **30 seconds**. Zero selects the fallback; a negative duration explicitly disables it.
 - **Provider overrides:** `omnisdk.Args.TuningByProvider` (`tuning_by_provider` in JSON) maps provider
   names to `omnisdk.ProviderTuning`. Its fields are `RequestTimeout`, `RetryTries`, `RetryRate`, and
-  `MaxPerHost`; zero fields inherit the global `Args.Tuning` value, then library defaults. Keys
+  `MaxPerHost`, and `PageLimit`; zero fields inherit the global `Args.Tuning` value, then library defaults. Keys
   accept `google` or `stackql_unstable_google`; the namespaced entry wins when both exist.
   Overrides apply to provider authentication exchanges as well as resource calls, in document-backed
   and built-in plans. Retry and per-host admission state is shared across a provider's exchanges

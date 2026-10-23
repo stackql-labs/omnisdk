@@ -89,7 +89,7 @@ func (g *graphQLOperator) run(ctx context.Context, buf facade.Buffer) error {
 	fragment := ""
 	offset := 0
 	seen := map[string]bool{}
-	for {
+	for page := 0; httpx.WithinPageLimit(ctx, page); page++ {
 		if err := ctx.Err(); err != nil {
 			return err
 		}
@@ -184,6 +184,7 @@ func (g *graphQLOperator) run(ctx context.Context, buf facade.Buffer) error {
 			fragment = ", after: " + identity
 		}
 	}
+	return nil
 }
 
 func (g *graphQLOperator) page(ctx context.Context, bound map[string]any) (facade.Record, map[string]any, error) {

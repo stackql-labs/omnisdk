@@ -2,15 +2,15 @@ package omnisdk
 
 import (
 	"fmt"
-	"github.com/stackql-labs/omnisdk/internal/system_g/exchange/docx"
-	"github.com/stackql-labs/omnisdk/pkg/sqlfn"
 	"slices"
 	"strings"
 
+	"github.com/stackql-labs/omnisdk/internal/system_g/exchange/docx"
 	"github.com/stackql-labs/omnisdk/internal/system_g/fn"
 	"github.com/stackql-labs/omnisdk/pkg/docparse/aot"
 	"github.com/stackql-labs/omnisdk/pkg/namespace"
 	"github.com/stackql-labs/omnisdk/pkg/query"
+	"github.com/stackql-labs/omnisdk/pkg/sqlfn"
 )
 
 // Table describes a read source's address and select signatures. A provider
@@ -1232,8 +1232,13 @@ func (r *resolver) keep(alias, name string) {
 func (r *resolver) build(sel []query.Output) (Resolution, error) {
 	byAlias := map[string][]SelectColumn{}
 	for _, o := range sel {
-		if len(r.aliasesOf(o.Expr())) > 1 {
-			// Reads several tables: computed on the finished row, from what each node keeps.
+		scalar, err := r.scalarOutput(o.Expr())
+		if err != nil {
+			return nil, err
+		}
+		if scalar || len(r.aliasesOf(o.Expr())) > 1 {
+			// Scalar SELECT expressions run after WHERE, including single-source
+			// expressions: a discarded row must not evaluate an erroring branch.
 			e, err := r.rewriteExpr(o.Expr())
 			if err != nil {
 				return nil, fmt.Errorf("omnisdk: output %q: %w", o.Name(), err)
@@ -1323,6 +1328,19 @@ func (r *resolver) build(sel []query.Output) (Resolution, error) {
 		g = empty
 	}
 	return resolution{graph: g, params: r.params}, nil
+}
+
+func (r *resolver) scalarOutput(expression query.Expr) (bool, error) {
+	call, isCall := expression.(query.Call)
+	if !isCall {
+		return false, nil
+	}
+	registry, err := fn.Builtins(r.dialect)
+	if err != nil {
+		return false, err
+	}
+	rows, err := fn.RowProducing(registry, call.Func())
+	return !rows, err
 }
 
 // projected converts an output expression to the engine's, reporting the one table it reads.

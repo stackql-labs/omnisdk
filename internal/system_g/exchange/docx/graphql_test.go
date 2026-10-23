@@ -94,3 +94,24 @@ func TestGraphQLHTTPDeadlineStillCoversBody(t *testing.T) {
 		t.Fatal("GraphQL bypassed the request timeout")
 	}
 }
+
+func TestGraphQLPageLimitStopsWithoutError(t *testing.T) {
+	var calls atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		page := calls.Add(1)
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprintf(w, `{"data":{"nodes":[{"name":"row"}],"cursor":"page-%d"}}`, page)
+	}))
+	defer srv.Close()
+	ctx := httpx.WithPageLimit(context.Background(), 2)
+	op := newGraphQLOperator(graphSpecTest{}, "", httpx.Request{URL: srv.URL}, nil, nil, 10, "")
+	rows := op.Open(ctx)
+	defer rows.Close()
+	count := 0
+	for rows.Next(ctx) {
+		count++
+	}
+	if rows.Err() != nil || calls.Load() != 2 || count != 2 {
+		t.Fatalf("requests=%d rows=%d error=%v", calls.Load(), count, rows.Err())
+	}
+}

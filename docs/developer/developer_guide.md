@@ -130,8 +130,13 @@ Tuning (any subcommand): `--parallelism` (fan-out concurrency), `--max-per-host`
 Request settings resolve from `Args.TuningByProvider` to global `Args.Tuning`,
 then library defaults. Provider keys accept `google` or `stackql_unstable_google`;
 the namespaced entry wins if both are present. Provider overrides cover
-`RequestTimeout`, `RetryTries`, `RetryRate`, and `MaxPerHost`. Zero fields inherit.
+`RequestTimeout`, `RetryTries`, `RetryRate`, `MaxPerHost`, and `PageLimit`. Zero fields inherit.
 Whole-query deadlines, row limits, buffering, and total parallelism remain global.
+
+`PageLimit` caps pages per resource read, including cursor, page-number, next-link,
+and GraphQL pagination. Reaching the cap ends the read cleanly. Global zero or
+negative values mean unlimited; a negative provider override removes a global cap.
+Retries and asynchronous polling attempts do not consume this page budget.
 
 `RequestTimeout` defaults to **30 seconds**, including HTTP response body reads
 and gRPC response consumption. A negative duration explicitly disables it.

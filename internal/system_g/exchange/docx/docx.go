@@ -646,11 +646,31 @@ func compile(ex aot.AOTExchange, inputs map[string]any, reg dsl.Registry, o opti
 		}
 	}
 	for wire, slot := range o.querySlots {
+		if slices.ContainsFunc(req.Parameters(), func(parameter aot.Parameter) bool {
+			return parameter.Name() == wire && parameter.In() == aot.InBody
+		}) {
+			if err := bodyControlSlot(&hreq, req, wire, slot); err != nil {
+				return nil, err
+			}
+			bindings = withInput(bindings, slot)
+			continue
+		}
 		if hreq.Query == nil {
 			hreq.Query = map[string]string{}
 		}
 		hreq.Query[wire] = "{" + slot + "}"
 		bindings = withInput(bindings, slot)
+	}
+	var xmlEnvelope *xmlRequestBody
+	if declared, ok := req.(aot.XMLRequest); ok && declared.XMLRootName() != "" &&
+		bodyEncoding(req.BodyMediaType()) == httpx.EncodingXML {
+		var schema aot.Schema
+		if shape, ok := req.(aot.RequestShape); ok {
+			schema = shape.BodySchema()
+		}
+		xmlEnvelope = &xmlRequestBody{declaration: declared, schema: schema}
+		// Preserve structured values until the schema-aware XML transform runs.
+		hreq.Body.Encoding = httpx.EncodingJSON
 	}
 	for header, media := range map[string]string{"Accept": resp.MediaType(), "Content-Type": req.MediaType()} {
 		if media == "" {
@@ -752,6 +772,9 @@ func compile(ex aot.AOTExchange, inputs map[string]any, reg dsl.Registry, o opti
 
 	spec := plan.NewExchangeSpec(ex.Name(), bindings, nil, func(bound map[string]any) facade.Operator {
 		var reqT []facade.Transform
+		if xmlEnvelope != nil {
+			reqT = append(reqT, *xmlEnvelope)
+		}
 		if shape, ok := req.(aot.RequestShape); ok && strings.Contains(req.BodyMediaType(), "json") {
 			reqT = append(reqT, bodyShape{shape: shape})
 		}

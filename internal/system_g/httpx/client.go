@@ -16,6 +16,23 @@ import (
 // otherwise care about.
 
 type clientKey struct{}
+type pageLimitKey struct{}
+
+// WithPageLimit caps successful pages per resource read. Zero or negative is
+// unlimited; retries and polling attempts are separate policies.
+func WithPageLimit(ctx context.Context, limit int) context.Context {
+	return context.WithValue(ctx, pageLimitKey{}, limit)
+}
+
+func PageLimit(ctx context.Context) int {
+	limit, _ := ctx.Value(pageLimitKey{}).(int)
+	return limit
+}
+
+func WithinPageLimit(ctx context.Context, fetched int) bool {
+	limit := PageLimit(ctx)
+	return limit <= 0 || fetched < limit
+}
 
 // DefaultRequestTimeout bounds a request, including reading its response body.
 const DefaultRequestTimeout = requestpolicy.DefaultTimeout

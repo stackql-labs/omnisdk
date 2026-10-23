@@ -19,6 +19,25 @@ import (
 
 type bodyShape struct{ shape aot.RequestShape }
 
+// A read control belongs where the operation declares the parameter. A JSON
+// API's limit is a body field even though OData uses query parameters for it.
+func bodyControlSlot(request *httpx.Request, declaration aot.Request, wire, slot string) error {
+	if len(request.Body.Raw) > 0 {
+		var body map[string]any
+		decoder := json.NewDecoder(bytes.NewReader(request.Body.Raw))
+		decoder.UseNumber()
+		if err := decoder.Decode(&body); err != nil {
+			return fmt.Errorf("request read control %s: %w", wire, err)
+		}
+		request.Body = httpx.Body{Encoding: bodyEncoding(declaration.BodyMediaType()), Params: body}
+	}
+	if request.Body.Params == nil {
+		request.Body = httpx.Body{Encoding: bodyEncoding(declaration.BodyMediaType()), Params: map[string]any{}}
+	}
+	request.Body.Params[wire] = "{" + slot + "}"
+	return nil
+}
+
 func (b bodyShape) Apply(in facade.Page) (facade.Record, error) {
 	raw := httpx.ReqBody(in)
 	if len(raw) == 0 || b.shape.BodySchema() == nil {

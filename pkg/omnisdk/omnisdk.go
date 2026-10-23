@@ -365,6 +365,8 @@ func (a *Args) UnmarshalJSON(data []byte) error {
 
 // Tuning are the run knobs; a zero value uses sensible defaults.
 type Tuning struct {
+	// PageLimit caps pages per resource read. Zero or negative is unlimited.
+	PageLimit int
 	// Parallelism bounds concurrent work: a query's fan-out, and the keys an IaC run converges at
 	// once. Zero is the default, 16.
 	Parallelism int
@@ -1832,6 +1834,7 @@ func (c *cannedPlan) decorate(parent context.Context) (context.Context, context.
 		ctx, timeoutCancel = context.WithTimeout(parent, c.args.Tuning.Timeout)
 	}
 	ctx = httpx.WithRequestTimeout(ctx, c.args.Tuning.RequestTimeout)
+	ctx = httpx.WithPageLimit(ctx, c.args.Tuning.PageLimit)
 	ctx = requestpolicy.WithPolicy(ctx, newProviderPolicies(c.args))
 	// The HTTP client is a run policy like the rest: set once here, obeyed by every exchange, so a
 	// document-compiled plan and a hand-authored one behave identically.

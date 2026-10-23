@@ -237,6 +237,13 @@ type BodyTranslationRequest interface {
 	BodyTranslation() string
 }
 
+// XMLRequest declares the wire envelope independently of the body properties.
+type XMLRequest interface {
+	XMLRootName() string
+	XMLDeclaration() string
+	XMLRootAnnotation() string
+}
+
 // StringOnlySchema marks a structured value serialized as JSON text on wire.
 type StringOnlySchema interface {
 	StringOnly() bool
