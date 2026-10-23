@@ -10,15 +10,24 @@ import (
 	"sync"
 
 	"github.com/stackql-labs/omnisdk/pkg/docparse/aot"
+	"github.com/stackql/stackql-provider-registry/signing/pqsig"
 )
 
 // Option configures how a bundle is resolved.
 type Option func(*settings)
 
 type settings struct {
-	prefix string
-	docs   DocCache
-	docKey string
+	prefix   string
+	docs     DocCache
+	docKey   string
+	verifier pqsig.Verifier
+	verify   bool
+}
+
+// WithVerifier authenticates every provider and service document before parsing.
+// Passing nil is an error, not a request to disable verification.
+func WithVerifier(v pqsig.Verifier) Option {
+	return func(s *settings) { s.verifier, s.verify = v, true }
 }
 
 // DocCache holds parsed service documents across catalogs. A parsed document is read-only, so one
@@ -57,14 +66,37 @@ func resolveSettings(opts []Option) settings {
 	for _, o := range opts {
 		o(&s)
 	}
+	if s.verify {
+		// A shared parse cache may contain documents read without verification, or
+		// under a different trust store. Verified reads never use those entries.
+		s.docs = nil
+	}
 	return s
+}
+
+func (s settings) readDocument(fsys fs.FS, file string) ([]byte, error) {
+	if s.verify && s.verifier == nil {
+		return nil, fmt.Errorf("stackqldoc: %s: nil document verifier", file)
+	}
+	data, err := fs.ReadFile(fsys, file)
+	if err != nil {
+		return nil, fmt.Errorf("stackqldoc: read %s: %w", file, err)
+	}
+	if s.verify {
+		data, err = s.verifier.Verify(data)
+		if err != nil {
+			return nil, fmt.Errorf("stackqldoc: verify %s: %w", file, err)
+		}
+	}
+	return data, nil
 }
 
 // Open resolves a provider bundle — provider.yaml plus the service documents beside it — into
 // addressable exchanges. Service documents are parsed LAZILY: a provider lists hundreds and each is
 // megabytes, so resolving an address must not cost the whole catalogue.
 func Open(fsys fs.FS, opts ...Option) (aot.Catalog, error) {
-	b, err := fs.ReadFile(fsys, "provider.yaml")
+	st := resolveSettings(opts)
+	b, err := st.readDocument(fsys, "provider.yaml")
 	if err != nil {
 		return nil, fmt.Errorf("stackqldoc: open provider: %w", err)
 	}
@@ -72,9 +104,8 @@ func Open(fsys fs.FS, opts ...Option) (aot.Catalog, error) {
 	if err != nil {
 		return nil, err
 	}
-	st := resolveSettings(opts)
 	c := &catalog{fsys: fsys, provider: p, files: map[string]string{}, missing: map[string]string{},
-		prefix: st.prefix, docs: st.docs, docKey: st.docKey}
+		prefix: st.prefix, docs: st.docs, docKey: st.docKey, settings: st}
 	// A provider lists every service it could offer; only those whose document is present here are
 	// addressable. Which is which is a fact about the bundle, so it is settled once, up front.
 	//
@@ -125,6 +156,7 @@ func Open(fsys fs.FS, opts ...Option) (aot.Catalog, error) {
 type catalog struct {
 	fsys     fs.FS
 	provider aot.Provider
+	settings settings
 
 	prefix string // the namespace addresses live under
 
@@ -276,7 +308,7 @@ func (c *catalog) doc(service string) (Doc, error) {
 			}
 		}
 	}
-	b, err := fs.ReadFile(c.fsys, file)
+	b, err := c.settings.readDocument(c.fsys, file)
 	if err != nil {
 		return nil, fmt.Errorf("stackqldoc: read %s: %w", file, err)
 	}

@@ -9,6 +9,7 @@ import (
 
 	"github.com/stackql-labs/omnisdk/internal/system_g/fn"
 	"github.com/stackql-labs/omnisdk/pkg/docparse/aot"
+	"github.com/stackql-labs/omnisdk/pkg/docparse/stackqldoc"
 	"github.com/stackql-labs/omnisdk/pkg/namespace"
 	"github.com/stackql-labs/omnisdk/pkg/query"
 )
@@ -50,20 +51,22 @@ type ParamSignature interface {
 }
 
 // DescribeTable reads what the documents under dir say about an address's reads.
-func DescribeTable(dir, address string) (Table, error) { return describeTable(dir, address, "select") }
+func DescribeTable(dir, address string, opts ...stackqldoc.Option) (Table, error) {
+	return describeTable(dir, address, "select", opts...)
+}
 
 // DescribeMutation reads what the documents under dir say about an address's methods for a
 // mutating verb: "insert", "update", "replace" or "delete".
-func DescribeMutation(dir, address, verb string) (Table, error) {
+func DescribeMutation(dir, address, verb string, opts ...stackqldoc.Option) (Table, error) {
 	switch verb {
 	case "insert", "update", "delete", "replace":
-		return describeTable(dir, address, verb)
+		return describeTable(dir, address, verb, opts...)
 	}
 	return nil, fmt.Errorf("omnisdk: %q is not a mutating verb", verb)
 }
 
-func describeTable(dir, address, verb string) (Table, error) {
-	c, err := openDocs(dir, address)
+func describeTable(dir, address, verb string, opts ...stackqldoc.Option) (Table, error) {
+	c, err := openDocs(dir, address, opts...)
 	if err != nil {
 		return nil, err
 	}

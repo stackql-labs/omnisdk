@@ -15,17 +15,20 @@ import (
 // services/. Providers and versions are DISCOVERED, not configured — the layout already states both,
 // and a second source of truth about which version is current is a way to disagree with the disk.
 //
-// Nothing is parsed here. A registry can hold thousands of resources across dozens of providers, so
-// opening one reads directory names only; a provider's documents are touched when something addresses
-// them, and dropped again after (see catalog).
+// Only provider metadata is read here. Service documents are read lazily when
+// addressed. WithVerifier authenticates metadata as well as every later read.
 func OpenRegistry(fsys fs.FS, opts ...Option) (aot.Registry, error) {
+	st := resolveSettings(opts)
+	if st.verify && st.verifier == nil {
+		return nil, fmt.Errorf("stackqldoc: open registry: nil document verifier")
+	}
 	entries, err := fs.ReadDir(fsys, ".")
 	if err != nil {
 		return nil, fmt.Errorf("stackqldoc: open registry: %w", err)
 	}
 	r := &registry{
 		fsys: fsys, versions: map[string]string{}, dirs: map[string]string{},
-		catalogs: map[string]aot.Catalog{}, opts: opts, prefix: resolveSettings(opts).prefix,
+		catalogs: map[string]aot.Catalog{}, opts: opts, prefix: st.prefix,
 	}
 	for _, e := range entries {
 		if !e.IsDir() {
@@ -40,8 +43,17 @@ func OpenRegistry(fsys fs.FS, opts ...Option) (aot.Registry, error) {
 		// googleapis.com/ declares itself "google", and its resources' own ids say google too.
 		// Addressing by directory would name something the documents never call it.
 		name := e.Name()
-		if b, err := fs.ReadFile(fsys, e.Name()+"/"+v+"/provider.yaml"); err == nil {
-			if p, err := ParseProvider(b); err == nil && p.Name() != "" {
+		file := e.Name() + "/" + v + "/provider.yaml"
+		b, err := st.readDocument(fsys, file)
+		if st.verify && err != nil {
+			return nil, err
+		}
+		if err == nil {
+			p, err := ParseProvider(b)
+			if st.verify && err != nil {
+				return nil, fmt.Errorf("stackqldoc: parse %s: %w", file, err)
+			}
+			if err == nil && p.Name() != "" {
 				name = p.Name()
 			}
 		}
@@ -157,7 +169,7 @@ func (r *registry) Catalog(provider string) (aot.Catalog, error) {
 	}
 	c, err := Open(sub, append(append([]Option{}, r.opts...), underKey(dir+"/"+version))...)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("stackqldoc: %s/%s: %w", dir, version, err)
 	}
 	// A catalog is safe to keep: it holds the provider document and a file index, never a service
 	// document. That is what makes handing over a whole registry root affordable.
@@ -199,6 +211,11 @@ func (r *registry) ServiceFile(address string) (string, error) {
 	cat.mu.Unlock()
 	if !ok {
 		return "", fmt.Errorf("stackqldoc: %s has no service %q (have %v)", full, service, cat.Services())
+	}
+	if cat.settings.verify {
+		if _, err := cat.settings.readDocument(cat.fsys, file); err != nil {
+			return "", err
+		}
 	}
 	dir := r.dirs[r.dirName(full)]
 	return path.Join(dir, r.versions[dir], file), nil
