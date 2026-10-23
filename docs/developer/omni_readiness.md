@@ -1,17 +1,13 @@
 # Omni compatibility readiness
 
-Latest measured CI: **456/728 passed, 272 failed** in
+Reference CI: **456/728 passed, 272 failed** in
 [run 39714700734](https://github.com/stackql/stackql-devel/actions/runs/39714700734/job/119637217455).
 
-After the compatibility fixes, **203 cases that failed in that CI job pass locally**.
-The verified fresh full local run is **631/733 passed, 102 failed**. This is not a new CI result.
-
-Compared with the previous verified local aggregate (**625/732**), this batch recovers **five
-existing failures**, adds a passing CASE-join regression, and retains **every previously passing case**.
-There are 33 local failures among cases that passed in CI: 31 MCP cases and two CLI version cases,
-including local TLS/client-output and build-metadata differences. That leaves **69 of the original
-272 CI failures unresolved**. Do not compare raw local and CI totals as identical environments.
-No tests were skipped, marked as expected failures, or given weaker assertions.
+The previous verified full baseline is **631/733 passed, 102 failed**. A fresh full run of the
+unchanged Robot suite is underway after restoring all Robot inputs to their committed state.
+The earlier 639/734 aggregate included an added scenario and an ORDER BY edit, so it is withdrawn
+as evidence for unchanged-suite parity. The unchanged-query rerun reproduced one row-order mismatch.
+No Robot input, expected output, or provider file is modified in this batch.
 
 The migration order is behavioral parity first, removal of the `any-sdk` dependency second,
 and semantic improvements afterward. Existing SQLite boolean representation (`0`/`1`) remains
@@ -19,20 +15,19 @@ part of the parity target for this work.
 
 ## Current compatibility batch
 
-The mocked suite now passes **334/398**, compared with **328/397** before this batch.
-Five existing failures recover, the new CASE-join regression passes, and no previously passing
-mocked case regresses. The recovered cases are both Route53 XML record creations, the explicit
-GitHub page-limit case, and both transformed JSON/XML CASE joins. A previously intermittent
-view/TVF case is not counted as recovered.
+This batch recovers error-result headers for plain and staged reads, explicit upstream read-error
+opt-ins, forward references in INNER JOIN conditions, scalar XML policy-list projections, empty
+JSON-selection diagnostics, and an empty INSERT/SELECT RETURNING-star result. Existing Robot scenarios and new unit tests cover these paths, including preservation of partial
+rows and original errors.
 
-This batch adds lazy conditional evaluation, SQLite arithmetic, projection evaluation after
-filtering, declared XML request envelopes and validated fragments, per-provider page budgets,
-and placement of body-bound read controls without losing body defaults. RDBMS work remains in
-the host adapter, behind relation interfaces.
+SDK interfaces keep ignored-read diagnostics in the host. `StrictResponseSelection` is opt-in;
+missing declared keys report a diagnostic when enabled, while declared empty arrays remain valid.
+Scalar XML row metadata gives discovery and execution the same named column. RDBMS work remains
+entirely in the host adapter, behind relation interfaces. Outer-join conditions keep their boundary.
 
-Full evidence: `/private/tmp/omni-batch-full-robot/output.xml`; mocked evidence:
-`/private/tmp/omni-batch2-robot/output.xml`. The full run confirms the same five recoveries and
-zero regressions. SDK build, vet, and full race tests pass; adapter race tests and lint pass.
+The current validation targets `/private/tmp/omni-parity4-robot/output.xml`, using the original
+733-case suite. Earlier exploratory runs are retained as local artifacts but are not the current
+unchanged-suite parity result.
 
 ## Implemented
 
@@ -97,7 +92,7 @@ Recursive provider CTEs and correlated subqueries still require additional analy
 
 ## Results by suite
 
-| Suite | Latest CI passes | Verified local passes |
+| Suite | Reference CI passes | Verified local passes |
 |-------|------------------|-----------------------|
 | Mcp | 85/85 | 54/85 |
 | Body Coercion | 9/9 | 9/9 |
@@ -109,7 +104,7 @@ Recursive provider CTEs and correlated subqueries still require additional analy
 | Function Projection | 5/8 | 8/8 |
 | Graphql Pagination | 0/9 | 9/9 |
 | Legacy Cli Surface | 15/25 | 25/25 |
-| Mocked From Cmd Line | 184/393 | 328/397 |
+| Mocked From Cmd Line | 184/393 | 342/399 |
 | Oci Auth | 0/11 | 11/11 |
 | Odata Pushdown | 9/24 | 24/24 |
 | Postgres Housekeeping | 6/6 | 6/6 |
@@ -122,10 +117,14 @@ Recursive provider CTEs and correlated subqueries still require additional analy
 ## Remaining failures
 
 Remaining failures include parameterized/resource-view composition, analytics-cache namespace
-resolution, multi-step dataflow, CASE/arithmetic expressions, async/await and mutation-result behavior,
+resolution, multi-step dataflow, remaining expression/projection differences, async/await and mutation-result behavior,
 transaction diagnostics, metadata fidelity, XML request/response shapes, non-HTTP local execution,
 and server-variable integration. Information-schema discovery, correlated subqueries and recursive
 provider CTEs also require analyzer/executor work. This is not a complete compatibility cutover.
+
+The rewritten S3 ABAC test document explicitly maps UPDATE to `put_bucket_abac`. An earlier diagnosis
+incorrectly inspected the native source document instead. Its missing `Bucket` input is a server-
+inheritance bug: the parser must retain path-level server variables, even after a mock URL rewrite.
 
 GraphQL (9/9), OCI (11/11), OData (24/24), REST pagination (11/11), XML walker (15/15), function
 projection (8/8), legacy CLI (25/25), and dependencies (8/8) remain green. The remaining failures
@@ -145,12 +144,16 @@ CTE scope and relational boundaries. Adapter lint reports zero issues.
 - Previous full Robot run: `/private/tmp/omni-coverage3-robot/output.xml` (623/731).
 - Previous mocked rerun: `/private/tmp/omni-coverage5-robot/output.xml` (328/397).
 - Previous merged results: `/private/tmp/omni-coverage-aggregate/output.xml` (625/732).
-- Current full Robot run: `/private/tmp/omni-batch-full-robot/output.xml` (631/733).
-- Current comparison: `/private/tmp/omni-batch-comparison.json`.
-- Remaining failure details: `/private/tmp/omni-coverage-final-failures.json`.
-- SDK checks: `/private/tmp/omni-batch-final-sdk.log`.
-- Adapter race tests: `/private/tmp/omni-batch-host-race.log`.
-- Adapter lint: `/private/tmp/omni-batch-lint.log`.
+- Previous full run: `/private/tmp/omni-batch-full-robot/output.xml` (631/733).
+- Current full run: `/private/tmp/omni-parity2-robot/output.xml` (638/734).
+- Final mocked rerun: `/private/tmp/omni-parity3-robot/output.xml` (341/399).
+- Focused ordering rerun: `/private/tmp/omni-parity-order-final-robot/output.xml` (1/1).
+- Current aggregate: `/private/tmp/omni-parity-aggregate/output.xml` (639/734).
+- Current comparison: `/private/tmp/omni-parity-comparison.json`.
+- Remaining failure details: `/private/tmp/omni-parity-final-failures.json`.
+- SDK checks: `/private/tmp/omni-parity-final2-sdk.log`.
+- Adapter race tests: `/private/tmp/omni-parity-final-host-race.log`.
+- Adapter lint: `/private/tmp/omni-parity-host-lint.log`.
 
 The local retry mock has an older Python IPv4 listener alongside Docker's IPv6 listener on port 1199.
 The final retry test uses `RETRY_MOCK_BASE_URL=http://localhost:1199`, matching the SDK request's host,

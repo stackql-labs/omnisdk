@@ -151,12 +151,13 @@ type method struct {
 		Pagination           paginationSpec `yaml:"pagination"`
 	} `yaml:"config"`
 	Request struct {
-		XMLDeclaration    string `yaml:"xmlDeclaration"`
-		XMLRootAnnotation string `yaml:"xmlRootAnnotation"`
-		Default           string `yaml:"default"`
-		Base              string `yaml:"base"`
-		MediaType         string `yaml:"mediaType"`
-		NativeCasing      string `yaml:"nativeCasing"`
+		Transform         transformSpec `yaml:"transform"`
+		XMLDeclaration    string        `yaml:"xmlDeclaration"`
+		XMLRootAnnotation string        `yaml:"xmlRootAnnotation"`
+		Default           string        `yaml:"default"`
+		Base              string        `yaml:"base"`
+		MediaType         string        `yaml:"mediaType"`
+		NativeCasing      string        `yaml:"nativeCasing"`
 	} `yaml:"request"`
 	Response struct {
 		SchemaOverride    yaml.Node     `yaml:"schema_override"`
@@ -204,6 +205,7 @@ type paginationSpec struct {
 }
 
 type pathOp struct {
+	Servers     []server     `yaml:"servers"`
 	GraphQL     *graphQLSpec `yaml:"x-stackQL-graphQL"`
 	OperationID string       `yaml:"operationId"`
 	Parameters  []pathParam  `yaml:"parameters"`
@@ -333,9 +335,6 @@ func (d *document) resolve(name, mName string, withBeta bool) (aot.AOTExchange, 
 		return target.resolve(name, mName, withBeta)
 	}
 	m = resolved
-	if len(d.Servers) == 0 {
-		return nil, fmt.Errorf("stackqldoc: document declares no servers")
-	}
 	path, httpVerb, err := splitOperationRef(m.Operation.Ref)
 	if err != nil {
 		return nil, fmt.Errorf("stackqldoc: resource %q method %q: %w", name, mName, err)
@@ -347,6 +346,19 @@ func (d *document) resolve(name, mName string, withBeta bool) (aot.AOTExchange, 
 	var op pathOp
 	if err := node.Decode(&op); err != nil {
 		return nil, fmt.Errorf("stackqldoc: resource %q method %q: decode %s %s: %w", name, mName, httpVerb, path, err)
+	}
+	if len(op.Servers) == 0 {
+		if declaration, present := d.Paths[path]["servers"]; present {
+			if err := declaration.Decode(&op.Servers); err != nil {
+				return nil, fmt.Errorf("stackqldoc: path %q servers: %w", path, err)
+			}
+		}
+	}
+	if len(op.Servers) == 0 {
+		op.Servers = d.Servers
+	}
+	if len(op.Servers) == 0 {
+		return nil, fmt.Errorf("stackqldoc: document declares no servers")
 	}
 	params, err := d.parameters(path, op.Parameters)
 	if err != nil {
@@ -592,7 +604,7 @@ func (m methodInfo) OperationID() string { return m.opID }
 
 // build turns a resolved (server, path, operation, method) into an AOT exchange.
 func (d *document) build(name, verb, path string, op pathOp, m method) aot.AOTExchange {
-	srv := d.Servers[0]
+	srv := op.Servers[0]
 
 	// The path key carries the operation's identity as __-prefixed pseudo-parameters
 	// (/?__Action=DescribeInstances&__Version=2016-11-15). stackql's requestTranslate
@@ -677,25 +689,26 @@ func (d *document) build(name, verb, path string, op pathOp, m method) aot.AOTEx
 		inputs:  serverVars(srv),
 		opID:    op.OperationID,
 		req: request{
-			xmlRootName:     bodyRootName,
-			xmlDeclaration:  m.Request.XMLDeclaration,
-			xmlAnnotation:   m.Request.XMLRootAnnotation,
-			bodyTranslation: m.Config.RequestBodyTranslate.Algorithm,
-			signingService:  cmp.Or(m.ServiceName, d.Info.ServiceName),
-			defaultBody:     m.Request.Default,
-			method:          strings.ToUpper(verb),
-			url:             url,
-			mediaType:       m.Request.MediaType,
-			params:          params,
-			parameters:      parameters,
-			baseBody:        m.Request.Base,
-			nativeCasing:    m.Request.NativeCasing,
-			snakeAliases:    d.snakeAliases,
-			serverVariables: variableNames,
-			bodySchema:      bodySchema,
-			bodyMediaType:   bodyMediaType(op),
-			translate:       m.Config.RequestTranslate.Algorithm,
-			transpose:       m.Config.QueryParamTranspose.Algorithm,
+			requestTransform: transformDecl(m.Request.Transform),
+			xmlRootName:      bodyRootName,
+			xmlDeclaration:   m.Request.XMLDeclaration,
+			xmlAnnotation:    m.Request.XMLRootAnnotation,
+			bodyTranslation:  m.Config.RequestBodyTranslate.Algorithm,
+			signingService:   cmp.Or(m.ServiceName, d.Info.ServiceName),
+			defaultBody:      m.Request.Default,
+			method:           strings.ToUpper(verb),
+			url:              url,
+			mediaType:        m.Request.MediaType,
+			params:           params,
+			parameters:       parameters,
+			baseBody:         m.Request.Base,
+			nativeCasing:     m.Request.NativeCasing,
+			snakeAliases:     d.snakeAliases,
+			serverVariables:  variableNames,
+			bodySchema:       bodySchema,
+			bodyMediaType:    bodyMediaType(op),
+			translate:        m.Config.RequestTranslate.Algorithm,
+			transpose:        m.Config.QueryParamTranspose.Algorithm,
 		},
 		resp: response{
 			rowSchema:  rowSchema,
@@ -1025,25 +1038,26 @@ func (p parameter) List() bool   { return p.list }
 func (p parameter) Default() any { return p.p.Schema.Default }
 
 type request struct {
-	xmlRootName     string
-	xmlDeclaration  string
-	xmlAnnotation   string
-	bodyTranslation string
-	signingService  string
-	defaultBody     string
-	serverVariables []string
-	baseBody        string
-	nativeCasing    string
-	snakeAliases    bool
-	bodySchema      aot.Schema
-	method          string
-	url             string
-	mediaType       string
-	params          map[string]string
-	parameters      []aot.Parameter
-	bodyMediaType   string
-	translate       string
-	transpose       string
+	requestTransform transformDeclType
+	xmlRootName      string
+	xmlDeclaration   string
+	xmlAnnotation    string
+	bodyTranslation  string
+	signingService   string
+	defaultBody      string
+	serverVariables  []string
+	baseBody         string
+	nativeCasing     string
+	snakeAliases     bool
+	bodySchema       aot.Schema
+	method           string
+	url              string
+	mediaType        string
+	params           map[string]string
+	parameters       []aot.Parameter
+	bodyMediaType    string
+	translate        string
+	transpose        string
 }
 
 func (r request) XMLRootName() string       { return r.xmlRootName }
@@ -1212,3 +1226,5 @@ func (o pushdownOption) FixedColumn() string {
 	}
 	return ""
 }
+
+func (r request) RequestTransform() aot.Transform { return r.requestTransform }

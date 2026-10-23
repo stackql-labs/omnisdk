@@ -92,3 +92,24 @@ properties:
 		t.Fatal("undeclared array element unexpectedly matched")
 	}
 }
+
+func TestXMLScalarSelectionDeclaresNamedColumn(t *testing.T) {
+	var root yaml.Node
+	if err := yaml.Unmarshal([]byte(`type: object
+properties:
+  PolicyNames:
+    type: array
+    items: {type: string}
+`), &root); err != nil {
+		t.Fatal(err)
+	}
+	selected := selectedXMLSchema(root.Content[0], nil, "/*/ListPoliciesResult/PolicyNames/member")
+	scalar, ok := selected.(interface{ ScalarColumn() string })
+	if !ok || scalar.ScalarColumn() != "member" || !reflect.DeepEqual(selected.Properties(), []string{"member"}) {
+		t.Fatalf("schema=%#v", selected)
+	}
+	value, ok := selected.Property("member")
+	if !ok || value.(interface{ Type() string }).Type() != "string" {
+		t.Fatalf("member schema=%#v", value)
+	}
+}

@@ -46,6 +46,8 @@ func Make(req Request, decode facade.Transform, reqT ...facade.Transform) func(b
 	}
 }
 
+var errIgnoredRead = errors.New("httpx: ignored read response")
+
 type op struct {
 	req    Request
 	bound  map[string]any
@@ -62,7 +64,12 @@ func (o *op) Open(ctx context.Context) facade.Records {
 	buf := buffer.NewBuffer(1, 1024, buffer.PagesAhead(ctx))
 	go func() {
 		var cerr error
-		defer func() { buf.Complete(cerr) }()
+		defer func() {
+			if errors.Is(cerr, errIgnoredRead) {
+				cerr = nil
+			}
+			buf.Complete(cerr)
+		}()
 		switch o.req.Continuation.Kind {
 		case ContPoll:
 			cerr = o.poll(ctx, buf)
@@ -336,6 +343,9 @@ func (o *op) send(ctx context.Context, rec facade.Record) (int, []byte, error) {
 	for i := 0; ; i++ {
 		status, body, header, err := o.sendOnce(ctx, rec)
 		logWire(ctx, Method(rec), URL(rec), status, err, body)
+		if err == nil && status >= 400 && o.req.Read && ignoredReadStatus(ctx, status, body) {
+			return status, nil, errIgnoredRead
+		}
 		if err == nil && status < 400 {
 			o.lastHeader = header
 			return status, body, nil

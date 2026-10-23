@@ -230,12 +230,32 @@ func flattenSelection(values []any) []any {
 	return out
 }
 
-type selectionRows struct{ selection jsonpath.Selection }
+type selectionRows struct {
+	selection jsonpath.Selection
+	strict    bool
+}
 
 func (s selectionRows) Apply(in facade.Page) (facade.Record, error) {
 	doc, ok := in.Doc(facade.AnonymousPayload)
 	if !ok {
 		return nil, fmt.Errorf("response selection requires a decoded document")
+	}
+	if s.strict {
+		current := doc
+		for _, segment := range s.selection.Segments() {
+			if segment.Array() {
+				break
+			}
+			object, ok := current.(map[string]any)
+			if !ok {
+				break
+			}
+			value, present := object[segment.Name()]
+			if !present {
+				return nil, fmt.Errorf("error processing response: unknown key %s", segment.Name())
+			}
+			current = value
+		}
 	}
 	return docRecord(flattenSelection(s.selection.Values(doc))), nil
 }

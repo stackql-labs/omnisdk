@@ -7,6 +7,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/stackql-labs/omnisdk/internal/system_g/facade"
 	"github.com/stackql-labs/omnisdk/internal/system_g/requestpolicy"
 )
 
@@ -87,4 +88,23 @@ func InsecureClient() *http.Client {
 		insecureClient = &http.Client{Transport: t}
 	})
 	return insecureClient
+}
+
+type readErrorsKey struct{}
+
+func WithReadErrors(ctx context.Context, policy facade.HTTPReadErrorPolicy) context.Context {
+	if policy == nil {
+		return ctx
+	}
+	return context.WithValue(ctx, readErrorsKey{}, policy)
+}
+func ignoredReadStatus(ctx context.Context, status int, body []byte) bool {
+	policy, _ := ctx.Value(readErrorsKey{}).(facade.HTTPReadErrorPolicy)
+	if policy == nil || !policy.IsIgnored(status) {
+		return false
+	}
+	if observer, ok := policy.(facade.HTTPReadErrorObserver); ok {
+		observer.IgnoredStatus(status, string(body))
+	}
+	return true
 }

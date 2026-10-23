@@ -26,6 +26,7 @@ import (
 
 // Declared type identifiers, exactly as documents spell them.
 const (
+	TypeText1 = "golang_template_text_v0.1.0"
 	TypeText  = "golang_template_text_v0.3.0"
 	TypeMXJ   = "golang_template_mxj_v0.2.0"
 	TypeMXJ1  = "golang_template_mxj_v0.1.0"
@@ -36,6 +37,9 @@ const (
 
 // Text is the request-shaping language: "." is the raw input as a string.
 func Text() dsl.Evaluator { return evaluator{typ: TypeText, bind: bindString} }
+
+// Text1 is the legacy request-shaping language with string-bound input.
+func Text1() dsl.Evaluator { return evaluator{typ: TypeText1, bind: bindString} }
 
 // MXJ is the response-shaping language: "." is the input decoded from XML into a map. The versions
 // differ in the documents' own numbering, not in what "." is bound to, so one implementation serves
@@ -52,7 +56,7 @@ func JSON3() dsl.Evaluator { return evaluator{typ: TypeJSON3, bind: bindJSON} }
 
 // Evaluators is every language this package implements, for building a registry.
 func Evaluators() []dsl.Evaluator {
-	return []dsl.Evaluator{Text(), MXJ1(), MXJ(), MXJ3(), JSON1(), JSON3()}
+	return []dsl.Evaluator{Text1(), Text(), MXJ1(), MXJ(), MXJ3(), JSON1(), JSON3()}
 }
 
 type evaluator struct {

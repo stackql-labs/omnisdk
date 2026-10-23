@@ -8,3 +8,12 @@ type HTTPStatusError interface {
 	ResponseBody() string
 	RequestURL() string
 }
+
+// HTTPReadErrorPolicy explicitly tolerates selected upstream failures for reads.
+// It never applies to mutations or authentication exchanges.
+type HTTPReadErrorPolicy interface{ IsIgnored(statusCode int) bool }
+
+// HTTPReadErrorObserver receives ignored responses for host-owned diagnostics.
+type HTTPReadErrorObserver interface {
+	IgnoredStatus(statusCode int, body string)
+}

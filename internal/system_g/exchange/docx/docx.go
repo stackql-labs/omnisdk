@@ -46,6 +46,7 @@ import (
 type Option func(*options)
 
 type options struct {
+	strictSelection     bool
 	ignoreDocumentRetry bool
 	queryLimit          int
 	provider            string
@@ -341,6 +342,9 @@ func WithBound(names ...string) Option {
 	}
 }
 
+// WithStrictSelection reports an absent declared JSON row key as an error.
+func WithStrictSelection() Option { return func(o *options) { o.strictSelection = true } }
+
 // WithWholeResponse emits the decoded body as a single record instead of exploding the item list
 // the document's objectKey names. It is for mutating operations, which answer about one object: the
 // objectKey describes where a SELECT finds its items, and a create's reply has no such list.
@@ -486,7 +490,13 @@ func compile(ex aot.AOTExchange, inputs map[string]any, reg dsl.Registry, o opti
 	}
 	// The document states where the rows are, in one of two syntaxes it uses interchangeably.
 	rowPath := parseObjectKey(resp.ObjectKey())
-	var rowSelection facade.Transform = itemsAt(rowPath)
+	selection := items{steps: rowPath, strict: o.strictSelection && !strings.HasPrefix(resp.ObjectKey(), "/")}
+	if declared, ok := resp.(aot.SelectedSchema); ok {
+		if scalar, ok := declared.RowSchema().(aot.ScalarRowSchema); ok {
+			selection.scalarColumn = scalar.ScalarColumn()
+		}
+	}
+	var rowSelection facade.Transform = selection
 	selectionPath := resp.ObjectKey()
 	if gx, ok := ex.(aot.GraphQLExchange); ok {
 		if g, ok := gx.GraphQL(); ok && g.Selection() != "" {
@@ -498,11 +508,11 @@ func compile(ex aot.AOTExchange, inputs map[string]any, reg dsl.Registry, o opti
 		if err != nil {
 			return nil, err
 		}
-		rowSelection = selectionRows{selection: selection}
+		rowSelection = selectionRows{selection: selection, strict: o.strictSelection}
 	}
 
 	url := retarget(req.URL(), o.baseURL)
-	hreq := httpx.Request{Method: req.Method(), URL: url}
+	hreq := httpx.Request{Method: req.Method(), URL: url, Read: !o.wholeResponse}
 	if o.poll != nil {
 		hreq.Continuation = *o.poll
 	} else if c, ok := continuation(resp.Pagination()); ok {
@@ -661,8 +671,19 @@ func compile(ex aot.AOTExchange, inputs map[string]any, reg dsl.Registry, o opti
 		hreq.Query[wire] = "{" + slot + "}"
 		bindings = withInput(bindings, slot)
 	}
+	var requestProgram *requestBodyProgram
+	if declared, ok := req.(aot.RequestTransform); ok {
+		program := declared.RequestTransform()
+		if program != nil && program.Type() != "" && program.Body() != "" {
+			if _, ok := reg.Get(program.Type()); !ok {
+				return nil, fmt.Errorf("unsupported template type: %s", program.Type())
+			}
+			requestProgram = &requestBodyProgram{registry: reg, program: program}
+			hreq.Body.Encoding = httpx.EncodingJSON
+		}
+	}
 	var xmlEnvelope *xmlRequestBody
-	if declared, ok := req.(aot.XMLRequest); ok && declared.XMLRootName() != "" &&
+	if declared, ok := req.(aot.XMLRequest); requestProgram == nil && ok && declared.XMLRootName() != "" &&
 		bodyEncoding(req.BodyMediaType()) == httpx.EncodingXML {
 		var schema aot.Schema
 		if shape, ok := req.(aot.RequestShape); ok {
@@ -772,11 +793,13 @@ func compile(ex aot.AOTExchange, inputs map[string]any, reg dsl.Registry, o opti
 
 	spec := plan.NewExchangeSpec(ex.Name(), bindings, nil, func(bound map[string]any) facade.Operator {
 		var reqT []facade.Transform
-		if xmlEnvelope != nil {
-			reqT = append(reqT, *xmlEnvelope)
-		}
 		if shape, ok := req.(aot.RequestShape); ok && strings.Contains(req.BodyMediaType(), "json") {
 			reqT = append(reqT, bodyShape{shape: shape})
+		}
+		if requestProgram != nil {
+			reqT = append(reqT, *requestProgram)
+		} else if xmlEnvelope != nil {
+			reqT = append(reqT, *xmlEnvelope)
 		}
 		if req.Translate() == httpx.GetQueryToPostFormUTF8 {
 			// Translated before it is signed, so what is signed is what is sent.
@@ -1051,7 +1074,11 @@ func splitNonEmpty(s, sep string) []string {
 // element, /*/GetAccountSummaryResult names a single one.
 func itemsAt(steps []string) facade.Transform { return items{steps: steps} }
 
-type items struct{ steps []string }
+type items struct {
+	steps        []string
+	scalarColumn string
+	strict       bool
+}
 
 func (t items) Apply(in facade.Page) (facade.Record, error) {
 	doc, ok := in.Doc(facade.AnonymousPayload)
@@ -1090,14 +1117,28 @@ func (t items) Apply(in facade.Page) (facade.Record, error) {
 			}
 			continue
 		}
-		cur = m[step]
+		next, present := m[step]
+		if !present && t.strict {
+			return nil, fmt.Errorf("error processing response: unknown key %s", step)
+		}
+		cur = next
 	}
 	switch v := cur.(type) {
 	case []any:
+		if t.scalarColumn != "" {
+			rows := make([]any, len(v))
+			for i, value := range v {
+				rows[i] = map[string]any{t.scalarColumn: value}
+			}
+			return docRecord(rows), nil
+		}
 		return docRecord(v), nil
 	case map[string]any:
 		return docRecord([]any{v}), nil // a single element is one row
 	default:
+		if cur != nil && t.scalarColumn != "" {
+			return docRecord([]any{map[string]any{t.scalarColumn: cur}}), nil
+		}
 		return docRecord([]any{}), nil // absent is an answer, not a failure
 	}
 }

@@ -54,7 +54,17 @@ func selectedXMLSchema(node *yaml.Node, components map[string]*yaml.Node, path s
 	if item := schemaField(node, components, "items", 0); item != nil {
 		node = item
 	}
-	return newSchema(node, components)
+	row := materialise(node, components, 0)
+	if row == nil {
+		return nil
+	}
+	if row != nil && row.Type() != "" && row.Type() != "object" && row.Type() != "array" {
+		name := path[strings.LastIndex(path, "/")+1:]
+		if name != "" && name != "*" {
+			return scalarRowSchema{Schema: &materialised{typ: "object", props: map[string]*materialised{name: row}, names: []string{name}}, column: name}
+		}
+	}
+	return row
 }
 
 // Array items may declare their wire element name in an allOf annotation next
@@ -118,3 +128,11 @@ func schemaProperty(node *yaml.Node, components map[string]*yaml.Node, name stri
 	}
 	return nil
 }
+
+// A scalar XML element still has the SQL column named by its selection.
+type scalarRowSchema struct {
+	aot.Schema
+	column string
+}
+
+func (s scalarRowSchema) ScalarColumn() string { return s.column }

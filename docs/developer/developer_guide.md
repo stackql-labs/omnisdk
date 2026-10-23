@@ -156,6 +156,13 @@ args := omnisdk.Args{
 ```
 
 > `--limit` is a budget, **not a sample**: it has no fairness across legs, so any value below the full result set biases toward whichever provider emits first. On a real org-wide run, `"tuning":{"Limit":25}` returned 24 GCP + 1 Azure rows and **zero** AWS — the AWS leg fans out three detail calls per bucket before its first row, and the budget was gone. To bound a multi-cloud look, run the legs separately with their own limits.
+For explicit upstream read-error tolerance, pass `Args.HTTPReadErrors` with an
+`IsIgnored(statusCode int) bool` implementation. Ignored responses end the resource read without
+emitting a row; mutations and authentication stay strict. Implement `IgnoredStatus(int, string)`
+on the same policy to receive diagnostics in the host. Keep this opt-in separate from retry policy.
+`Args.StrictResponseSelection` reports absent declared JSON row keys; its default is an empty read.
+A declared empty array is successful in either mode.
+
 Credentials resolve direct flag → env var → file; env vars are never required. Scope (e.g. `--project`) is **required and never inferred** — no env or key-embedded fallback.
 
 

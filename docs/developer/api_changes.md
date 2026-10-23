@@ -18,6 +18,27 @@ positional literals must account for added fields or switch to keyed fields.
 
 ## Additions
 
+- **Declared server precedence:** operations use their own server declaration, otherwise the
+  path item's, otherwise the document's. Scope variables from the selected declaration remain
+  accepted after endpoint rewrites; their defaults are never substituted for explicit caller scope.
+- **Request programs:** optional `aot.RequestTransform` exposes a declared request-body program.
+  It runs before signing and takes precedence over generic XML envelope serialization. The
+  `golang_template_text_v0.1.0` evaluator is now registered alongside v0.3.0; unknown versions fail
+  before dispatch. Existing request implementations need no additional methods.
+
+- **Explicit upstream read-error policy:** `Args.HTTPReadErrors` accepts an
+  `HTTPReadErrorPolicy` interface (`IsIgnored(int) bool`). A matching HTTP error ends that
+  document-backed resource read cleanly without a synthetic row or another retry. Prior pages remain available.
+  This opt-in never suppresses mutation or authentication failures. A policy may also implement
+  `HTTPReadErrorObserver.IgnoredStatus(int, string)` for host-owned diagnostics. Both interfaces
+  stay outside serialized arguments; nil retains strict handling.
+- **Response selection diagnostics:** `Args.StrictResponseSelection` optionally reports an absent
+  declared JSON row key, including JSON-path selections. Default behavior remains an empty read;
+  a declared empty array remains successful in either mode. StackQL opts in for CLI parity.
+- **Scalar XML rows:** optional `aot.ScalarRowSchema` declares the column associated with a
+  scalar XML selection. The supplied parser exposes the terminal element as a column (for example,
+  `PolicyNames/member` becomes `member`), consistently across discovery and row acquisition.
+
 - **Conditional expressions:** the function catalogue supports lazy searched and simple CASE
   (`case_when`, `case_value`) plus three-valued `and`, `or`, and `not`. SQLite `if` and `iif`
   skip unselected branches. Optional `sqlfn.LazyFunc` lets custom functions request deferred

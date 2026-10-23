@@ -309,6 +309,9 @@ type Response interface {
 	Pagination() Pagination
 }
 
+// RequestTransform optionally declares the program that produces an operation's wire body.
+type RequestTransform interface{ RequestTransform() Transform }
+
 // Transform is a declared body transformation: a program and the language it is written in.
 type Transform interface {
 	// Type names the evaluator (e.g. golang_template_mxj_v0.2.0). Empty means none declared.
@@ -447,6 +450,13 @@ type GraphQL interface {
 
 // GraphQLExchange optionally describes GraphQL acquisition on the ordinary HTTP exchange.
 type GraphQLExchange interface{ GraphQL() (GraphQL, bool) }
+
+// ScalarRowSchema names the column of a declared scalar row selection.
+// It presents an object schema so discovery and execution share the same shape.
+type ScalarRowSchema interface {
+	Schema
+	ScalarColumn() string
+}
 
 // SelectedSchema optionally exposes the row schema reached by a response selection.
 type SelectedSchema interface{ RowSchema() Schema }

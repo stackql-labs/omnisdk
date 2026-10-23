@@ -246,9 +246,23 @@ type Method struct {
 	Schema     map[string]any `json:"schema"`
 }
 
+// HTTPReadErrorPolicy opts document-backed reads into tolerating selected upstream status codes.
+// Ignored responses end that resource read without emitting a row.
+// Mutations and authentication remain strict.
+type HTTPReadErrorPolicy interface{ IsIgnored(statusCode int) bool }
+
+// HTTPReadErrorObserver optionally receives ignored responses for host diagnostics.
+type HTTPReadErrorObserver interface {
+	IgnoredStatus(statusCode int, body string)
+}
+
 // Args are the inputs to run a resource: explicit scope Params, optional Auth (config-driven-auth
 // resources), an endpoint override, run Tuning, and an optional traffic log.
 type Args struct {
+	// StrictResponseSelection reports an absent declared JSON row key instead of an empty read.
+	StrictResponseSelection bool `json:"strict_response_selection,omitempty"`
+	// HTTPReadErrors is an explicit opt-in; nil preserves strict upstream errors.
+	HTTPReadErrors HTTPReadErrorPolicy `json:"-"`
 	// Relations binds opaque read handles resolved by the caller's analyzer.
 	// Handles take precedence over document lookup and cannot be mutation targets.
 	Relations map[string]Relation `json:"-"`
@@ -1364,6 +1378,9 @@ func docInputs(args Args) map[string]any {
 // Azure's is not wanted.
 func docOptions(args Args, sec aot.Security, oauth bool) ([]docx.Option, error) {
 	opts := []docx.Option{docx.WithQueryLimit(args.Tuning.Limit)}
+	if args.StrictResponseSelection {
+		opts = append(opts, docx.WithStrictSelection())
+	}
 	if args.Endpoint != "" {
 		opts = append(opts, docx.WithBaseURL(args.Endpoint))
 	}
@@ -1835,6 +1852,7 @@ func (c *cannedPlan) decorate(parent context.Context) (context.Context, context.
 	}
 	ctx = httpx.WithRequestTimeout(ctx, c.args.Tuning.RequestTimeout)
 	ctx = httpx.WithPageLimit(ctx, c.args.Tuning.PageLimit)
+	ctx = httpx.WithReadErrors(ctx, c.args.HTTPReadErrors)
 	ctx = requestpolicy.WithPolicy(ctx, newProviderPolicies(c.args))
 	// The HTTP client is a run policy like the rest: set once here, obeyed by every exchange, so a
 	// document-compiled plan and a hand-authored one behave identically.
