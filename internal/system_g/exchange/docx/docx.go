@@ -534,6 +534,9 @@ func compile(ex aot.AOTExchange, inputs map[string]any, reg dsl.Registry, o opti
 	bindings := ex.Inputs()
 	placed := map[string]bool{}
 	for _, p := range req.Parameters() {
+		if o.bodyFields[p.Name()] && p.In() != aot.InBody {
+			continue
+		}
 		_, supplied := inputs[p.Name()]
 		if !supplied && !o.bound[p.Name()] && !o.provided[p.Name()] && p.In() == aot.InHeader {
 			if declared, ok := p.(aot.ParameterDefault); ok && declared.Default() != nil {
@@ -676,7 +679,7 @@ func compile(ex aot.AOTExchange, inputs map[string]any, reg dsl.Registry, o opti
 		program := declared.RequestTransform()
 		if program != nil && program.Type() != "" && program.Body() != "" {
 			if _, ok := reg.Get(program.Type()); !ok {
-				return nil, fmt.Errorf("unsupported template type: %s", program.Type())
+				return nil, unsupportedProgramError{language: program.Type()}
 			}
 			requestProgram = &requestBodyProgram{registry: reg, program: program}
 			hreq.Body.Encoding = httpx.EncodingJSON
@@ -846,7 +849,7 @@ func compile(ex aot.AOTExchange, inputs map[string]any, reg dsl.Registry, o opti
 			return withClient(withRetrySettings(namedRows(decoded, req, rowBound), retrySettings, req.Method()), o.client)
 		}
 		listed := exchange.NewTransformExchange(0, decoded, rowSelection, 1)
-		return withClient(withRetrySettings(namedRows(exchange.NewExplodeRows(listed, 1), req, rowBound), retrySettings, req.Method()), o.client)
+		return withClient(withRetrySettings(namedRows(declaredXMLRows(exchange.NewExplodeRows(listed, 1), resp, hasProgram), req, rowBound), retrySettings, req.Method()), o.client)
 		// INNER, not left-outer: this is a SELECT, and an empty result set is zero rows. A left-outer
 		// would emit one row of bare inputs, which reads as "one instance with no fields".
 	}, bind.NewInnerFlatten())

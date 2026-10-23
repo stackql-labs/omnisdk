@@ -298,7 +298,7 @@ func Resolve(q query.Unresolved, tables map[string]Table) (Resolution, error) {
 func ResolveIn(q query.Unresolved, tables map[string]Table, d sqlfn.Dialect) (Resolution, error) {
 	r := resolver{dialect: d, tables: map[string]Table{}, params: map[string]string{}, nodeParams: map[string]map[string]string{},
 		fanout: map[string]map[string][]string{}, wide: map[string][]string{}, arrivals: map[string][]arrival{}, retain: map[string][]string{},
-		computed: map[string][]SelectColumn{}, body: map[string]any{},
+		computed: map[string][]SelectColumn{}, body: map[string]any{}, readBodies: map[string]map[string]any{},
 		outer: map[string][]query.Predicate{}, on: map[string][]query.Predicate{}, funcs: map[string]query.Call{}}
 	var conjuncts, listed []query.Predicate
 	for _, j := range q.From() {
@@ -739,6 +739,7 @@ type resolver struct {
 	tables     map[string]Table
 	order      []string
 	params     map[string]string
+	readBodies map[string]map[string]any
 	nodeParams map[string]map[string]string
 	fanout     map[string]map[string][]string
 	wide       map[string][]string
@@ -773,6 +774,7 @@ type arrival struct{ from, src, as string }
 func (r *resolver) bindConstant(p query.Predicate) (bool, error) {
 	var col query.Column
 	var values []string
+	var literalValue any
 	switch p := p.(type) {
 	case query.Compare:
 		left, err := r.constant(p.Left())
@@ -789,6 +791,7 @@ func (r *resolver) bindConstant(p query.Predicate) (bool, error) {
 			return false, nil
 		}
 		col, values = c, []string{fmt.Sprint(lit.Value())}
+		literalValue = lit.Value()
 	case query.In:
 		c, ok := p.Expr().(query.Column)
 		set, isSet := p.Set().(query.Collection)
@@ -836,11 +839,17 @@ func (r *resolver) bindConstant(p query.Predicate) (bool, error) {
 		}
 		alias = owners[0]
 	}
+	explicitBody := strings.HasPrefix(col.Name(), "data__") && r.mutating == "" && literalValue != nil
 	col = query.NewColumn(alias, canonicalName(r.tables[alias], col.Name()))
 	if !accepts(r.tables[alias], col.Name()) {
 		return false, nil
 	}
-	if len(values) == 1 {
+	if explicitBody {
+		if r.readBodies[alias] == nil {
+			r.readBodies[alias] = map[string]any{}
+		}
+		r.readBodies[alias][col.Name()] = literalValue
+	} else if len(values) == 1 {
 		if r.nodeParams[alias] == nil {
 			r.nodeParams[alias] = map[string]string{}
 		}
@@ -1259,7 +1268,7 @@ func (r *resolver) build(sel []query.Output) (Resolution, error) {
 		if alias == r.mutating {
 			verb = r.verb
 		}
-		var body map[string]any
+		body := r.readBodies[alias]
 		if alias == r.mutating {
 			body = r.body
 		}
@@ -1352,12 +1361,13 @@ func (r *resolver) projected(e query.Expr) (string, Expression, error) {
 		switch {
 		case err != nil:
 			failed = err
+			return fn.Literal(nil)
 		case alias != "" && alias != q.Qualifier():
 			failed = fmt.Errorf("reads %s and %s; an expression across tables is not yet supported", alias, q.Qualifier())
 		default:
 			alias = q.Qualifier()
 		}
-		return fn.Field(c.Name())
+		return fn.Field(q.Name())
 	})
 	switch {
 	case err != nil:
@@ -1403,6 +1413,9 @@ func (r *resolver) known(alias string) map[string]bool {
 		k[name] = true
 	}
 	for name := range r.wide {
+		k[name] = true
+	}
+	for name := range r.readBodies[alias] {
 		k[name] = true
 	}
 	for name := range r.nodeParams[alias] {

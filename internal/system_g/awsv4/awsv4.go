@@ -141,7 +141,14 @@ func (s sigV4Signer) canonicalHeaders(req *http.Request) (block, signed string) 
 	type kv struct{ name, value string }
 	hs := []kv{{"host", host}}
 	for name, vals := range req.Header {
-		hs = append(hs, kv{strings.ToLower(name), strings.TrimSpace(strings.Join(vals, ","))})
+		lower := strings.ToLower(name)
+		// Authentication and transport/negotiation headers are not part of the
+		// stable signed request. In particular, re-signing must ignore old auth.
+		switch lower {
+		case "authorization", "user-agent", "x-amzn-trace-id", "expect", "transfer-encoding", "accept", "accept-encoding":
+			continue
+		}
+		hs = append(hs, kv{lower, strings.TrimSpace(strings.Join(vals, ","))})
 	}
 	sort.Slice(hs, func(i, j int) bool { return hs[i].name < hs[j].name })
 

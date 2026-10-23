@@ -68,3 +68,33 @@ func TestSignerRejectsMissingCreds(t *testing.T) {
 		t.Fatal("expected error signing with empty credentials, got nil")
 	}
 }
+
+func TestSignerKeepsNegotiationHeadersUnsignedAndResigningStable(t *testing.T) {
+	signer := NewSigV4Signer("ap-southeast-1", "logs", Credentials{AccessKeyID: "AKID", SecretAccessKey: "SECRET"}, false)
+	request, err := http.NewRequest("POST", "https://logs.example.test/", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	request.Header.Set("Accept", "application/json")
+	request.Header.Set("Accept-Encoding", "gzip")
+	request.Header.Set("Content-Encoding", "amz-1.0")
+	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set("X-Amz-Target", "Logs_20140328.GetLogEvents")
+	when := time.Unix(1000, 0)
+	if err = signer.Sign(request, []byte(`{}`), when); err != nil {
+		t.Fatal(err)
+	}
+	first := request.Header.Get("Authorization")
+	if !strings.Contains(first, "SignedHeaders=content-encoding;content-type;host;x-amz-date;x-amz-target,") {
+		t.Fatalf("authorization=%s", first)
+	}
+	if request.Header.Get("Accept") != "application/json" {
+		t.Fatal("dropped the wire negotiation header")
+	}
+	if err = signer.Sign(request, []byte(`{}`), when); err != nil {
+		t.Fatal(err)
+	}
+	if got := request.Header.Get("Authorization"); got != first {
+		t.Fatalf("re-signing changed authorization: %s != %s", got, first)
+	}
+}

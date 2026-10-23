@@ -246,6 +246,12 @@ type Method struct {
 	Schema     map[string]any `json:"schema"`
 }
 
+// UnsupportedProgramError identifies a declared language without a registered evaluator.
+type UnsupportedProgramError interface {
+	error
+	ProgramType() string
+}
+
 // HTTPReadErrorPolicy opts document-backed reads into tolerating selected upstream status codes.
 // Ignored responses end that resource read without emitting a row.
 // Mutations and authentication remain strict.
