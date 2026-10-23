@@ -920,3 +920,15 @@ handles remain host-owned.
 StackQL's read policy maps HTTP 404 to an empty resource read while retaining its diagnostic.
 Sibling reads continue, and an unmatched LEFT JOIN can feed INSERT SELECT. This is host policy:
 Omni remains strict by default, and mutation/authentication failures are never suppressed by it.
+
+The StackQL adapter also resolves explicitly configured external SQL connections into read
+relations, including their information-schema objects. It discovers columns with a bounded
+metadata query and opens data rows only during execution. Connection lookup, quoted SQL,
+database drivers and cursor handling stay in the host; Omni receives the same `Relation`
+interface used for other sources.
+
+Optional `ServerTransportDefaults` metadata exposes only a declared HTTP or HTTPS URL-scheme
+default. The host can bind that value before resolution; an explicit SQL value wins. This does
+not apply host, cluster, account, region or other scope defaults, and the SDK itself never
+substitutes the transport default. `DocMethod.TransportDefaults` exposes the same discovery
+metadata.

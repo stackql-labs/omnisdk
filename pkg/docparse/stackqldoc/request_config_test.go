@@ -134,3 +134,49 @@ components:
 		t.Fatalf("method metadata=%s", got)
 	}
 }
+
+func TestServerTransportDefaultsNeverIncludeScope(t *testing.T) {
+	doc, err := stackqldoc.Parse([]byte(`openapi: 3.0.0
+servers:
+  - url: '{scheme}://{host}/{region}'
+    variables:
+      scheme: {default: https}
+      host: {default: ignored.example.test}
+      region: {default: ignored-region}
+paths:
+  /items:
+    get:
+      responses:
+        '200': {description: ok}
+components:
+  x-stackQL-resources:
+    items:
+      methods:
+        select: {operation: {$ref: '#/paths/~1items/get'}}
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	exchange, err := doc.Select("items")
+	if err != nil {
+		t.Fatal(err)
+	}
+	metadata := exchange.Request().(aot.ServerTransportDefaults).ServerTransportDefaults()
+	if len(metadata) != 1 || metadata["scheme"] != "https" {
+		t.Fatalf("transport metadata=%v", metadata)
+	}
+	if exchange.Request().URL() != "{scheme}://{host}/{region}/items" {
+		t.Fatal("parser substituted default scope or transport")
+	}
+	metadata["scheme"] = "changed"
+	if exchange.Request().(aot.ServerTransportDefaults).ServerTransportDefaults()["scheme"] != "https" {
+		t.Fatal("transport metadata exposes mutable parser state")
+	}
+	methods, err := doc.Methods("items")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if methods[0].(aot.ServerTransportDefaults).ServerTransportDefaults()["scheme"] != "https" {
+		t.Fatal("discovery lost transport metadata")
+	}
+}

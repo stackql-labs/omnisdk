@@ -18,6 +18,12 @@ positional literals must account for added fields or switch to keyed fields.
 
 ## Additions
 
+- **Server transport metadata:** optional `aot.ServerTransportDefaults` and
+  `omnisdk.ServerTransportDefaults` expose a declared HTTP or HTTPS URL-scheme default.
+  `DocMethod.TransportDefaults` carries it for discovery. The SDK leaves the URL placeholder
+  unresolved; a host may supply the transport binding, with explicit SQL taking precedence.
+  Host, cluster, account and region defaults are excluded.
+
 - **Mutation completion:** `Args.MutationCompletion` accepts a `MutationCompletion` interface
   for graph mutations. Its `Complete` method receives the context, resource address, verb,
   bound inputs and initial response, and returns the completed resource before RETURNING
@@ -49,6 +55,8 @@ positional literals must account for added fields or switch to keyed fields.
   It runs before signing and takes precedence over generic XML envelope serialization. The
   `golang_template_text_v0.1.0` evaluator is now registered alongside v0.3.0; unknown versions fail
   before dispatch. Existing request implementations need no additional methods.
+  Unsupported request and response programs expose `UnsupportedProgramError.ProgramType()`
+  through wrapped errors, allowing hosts to retain their own diagnostic wording.
 
 - **Explicit upstream read-error policy:** `Args.HTTPReadErrors` accepts an
   `HTTPReadErrorPolicy` interface (`IsIgnored(int) bool`). A matching HTTP error ends that

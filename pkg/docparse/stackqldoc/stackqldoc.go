@@ -539,6 +539,9 @@ func (d *document) Methods(name string) ([]aot.Method, error) {
 		info := methodInfo{name: mName, verb: verb, opID: d.operationID(m)}
 		if ex, err := d.resolve(name, mName, false); err == nil {
 			info.opID = ex.OperationID()
+			if declared, ok := ex.Request().(aot.ServerTransportDefaults); ok {
+				info.transport = declared.ServerTransportDefaults()
+			}
 			if declared, ok := ex.Request().(aot.ServerEnvironmentBindings); ok {
 				info.environment = declared.ServerEnvironmentBindings()
 			}
@@ -600,9 +603,12 @@ type methodInfo struct {
 	name, verb, opID string
 	required         []string
 	environment      map[string]string
+	transport        map[string]string
 }
 
 func (m methodInfo) RequiredParams() []string { return append([]string(nil), m.required...) }
+
+func (m methodInfo) ServerTransportDefaults() map[string]string { return maps.Clone(m.transport) }
 
 func (m methodInfo) ServerEnvironmentBindings() map[string]string { return maps.Clone(m.environment) }
 
@@ -718,6 +724,7 @@ func (d *document) build(name, verb, path string, op pathOp, m method) aot.AOTEx
 			snakeAliases:      d.snakeAliases,
 			serverVariables:   variableNames,
 			serverEnvironment: environment,
+			transportDefaults: serverTransportDefaults(srv),
 			bodySchema:        bodySchema,
 			bodyMediaType:     bodyMediaType(op),
 			translate:         m.Config.RequestTranslate.Algorithm,
@@ -869,6 +876,21 @@ type security struct {
 
 func (s security) Scheme() aot.Scheme { return s.scheme }
 func (s security) Name() string       { return s.name }
+
+// A URL scheme is transport configuration. Defaults for every other server
+// variable remain scope, even when the document supplies a default value.
+func serverTransportDefaults(s server) map[string]string {
+	scheme, _, ok := strings.Cut(serverURL(s.URL), "://")
+	if !ok || !strings.HasPrefix(scheme, "{") || !strings.HasSuffix(scheme, "}") {
+		return nil
+	}
+	name := strings.TrimSuffix(strings.TrimPrefix(scheme, "{"), "}")
+	value := s.Variables[name].Default
+	if value != "http" && value != "https" {
+		return nil
+	}
+	return map[string]string{name: value}
+}
 
 // serverVars are the server URL's {variables}, which become bound inputs — a region is a scope
 // decision the caller makes, never something a parser invents. Sorted for a stable signature.
@@ -1060,6 +1082,7 @@ type request struct {
 	defaultBody       string
 	serverVariables   []string
 	serverEnvironment map[string]string
+	transportDefaults map[string]string
 	baseBody          string
 	nativeCasing      string
 	snakeAliases      bool
@@ -1087,6 +1110,8 @@ func (r request) DefaultBody() string { return r.defaultBody }
 func (r request) ServerEnvironmentBindings() map[string]string {
 	return maps.Clone(r.serverEnvironment)
 }
+
+func (r request) ServerTransportDefaults() map[string]string { return maps.Clone(r.transportDefaults) }
 
 func (r request) ServerVariables() []string { return slices.Clone(r.serverVariables) }
 

@@ -469,7 +469,7 @@ func compile(ex aot.AOTExchange, inputs map[string]any, reg dsl.Registry, o opti
 	hasProgram := tr.Type() != "" && (tr.Body() != "" || schemaDriven(reg, tr.Type()))
 	if hasProgram {
 		if _, ok := reg.Get(tr.Type()); !ok {
-			return nil, fmt.Errorf("docx: exchange %q needs evaluator %q (have: %v)", ex.Name(), tr.Type(), reg.Types())
+			return nil, fmt.Errorf("docx: exchange %q needs evaluator %q (have: %v): %w", ex.Name(), tr.Type(), reg.Types(), unsupportedProgramError{language: tr.Type()})
 		}
 	}
 	decode := decoderFor(resp, hasProgram)

@@ -1,21 +1,24 @@
 # Omni compatibility readiness
 
-Current CI reference: **658/733 passed, 75 failed** in
+Historical CI reference: **658/733 passed, 75 failed** in
 [run 39960274810](https://github.com/stackql/stackql-devel/actions/runs/39960274810),
 using the downloaded `stackql_linux_omni_robot_reports` artifact.
 
-The latest completed local full run is **651/733 passed, 82 failed**
-(`/private/tmp/omni-parity8-robot/output.xml`). The final 404-case query/server-variable rerun after the
-explicit Azure authentication fix passed **355/404**, with **49 failures**
-(`/private/tmp/omni-parity10-robot/output.xml`). Two S3 view cases that passed in the
-preceding full run failed here: one changed rows, and one aggregation returned no rows.
-The cause is unresolved; stable regression-free parity is not established. A focused
-race-instrumented CLI rerun passed two of the three S3 cases and reported no data race.
-The failed case recorded an upstream HTTP 404 in its stderr artifact. The positive INSERT
-source case records HTTP 404 `Project Not Found`; it remains failing. Local MCP failures and build-version
-metadata make the local total different from CI; compare individual scenarios as well as totals.
-A join also varies in row order between runs. No Robot input, assertion, or provider file was
-changed. The earlier 639/734 aggregate involved edited inputs and is withdrawn as parity evidence.
+The latest completed local full run is **660/733 passed, 73 failed**
+(`/private/tmp/omni-remainder4-full-robot/output.xml`), up from 651/733. Comparing individual
+scenarios found nine new passes and no lost passes. This run includes asynchronous mutation
+completion and the host's legacy HTTP 404 read policy. The latter resolves the S3 sibling-read
+cancellation and positive INSERT SELECT failure while preserving the original 404 diagnostic.
+
+Subsequent unchanged focused runs passed all eight async/await scenarios, all four external
+PostgreSQL scenarios with `SHOULD_RUN_DOCKER_EXTERNAL_TESTS:true` (actual execution, not the
+usual local skip), and the Kubernetes JSON-path scenario. The last two fixes are newer than
+the completed full run; their focused passes must not be added to that total.
+
+Local MCP failures and build-version metadata make the local total different from CI; compare
+individual scenarios as well as totals. A join also varies in row order between runs. No Robot
+input, assertion, or provider file was changed. The earlier 639/734 aggregate involved edited
+inputs and is withdrawn as parity evidence.
 
 The migration order is behavioral parity first, removal of the `any-sdk` dependency second,
 and semantic improvements afterward. Existing SQLite boolean representation (`0`/`1`) remains
@@ -117,7 +120,7 @@ Recursive provider CTEs and correlated subqueries still require additional analy
 | Stackql Function Projection | 8/8 | 8/8 |
 | Stackql Graphql Pagination | 9/9 | 9/9 |
 | Stackql Legacy Cli Surface | 25/25 | 25/25 |
-| Stackql Mocked From Cmd Line | 329/398 | 351/398 |
+| Stackql Mocked From Cmd Line | 329/398 | 360/398 |
 | Stackql Oci Auth | 11/11 | 11/11 |
 | Stackql Odata Pushdown | 24/24 | 24/24 |
 | Stackql Postgres Housekeeping | 6/6 | 6/6 |
@@ -130,10 +133,10 @@ Recursive provider CTEs and correlated subqueries still require additional analy
 ## Remaining failures
 
 Remaining failures include parameterized/resource-view composition, analytics-cache namespace
-resolution, multi-step dataflow, remaining expression/projection differences, async/await and mutation-result behavior,
+resolution, multi-step dataflow, remaining expression/projection differences and provider-specific mutation completion,
 transaction diagnostics, metadata fidelity, XML request/response shapes, non-HTTP local execution,
-and deeper server/view binding composition. Information-schema discovery, correlated subqueries and recursive
-provider CTEs also require analyzer/executor work. This is not a complete compatibility cutover.
+and deeper server/view binding composition. Information-schema objects on explicitly configured external SQL connections now use host-owned
+relation handles. Correlated subqueries and recursive provider CTEs still require analyzer/executor work. This is not a complete compatibility cutover.
 
 The rewritten S3 ABAC test document explicitly maps UPDATE to `put_bucket_abac`. An earlier diagnosis
 incorrectly inspected the native source document instead. The missing `Bucket` input was fixed by retaining path-level server variables after mock URL rewrites;
@@ -145,16 +148,14 @@ are not being treated as intentional differences or a cutover-ready result.
 
 ## Validation and artifacts
 
-- Current CI: `/private/tmp/omni-ci-39960274810/output.xml` (658/733).
-- Latest completed local full run: `/private/tmp/omni-parity8-robot/output.xml` (651/733).
-- Full SDK race checks before the final auth fix: `/private/tmp/omni-parity8-final-sdk.log`.
-- Explicit Azure override regression tests: `/private/tmp/omni-parity9-auth.log`.
-- Final query/server-variable run: `/private/tmp/omni-parity10-robot/output.xml` (355/404).
-- Focused race-instrumented views: `/private/tmp/omni-parity-race-views/output.xml` (2/3; no data race reported).
-- Per-test comparison: `/private/tmp/omni-parity-final-evidence.json`.
-- Final SDK checks: `/private/tmp/omni-parity9-final-sdk.log` (passed).
-- Final host race checks and lint: `/private/tmp/omni-parity10-host.log`,
-  `/private/tmp/omni-parity10-lint.log`.
+- Historical CI: `/private/tmp/omni-ci-39960274810/output.xml` (658/733).
+- Latest completed full local run: `/private/tmp/omni-remainder4-full-robot/output.xml` (660/733).
+- Async/await: `/private/tmp/omni-remainder3-async-robot/output.xml` (8/8).
+- External PostgreSQL, Docker gate enabled: `/private/tmp/omni-remainder5-external-robot/output.xml` (4/4).
+- Kubernetes transport binding: `/private/tmp/omni-remainder6-k8s/output.xml` (1/1).
+- SDK checks: `/private/tmp/omni-remainder-final-sdk.log`.
+- Host race checks and lint: `/private/tmp/omni-remainder-final-host.log`,
+  `/private/tmp/omni-remainder-final-lint.log` (zero lint issues).
 
 The local retry mock has an older Python IPv4 listener alongside Docker's IPv6 listener on port 1199.
 The final retry test uses `RETRY_MOCK_BASE_URL=http://localhost:1199`, matching the SDK request's host,
@@ -163,5 +164,4 @@ running; retry counts and expected output were not changed.
 
 Both checkouts contain required changes: the SDK, StackQL's intrinsic adapter, and its GraphQL
 registry URL rewriter. Testing used a temporary Go modfile pointing at the SDK checkout;
-the companion `go.mod` was not changed. CI must consume the updated SDK and adapter to measure the
-new result. API notes remain relative to `v0.1.5-beta06` in [api_changes.md](api_changes.md).
+CI must consume the updated SDK and adapter together to measure the new result. API notes remain relative to `v0.1.5-beta06` in [api_changes.md](api_changes.md).

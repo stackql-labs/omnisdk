@@ -20,6 +20,11 @@ type ParameterDefault interface{ Default() any }
 // ServerBindings retains declared server variables after endpoint rewriting.
 type ServerBindings interface{ ServerVariables() []string }
 
+// ServerTransportDefaults retains declared HTTP(S) URL-scheme defaults only.
+// Scope defaults (host, account, region, database) are never included or applied.
+// Hosts may turn this metadata into explicit bindings before SDK resolution.
+type ServerTransportDefaults interface{ ServerTransportDefaults() map[string]string }
+
 // ServerEnvironmentBindings exposes only explicit environment-variable annotations.
 // Parsers retain metadata; only a host may resolve environment values and pass them
 // as explicit query inputs. The library never reads these environment variables.

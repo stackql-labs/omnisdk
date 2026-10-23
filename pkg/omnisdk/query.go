@@ -91,11 +91,22 @@ func (t table) Methods() []MethodSignature { return t.methods }
 // as query inputs; Omni never reads scope values from the environment.
 type ServerEnvironmentBindings interface{ ServerEnvironmentBindings() map[string]string }
 
+// ServerTransportDefaults exposes declared HTTP(S) URL-scheme defaults to hosts.
+// It never includes scope defaults, and Omni never substitutes these values.
+type ServerTransportDefaults interface{ ServerTransportDefaults() map[string]string }
+
 type docSignature struct{ ex aot.AOTExchange }
 
 func (s docSignature) ServerEnvironmentBindings() map[string]string {
 	if declared, ok := s.ex.Request().(aot.ServerEnvironmentBindings); ok {
 		return declared.ServerEnvironmentBindings()
+	}
+	return nil
+}
+
+func (s docSignature) ServerTransportDefaults() map[string]string {
+	if declared, ok := s.ex.Request().(aot.ServerTransportDefaults); ok {
+		return declared.ServerTransportDefaults()
 	}
 	return nil
 }

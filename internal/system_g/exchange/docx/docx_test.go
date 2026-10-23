@@ -2,6 +2,7 @@ package docx_test
 
 import (
 	"context"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -13,6 +14,7 @@ import (
 	"github.com/stackql-labs/omnisdk/internal/system_g/awsv4"
 	"github.com/stackql-labs/omnisdk/internal/system_g/bind"
 	"github.com/stackql-labs/omnisdk/internal/system_g/exchange/docx"
+	"github.com/stackql-labs/omnisdk/internal/system_g/facade"
 	"github.com/stackql-labs/omnisdk/internal/system_g/plan"
 	"github.com/stackql-labs/omnisdk/pkg/docparse/aot"
 	"github.com/stackql-labs/omnisdk/pkg/docparse/dsl"
@@ -206,6 +208,10 @@ func TestUnsupportedEvaluatorIsRejected(t *testing.T) {
 	_, err = docx.SelectPlan(doc(t), "instances", map[string]any{"region": "us-east-1"}, empty, testCreds)
 	if err == nil || !strings.Contains(err.Error(), "needs evaluator") {
 		t.Fatalf("err = %v", err)
+	}
+	var program facade.UnsupportedProgramError
+	if !errors.As(err, &program) || program.ProgramType() != "golang_template_mxj_v0.3.0" {
+		t.Fatalf("unsupported response program lost its type: %v", err)
 	}
 }
 
