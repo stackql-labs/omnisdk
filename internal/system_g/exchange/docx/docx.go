@@ -686,6 +686,9 @@ func compile(ex aot.AOTExchange, inputs map[string]any, reg dsl.Registry, o opti
 	// a caller to restate it per exchange is how a request goes out unsigned. Overridable, never
 	// silently skipped — a declared scheme with no way to satisfy it is an error, not a plain request.
 	service := serviceOf(req.URL())
+	if declared, ok := req.(aot.SigningRequest); ok && declared.SigningService() != "" {
+		service = declared.SigningService()
+	}
 	sec := effectiveSecurity(ex.Security(), o.security)
 	if !o.noSign && o.signer == nil {
 		switch sec.Scheme() {

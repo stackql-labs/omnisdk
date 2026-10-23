@@ -11,6 +11,7 @@
 package stackqldoc
 
 import (
+	"cmp"
 	"encoding/json"
 	"fmt"
 	"slices"
@@ -59,6 +60,9 @@ func Parse(b []byte) (Doc, error) {
 // ---- document shape (only the parts an exchange needs) ----------------------
 
 type document struct {
+	Info struct {
+		ServiceName string `yaml:"x-serviceName"`
+	} `yaml:"info"`
 	source        string
 	resolver      documentResolver
 	ResourcesRoot map[string]resource `yaml:"resources"`
@@ -136,13 +140,15 @@ type algorithmSpec struct {
 }
 
 type method struct {
-	Operation ref `yaml:"operation"`
-	Config    struct {
-		Retry               *retrySpec     `yaml:"retry"`
-		RequestTranslate    algorithmSpec  `yaml:"requestTranslate"`
-		QueryParamTranspose algorithmSpec  `yaml:"queryParamTranspose"`
-		QueryParamPushdown  *pushdownSpec  `yaml:"queryParamPushdown"`
-		Pagination          paginationSpec `yaml:"pagination"`
+	ServiceName string `yaml:"serviceName"`
+	Operation   ref    `yaml:"operation"`
+	Config      struct {
+		RequestBodyTranslate algorithmSpec  `yaml:"requestBodyTranslate"`
+		Retry                *retrySpec     `yaml:"retry"`
+		RequestTranslate     algorithmSpec  `yaml:"requestTranslate"`
+		QueryParamTranspose  algorithmSpec  `yaml:"queryParamTranspose"`
+		QueryParamPushdown   *pushdownSpec  `yaml:"queryParamPushdown"`
+		Pagination           paginationSpec `yaml:"pagination"`
 	} `yaml:"config"`
 	Request struct {
 		Default      string `yaml:"default"`
@@ -662,6 +668,8 @@ func (d *document) build(name, verb, path string, op pathOp, m method) aot.AOTEx
 		inputs:  serverVars(srv),
 		opID:    op.OperationID,
 		req: request{
+			bodyTranslation: m.Config.RequestBodyTranslate.Algorithm,
+			signingService:  cmp.Or(m.ServiceName, d.Info.ServiceName),
 			defaultBody:     m.Request.Default,
 			method:          strings.ToUpper(verb),
 			url:             url,
@@ -1005,6 +1013,8 @@ func (p parameter) List() bool   { return p.list }
 func (p parameter) Default() any { return p.p.Schema.Default }
 
 type request struct {
+	bodyTranslation string
+	signingService  string
 	defaultBody     string
 	serverVariables []string
 	baseBody        string
@@ -1020,6 +1030,10 @@ type request struct {
 	translate       string
 	transpose       string
 }
+
+func (r request) SigningService() string { return r.signingService }
+
+func (r request) BodyTranslation() string { return r.bodyTranslation }
 
 func (r request) DefaultBody() string { return r.defaultBody }
 

@@ -169,6 +169,34 @@ func TestDeclaredSigningIsRequired(t *testing.T) {
 	}
 }
 
+func TestSigningServiceSurvivesPrivateEndpoint(t *testing.T) {
+	var authorization string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		authorization = r.Header.Get("Authorization")
+		w.Header().Set("Content-Type", "text/xml")
+		_, _ = w.Write([]byte(instancesXML))
+	}))
+	defer srv.Close()
+	// Both the service-wide declaration and method override survive replacing
+	// the server itself, rather than only applying WithBaseURL at execution.
+	for _, service := range []string{"private-service", "method-service"} {
+		data := strings.Replace(string(doc(t)), "x-serviceName: ec2", "x-serviceName: private-service", 1)
+		data = strings.ReplaceAll(data, "https://ec2.{region}.amazonaws.com", srv.URL)
+		if service == "method-service" {
+			data = strings.Replace(data, "describe_instances:\n", "describe_instances:\n          serviceName: method-service\n", 1)
+		}
+		p, err := docx.SelectPlan([]byte(data), "instances", map[string]any{"region": "us-east-1"},
+			registry(t), testCreds, docx.WithProviderSecurity(providerSecurity(t)))
+		if err != nil {
+			t.Fatal(err)
+		}
+		drain(t, p)
+		if !strings.Contains(authorization, "/us-east-1/"+service+"/aws4_request") {
+			t.Fatalf("credential scope = %q, want %s", authorization, service)
+		}
+	}
+}
+
 // A document naming a language the registry does not implement must say so, naming both.
 func TestUnsupportedEvaluatorIsRejected(t *testing.T) {
 	empty, err := dsl.NewRegistry()

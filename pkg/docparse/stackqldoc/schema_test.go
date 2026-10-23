@@ -67,3 +67,28 @@ properties:
 		t.Fatalf("selected row = %v", selected)
 	}
 }
+
+func TestXMLSelectionUsesDeclaredArrayItemName(t *testing.T) {
+	var root yaml.Node
+	if err := yaml.Unmarshal([]byte(`type: object
+properties:
+  ResourceRecordSets:
+    type: array
+    items:
+      allOf:
+        - type: object
+          properties:
+            Name: {type: string}
+            Type: {type: string}
+        - xml: {name: ResourceRecordSet}
+`), &root); err != nil {
+		t.Fatal(err)
+	}
+	selected := selectedXMLSchema(root.Content[0], nil, "/*/ResourceRecordSets/ResourceRecordSet")
+	if selected == nil || !reflect.DeepEqual(selected.Properties(), []string{"Name", "Type"}) {
+		t.Fatalf("selected row = %v", selected)
+	}
+	if got := selectedXMLSchema(root.Content[0], nil, "/*/ResourceRecordSets/Unrelated"); got != nil {
+		t.Fatal("undeclared array element unexpectedly matched")
+	}
+}

@@ -875,3 +875,8 @@ window functions, or ORDER BY/LIMIT must implement those operations inside its o
 returning rows. Registering a handle does not authorize flattening that boundary or executing a
 recursive CTE through an acyclic graph. SQL parsing, name resolution and database metadata remain
 the front end's responsibility.
+
+The StackQL adapter uses this seam for stored views, materialized views, user tables and
+nonrecursive CTEs. It resolves storage metadata and executes backend SQL in the host repository.
+CTE definitions retain lexical scope and their own aggregation/order/limit boundaries; stored view
+definitions do not inherit a caller's CTE names. No database connection or driver enters Omni.

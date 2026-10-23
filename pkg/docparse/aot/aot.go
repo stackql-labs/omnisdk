@@ -225,6 +225,23 @@ type RequestShape interface {
 	BodySchema() Schema
 }
 
+// SigningRequest retains the service identity when an endpoint is overridden.
+// A private endpoint's hostname need not name the service used in SigV4 scope.
+type SigningRequest interface {
+	SigningService() string
+}
+
+// BodyTranslationRequest declares a mapping of flat body inputs into a nested
+// request property (for example naive_DesiredState).
+type BodyTranslationRequest interface {
+	BodyTranslation() string
+}
+
+// StringOnlySchema marks a structured value serialized as JSON text on wire.
+type StringOnlySchema interface {
+	StringOnly() bool
+}
+
 // Parameter is one declared input and its location on the wire.
 type Parameter interface {
 	Name() string

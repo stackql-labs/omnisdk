@@ -1072,8 +1072,11 @@ func (r *resolver) bindComputed(c query.Compare, col query.Column, e query.Expr)
 // flows there; where both do, it flows into the relation joined later — the one the ON belongs to —
 // and, under a left join, into the joined side. Where neither takes it, it is not an edge.
 func (r *resolver) optionalEdge(l, rc query.Column) (to, from query.Column, ok bool) {
-	lTakes := accepts(r.tables[l.Qualifier()], l.Name())
-	rTakes := accepts(r.tables[rc.Qualifier()], rc.Name())
+	// A declared constant or fanout already supplies that input. The equality
+	// constrains its rows; wiring another value would both overwrite explicit
+	// scope and give the graph two producers for the same request input.
+	lTakes := accepts(r.tables[l.Qualifier()], l.Name()) && !r.known(l.Qualifier())[l.Name()]
+	rTakes := accepts(r.tables[rc.Qualifier()], rc.Name()) && !r.known(rc.Qualifier())[rc.Name()]
 	if r.onTarget != "" {
 		switch {
 		case l.Qualifier() == r.onTarget && lTakes:

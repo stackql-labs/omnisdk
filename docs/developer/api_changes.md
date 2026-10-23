@@ -71,6 +71,10 @@ args := omnisdk.Args{
   `aot.MethodInputs` interface exposes this metadata.
 - **Document request metadata:** optional `aot.RequestShape` and `aot.RequestDefaults` interfaces
   expose naming, body schema, and fallback body declarations without changing existing implementers.
+  Optional `aot.SigningRequest` retains the declared signing service through endpoint rewrites;
+  method `serviceName` overrides document `info.x-serviceName`. Optional
+  `aot.BodyTranslationRequest` exposes `requestBodyTranslate`, and `aot.StringOnlySchema` exposes
+  `x-stackQL-stringOnly`: nested inputs are coerced against their schema before JSON stringification.
 - **OCI authentication:** `omnisdk.Auth` accepts OCI tenancy/user OCIDs, fingerprint, RSA private
   key, passphrase, configuration file and profile, including named environment variables for
   credentials. Set `Type: "oci_signing_v1"`. Explicit raw credentials must be complete; partial raw
@@ -98,6 +102,11 @@ args := omnisdk.Args{
   `errors.As`, preserving the distinction between a provider rejection and a transport failure.
 
 ## Behaviour changes
+
+XML row selection follows declared array-item element names, including annotations beside `allOf`
+references. Scalar comparison calls (`=`, `!=`, `<>`, `<`, `<=`, `>`, `>=`) use the configured SQL
+dialect, including NULL propagation. Join equalities on request inputs already supplied by explicit
+constants or fanouts constrain rows instead of introducing a second producer for the input.
 
 | Change | Who is affected |
 |--------|-----------------|

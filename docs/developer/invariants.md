@@ -37,6 +37,12 @@ reverse. Enforced: `TestLeafImplementationsSeeContractsOnly`.
 `cmd/omnicli` imports nothing from `internal/` — it consumes the facade exactly as an external
 caller would, which is what keeps the facade honest.
 
+**RDBMS access belongs to the host.** Database discovery, connections, SQL execution and
+database drivers must stay outside the library. Hosts pass relation handles through `Relation`
+and return cursors through `Rows`; Omni does not receive a database connection. Database drivers
+used solely by parity tests are test oracles, not production dependencies.
+Enforced: `TestLibraryHasNoRDBMSDependencies`.
+
 ## Durability and effects
 
 **7. Intent is recorded before the effect, never after.** Both the per-key ledger entry and the run

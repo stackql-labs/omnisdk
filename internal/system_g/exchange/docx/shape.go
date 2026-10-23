@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"math/big"
 	"strconv"
+	"strings"
 
 	"github.com/stackql-labs/omnisdk/internal/system_g/bind"
 	"github.com/stackql-labs/omnisdk/internal/system_g/exchange"
@@ -43,6 +44,11 @@ func (b bodyShape) Apply(in facade.Page) (facade.Record, error) {
 		return httpx.NewRequestRecord(httpx.Method(in), httpx.URL(in), httpx.Header(in), payload), nil
 	}
 	names := namespace.NewNaming(b.shape.NativeCasing(), b.shape.SnakeCaseAliases())
+	if translation, ok := b.shape.(aot.BodyTranslationRequest); ok {
+		if err := nestBodyInputs(m, schema, translation.BodyTranslation(), names); err != nil {
+			return nil, err
+		}
+	}
 	out := map[string]any{}
 	for name, v := range m {
 		wire, err := names.Native(name, schema.Properties())
@@ -68,6 +74,20 @@ func (b bodyShape) Apply(in facade.Page) (facade.Record, error) {
 }
 
 func coerceBody(key string, v any, schema aot.Schema) (any, error) {
+	value, err := coerceBodyValue(key, v, schema)
+	if err != nil || value == nil {
+		return value, err
+	}
+	if declared, ok := schema.(aot.StringOnlySchema); ok && declared.StringOnly() {
+		if _, alreadyText := value.(string); !alreadyText {
+			text, err := encode.JSON(value)
+			return string(text), err
+		}
+	}
+	return value, nil
+}
+
+func coerceBodyValue(key string, v any, schema aot.Schema) (any, error) {
 	if v == nil {
 		return nil, nil
 	}
@@ -162,6 +182,45 @@ func coerceBody(key string, v any, schema aot.Schema) (any, error) {
 		return out, nil
 	}
 	return v, nil
+}
+
+func nestBodyInputs(body map[string]any, schema aot.Schema, algorithm string, names namespace.Naming) error {
+	if algorithm == "" || algorithm == "naive" || algorithm == "default" {
+		return nil
+	}
+	parent, declared := strings.CutPrefix(algorithm, "naive_")
+	if !declared || parent == "" {
+		return fmt.Errorf("unsupported request body translation %q", algorithm)
+	}
+	nested, exists := schema.Property(parent)
+	if !exists {
+		return fmt.Errorf("request body translation %q names an undeclared property", algorithm)
+	}
+	values := map[string]any{}
+	for name, value := range body {
+		if _, topLevel := schema.Property(name); topLevel {
+			continue
+		}
+		wire, err := names.Native(name, nested.Properties())
+		if err != nil {
+			return err
+		}
+		if _, matched := nested.Property(wire); !matched {
+			continue
+		}
+		if _, duplicate := values[wire]; duplicate {
+			return fmt.Errorf("request body key %q supplied more than once through aliases", wire)
+		}
+		values[wire] = value
+		delete(body, name)
+	}
+	if len(values) > 0 {
+		if _, supplied := body[parent]; supplied {
+			return fmt.Errorf("request body property %q supplied both directly and through nested inputs", parent)
+		}
+		body[parent] = values
+	}
+	return nil
 }
 
 type rowNames struct{ naming namespace.Naming }

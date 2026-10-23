@@ -16,13 +16,14 @@ import (
 // schema would carry the document it came from — exactly what resolving an exchange exists to avoid.
 // Only what the response actually reaches is kept.
 type materialised struct {
-	props    map[string]*materialised
-	names    []string
-	items    *materialised
-	wire     string
-	typ      string
-	fmt      string
-	required []string
+	stringOnly bool
+	props      map[string]*materialised
+	names      []string
+	items      *materialised
+	wire       string
+	typ        string
+	fmt        string
+	required   []string
 }
 
 func (m *materialised) RequiredProperties() []string { return slices.Clone(m.required) }
@@ -48,6 +49,8 @@ func (m *materialised) Items() (aot.Schema, bool) {
 }
 
 func (m *materialised) WireName() string { return m.wire }
+
+func (m *materialised) StringOnly() bool { return m.stringOnly }
 
 // maxSchemaDepth bounds the copy. A response shape is an envelope, a row type and its scalar
 // properties; anything deeper is a recursive definition, and following it would copy the document.
@@ -84,6 +87,9 @@ func materialiseActive(node *yaml.Node, components map[string]*yaml.Node, depth 
 	}
 	active[resolved] = true
 	defer delete(active, resolved)
+	if annotation := field(resolved, "x-stackQL-stringOnly"); annotation != nil {
+		out.stringOnly = annotation.Value == "true"
+	}
 	// allOf adds constraints at the same object depth. Copy each branch's
 	// declared fields, with local properties taking precedence over inherited ones.
 	if branches := field(resolved, "allOf"); branches != nil {
@@ -107,6 +113,7 @@ func materialiseActive(node *yaml.Node, components map[string]*yaml.Node, depth 
 			if base.items != nil {
 				out.items = base.items
 			}
+			out.stringOnly = out.stringOnly || base.stringOnly
 			out.required = append(out.required, base.required...)
 		}
 	}
