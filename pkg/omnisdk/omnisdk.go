@@ -23,8 +23,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/stackql-labs/omnisdk/pkg/cache"
-	"github.com/stackql-labs/omnisdk/pkg/sqlfn"
 	"io"
 	"io/fs"
 	"net/http"
@@ -36,6 +34,10 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/stackql-labs/omnisdk/pkg/cache"
+	"github.com/stackql-labs/omnisdk/pkg/rowcache"
+	"github.com/stackql-labs/omnisdk/pkg/sqlfn"
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
@@ -247,12 +249,76 @@ type Method struct {
 	Schema     map[string]any `json:"schema"`
 }
 
+// UnsupportedProgramError identifies a declared language without a registered evaluator.
+type UnsupportedProgramError interface {
+	error
+	ProgramType() string
+}
+
+// HTTPReadErrorPolicy opts document-backed reads into tolerating selected upstream status codes.
+// Ignored responses end that resource read without emitting a row.
+// Mutations and authentication remain strict.
+type HTTPReadErrorPolicy interface{ IsIgnored(statusCode int) bool }
+
+// AuthenticationError identifies a failed credential exchange.
+type AuthenticationError interface {
+	error
+	AuthenticationFailure() bool
+}
+
+// HTTPObserver receives explicitly enabled document request diagnostics.
+// Callbacks may run concurrently and must not mutate supplied row documents.
+type HTTPObserver interface {
+	HTTPRequest(method, url string, body []byte)
+	HTTPResponse(status int, body []byte)
+	HTTPRows(rows any)
+}
+
+// ResponseSelectionErrorPolicy controls absent collection keys on document reads.
+// Nil preserves strict selection errors when StrictResponseSelection is enabled.
+type ResponseSelectionErrorPolicy interface{ IgnoreMissingKey(key string) bool }
+
+// HTTPReadErrorObserver optionally receives ignored responses for host diagnostics.
+type HTTPReadErrorObserver interface {
+	IgnoredStatus(statusCode int, body string)
+}
+
 // Args are the inputs to run a resource: explicit scope Params, optional Auth (config-driven-auth
 // resources), an endpoint override, run Tuning, and an optional traffic log.
 type Args struct {
 	// DocumentVerifier opts document-backed plans into signature verification.
 	// Nil preserves the default unverified behavior.
 	DocumentVerifier pqsig.Verifier `json:"-"`
+	// ReadCache optionally caches complete transformed document reads before SQL.
+	// Nil adds no cache wrapper or collector. The caller owns the cache lifecycle.
+	ReadCache rowcache.Cache `json:"-"`
+	// ReadCacheLookupOnly reuses complete host snapshots without publishing live
+	// reads. Page limits still bound cache misses, while completed snapshots are
+	// read as stored. False preserves the normal page-cap cache bypass.
+	ReadCacheLookupOnly bool `json:"read_cache_lookup_only,omitempty"`
+
+	// ReadCachePartition is an explicit authorization/cache namespace. Required
+	// with ReadCache; it must differ between principals/tenants that cannot share rows.
+	ReadCachePartition string `json:"read_cache_partition,omitempty"`
+	// MutationCompletion optionally follows accepted graph mutations before projection.
+	MutationCompletion MutationCompletion `json:"-"`
+	// LegacyXMLValues preserves legacy XML table text and transformed boolean values.
+	LegacyXMLValues bool `json:"legacy_xml_values,omitempty"`
+	// LegacyResponseTransforms permits legacy decoding when a document names an
+	// unknown response evaluator. False rejects unsupported programs at planning.
+	LegacyResponseTransforms bool `json:"legacy_response_transforms,omitempty"`
+
+	// StrictResponseSelection reports an absent declared JSON row key instead of an empty read.
+	StrictResponseSelection bool `json:"strict_response_selection,omitempty"`
+	// ResponseSelectionErrors optionally tolerates missing collection keys with diagnostics.
+	ResponseSelectionErrors ResponseSelectionErrorPolicy `json:"-"`
+	// LegacyPagination retains any-sdk behavior for native API pagination hints.
+	// Explicit StackQL pagination remains authoritative. False preserves native inference.
+	LegacyPagination bool `json:"legacy_pagination,omitempty"`
+	// HTTPReadErrors is an explicit opt-in; nil preserves strict upstream errors.
+	HTTPReadErrors HTTPReadErrorPolicy `json:"-"`
+	// HTTPObserver optionally receives document request diagnostics; nil adds no stages.
+	HTTPObserver HTTPObserver `json:"-"`
 	// Relations binds opaque read handles resolved by the caller's analyzer.
 	// Handles take precedence over document lookup and cannot be mutation targets.
 	Relations map[string]Relation `json:"-"`
@@ -369,6 +435,8 @@ func (a *Args) UnmarshalJSON(data []byte) error {
 
 // Tuning are the run knobs; a zero value uses sensible defaults.
 type Tuning struct {
+	// PageLimit caps pages per resource read. Zero or negative is unlimited.
+	PageLimit int
 	// Parallelism bounds concurrent work: a query's fan-out, and the keys an IaC run converges at
 	// once. Zero is the default, 16.
 	Parallelism int
@@ -1124,6 +1192,9 @@ func NewMerged(methods []string, args Args) (Plan, error) {
 // a base URL (every service at that one host), or a JSON object of service → base URL for pointing one
 // provider at a mock while another stays real.
 func checkEndpoint(args Args) error {
+	if args.ReadCache != nil && args.ReadCachePartition == "" {
+		return fmt.Errorf("omnisdk: ReadCache requires an explicit ReadCachePartition")
+	}
 	if _, err := endpoint.Parse(args.Endpoint); err != nil {
 		return fmt.Errorf("omnisdk: %w", err)
 	}
@@ -1157,6 +1228,7 @@ func NewFromDoc(doc []byte, provider, resource string, args Args) (Plan, error) 
 	if err != nil {
 		return nil, err
 	}
+	opts = appendReadCache(opts, args, provider+"."+resource, provider)
 	pl, err := docx.SelectPlan(doc, resource, docInputs(args), reg, opts...)
 	if err != nil {
 		return nil, err
@@ -1303,10 +1375,12 @@ func DocResources(dir, provider, service string, opts ...stackqldoc.Option) ([]s
 // DocMethod is a method as a document declares it: its name, the SQL verb it is bound to (empty when
 // none), and the operation behind it.
 type DocMethod struct {
-	RequiredParams []string `json:"required_params,omitempty"`
-	Name           string   `json:"name"`
-	SQLVerb        string   `json:"sql_verb,omitempty"`
-	OperationID    string   `json:"operation_id,omitempty"`
+	TransportDefaults map[string]string `json:"transport_defaults,omitempty"`
+	ServerEnvironment map[string]string `json:"server_environment,omitempty"`
+	RequiredParams    []string          `json:"required_params,omitempty"`
+	Name              string            `json:"name"`
+	SQLVerb           string            `json:"sql_verb,omitempty"`
+	OperationID       string            `json:"operation_id,omitempty"`
 }
 
 // DocMethods lists a resource's methods.
@@ -1322,6 +1396,12 @@ func DocMethods(dir, provider, service, resource string, opts ...stackqldoc.Opti
 	out := make([]DocMethod, len(ms))
 	for i, m := range ms {
 		out[i] = DocMethod{Name: m.Name(), SQLVerb: m.SQLVerb(), OperationID: m.OperationID()}
+		if declared, ok := m.(aot.ServerTransportDefaults); ok {
+			out[i].TransportDefaults = declared.ServerTransportDefaults()
+		}
+		if declared, ok := m.(aot.ServerEnvironmentBindings); ok {
+			out[i].ServerEnvironment = declared.ServerEnvironmentBindings()
+		}
 		if inputs, ok := m.(aot.MethodInputs); ok {
 			out[i].RequiredParams = inputs.RequiredParams()
 		}
@@ -1351,6 +1431,7 @@ func NewSelectFromCatalog(dir, address string, args Args) (Plan, error) {
 	if err != nil {
 		return nil, err
 	}
+	opts = appendReadCache(opts, args, address, c.Provider().Name())
 	pl, err := docx.PlanFor(ex, docInputs(args), reg, opts...)
 	if err != nil {
 		return nil, err
@@ -1379,7 +1460,19 @@ func docInputs(args Args) map[string]any {
 // oauth reports that the provider's OAuth grant is already settled (a token URL of its own), so
 // Azure's is not wanted.
 func docOptions(args Args, sec aot.Security, oauth bool) ([]docx.Option, error) {
-	opts := []docx.Option{docx.WithQueryLimit(args.Tuning.Limit)}
+	opts := []docx.Option{docx.WithQueryLimit(args.Tuning.Limit), docx.WithSelectionErrors(args.ResponseSelectionErrors), docx.WithHTTPObserver(args.HTTPObserver)}
+	if args.LegacyResponseTransforms {
+		opts = append(opts, docx.WithLegacyResponseTransforms())
+	}
+	if args.LegacyXMLValues {
+		opts = append(opts, docx.WithLegacyXMLValues())
+	}
+	if args.LegacyPagination {
+		opts = append(opts, docx.WithLegacyPagination())
+	}
+	if args.StrictResponseSelection {
+		opts = append(opts, docx.WithStrictSelection())
+	}
 	if args.Endpoint != "" {
 		opts = append(opts, docx.WithBaseURL(args.Endpoint))
 	}
@@ -1476,8 +1569,14 @@ func providerOptions(args Args, p aot.Provider) ([]docx.Option, error) {
 	sec := p.Security()
 	cfg := effectiveAuth(args, p)
 	var opts []docx.Option
-	oauth := false
-	if sec.Scheme() == aot.SchemeOAuthClientCredentials && cfg.TokenURL != "" {
+	m, err := requestAuth(p, sec, cfg)
+	if err != nil {
+		return nil, err
+	}
+	// An explicit request credential replaces token acquisition. Do not probe a
+	// service principal or launch the Azure CLI before applying that override.
+	oauth := m != nil && m.RequestTransform() != nil
+	if sec.Scheme() == aot.SchemeOAuthClientCredentials && cfg.TokenURL != "" && !oauth {
 		o, err := clientCredentials(p.Name(), cfg)
 		if err != nil {
 			return nil, err
@@ -1499,10 +1598,6 @@ func providerOptions(args Args, p aot.Provider) ([]docx.Option, error) {
 	}
 	if sec.Scheme() == aot.SchemeServiceAccount && len(cfg.Scopes) > 0 {
 		opts = append(opts, docx.WithGoogleScopes(cfg.Scopes))
-	}
-	m, err := requestAuth(p, sec, cfg)
-	if err != nil {
-		return nil, err
 	}
 	if m == nil {
 		return opts, nil
@@ -1850,6 +1945,8 @@ func (c *cannedPlan) decorate(parent context.Context) (context.Context, context.
 		ctx, timeoutCancel = context.WithTimeout(parent, c.args.Tuning.Timeout)
 	}
 	ctx = httpx.WithRequestTimeout(ctx, c.args.Tuning.RequestTimeout)
+	ctx = httpx.WithPageLimit(ctx, c.args.Tuning.PageLimit)
+	ctx = httpx.WithReadErrors(ctx, c.args.HTTPReadErrors)
 	ctx = requestpolicy.WithPolicy(ctx, newProviderPolicies(c.args))
 	// The HTTP client is a run policy like the rest: set once here, obeyed by every exchange, so a
 	// document-compiled plan and a hand-authored one behave identically.

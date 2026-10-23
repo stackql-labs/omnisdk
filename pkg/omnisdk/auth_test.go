@@ -684,3 +684,46 @@ func TestOneQueryAcrossThreeClouds(t *testing.T) {
 		t.Errorf("azure: Authorization = %q", got)
 	}
 }
+
+func TestExplicitAzureRequestCredentialBypassesDefaultTokenAcquisition(t *testing.T) {
+	requireCorpus(t)
+	t.Setenv("PATH", t.TempDir())
+	for _, name := range []string{"AZURE_TENANT_ID", "AZURE_CLIENT_ID", "AZURE_CLIENT_SECRET"} {
+		t.Setenv(name, "")
+	}
+	for _, kind := range []string{"api_key", "bearer"} {
+		t.Run(kind, func(t *testing.T) {
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if got := r.Header.Get("Authorization"); got != "Bearer explicit-token" {
+					t.Errorf("Authorization=%q", got)
+				}
+				if strings.Contains(r.URL.Path, "oauth") {
+					t.Error("explicit token attempted a token exchange")
+				}
+				w.Header().Set("Content-Type", "application/json")
+				fmt.Fprint(w, `{"value":[{"name":"acct"}]}`)
+			}))
+			defer srv.Close()
+			graph, err := omnisdk.NewGraph([]omnisdk.Node{omnisdk.NewNode("a", "stackql_unstable_azure.storage.storage_accounts", nil)}, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			plan, err := omnisdk.NewGraphQuery(corpus, graph, omnisdk.Args{Endpoint: srv.URL, Params: map[string]string{"subscription_id": "sub"}, AuthByProvider: map[string]*omnisdk.Auth{"azure": {Type: kind, Name: "Authorization", ValuePrefix: "Bearer ", Credentials: "explicit-token"}}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			rows, err := plan.Open(context.Background())
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer rows.Close()
+			count := 0
+			for rows.Next() {
+				count++
+			}
+			if count != 1 || rows.Err() != nil {
+				t.Fatalf("rows=%d err=%v", count, rows.Err())
+			}
+		})
+	}
+}

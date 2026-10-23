@@ -38,6 +38,14 @@ type Func interface {
 	Call(args []any) (any, error)
 }
 
+// LazyFunc is an optional scalar contract for conditional evaluation. Engines
+// pass unevaluated arguments so errors or effects in an unselected branch do
+// not run. Call remains available for callers with already evaluated values.
+type LazyFunc interface {
+	Func
+	CallLazy(args []func() (any, error)) (any, error)
+}
+
 // Catalog is a set of functions by name.
 type Catalog interface {
 	Get(name string) (Func, bool)
@@ -149,6 +157,8 @@ func sqliteBuiltins(o options) []Func {
 	add(stackqlExtensions())
 	add(sqlitePrintfFuncs())
 	add(sqliteOperators())
+	add(sqliteArithmetic())
+	add(booleanFunctions(sqliteTruth, func(value bool) any { return boolInt(value) }))
 	out := make([]Func, 0, len(order))
 	for _, n := range order {
 		out = append(out, byName[n])

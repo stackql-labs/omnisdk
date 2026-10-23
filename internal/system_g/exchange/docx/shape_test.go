@@ -29,6 +29,13 @@ paths:
                 Label: {type: string}
                 Protocols: {type: array, items: {type: string}}
                 Options: {type: object, properties: {Retries: {type: integer}}}
+                DesiredState:
+                  type: object
+                  x-stackQL-stringOnly: true
+                  properties:
+                    BucketName: {type: string}
+                    ObjectLockEnabled: {type: boolean}
+                    Tags: {type: array, items: {type: object, properties: {Key: {type: string}, Value: {type: string}}}}
       responses:
         '200':
           content:
@@ -39,6 +46,7 @@ components:
     items:
       methods:
         create:
+          config: {requestBodyTranslate: {algorithm: naive_DesiredState}}
           operation: {$ref: '#/paths/~1items/post'}
           request: {mediaType: application/json, nativeCasing: pascal}
       sqlVerbs:
@@ -52,6 +60,28 @@ components:
 		t.Fatal(err)
 	}
 	return ex.Request().(aot.RequestShape)
+}
+
+func TestBodyShapeNestsAndStringifiesDeclaredStructuredProperty(t *testing.T) {
+	transform := bodyShape{requestShape(t)}
+	out, err := transform.Apply(httpx.NewRequestRecord("POST", "http://example.test/items", nil,
+		[]byte(`{"BucketName":"my-bucket","ObjectLockEnabled":"true","Tags":"[{\"Key\":\"k\",\"Value\":\"v\"}]","Label":"retained"}`)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got map[string]any
+	if err := json.Unmarshal(httpx.ReqBody(out), &got); err != nil {
+		t.Fatal(err)
+	}
+	want := `{"BucketName":"my-bucket","ObjectLockEnabled":true,"Tags":[{"Key":"k","Value":"v"}]}`
+	if got["DesiredState"] != want || got["Label"] != "retained" || len(got) != 2 {
+		t.Fatalf("body = %#v", got)
+	}
+	_, err = transform.Apply(httpx.NewRequestRecord("POST", "http://example.test/items", nil,
+		[]byte(`{"BucketName":"my-bucket","DesiredState":{}}`)))
+	if err == nil {
+		t.Fatal("accepted conflicting direct and nested inputs")
+	}
 }
 
 func TestBodyShapeParsesStructuredSQLStrings(t *testing.T) {
@@ -95,5 +125,23 @@ func TestBodyShapeCoercesBeforeSending(t *testing.T) {
 		if _, err := transform.Apply(httpx.NewRequestRecord("POST", "http://example.test/items", nil, []byte(body))); err == nil {
 			t.Errorf("accepted invalid or duplicate body: %s", body)
 		}
+	}
+}
+
+func TestBodyReadControlPreservesDeclaredDefaults(t *testing.T) {
+	declaration := requestShape(t).(aot.Request)
+	request := httpx.Request{Body: httpx.Body{Raw: []byte(`{"Filters":{},"Enabled":true}`)}}
+	if err := bodyControlSlot(&request, declaration, "ItemCount", "read_limit"); err != nil {
+		t.Fatal(err)
+	}
+	if len(request.Body.Raw) != 0 || request.Body.Params["ItemCount"] != "{read_limit}" || request.Body.Params["Enabled"] != true {
+		t.Fatalf("body=%#v", request.Body)
+	}
+	filters, ok := request.Body.Params["Filters"].(map[string]any)
+	if !ok || len(filters) != 0 {
+		t.Fatalf("defaults lost: %#v", request.Body.Params)
+	}
+	if len(request.Query) != 0 {
+		t.Fatalf("body control leaked into query: %#v", request.Query)
 	}
 }

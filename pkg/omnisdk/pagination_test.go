@@ -141,8 +141,14 @@ func TestPaginationFollowsODataNextLink(t *testing.T) {
 		}
 	}))
 	defer srv.Close()
-	if n := countRows(t, corpus, "stackql_unstable_entra_id.directory_roles.directory_roles", omnisdk.Args{Endpoint: srv.URL}); n != 2 {
-		t.Errorf("rows = %d, want both pages", n)
+	for _, tc := range []struct {
+		legacy bool
+		want   int
+	}{{false, 2}, {true, 1}} {
+		args := omnisdk.Args{Endpoint: srv.URL, LegacyPagination: tc.legacy}
+		if n := countRows(t, corpus, "stackql_unstable_entra_id.directory_roles.directory_roles", args); n != tc.want {
+			t.Errorf("legacy=%v: rows = %d, want %d", tc.legacy, n, tc.want)
+		}
 	}
 }
 

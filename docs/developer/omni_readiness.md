@@ -1,19 +1,76 @@
 # Omni compatibility readiness
 
-Latest measured CI: **456/728 passed, 272 failed** in
-[run 39714700734](https://github.com/stackql/stackql-devel/actions/runs/39714700734/job/119637217455).
+Historical CI reference: **658/733 passed, 75 failed** in
+[run 39960274810](https://github.com/stackql/stackql-devel/actions/runs/39960274810),
+using the downloaded `stackql_linux_omni_robot_reports` artifact.
 
-After the compatibility fixes, **175 cases that failed in that CI job pass locally**.
-The verified local aggregate is **600/730 passed, 130 failed**: a full 730-case run
-plus a 506-case rerun after the final text/JSON NULL presentation correction. This is not a new CI result.
-The local suite contains two new subquery regressions; both pass.
+The latest completed local full run is **661/733 passed, 72 failed**
+(`/private/tmp/omni-remainder7-full-robot/output.xml`), up from 651/733. Comparing individual
+scenarios found ten new passes and no lost passes. This run includes asynchronous mutation
+completion, host-owned external SQL relations, declared transport metadata and the host's
+legacy HTTP 404 read policy. The latter resolves the S3 sibling-read cancellation and positive
+INSERT SELECT failure while preserving the original 404 diagnostic.
 
-Compared with the previous completed local run (**587/728**), this branch recovers **11 existing
-failures**, adds two passing regressions, and introduces **no failures among previously passing cases**.
-There are 33 local failures among cases that passed in CI: 31 MCP cases and two CLI version cases,
-matching the observed local TLS/build-metadata differences. That leaves **97 of the original
-272 CI failures unresolved**. Do not compare raw local and CI totals as identical environments.
-No tests were skipped, marked as expected failures, or given weaker assertions.
+All eight async/await scenarios and the Kubernetes JSON-path scenario pass. All four external
+PostgreSQL scenarios ran with `SHOULD_RUN_DOCKER_EXTERNAL_TESTS:true` and passed; they were
+actually executed, rather than counted as passes through the usual local gate.
+
+Local MCP failures and build-version metadata make the local total different from CI; compare
+individual scenarios as well as totals. A join also varies in row order between runs. No Robot
+input, assertion, or provider file was changed. The earlier 639/734 aggregate involved edited
+inputs and is withdrawn as parity evidence.
+
+The migration order is behavioral parity first, removal of the `any-sdk` dependency second,
+and semantic improvements afterward. Existing SQLite boolean representation (`0`/`1`) remains
+part of the parity target for this work.
+
+## View and inbox binding follow-up
+
+The subsequent unchanged mocked-query/server-variable run passed **370/404**, versus
+367/404 for the same scenarios in the last full run. Four previously failing view cases passed:
+polymorphic S3 with explicit inputs, the EC2 view-parameter scenario, repeated EC2 VPC view
+invocation, and EC2 instance region tuple replacement. One previously passing join returned the
+same two rows in the opposite order. The identical ordering failure exists in earlier artifacts
+(`/private/tmp/omni-parity-order-robot/output.xml` and `omni-parity7-robot/output.xml`);
+this run is not evidence that ordering parity is resolved.
+
+Document-view variants now recognize declared dialect/required-input predicates. Caller constant
+and IN bindings replace literal view inputs while preserving column-to-column dependencies and
+business predicates. The SDK resolver no longer wires an already-bound inbox slot because a
+different required input is missing. Bindings remain identity transfers; request conversion stays
+in input transformations. No RDBMS code enters the SDK.
+
+Validation: `/private/tmp/omni-inbox-next-robot/output.xml`, comparison
+`/private/tmp/omni-inbox-next-comparison.json`, full SDK race checks
+`/private/tmp/omni-inbox-next-full-sdk.log`, host race checks
+`/private/tmp/omni-inbox-next-host.log` and lint `/private/tmp/omni-inbox-next-lint.log` (zero issues).
+Robot inputs, assertions and provider files remain unchanged. This 404-case subset does not replace
+the completed 733-case full-run total above.
+
+A focused confirmation passed **5/5**, including all four recovered view cases and the
+intermittent join-order case (`/private/tmp/omni-inbox-next-confirm-robot/output.xml`). Its passing
+rerun does not remove the observed ordering instability from the backlog.
+
+## Current compatibility batch
+
+This batch recovers error-result headers for plain and staged reads, explicit upstream read-error
+opt-ins, forward references in INNER JOIN conditions, scalar XML policy-list projections, empty
+JSON-selection diagnostics, and an empty INSERT/SELECT RETURNING-star result. Existing Robot scenarios and new unit tests cover these paths, including preservation of partial
+rows and original errors.
+
+SDK interfaces keep ignored-read diagnostics in the host. `StrictResponseSelection` is opt-in;
+missing declared keys report a diagnostic when enabled, while declared empty arrays remain valid.
+Scalar XML row metadata gives discovery and execution the same named column. RDBMS work remains
+entirely in the host adapter, behind relation interfaces. Outer-join conditions keep their boundary.
+
+The current batch additionally separates declared and synthesized AWS negotiation headers,
+retains explicit body bindings and canonical projection names, projects constants and NULL,
+resolves declared server environment annotations in the host, and executes INSERT SELECT's
+complete read source behind a handle before mutation dispatch. RETURNING star names only the
+target's fields. DELETE AWAIT RETURNING fails before dispatch. Explicit Azure API keys and bearer
+tokens override default OAuth acquisition without requiring the Azure CLI. Fourteen failing tests
+in the current CI artifact encounter that credential-precedence bug; fixing their authentication
+blocker does not establish that all fourteen otherwise pass.
 
 ## Implemented
 
@@ -43,6 +100,14 @@ No tests were skipped, marked as expected failures, or given weaker assertions.
 - Document/resource/method request translation and transposition inheritance, header defaults,
   structured AWS query inputs, and JSON body input discovery.
 - Constant function values in mutations and request bindings; path scope echoed when absent from rows.
+- XML selection through declared array-item wire names, including `allOf` annotations.
+- Declared signing service identity survives private/mock endpoint rewrites; method `serviceName`
+  overrides document `info.x-serviceName`.
+- Nested body input translation and schema coercion before `x-stackQL-stringOnly` serialization.
+- Scalar comparison calls with SQL NULL semantics; host translation of scalar comparisons and `||`.
+- Per-provider host credentials forwarded for every source, including sources after derived handles.
+- Declared wildcard expansion at staging boundaries, joined `COUNT(*)` without ambiguous column
+  expansion, and host translation to Omni's existing lateral table-function interface.
 
 ## Relation composition in this branch
 
@@ -60,39 +125,53 @@ The missing `toInt`/`toBool` template helpers also unblock transformed XML reads
 
 Some previously green derived-table scenarios fell through to the legacy planner. Moving them into
 Omni increases actual Omni coverage without increasing the traffic-light pass count for those cases.
-This does not yet provide general stored-view/table resolution, correlated subqueries or CTE execution.
+The host adapter also resolves stored views, materialized views and user tables through its SQL-system
+metadata interfaces. Storage reads become opaque handles; Omni receives no connection, SQL executor
+or database-discovery code. An architecture test rejects production database dependencies.
+
+Nonrecursive CTEs use the same boundaries, with lexical scoping, earlier-definition references,
+explicit column names and nested shadowing. Stored view definitions keep an independent scope.
+Features unsupported by any-sdk are outside this behavioral-parity target.
 
 ## Results by suite
 
-| Suite | Latest CI passes | Verified local passes |
-|-------|------------------|-----------------------|
+| Suite | Current CI passes | Latest completed local full run |
+|-------|-------------------|----------------------------------|
 | Mcp | 85/85 | 54/85 |
-| Body Coercion | 9/9 | 9/9 |
-| Casing | 32/32 | 32/32 |
-| Dependencies | 7/8 | 8/8 |
-| Exec | 3/3 | 3/3 |
-| Export | 8/8 | 8/8 |
-| From Cmd Line | 26/32 | 28/32 |
-| Function Projection | 5/8 | 8/8 |
-| Graphql Pagination | 0/9 | 9/9 |
-| Legacy Cli Surface | 15/25 | 25/25 |
-| Mocked From Cmd Line | 184/393 | 303/395 |
-| Oci Auth | 0/11 | 11/11 |
-| Odata Pushdown | 9/24 | 24/24 |
-| Postgres Housekeeping | 6/6 | 6/6 |
-| Rest Pagination | 10/11 | 11/11 |
-| Server Variables | 3/6 | 3/6 |
-| Sessions | 34/35 | 35/35 |
-| Sessions Postgres | 8/8 | 8/8 |
-| Xml Walker | 12/15 | 15/15 |
+| Stackql Body Coercion | 9/9 | 9/9 |
+| Stackql Casing | 32/32 | 32/32 |
+| Stackql Dependencies | 8/8 | 8/8 |
+| Stackql Exec | 3/3 | 3/3 |
+| Stackql Export | 8/8 | 8/8 |
+| Stackql From Cmd Line | 30/32 | 28/32 |
+| Stackql Function Projection | 8/8 | 8/8 |
+| Stackql Graphql Pagination | 9/9 | 9/9 |
+| Stackql Legacy Cli Surface | 25/25 | 25/25 |
+| Stackql Mocked From Cmd Line | 329/398 | 361/398 |
+| Stackql Oci Auth | 11/11 | 11/11 |
+| Stackql Odata Pushdown | 24/24 | 24/24 |
+| Stackql Postgres Housekeeping | 6/6 | 6/6 |
+| Stackql Rest Pagination | 11/11 | 11/11 |
+| Stackql Server Variables | 3/6 | 6/6 |
+| Stackql Sessions | 34/35 | 35/35 |
+| Stackql Sessions Postgres | 8/8 | 8/8 |
+| Stackql Xml Walker | 15/15 | 15/15 |
 
 ## Remaining failures
 
-Remaining failures include stored SQL views and materialized/user tables in mixed queries,
-resource-view expansion, multi-step dataflow, SQL expression output, async/await and mutation-result
-behavior, metadata fidelity, XML shapes, and server-variable integration. Stored relation and
-information-schema discovery, correlated subqueries and CTE planning still require analyzer work;
-the new handle interface supplies the execution seam for that work.
+The latest local run has 37 mocked-query failures, 31 MCP failures and four CLI/metadata failures.
+The historical CI reference passed all 85 MCP tests; the local MCP count is not evidence that
+this batch introduced 31 SDK regressions.
+
+Remaining failures include parameterized/resource-view composition, analytics-cache namespace
+resolution, multi-step dataflow, remaining expression/projection differences and provider-specific mutation completion,
+transaction diagnostics, metadata fidelity, XML request/response shapes, non-HTTP local execution,
+and deeper server/view binding composition. Information-schema objects on explicitly configured external SQL connections now use host-owned
+relation handles. Features unsupported by any-sdk are not counted as parity gaps. This is not a complete compatibility cutover.
+
+The rewritten S3 ABAC test document explicitly maps UPDATE to `put_bucket_abac`. An earlier diagnosis
+incorrectly inspected the native source document instead. The missing `Bucket` input was fixed by retaining path-level server variables after mock URL rewrites;
+both the transformed update and obsolete-version diagnostic now pass.
 
 GraphQL (9/9), OCI (11/11), OData (24/24), REST pagination (11/11), XML walker (15/15), function
 projection (8/8), legacy CLI (25/25), and dependencies (8/8) remain green. The remaining failures
@@ -100,20 +179,16 @@ are not being treated as intentional differences or a cutover-ready result.
 
 ## Validation and artifacts
 
-SDK: `go build ./...`, `go vet ./...`, and `go test -race ./...` pass. Handle regressions cover
-planning without IO, dependent bindings, cursor ownership, partial rows plus original errors,
-required inputs, canceled opens, and rejection of mutation targets. Adapter race tests cover nested
-subqueries, inner aggregation/order/limit boundaries, wildcard schemas, native values, NULL, constants
-and LEFT JOIN. Adapter/output lint reports zero issues.
-
-- Previous full baseline: `/private/tmp/omni-final-readiness/output.xml` (587/728).
-- Current full Robot run: `/private/tmp/omni-relations-final-readiness/output.xml` (598/730).
-- Final 506-case rerun: `/private/tmp/omni-relations-formats-robot/output.xml` (414/506).
-- Rebot-merged results: `/private/tmp/omni-relations-aggregate/output.xml` (600/730).
-- SDK checks: `/private/tmp/omni-relations-scalars-checks.log`.
-- Handle regressions: `/private/tmp/omni-relation-tests.log`.
-- Adapter/output race tests: `/private/tmp/omni-derived-final-tests.log`.
-- Adapter/output lint: `/private/tmp/omni-derived-lint.log`.
+- Historical CI: `/private/tmp/omni-ci-39960274810/output.xml` (658/733).
+- Latest completed full local run: `/private/tmp/omni-remainder7-full-robot/output.xml` (661/733).
+- Async/await: `/private/tmp/omni-remainder3-async-robot/output.xml` (8/8).
+- External PostgreSQL, Docker gate enabled: `/private/tmp/omni-remainder5-external-robot/output.xml` (4/4).
+- Kubernetes transport binding: `/private/tmp/omni-remainder6-k8s/output.xml` (1/1).
+- Scenario comparison: `/private/tmp/omni-remainder7-comparison.json` (ten gains, zero losses against the prior full run).
+- Response-exchange race checks: `/private/tmp/omni-remainder7-docx.log`; final vet: `/private/tmp/omni-remainder7-vet.log`.
+- SDK checks: `/private/tmp/omni-remainder-final-sdk.log`.
+- Host race checks and lint: `/private/tmp/omni-remainder-final-host.log`,
+  `/private/tmp/omni-remainder-final-lint.log` (zero lint issues).
 
 The local retry mock has an older Python IPv4 listener alongside Docker's IPv6 listener on port 1199.
 The final retry test uses `RETRY_MOCK_BASE_URL=http://localhost:1199`, matching the SDK request's host,
@@ -122,5 +197,55 @@ running; retry counts and expected output were not changed.
 
 Both checkouts contain required changes: the SDK, StackQL's intrinsic adapter, and its GraphQL
 registry URL rewriter. Testing used a temporary Go modfile pointing at the SDK checkout;
-the companion `go.mod` was not changed. CI must consume the updated SDK and adapter to measure the
-new result. API notes remain relative to `v0.1.5-beta06` in [api_changes.md](api_changes.md).
+CI must consume the updated SDK and adapter together to measure the new result. API notes remain relative to `v0.1.5-beta06` in [api_changes.md](api_changes.md).
+
+## Declared server variables and XML wire names
+
+The focused unchanged Robot run passed **34/36**
+(`/private/tmp/omni-server-star-xml-robot/output.xml`). Both IAM policy cases,
+`Server Parameter in Select Star`, and the flattened paginated JSON star case pass.
+All 15 XML Walker cases pass. The two failures (transformed XML boolean formatting
+and naive XML star projection) also fail in the previous star-host artifact;
+no previously passing case in this selection was lost.
+
+The host now obtains declared server-variable names from the method selected by
+Omni, replacing the bound-path-parameter heuristic. Required query inputs such as
+IAM `UserName` remain inputs; ordinary path inputs are not added to star output.
+AWS query transposition and GET-to-POST form translation are unchanged. Native XML
+rows map declared wire names to logical schema names, recovering `AvailabilityZone`.
+
+This focused run does not replace either the full-run total or the larger subset
+results above. Provider files and Robot inputs and assertions are unchanged.
+
+Validation for this batch: full `pkg/omnisdk` race suite passed
+(`/private/tmp/omni-server-star-sdk-race.log`); XML exchange, document parser and
+schema-XML race suites passed (`/private/tmp/omni-server-star-xml-tests.log`).
+Repository-wide build and vet passed. Host intrinsic tests and lint passed
+(`/private/tmp/omni-server-star-lint.log`, zero issues).
+
+## Inline operations, transactions and explicit credential errors
+
+The next unchanged 471-case run passed **447/471**, with four recovered cases and
+no lost passes against the preceding 443/471 artifact
+(`/private/tmp/omni-batch15-robot/output.xml`). This binary includes inline command
+execution but predates the transaction and credential-error follow-up.
+
+The follow-up unchanged transaction/local/auth selection passed **33/34**
+(`/private/tmp/omni-batch15c-robot/output.xml`). It recovers six additional cases:
+all three previously failing transaction cases, both remaining OpenSSL cases,
+and authentication recovery after an explicitly invalid credential file. No previously
+passing selected case was lost. The sole selected failure is OAuth token-error wording.
+Do not add these results into a claimed completed 471-case run: the final combined
+binary has not had that entire selection rerun.
+
+Local argv templates execute without a shell; response text uses its declared DSL.
+The host registers only explicitly declared delete reversals, captures accepted response
+identities and passes only inputs accepted by that inverse method. Missing identity
+never creates a reversal. Mutation diagnostics preserve unknown-outcome error identity.
+Explicit credential-file failures no longer fall back to environmental authentication.
+Robot inputs, assertions and provider files are unchanged; database access stays in the host.
+
+Validation: targeted public SDK race tests (`/private/tmp/omni-batch15-public-race.log`),
+XML/local exchange and parser race tests (`/private/tmp/omni-batch15-sdk-tests.log`),
+host race tests (`/private/tmp/omni-batch15-host-race.log`), repository build/vet
+(`/private/tmp/omni-batch15-vet.log`) and host lint (`/private/tmp/omni-batch15-lint.log`).

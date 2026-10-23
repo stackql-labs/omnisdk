@@ -16,7 +16,7 @@ import (
 // scan would have kept.
 func TestJoinKeyAgreesWithCompare(t *testing.T) {
 	vals := []any{nil, 0, -0.0, "0", "-0", 1, 1.0, "1", "1.0", "1e0", " 1", "01", 2, "abc", "ABC", "",
-		true, "true", "NaN", "Inf", "+Inf", "-Inf", 1.5, "1.50"}
+		true, "true", "1e-4000", "1e-5000", "Inf", "NaN", "Inf", "+Inf", "-Inf", 1.5, "1.50"}
 	for _, a := range vals {
 		for _, b := range vals {
 			c, ok := compareValues(a, b)
@@ -93,4 +93,40 @@ func mustKey(t *testing.T, v any) string {
 		t.Fatalf("no key for %v", v)
 	}
 	return k
+}
+
+func TestJoinKeepsAdjacentLargeProviderIdentifiersDistinct(t *testing.T) {
+	a, b := "3236826943903762397", "3236826943903762398"
+	if order, ok := compareValues(a, b); !ok || order >= 0 {
+		t.Fatalf("distinct identifiers collapsed: %d %v", order, ok)
+	}
+	ka, _ := joinKey(a)
+	kb, _ := joinKey(b)
+	if ka == kb {
+		t.Fatal("distinct identifiers share a hash probe")
+	}
+	for _, equivalent := range []any{int64(3236826943903762397), "3236826943903762397.0", "3.236826943903762397e18"} {
+		if order, ok := compareValues(a, equivalent); !ok || order != 0 {
+			t.Fatalf("equivalent value %v differs", equivalent)
+		}
+		key, _ := joinKey(equivalent)
+		if key != ka {
+			t.Fatalf("equivalent value %v hashes differently", equivalent)
+		}
+	}
+}
+
+func TestExactJoinParsingBoundsExponentExpansion(t *testing.T) {
+	if _, ok := exactNumber("1e-1000000000"); ok {
+		t.Fatal("unbounded exponent accepted")
+	}
+	if _, ok := exactNumber("0.000000000000000000000000000001"); !ok {
+		t.Fatal("ordinary decimal rejected")
+	}
+	a, _ := joinKey("1e-1000000000")
+	b, _ := joinKey("0")
+	order, ok := compareValues("1e-1000000000", "0")
+	if !ok || order == 0 || a == b {
+		t.Fatal("bounded textual comparison and hash disagree")
+	}
 }

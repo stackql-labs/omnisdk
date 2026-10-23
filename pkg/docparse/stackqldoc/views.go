@@ -3,6 +3,8 @@ package stackqldoc
 import (
 	"fmt"
 	"github.com/stackql-labs/omnisdk/pkg/docparse/aot"
+	"regexp"
+	"strings"
 )
 
 type viewSpec struct {
@@ -38,4 +40,20 @@ func (c *catalog) View(service, name string) (aot.View, bool, error) {
 		return nil, false, nil
 	}
 	return view, true, nil
+}
+
+var requiredViewParams = regexp.MustCompile(`requiredParams\s*==\s*\[([^\]]*)\]`)
+
+func (v *viewSpec) requiredParams() []string {
+	match := requiredViewParams.FindStringSubmatch(v.Condition)
+	if len(match) < 2 {
+		return nil
+	}
+	var names []string
+	for _, raw := range strings.Split(match[1], ",") {
+		if name := strings.Trim(strings.TrimSpace(raw), "\"'"); name != "" {
+			names = append(names, name)
+		}
+	}
+	return names
 }

@@ -22,6 +22,8 @@ const DefaultRequestTimeout = httpx.DefaultRequestTimeout
 // Zero fields inherit the global Tuning value, then library defaults. Whole-run
 // budgets (Timeout, Limit, Parallelism, buffering) stay global.
 type ProviderTuning struct {
+	// PageLimit inherits when zero; negative explicitly removes a global cap.
+	PageLimit int
 	// RequestTimeout uses a negative duration to explicitly disable its deadline.
 	RequestTimeout time.Duration
 	// RetryTries, RetryRate and MaxPerHost configure HTTP retries and admission,
@@ -64,6 +66,7 @@ func (o providerOperator) Open(ctx context.Context) facade.Records {
 }
 
 type providerPolicy struct {
+	pageLimit  int
 	timeout    time.Duration
 	retry      facade.RetryPolicy
 	admissions facade.Admissions
@@ -92,6 +95,9 @@ func (p *providerPolicies) ForProvider(ctx context.Context, name string) context
 		if o.RequestTimeout != 0 {
 			t.RequestTimeout = o.RequestTimeout
 		}
+		if o.PageLimit != 0 {
+			t.PageLimit = o.PageLimit
+		}
 		if o.RetryTries != 0 {
 			t.RetryTries = o.RetryTries
 		}
@@ -101,7 +107,7 @@ func (p *providerPolicies) ForProvider(ctx context.Context, name string) context
 		if o.MaxPerHost != 0 {
 			t.MaxPerHost = o.MaxPerHost
 		}
-		policy = providerPolicy{timeout: t.RequestTimeout,
+		policy = providerPolicy{timeout: t.RequestTimeout, pageLimit: t.PageLimit,
 			retry: retry.New(retry.Config{
 				Tries:    orInt(t.RetryTries, 4),
 				Backoff:  retry.NewDecorrelatedJitter(250*time.Millisecond, 30*time.Second),
@@ -113,6 +119,7 @@ func (p *providerPolicies) ForProvider(ctx context.Context, name string) context
 	}
 	p.mu.Unlock()
 	ctx = httpx.WithRequestTimeout(ctx, policy.timeout)
+	ctx = httpx.WithPageLimit(ctx, policy.pageLimit)
 	ctx = retry.WithPolicy(ctx, policy.retry)
 	return admit.WithAdmissions(ctx, policy.admissions)
 }

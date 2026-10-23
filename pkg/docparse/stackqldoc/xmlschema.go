@@ -40,8 +40,8 @@ func selectedXMLSchema(node *yaml.Node, components map[string]*yaml.Node, path s
 			node = next
 			continue
 		}
-		if segment == "item" || segment == "member" {
-			if item := schemaField(node, components, "items", 0); item != nil {
+		if item := schemaField(node, components, "items", 0); item != nil {
+			if segment == "item" || segment == "member" || schemaXMLName(item, components, 0) == segment {
 				node = item
 				continue
 			}
@@ -54,7 +54,37 @@ func selectedXMLSchema(node *yaml.Node, components map[string]*yaml.Node, path s
 	if item := schemaField(node, components, "items", 0); item != nil {
 		node = item
 	}
-	return newSchema(node, components)
+	row := materialise(node, components, 0)
+	if row == nil {
+		return nil
+	}
+	if row != nil && row.Type() != "" && row.Type() != "object" && row.Type() != "array" {
+		name := path[strings.LastIndex(path, "/")+1:]
+		if name != "" && name != "*" {
+			return scalarRowSchema{Schema: &materialised{typ: "object", props: map[string]*materialised{name: row}, names: []string{name}}, column: name}
+		}
+	}
+	return row
+}
+
+// Array items may declare their wire element name in an allOf annotation next
+// to a reference. Resolve both forms before matching an XPath segment.
+func schemaXMLName(node *yaml.Node, components map[string]*yaml.Node, depth int) string {
+	if depth > 16 {
+		return ""
+	}
+	node = resolve(node, components)
+	if name := xmlName(node); name != "" {
+		return name
+	}
+	if branches := field(node, "allOf"); branches != nil {
+		for _, branch := range branches.Content {
+			if name := schemaXMLName(branch, components, depth+1); name != "" {
+				return name
+			}
+		}
+	}
+	return ""
 }
 
 func schemaField(node *yaml.Node, components map[string]*yaml.Node, name string, depth int) *yaml.Node {
@@ -98,3 +128,11 @@ func schemaProperty(node *yaml.Node, components map[string]*yaml.Node, name stri
 	}
 	return nil
 }
+
+// A scalar XML element still has the SQL column named by its selection.
+type scalarRowSchema struct {
+	aot.Schema
+	column string
+}
+
+func (s scalarRowSchema) ScalarColumn() string { return s.column }

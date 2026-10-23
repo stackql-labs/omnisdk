@@ -1408,3 +1408,24 @@ func TestConstantMutationPredicateRunsBeforeEffects(t *testing.T) {
 		})
 	}
 }
+
+func TestInsertSelectReturningStarUsesOnlyTargetColumns(t *testing.T) {
+	q := mustMutation(t,
+		query.NewInsert(users("t"), query.NewAssignment("UserName", query.NewColumn("u", "UserName"))),
+		[]query.Join{query.NewJoin(users("u"), query.Base)}, []query.Predicate{regionEq()},
+		[]query.Output{query.NewOutput("", query.NewStar(""))},
+	)
+	rows, made := runQuery(t, q)
+	if len(rows) != 2 {
+		t.Fatalf("returning rows=%v", rows)
+	}
+	for _, row := range rows {
+		if !strings.Contains(row, "arn=arn:aws:iam::1:user/") || !strings.Contains(row, "user_name=") {
+			t.Fatalf("returning row=%s", row)
+		}
+	}
+	expected := []string{"CreateUser|us-east-1|alice", "CreateUser|us-east-1|bob", "ListUsers|us-east-1"}
+	if !reflect.DeepEqual(made, expected) {
+		t.Fatalf("calls=%v want=%v", made, expected)
+	}
+}

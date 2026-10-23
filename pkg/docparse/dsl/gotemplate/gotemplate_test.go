@@ -170,11 +170,31 @@ func TestMXJVersionOneUsesDeclaredXMLBinding(t *testing.T) {
 	if !ok {
 		t.Fatal("MXJ v0.1.0 is unavailable")
 	}
-	result, err := evaluator.Eval(dsl.Context{}, `{{ toJson . }}`, []byte(`<Response><id>12345678901234567890</id></Response>`))
+	result, err := evaluator.Eval(dsl.Context{}, `{{ toJson . }}`, []byte(`<Response><id>12345678901234567890</id><boundary>9007199254740993</boundary></Response>`))
 	if err != nil {
 		t.Fatal(err)
 	}
 	if !strings.Contains(string(result), `"id":"12345678901234567890"`) {
 		t.Fatalf("XML binding = %s", result)
+	}
+	if !strings.Contains(string(result), `"boundary":"9007199254740993"`) {
+		t.Fatalf("XML binding lost integer precision at the float boundary: %s", result)
+	}
+}
+
+func TestMXJProgramsReceiveLegacyTypedScalars(t *testing.T) {
+	for _, typ := range []string{gotemplate.TypeMXJ, "golang_template_mxj_v0.1.0"} {
+		output, err := registry(t).Eval(typ, dsl.Context{}, `{{ toJson . }}`, []byte(`<root><size>10</size><enabled>false</enabled><name>disk-a</name></root>`))
+		if err != nil {
+			t.Fatal(err)
+		}
+		var decoded map[string]map[string]any
+		if err := json.Unmarshal(output, &decoded); err != nil {
+			t.Fatal(err)
+		}
+		row := decoded["root"]
+		if row["size"] != float64(10) || row["enabled"] != false || row["name"] != "disk-a" {
+			t.Fatalf("%s: typed scalar inputs=%v", typ, row)
+		}
 	}
 }

@@ -10,7 +10,13 @@ import (
 // affinity (SQLite) or of operator overloading beyond the built-in types (Postgres).
 
 func sqliteOperators() []Func {
-	return []Func{
+	return append(comparisonOperators(func(x, y any, _ string) (*int, error) {
+		if isNull(x) || isNull(y) {
+			return nil, nil
+		}
+		c := sqliteCompare(x, y)
+		return &c, nil
+	}, func(b bool) any { return boolInt(b) }), []Func{
 		// OP_Concat: NULL if any operand is; otherwise each operand's TEXT.
 		NewScalar("||", 2, -1, func(a []any) (any, error) {
 			var b strings.Builder
@@ -35,7 +41,25 @@ func sqliteOperators() []Func {
 			ge, le := cmp(a[0], a[1]), cmp(a[0], a[2])
 			return sqlAnd(ge, func(c int) bool { return c >= 0 }, le, func(c int) bool { return c <= 0 }, func(b bool) any { return boolInt(b) }), nil
 		}),
+	}...)
+}
+
+// Comparisons can be scalar expressions as well as WHERE predicates, for
+// example a view projecting json_extract(Properties, '$.enabled') = 0.
+func comparisonOperators(compare func(any, any, string) (*int, error), boolean func(bool) any) []Func {
+	var result []Func
+	for _, op := range []string{"=", "!=", "<>", "<", "<=", ">", ">="} {
+		result = append(result, NewScalar(op, 2, 2, func(a []any) (any, error) {
+			comparison, err := compare(a[0], a[1], op)
+			if err != nil || comparison == nil {
+				return nil, err
+			}
+			c := *comparison
+			return boolean(op == "=" && c == 0 || (op == "!=" || op == "<>") && c != 0 ||
+				op == "<" && c < 0 || op == "<=" && c <= 0 || op == ">" && c > 0 || op == ">=" && c >= 0), nil
+		}))
 	}
+	return result
 }
 
 // sqlAnd is SQL's three-valued AND of two comparisons, nil being NULL.
@@ -127,7 +151,16 @@ func sqliteRealSameAsInt(r float64, i int64) bool {
 }
 
 func pgOperators(env pgEnv) []Func {
-	return []Func{
+	comparisons := comparisonOperators(func(x, y any, op string) (*int, error) {
+		return pgCompareNullable(env, x, y, op)
+	}, func(b bool) any { return b })
+	functions := append(comparisons, booleanFunctions(pgTruth, func(value bool) any { return value })...)
+	return append(functions, []Func{
+		newChoice("case_when", 3, true, pgTruth),
+		newSimpleCase(func(left, right any) (bool, error) {
+			comparison, err := pgCompareNullable(env, left, right, "=")
+			return comparison != nil && *comparison == 0, err
+		}),
 		NewScalar("||", 2, -1, func(a []any) (any, error) {
 			acc := a[0]
 			for _, v := range a[1:] {
@@ -158,7 +191,7 @@ func pgOperators(env pgEnv) []Func {
 			return sqlAnd(ge, func(c int) bool { return c >= 0 }, le, func(c int) bool { return c <= 0 },
 				func(b bool) any { return b }), nil
 		}),
-	}
+	}...)
 }
 
 // pgOperandType is an operand's type for operator resolution: a NULL is an untyped literal.

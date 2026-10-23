@@ -13,12 +13,40 @@ package aot
 
 import "time"
 
+// DocumentIdentity fingerprints the source document that defines an exchange.
+// It carries no response data and invalidates cached rows after document changes.
+type DocumentIdentity interface{ DocumentIdentity() string }
+
+// InverseDeclaration retains a declared inverse reference and token metadata.
+// Each token contains key, location and algorithm, in that order.
+type InverseDeclaration interface {
+	InverseDeclaration() (string, map[string][3]string)
+}
+
+// InlineCommand declares an argv template executed locally, without a shell.
+// Empty means the exchange uses its ordinary transport.
+type InlineCommand interface{ InlineCommand() []string }
+
+// NativePagination identifies pagination inferred from native API annotations,
+// rather than an explicit StackQL pagination contract.
+type NativePagination interface{ Native() bool }
+
 // ParameterDefault exposes a declared wire default without making request
 // scope optional. Compilers may apply it to non-scope metadata such as headers.
 type ParameterDefault interface{ Default() any }
 
 // ServerBindings retains declared server variables after endpoint rewriting.
 type ServerBindings interface{ ServerVariables() []string }
+
+// ServerTransportDefaults retains declared HTTP(S) URL-scheme defaults only.
+// Scope defaults (host, account, region, database) are never included or applied.
+// Hosts may turn this metadata into explicit bindings before SDK resolution.
+type ServerTransportDefaults interface{ ServerTransportDefaults() map[string]string }
+
+// ServerEnvironmentBindings exposes only explicit environment-variable annotations.
+// Parsers retain metadata; only a host may resolve environment values and pass them
+// as explicit query inputs. The library never reads these environment variables.
+type ServerEnvironmentBindings interface{ ServerEnvironmentBindings() map[string]string }
 
 // RequestFallback supplies a complete body only when no body fields were supplied.
 type RequestFallback interface{ DefaultBody() string }
@@ -225,6 +253,30 @@ type RequestShape interface {
 	BodySchema() Schema
 }
 
+// SigningRequest retains the service identity when an endpoint is overridden.
+// A private endpoint's hostname need not name the service used in SigV4 scope.
+type SigningRequest interface {
+	SigningService() string
+}
+
+// BodyTranslationRequest declares a mapping of flat body inputs into a nested
+// request property (for example naive_DesiredState).
+type BodyTranslationRequest interface {
+	BodyTranslation() string
+}
+
+// XMLRequest declares the wire envelope independently of the body properties.
+type XMLRequest interface {
+	XMLRootName() string
+	XMLDeclaration() string
+	XMLRootAnnotation() string
+}
+
+// StringOnlySchema marks a structured value serialized as JSON text on wire.
+type StringOnlySchema interface {
+	StringOnly() bool
+}
+
 // Parameter is one declared input and its location on the wire.
 type Parameter interface {
 	Name() string
@@ -284,6 +336,9 @@ type Response interface {
 	Schema() Schema
 	Pagination() Pagination
 }
+
+// RequestTransform optionally declares the program that produces an operation's wire body.
+type RequestTransform interface{ RequestTransform() Transform }
 
 // Transform is a declared body transformation: a program and the language it is written in.
 type Transform interface {
@@ -423,6 +478,13 @@ type GraphQL interface {
 
 // GraphQLExchange optionally describes GraphQL acquisition on the ordinary HTTP exchange.
 type GraphQLExchange interface{ GraphQL() (GraphQL, bool) }
+
+// ScalarRowSchema names the column of a declared scalar row selection.
+// It presents an object schema so discovery and execution share the same shape.
+type ScalarRowSchema interface {
+	Schema
+	ScalarColumn() string
+}
 
 // SelectedSchema optionally exposes the row schema reached by a response selection.
 type SelectedSchema interface{ RowSchema() Schema }

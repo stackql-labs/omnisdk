@@ -130,8 +130,13 @@ Tuning (any subcommand): `--parallelism` (fan-out concurrency), `--max-per-host`
 Request settings resolve from `Args.TuningByProvider` to global `Args.Tuning`,
 then library defaults. Provider keys accept `google` or `stackql_unstable_google`;
 the namespaced entry wins if both are present. Provider overrides cover
-`RequestTimeout`, `RetryTries`, `RetryRate`, and `MaxPerHost`. Zero fields inherit.
+`RequestTimeout`, `RetryTries`, `RetryRate`, `MaxPerHost`, and `PageLimit`. Zero fields inherit.
 Whole-query deadlines, row limits, buffering, and total parallelism remain global.
+
+`PageLimit` caps pages per resource read, including cursor, page-number, next-link,
+and GraphQL pagination. Reaching the cap ends the read cleanly. Global zero or
+negative values mean unlimited; a negative provider override removes a global cap.
+Retries and asynchronous polling attempts do not consume this page budget.
 
 `RequestTimeout` defaults to **30 seconds**, including HTTP response body reads
 and gRPC response consumption. A negative duration explicitly disables it.
@@ -151,6 +156,24 @@ args := omnisdk.Args{
 ```
 
 > `--limit` is a budget, **not a sample**: it has no fairness across legs, so any value below the full result set biases toward whichever provider emits first. On a real org-wide run, `"tuning":{"Limit":25}` returned 24 GCP + 1 Azure rows and **zero** AWS — the AWS leg fans out three detail calls per bucket before its first row, and the budget was gone. To bound a multi-cloud look, run the legs separately with their own limits.
+For explicit upstream read-error tolerance, pass `Args.HTTPReadErrors` with an
+`IsIgnored(statusCode int) bool` implementation. Ignored responses end the resource read without
+emitting a row; mutations and authentication stay strict. Implement `IgnoredStatus(int, string)`
+on the same policy to receive diagnostics in the host. Retries run first; tolerance applies only when recovery ends.
+`Args.StrictResponseSelection` reports absent declared JSON row keys; its default is an empty read.
+A declared empty array is successful in either mode. A host may set
+`Args.ResponseSelectionErrors` to report a missing collection key and return zero rows
+without cancelling sibling reads. Failed selections never become cached empty results.
+
+`Args.HTTPObserver` enables request, raw-response, and selected-page diagnostics for
+document requests. It excludes credential exchanges and must be safe for concurrent
+callbacks. With no observer there are no additional diagnostic stages.
+
+Compatibility hosts can explicitly opt into `LegacyXMLValues` for complete XML child
+text and transformed integer booleans, and `LegacyResponseTransforms` for the old
+unknown-program decoder fallback. Standalone SDK defaults retain structured XML values
+and reject unsupported response programs.
+
 Credentials resolve direct flag → env var → file; env vars are never required. Scope (e.g. `--project`) is **required and never inferred** — no env or key-embedded fallback.
 
 
@@ -856,6 +879,15 @@ from the offset it applies locally. Omitting hints retains the existing local be
 `DocServices` returns declared provider service metadata, including services whose operation files
 are absent. `DocCatalog` continues to enumerate locally addressable services and exchanges.
 
+The StackQL host sets `Args.LegacyPagination` to match any-sdk: native `x-ms-pageable` hints alone
+do not enable next-link traversal. Explicit `x-stackQL-config.pagination` remains authoritative.
+Other SDK callers retain native inference by default. An explicit URL continuation is followed
+as declared; the SDK does not rewrite its destination.
+
+MXJ programs receive numeric and boolean XML scalars using the legacy number-before-boolean
+conversion rules. Large integral identifiers remain exact strings. This conversion belongs to
+the program's input transformation; bindings themselves continue transferring values unchanged.
+
 ### Analyzer-resolved relations
 
 A front end can resolve a subquery, database table or another read source before handing a graph
@@ -875,3 +907,112 @@ window functions, or ORDER BY/LIMIT must implement those operations inside its o
 returning rows. Registering a handle does not authorize flattening that boundary or executing a
 recursive CTE through an acyclic graph. SQL parsing, name resolution and database metadata remain
 the front end's responsibility.
+
+The StackQL adapter uses this seam for stored views, materialized views, user tables and
+nonrecursive CTEs. It resolves storage metadata and executes backend SQL in the host repository.
+CTE definitions retain lexical scope and their own aggregation/order/limit boundaries; stored view
+definitions do not inherit a caller's CTE names. No database connection or driver enters Omni.
+
+
+The StackQL adapter also places an `INSERT … SELECT` source behind a read handle. Its WHERE,
+joins and relational operations run before source rows reach the mutation exchange. Planning
+remains lazy. An empty source sends no mutation requests. The adapter rejects asynchronous
+DELETE with RETURNING before dispatch.
+
+Optional `ServerEnvironmentBindings` metadata exposes only explicit `x-stackQL-envVar`
+annotations. A host may resolve those names and add ordinary query bindings before calling
+`ResolveIn`; SQL bindings take precedence. `DocMethod.ServerEnvironment` supports the same host
+policy for SHOW METHODS. Omni does not read the environment or apply server scope defaults.
+
+
+A host can supply `Args.MutationCompletion` to follow accepted graph mutations before their
+RETURNING projection. It receives private input/response maps and must support concurrent calls
+and cancellation. Returning nil emits no resource row. Failure retains an unknown outcome and
+never retries the original mutation.
+
+The StackQL adapter uses this for explicit `/*+ AWAIT */` Google Compute mutations. It matches
+operation and target links against declared GET paths in the original provider/service, preserves
+explicit scope, polls at ten-second intervals with a ten-minute overall deadline, and reads the
+finished resource before RETURNING. Awaited DELETE reports progress without reading a deleted
+resource. Other providers require their own completion implementation. Storage and database
+handles remain host-owned.
+
+StackQL's read policy maps HTTP 404 to an empty resource read while retaining its diagnostic.
+Sibling reads continue, and an unmatched LEFT JOIN can feed INSERT SELECT. This is host policy:
+Omni remains strict by default, and mutation/authentication failures are never suppressed by it.
+
+The StackQL adapter also resolves explicitly configured external SQL connections into read
+relations, including their information-schema objects. It discovers columns with a bounded
+metadata query and opens data rows only during execution. Connection lookup, quoted SQL,
+database drivers and cursor handling stay in the host; Omni receives the same `Relation`
+interface used for other sources.
+
+Bindings transfer values into transformation inboxes; input transformations own their conversion
+into request fields. A slot already supplied by an explicit constant or fan-out does not acquire
+another producer merely because a different required slot is missing. Join conditions still
+constrain which rows match. The host selects declared document-view variants from the SQL dialect
+and explicitly supplied required inputs. Literal view inputs can be replaced by caller bindings;
+column-to-column dependencies and business predicates remain intact.
+
+Optional `ServerTransportDefaults` metadata exposes only a declared HTTP or HTTPS URL-scheme
+default. The host can bind that value before resolution; an explicit SQL value wins. This does
+not apply host, cluster, account, region or other scope defaults, and the SDK itself never
+substitutes the transport default. `DocMethod.TransportDefaults` exposes the same discovery
+metadata.
+
+## Optional API row cache
+
+`Args.ReadCache` opts document-driven reads into `pkg/rowcache`. It caches transformed
+API rows before input echoing, SQL projection, filters and joins. It is not a query-result
+cache. Mutations, local commands, polls and reads with a positive page/row cap bypass it.
+SQL pushdown is disabled for cacheable graph reads so a projection or filter cannot poison
+an entry used by another query. Authentication exchanges remain outside this cache.
+
+```go
+cache, err := rowcache.NewMemory(appContext,
+    rowcache.Config{TTL: 5 * time.Minute, GCInterval: 30 * time.Second},
+    rowcache.MemoryConfig{MaxBytes: 64 << 20, MaxEntryBytes: 4 << 20, MaxEntries: 1024})
+if err != nil {
+    return err
+}
+defer cache.Close()
+args.ReadCache = cache
+args.ReadCachePartition = "tenant-a/principal-a" // explicitly chosen by the host
+```
+
+The partition is required and must separate authorization contexts that cannot share rows.
+Keys also include the resource, selected method, source-document fingerprint, resolved
+request/response metadata, endpoint and bound request inputs. Changing the document,
+request or partition prevents reuse. The memory store retains key digests, not raw request
+credentials. Response data belongs only to this disposable cache, never to an intent
+journal or ledger. Cached values remain snapshots until TTL expiry; writes do not imply
+invalidation or read-your-writes behavior. Hosts needing immediate freshness must bypass
+or change their partition after mutations.
+
+Rows stream to the caller as they arrive. A private cache transaction receives copies and
+publishes atomically only after successful API completion. Failed pages, ignored HTTP
+errors, cancellation and incomplete producer cursors do not publish partial entries.
+Closing an outer query may leave a valid cache entry if its API producer already completed.
+Successful empty results are cacheable. Lookup/write failures fall back to live execution;
+a failure while reading an existing hit is returned rather than silently truncating rows
+or replaying already emitted rows. An optional `rowcache.Observer` receives cache errors.
+
+The standard-library-only package has no SQL, HTTP or System G dependency. `rowcache.Store`
+and `Transaction` allow host-owned storage. `rowcache.New` owns a collector but not an
+external store; the host owns that store's lifecycle. The memory implementation uses an
+expiry heap and LRU eviction, with one shared budget for committed data and pending writes.
+Its costs include estimated container overhead; they are not exact process RSS. Oversized
+entries stop caching while their live reads continue. Defaults are five minutes TTL,
+thirty seconds between collections, 64 MiB total, 4 MiB per entry and 1024 entries/pending
+writers. No collector or cache wrapper is created when the opt-in is absent.
+
+A host adapting an existing complete snapshot cache may set `ReadCacheLookupOnly`.
+Snapshot hits are reused even when live requests have a page cap; misses obey that
+cap and never write an entry. The host retains snapshot storage and expiry ownership.
+Normal cache mode continues to bypass capped reads entirely.
+
+Each managed cache owns one GC worker, independent of queries. Closing it or cancelling
+its application context stops and joins that worker; closing a query does neither. Existing
+hit readers retain their snapshots through eviction. The existing StackQL analytics SQL
+namespace cache requires a separate host adapter; enabling this API does not implicitly
+connect or change those tables.

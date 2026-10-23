@@ -125,26 +125,16 @@ func sqliteConditional() []Func {
 			}
 			return a[0], nil
 		}),
-		NewScalar("iif", 2, -1, iifFn),
-		NewScalar("if", 2, -1, iifFn),
+		newChoice("iif", 2, false, sqliteTruth),
+		newChoice("if", 2, false, sqliteTruth),
+		newChoice("case_when", 3, true, sqliteTruth),
+		newSimpleCase(func(left, right any) (bool, error) {
+			return !isNull(left) && !isNull(right) && sqliteCompare(left, right) == 0, nil
+		}),
 		NewScalar("max", 2, -1, extremum(1)),
 		NewScalar("min", 2, -1, extremum(-1)),
 		NewScalar("subtype", 1, 1, func([]any) (any, error) { return int64(0), nil }),
 	}
-}
-
-// iifFn is iif(C1, V1, C2, V2, …[, ELSE]): the value after the first true condition, ELSE or NULL.
-func iifFn(a []any) (any, error) {
-	i := 0
-	for ; i+1 < len(a); i += 2 {
-		if t, _ := truthy(a[i]); t {
-			return a[i+1], nil
-		}
-	}
-	if i < len(a) {
-		return a[i], nil
-	}
-	return nil, nil
 }
 
 // extremum is multi-argument max (dir 1) or min (dir -1): NULL if any argument is NULL, otherwise the
