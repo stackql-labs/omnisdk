@@ -14,6 +14,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -55,16 +56,20 @@ type sigV4Signer struct {
 	// signPayloadHeader adds and signs X-Amz-Content-Sha256. S3 requires it; the generic
 	// SigV4 flow (and its test vectors) omits it.
 	signPayloadHeader bool
+	unsignedHeaders   []string
 }
 
 // NewSigV4Signer builds an AWS SigV4 signer. signPayloadHeader adds and signs
 // X-Amz-Content-Sha256 (required by S3; omit for the generic SigV4 flow).
-func NewSigV4Signer(region, service string, creds Credentials, signPayloadHeader bool) Signer {
+// unsignedHeaders names automatically generated headers that remain on the wire
+// but are not part of the operation's declared signed request.
+func NewSigV4Signer(region, service string, creds Credentials, signPayloadHeader bool, unsignedHeaders ...string) Signer {
 	return sigV4Signer{
 		region:            region,
 		service:           service,
 		creds:             creds,
 		signPayloadHeader: signPayloadHeader,
+		unsignedHeaders:   append([]string(nil), unsignedHeaders...),
 	}
 }
 
@@ -145,7 +150,10 @@ func (s sigV4Signer) canonicalHeaders(req *http.Request) (block, signed string) 
 		// Authentication and transport/negotiation headers are not part of the
 		// stable signed request. In particular, re-signing must ignore old auth.
 		switch lower {
-		case "authorization", "user-agent", "x-amzn-trace-id", "expect", "transfer-encoding", "accept", "accept-encoding":
+		case "authorization", "user-agent", "x-amzn-trace-id", "expect", "transfer-encoding", "accept-encoding":
+			continue
+		}
+		if slices.ContainsFunc(s.unsignedHeaders, func(header string) bool { return strings.EqualFold(header, name) }) {
 			continue
 		}
 		hs = append(hs, kv{lower, strings.TrimSpace(strings.Join(vals, ","))})

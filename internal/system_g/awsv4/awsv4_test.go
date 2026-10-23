@@ -70,7 +70,7 @@ func TestSignerRejectsMissingCreds(t *testing.T) {
 }
 
 func TestSignerKeepsNegotiationHeadersUnsignedAndResigningStable(t *testing.T) {
-	signer := NewSigV4Signer("ap-southeast-1", "logs", Credentials{AccessKeyID: "AKID", SecretAccessKey: "SECRET"}, false)
+	signer := NewSigV4Signer("ap-southeast-1", "logs", Credentials{AccessKeyID: "AKID", SecretAccessKey: "SECRET"}, false, "Accept")
 	request, err := http.NewRequest("POST", "https://logs.example.test/", nil)
 	if err != nil {
 		t.Fatal(err)
@@ -96,5 +96,20 @@ func TestSignerKeepsNegotiationHeadersUnsignedAndResigningStable(t *testing.T) {
 	}
 	if got := request.Header.Get("Authorization"); got != first {
 		t.Fatalf("re-signing changed authorization: %s != %s", got, first)
+	}
+}
+
+func TestSignerSignsDeclaredAcceptHeader(t *testing.T) {
+	signer := NewSigV4Signer("ap-southeast-1", "cloudcontrolapi", Credentials{AccessKeyID: "AKID", SecretAccessKey: "SECRET"}, false)
+	request, err := http.NewRequest("POST", "https://example.test/", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	request.Header.Set("Accept", "application/json")
+	if err := signer.Sign(request, nil, time.Unix(1000, 0)); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(request.Header.Get("Authorization"), "SignedHeaders=accept;host;x-amz-date,") {
+		t.Fatal(request.Header.Get("Authorization"))
 	}
 }

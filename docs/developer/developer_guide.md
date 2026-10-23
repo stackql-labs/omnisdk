@@ -892,3 +892,14 @@ The StackQL adapter uses this seam for stored views, materialized views, user ta
 nonrecursive CTEs. It resolves storage metadata and executes backend SQL in the host repository.
 CTE definitions retain lexical scope and their own aggregation/order/limit boundaries; stored view
 definitions do not inherit a caller's CTE names. No database connection or driver enters Omni.
+
+
+The StackQL adapter also places an `INSERT … SELECT` source behind a read handle. Its WHERE,
+joins and relational operations run before source rows reach the mutation exchange. Planning
+remains lazy. An empty source sends no mutation requests. The adapter rejects asynchronous
+DELETE with RETURNING before dispatch.
+
+Optional `ServerEnvironmentBindings` metadata exposes only explicit `x-stackQL-envVar`
+annotations. A host may resolve those names and add ordinary query bindings before calling
+`ResolveIn`; SQL bindings take precedence. `DocMethod.ServerEnvironment` supports the same host
+policy for SHOW METHODS. Omni does not read the environment or apply server scope defaults.

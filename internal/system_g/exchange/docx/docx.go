@@ -696,6 +696,7 @@ func compile(ex aot.AOTExchange, inputs map[string]any, reg dsl.Registry, o opti
 		// Preserve structured values until the schema-aware XML transform runs.
 		hreq.Body.Encoding = httpx.EncodingJSON
 	}
+	var unsignedHeaders []string
 	for header, media := range map[string]string{"Accept": resp.MediaType(), "Content-Type": req.MediaType()} {
 		if media == "" {
 			continue
@@ -712,6 +713,9 @@ func compile(ex aot.AOTExchange, inputs map[string]any, reg dsl.Registry, o opti
 				hreq.Headers = map[string]string{}
 			}
 			hreq.Headers[header] = media
+			if header == "Accept" {
+				unsignedHeaders = append(unsignedHeaders, header)
+			}
 		}
 	}
 	// Raw material for T_in: bound so a producer delivers it, never placed on the wire.
@@ -815,7 +819,7 @@ func compile(ex aot.AOTExchange, inputs map[string]any, reg dsl.Registry, o opti
 		case sec.Scheme() == aot.SchemeAWSSigV4:
 			// region is a bound input, so the signer is built per run, not per plan
 			reqT = append(reqT, awsv4.NewSigV4Transform(
-				awsv4.NewSigV4Signer(str(bound["region"]), service, o.creds, signsPayload(service))))
+				awsv4.NewSigV4Signer(str(bound["region"]), service, o.creds, signsPayload(service), unsignedHeaders...)))
 		}
 		rowReq, rowBound := hreq, bound
 		if req.Transpose() == AWSCanonical {

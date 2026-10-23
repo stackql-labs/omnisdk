@@ -1,13 +1,21 @@
 # Omni compatibility readiness
 
-Reference CI: **456/728 passed, 272 failed** in
-[run 39714700734](https://github.com/stackql/stackql-devel/actions/runs/39714700734/job/119637217455).
+Current CI reference: **658/733 passed, 75 failed** in
+[run 39960274810](https://github.com/stackql/stackql-devel/actions/runs/39960274810),
+using the downloaded `stackql_linux_omni_robot_reports` artifact.
 
-The previous verified full baseline is **631/733 passed, 102 failed**. A fresh full run of the
-unchanged Robot suite is underway after restoring all Robot inputs to their committed state.
-The earlier 639/734 aggregate included an added scenario and an ORDER BY edit, so it is withdrawn
-as evidence for unchanged-suite parity. The unchanged-query rerun reproduced one row-order mismatch.
-No Robot input, expected output, or provider file is modified in this batch.
+The latest completed local full run is **651/733 passed, 82 failed**
+(`/private/tmp/omni-parity8-robot/output.xml`). The final 404-case query/server-variable rerun after the
+explicit Azure authentication fix passed **355/404**, with **49 failures**
+(`/private/tmp/omni-parity10-robot/output.xml`). Two S3 view cases that passed in the
+preceding full run failed here: one changed rows, and one aggregation returned no rows.
+The cause is unresolved; stable regression-free parity is not established. A focused
+race-instrumented CLI rerun passed two of the three S3 cases and reported no data race.
+The failed case recorded an upstream HTTP 404 in its stderr artifact. The positive INSERT
+source case records HTTP 404 `Project Not Found`; it remains failing. Local MCP failures and build-version
+metadata make the local total different from CI; compare individual scenarios as well as totals.
+A join also varies in row order between runs. No Robot input, assertion, or provider file was
+changed. The earlier 639/734 aggregate involved edited inputs and is withdrawn as parity evidence.
 
 The migration order is behavioral parity first, removal of the `any-sdk` dependency second,
 and semantic improvements afterward. Existing SQLite boolean representation (`0`/`1`) remains
@@ -25,9 +33,14 @@ missing declared keys report a diagnostic when enabled, while declared empty arr
 Scalar XML row metadata gives discovery and execution the same named column. RDBMS work remains
 entirely in the host adapter, behind relation interfaces. Outer-join conditions keep their boundary.
 
-The current validation targets `/private/tmp/omni-parity4-robot/output.xml`, using the original
-733-case suite. Earlier exploratory runs are retained as local artifacts but are not the current
-unchanged-suite parity result.
+The current batch additionally separates declared and synthesized AWS negotiation headers,
+retains explicit body bindings and canonical projection names, projects constants and NULL,
+resolves declared server environment annotations in the host, and executes INSERT SELECT's
+complete read source behind a handle before mutation dispatch. RETURNING star names only the
+target's fields. DELETE AWAIT RETURNING fails before dispatch. Explicit Azure API keys and bearer
+tokens override default OAuth acquisition without requiring the Azure CLI. Fourteen failing tests
+in the current CI artifact encounter that credential-precedence bug; fixing their authentication
+blocker does not establish that all fourteen otherwise pass.
 
 ## Implemented
 
@@ -92,39 +105,39 @@ Recursive provider CTEs and correlated subqueries still require additional analy
 
 ## Results by suite
 
-| Suite | Reference CI passes | Verified local passes |
-|-------|------------------|-----------------------|
+| Suite | Current CI passes | Latest completed local full run |
+|-------|-------------------|----------------------------------|
 | Mcp | 85/85 | 54/85 |
-| Body Coercion | 9/9 | 9/9 |
-| Casing | 32/32 | 32/32 |
-| Dependencies | 7/8 | 8/8 |
-| Exec | 3/3 | 3/3 |
-| Export | 8/8 | 8/8 |
-| From Cmd Line | 26/32 | 28/32 |
-| Function Projection | 5/8 | 8/8 |
-| Graphql Pagination | 0/9 | 9/9 |
-| Legacy Cli Surface | 15/25 | 25/25 |
-| Mocked From Cmd Line | 184/393 | 342/399 |
-| Oci Auth | 0/11 | 11/11 |
-| Odata Pushdown | 9/24 | 24/24 |
-| Postgres Housekeeping | 6/6 | 6/6 |
-| Rest Pagination | 10/11 | 11/11 |
-| Server Variables | 3/6 | 3/6 |
-| Sessions | 34/35 | 35/35 |
-| Sessions Postgres | 8/8 | 8/8 |
-| Xml Walker | 12/15 | 15/15 |
+| Stackql Body Coercion | 9/9 | 9/9 |
+| Stackql Casing | 32/32 | 32/32 |
+| Stackql Dependencies | 8/8 | 8/8 |
+| Stackql Exec | 3/3 | 3/3 |
+| Stackql Export | 8/8 | 8/8 |
+| Stackql From Cmd Line | 30/32 | 28/32 |
+| Stackql Function Projection | 8/8 | 8/8 |
+| Stackql Graphql Pagination | 9/9 | 9/9 |
+| Stackql Legacy Cli Surface | 25/25 | 25/25 |
+| Stackql Mocked From Cmd Line | 329/398 | 351/398 |
+| Stackql Oci Auth | 11/11 | 11/11 |
+| Stackql Odata Pushdown | 24/24 | 24/24 |
+| Stackql Postgres Housekeeping | 6/6 | 6/6 |
+| Stackql Rest Pagination | 11/11 | 11/11 |
+| Stackql Server Variables | 3/6 | 6/6 |
+| Stackql Sessions | 34/35 | 35/35 |
+| Stackql Sessions Postgres | 8/8 | 8/8 |
+| Stackql Xml Walker | 15/15 | 15/15 |
 
 ## Remaining failures
 
 Remaining failures include parameterized/resource-view composition, analytics-cache namespace
 resolution, multi-step dataflow, remaining expression/projection differences, async/await and mutation-result behavior,
 transaction diagnostics, metadata fidelity, XML request/response shapes, non-HTTP local execution,
-and server-variable integration. Information-schema discovery, correlated subqueries and recursive
+and deeper server/view binding composition. Information-schema discovery, correlated subqueries and recursive
 provider CTEs also require analyzer/executor work. This is not a complete compatibility cutover.
 
 The rewritten S3 ABAC test document explicitly maps UPDATE to `put_bucket_abac`. An earlier diagnosis
-incorrectly inspected the native source document instead. Its missing `Bucket` input is a server-
-inheritance bug: the parser must retain path-level server variables, even after a mock URL rewrite.
+incorrectly inspected the native source document instead. The missing `Bucket` input was fixed by retaining path-level server variables after mock URL rewrites;
+both the transformed update and obsolete-version diagnostic now pass.
 
 GraphQL (9/9), OCI (11/11), OData (24/24), REST pagination (11/11), XML walker (15/15), function
 projection (8/8), legacy CLI (25/25), and dependencies (8/8) remain green. The remaining failures
@@ -132,28 +145,16 @@ are not being treated as intentional differences or a cutover-ready result.
 
 ## Validation and artifacts
 
-SDK: `go build ./...`, `go vet ./...`, and `go test -race ./...` pass. Handle regressions cover
-planning without IO, dependent bindings, cursor ownership, partial rows plus original errors,
-required inputs, canceled opens, and rejection of mutation targets. Adapter race tests cover nested
-subqueries, inner aggregation/order/limit boundaries, wildcard schemas, native values, NULL, constants
-and LEFT JOIN. New adapter regressions cover stored tables/views, joined counts, table functions,
-CTE scope and relational boundaries. Adapter lint reports zero issues.
-
-- Previous full baseline: `/private/tmp/omni-final-readiness/output.xml` (587/728).
-- Previous verified aggregate: `/private/tmp/omni-relations-aggregate/output.xml` (600/730).
-- Previous full Robot run: `/private/tmp/omni-coverage3-robot/output.xml` (623/731).
-- Previous mocked rerun: `/private/tmp/omni-coverage5-robot/output.xml` (328/397).
-- Previous merged results: `/private/tmp/omni-coverage-aggregate/output.xml` (625/732).
-- Previous full run: `/private/tmp/omni-batch-full-robot/output.xml` (631/733).
-- Current full run: `/private/tmp/omni-parity2-robot/output.xml` (638/734).
-- Final mocked rerun: `/private/tmp/omni-parity3-robot/output.xml` (341/399).
-- Focused ordering rerun: `/private/tmp/omni-parity-order-final-robot/output.xml` (1/1).
-- Current aggregate: `/private/tmp/omni-parity-aggregate/output.xml` (639/734).
-- Current comparison: `/private/tmp/omni-parity-comparison.json`.
-- Remaining failure details: `/private/tmp/omni-parity-final-failures.json`.
-- SDK checks: `/private/tmp/omni-parity-final2-sdk.log`.
-- Adapter race tests: `/private/tmp/omni-parity-final-host-race.log`.
-- Adapter lint: `/private/tmp/omni-parity-host-lint.log`.
+- Current CI: `/private/tmp/omni-ci-39960274810/output.xml` (658/733).
+- Latest completed local full run: `/private/tmp/omni-parity8-robot/output.xml` (651/733).
+- Full SDK race checks before the final auth fix: `/private/tmp/omni-parity8-final-sdk.log`.
+- Explicit Azure override regression tests: `/private/tmp/omni-parity9-auth.log`.
+- Final query/server-variable run: `/private/tmp/omni-parity10-robot/output.xml` (355/404).
+- Focused race-instrumented views: `/private/tmp/omni-parity-race-views/output.xml` (2/3; no data race reported).
+- Per-test comparison: `/private/tmp/omni-parity-final-evidence.json`.
+- Final SDK checks: `/private/tmp/omni-parity9-final-sdk.log` (passed).
+- Final host race checks and lint: `/private/tmp/omni-parity10-host.log`,
+  `/private/tmp/omni-parity10-lint.log`.
 
 The local retry mock has an older Python IPv4 listener alongside Docker's IPv6 listener on port 1199.
 The final retry test uses `RETRY_MOCK_BASE_URL=http://localhost:1199`, matching the SDK request's host,

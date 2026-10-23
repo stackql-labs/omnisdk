@@ -20,6 +20,11 @@ type ParameterDefault interface{ Default() any }
 // ServerBindings retains declared server variables after endpoint rewriting.
 type ServerBindings interface{ ServerVariables() []string }
 
+// ServerEnvironmentBindings exposes only explicit environment-variable annotations.
+// Parsers retain metadata; only a host may resolve environment values and pass them
+// as explicit query inputs. The library never reads these environment variables.
+type ServerEnvironmentBindings interface{ ServerEnvironmentBindings() map[string]string }
+
 // RequestFallback supplies a complete body only when no body fields were supplied.
 type RequestFallback interface{ DefaultBody() string }
 

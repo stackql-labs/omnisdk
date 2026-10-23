@@ -14,6 +14,7 @@ import (
 	"cmp"
 	"encoding/json"
 	"fmt"
+	"maps"
 	"slices"
 	"sort"
 	"strings"
@@ -113,7 +114,8 @@ type server struct {
 }
 
 type serverVariable struct {
-	Default string `yaml:"default"`
+	Default     string `yaml:"default"`
+	Environment string `yaml:"x-stackQL-envVar"`
 }
 
 type resource struct {
@@ -537,6 +539,9 @@ func (d *document) Methods(name string) ([]aot.Method, error) {
 		info := methodInfo{name: mName, verb: verb, opID: d.operationID(m)}
 		if ex, err := d.resolve(name, mName, false); err == nil {
 			info.opID = ex.OperationID()
+			if declared, ok := ex.Request().(aot.ServerEnvironmentBindings); ok {
+				info.environment = declared.ServerEnvironmentBindings()
+			}
 			naming := namespace.NewNaming(m.Request.NativeCasing, d.snakeAliases && m.Request.NativeCasing != "")
 			var variables []string
 			if declared, ok := ex.Request().(aot.ServerBindings); ok {
@@ -594,9 +599,12 @@ func (d *document) operationID(m method) string {
 type methodInfo struct {
 	name, verb, opID string
 	required         []string
+	environment      map[string]string
 }
 
 func (m methodInfo) RequiredParams() []string { return append([]string(nil), m.required...) }
+
+func (m methodInfo) ServerEnvironmentBindings() map[string]string { return maps.Clone(m.environment) }
 
 func (m methodInfo) Name() string        { return m.name }
 func (m methodInfo) SQLVerb() string     { return m.verb }
@@ -632,8 +640,12 @@ func (d *document) build(name, verb, path string, op pathOp, m method) aot.AOTEx
 	// A mock or private-endpoint override can replace the host while retaining
 	// declared server variables. They remain accepted scope bindings even when
 	// the rewritten URL no longer needs them.
+	environment := map[string]string{}
 	variableNames := make([]string, 0, len(srv.Variables))
-	for name := range srv.Variables {
+	for name, variable := range srv.Variables {
+		if variable.Environment != "" {
+			environment[name] = variable.Environment
+		}
 		variableNames = append(variableNames, name)
 	}
 	sort.Strings(variableNames)
@@ -689,26 +701,27 @@ func (d *document) build(name, verb, path string, op pathOp, m method) aot.AOTEx
 		inputs:  serverVars(srv),
 		opID:    op.OperationID,
 		req: request{
-			requestTransform: transformDecl(m.Request.Transform),
-			xmlRootName:      bodyRootName,
-			xmlDeclaration:   m.Request.XMLDeclaration,
-			xmlAnnotation:    m.Request.XMLRootAnnotation,
-			bodyTranslation:  m.Config.RequestBodyTranslate.Algorithm,
-			signingService:   cmp.Or(m.ServiceName, d.Info.ServiceName),
-			defaultBody:      m.Request.Default,
-			method:           strings.ToUpper(verb),
-			url:              url,
-			mediaType:        m.Request.MediaType,
-			params:           params,
-			parameters:       parameters,
-			baseBody:         m.Request.Base,
-			nativeCasing:     m.Request.NativeCasing,
-			snakeAliases:     d.snakeAliases,
-			serverVariables:  variableNames,
-			bodySchema:       bodySchema,
-			bodyMediaType:    bodyMediaType(op),
-			translate:        m.Config.RequestTranslate.Algorithm,
-			transpose:        m.Config.QueryParamTranspose.Algorithm,
+			requestTransform:  transformDecl(m.Request.Transform),
+			xmlRootName:       bodyRootName,
+			xmlDeclaration:    m.Request.XMLDeclaration,
+			xmlAnnotation:     m.Request.XMLRootAnnotation,
+			bodyTranslation:   m.Config.RequestBodyTranslate.Algorithm,
+			signingService:    cmp.Or(m.ServiceName, d.Info.ServiceName),
+			defaultBody:       m.Request.Default,
+			method:            strings.ToUpper(verb),
+			url:               url,
+			mediaType:         m.Request.MediaType,
+			params:            params,
+			parameters:        parameters,
+			baseBody:          m.Request.Base,
+			nativeCasing:      m.Request.NativeCasing,
+			snakeAliases:      d.snakeAliases,
+			serverVariables:   variableNames,
+			serverEnvironment: environment,
+			bodySchema:        bodySchema,
+			bodyMediaType:     bodyMediaType(op),
+			translate:         m.Config.RequestTranslate.Algorithm,
+			transpose:         m.Config.QueryParamTranspose.Algorithm,
 		},
 		resp: response{
 			rowSchema:  rowSchema,
@@ -1038,26 +1051,27 @@ func (p parameter) List() bool   { return p.list }
 func (p parameter) Default() any { return p.p.Schema.Default }
 
 type request struct {
-	requestTransform transformDeclType
-	xmlRootName      string
-	xmlDeclaration   string
-	xmlAnnotation    string
-	bodyTranslation  string
-	signingService   string
-	defaultBody      string
-	serverVariables  []string
-	baseBody         string
-	nativeCasing     string
-	snakeAliases     bool
-	bodySchema       aot.Schema
-	method           string
-	url              string
-	mediaType        string
-	params           map[string]string
-	parameters       []aot.Parameter
-	bodyMediaType    string
-	translate        string
-	transpose        string
+	requestTransform  transformDeclType
+	xmlRootName       string
+	xmlDeclaration    string
+	xmlAnnotation     string
+	bodyTranslation   string
+	signingService    string
+	defaultBody       string
+	serverVariables   []string
+	serverEnvironment map[string]string
+	baseBody          string
+	nativeCasing      string
+	snakeAliases      bool
+	bodySchema        aot.Schema
+	method            string
+	url               string
+	mediaType         string
+	params            map[string]string
+	parameters        []aot.Parameter
+	bodyMediaType     string
+	translate         string
+	transpose         string
 }
 
 func (r request) XMLRootName() string       { return r.xmlRootName }
@@ -1069,6 +1083,10 @@ func (r request) SigningService() string { return r.signingService }
 func (r request) BodyTranslation() string { return r.bodyTranslation }
 
 func (r request) DefaultBody() string { return r.defaultBody }
+
+func (r request) ServerEnvironmentBindings() map[string]string {
+	return maps.Clone(r.serverEnvironment)
+}
 
 func (r request) ServerVariables() []string { return slices.Clone(r.serverVariables) }
 

@@ -1307,10 +1307,11 @@ func DocResources(dir, provider, service string) ([]string, error) {
 // DocMethod is a method as a document declares it: its name, the SQL verb it is bound to (empty when
 // none), and the operation behind it.
 type DocMethod struct {
-	RequiredParams []string `json:"required_params,omitempty"`
-	Name           string   `json:"name"`
-	SQLVerb        string   `json:"sql_verb,omitempty"`
-	OperationID    string   `json:"operation_id,omitempty"`
+	ServerEnvironment map[string]string `json:"server_environment,omitempty"`
+	RequiredParams    []string          `json:"required_params,omitempty"`
+	Name              string            `json:"name"`
+	SQLVerb           string            `json:"sql_verb,omitempty"`
+	OperationID       string            `json:"operation_id,omitempty"`
 }
 
 // DocMethods lists a resource's methods.
@@ -1326,6 +1327,9 @@ func DocMethods(dir, provider, service, resource string) ([]DocMethod, error) {
 	out := make([]DocMethod, len(ms))
 	for i, m := range ms {
 		out[i] = DocMethod{Name: m.Name(), SQLVerb: m.SQLVerb(), OperationID: m.OperationID()}
+		if declared, ok := m.(aot.ServerEnvironmentBindings); ok {
+			out[i].ServerEnvironment = declared.ServerEnvironmentBindings()
+		}
 		if inputs, ok := m.(aot.MethodInputs); ok {
 			out[i].RequiredParams = inputs.RequiredParams()
 		}
@@ -1483,8 +1487,14 @@ func providerOptions(args Args, p aot.Provider) ([]docx.Option, error) {
 	sec := p.Security()
 	cfg := effectiveAuth(args, p)
 	var opts []docx.Option
-	oauth := false
-	if sec.Scheme() == aot.SchemeOAuthClientCredentials && cfg.TokenURL != "" {
+	m, err := requestAuth(p, sec, cfg)
+	if err != nil {
+		return nil, err
+	}
+	// An explicit request credential replaces token acquisition. Do not probe a
+	// service principal or launch the Azure CLI before applying that override.
+	oauth := m != nil && m.RequestTransform() != nil
+	if sec.Scheme() == aot.SchemeOAuthClientCredentials && cfg.TokenURL != "" && !oauth {
 		o, err := clientCredentials(p.Name(), cfg)
 		if err != nil {
 			return nil, err
@@ -1506,10 +1516,6 @@ func providerOptions(args Args, p aot.Provider) ([]docx.Option, error) {
 	}
 	if sec.Scheme() == aot.SchemeServiceAccount && len(cfg.Scopes) > 0 {
 		opts = append(opts, docx.WithGoogleScopes(cfg.Scopes))
-	}
-	m, err := requestAuth(p, sec, cfg)
-	if err != nil {
-		return nil, err
 	}
 	if m == nil {
 		return opts, nil

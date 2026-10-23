@@ -88,3 +88,49 @@ components:
 		}
 	}
 }
+
+func TestServerEnvironmentAnnotationsAreMetadataOnly(t *testing.T) {
+	t.Setenv("OMNI_METADATA_ONLY_REGION", "must-not-be-read")
+	doc, err := stackqldoc.Parse([]byte(`openapi: 3.0.0
+servers:
+  - url: 'https://{region}.example.test'
+    variables:
+      region: {default: ignored, x-stackQL-envVar: OMNI_METADATA_ONLY_REGION}
+paths:
+  /items:
+    get:
+      responses:
+        '200': {description: ok}
+components:
+  x-stackQL-resources:
+    items:
+      methods:
+        select: {operation: {$ref: '#/paths/~1items/get'}}
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	exchange, err := doc.Select("items")
+	if err != nil {
+		t.Fatal(err)
+	}
+	request := exchange.Request()
+	if request.URL() != "https://{region}.example.test/items" {
+		t.Fatalf("parser resolved scope: %s", request.URL())
+	}
+	metadata := request.(aot.ServerEnvironmentBindings).ServerEnvironmentBindings()
+	if metadata["region"] != "OMNI_METADATA_ONLY_REGION" {
+		t.Fatalf("metadata=%v", metadata)
+	}
+	metadata["region"] = "changed"
+	if request.(aot.ServerEnvironmentBindings).ServerEnvironmentBindings()["region"] != "OMNI_METADATA_ONLY_REGION" {
+		t.Fatal("metadata exposes mutable parser state")
+	}
+	methods, err := doc.Methods("items")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := methods[0].(aot.ServerEnvironmentBindings).ServerEnvironmentBindings()["region"]; got != "OMNI_METADATA_ONLY_REGION" {
+		t.Fatalf("method metadata=%s", got)
+	}
+}

@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/stackql-labs/omnisdk/internal/system_g/awsv4"
 	"github.com/stackql-labs/omnisdk/internal/system_g/exchange/docx"
 )
 
@@ -165,6 +166,56 @@ components:
 			}
 			if rows := drain(t, p); len(rows) != 1 {
 				t.Fatalf("rows = %v", rows)
+			}
+		})
+	}
+}
+
+func TestSigningDistinguishesDeclaredAndGeneratedAccept(t *testing.T) {
+	for _, declared := range []bool{false, true} {
+		t.Run(map[bool]string{false: "generated", true: "declared"}[declared], func(t *testing.T) {
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.Header.Get("Accept") != "application/json" {
+					t.Errorf("Accept=%q", r.Header.Get("Accept"))
+				}
+				signed := strings.Contains(r.Header.Get("Authorization"), "SignedHeaders=accept;")
+				if signed != declared {
+					t.Errorf("declared=%v authorization=%s", declared, r.Header.Get("Authorization"))
+				}
+				_, _ = w.Write([]byte(`{"items":[{"id":"one"}]}`))
+			}))
+			defer srv.Close()
+			header := ""
+			if declared {
+				header = "      parameters: [{name: Accept, in: header, schema: {type: string, default: application/json}}]\n"
+			}
+			document := []byte(`openapi: 3.0.0
+servers: [{url: 'https://example.test'}]
+security: [{sig: []}]
+paths:
+  /items:
+    get:
+` + header + `      responses:
+        '200':
+          content:
+            application/json:
+              schema: {type: object}
+components:
+  securitySchemes:
+    sig: {type: apiKey, in: header, name: Authorization, x-amazon-apigateway-authtype: awsSigv4}
+  x-stackQL-resources:
+    items:
+      methods:
+        select:
+          operation: {$ref: '#/paths/~1items/get'}
+          response: {mediaType: application/json, objectKey: items}
+`)
+			p, err := docx.SelectPlan(document, "items", map[string]any{"region": "ap-southeast-1"}, registry(t), docx.WithBaseURL(srv.URL), docx.WithAWSCredentials(awsv4.Credentials{AccessKeyID: "test", SecretAccessKey: "test"}))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if rows := drain(t, p); len(rows) != 1 {
+				t.Fatalf("rows=%v", rows)
 			}
 		})
 	}

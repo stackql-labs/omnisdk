@@ -86,7 +86,19 @@ type table struct {
 func (t table) Address() string            { return t.address }
 func (t table) Methods() []MethodSignature { return t.methods }
 
+// ServerEnvironmentBindings is optional document metadata for a host analyzer.
+// Hosts resolve only the explicitly named environment variables and supply values
+// as query inputs; Omni never reads scope values from the environment.
+type ServerEnvironmentBindings interface{ ServerEnvironmentBindings() map[string]string }
+
 type docSignature struct{ ex aot.AOTExchange }
+
+func (s docSignature) ServerEnvironmentBindings() map[string]string {
+	if declared, ok := s.ex.Request().(aot.ServerEnvironmentBindings); ok {
+		return declared.ServerEnvironmentBindings()
+	}
+	return nil
+}
 
 func (s docSignature) Method() string  { return s.ex.Name() }
 func (s docSignature) TakesBody() bool { return s.ex.Request().BodyMediaType() != "" }
@@ -683,6 +695,9 @@ func (r *resolver) expand(sel []query.Output) ([]query.Output, error) {
 			continue
 		}
 		aliases := r.order
+		if r.mutating != "" {
+			aliases = []string{r.mutating}
+		}
 		if st.Qualifier() != "" {
 			aliases = []string{st.Qualifier()}
 		}
@@ -1340,6 +1355,9 @@ func (r *resolver) build(sel []query.Output) (Resolution, error) {
 }
 
 func (r *resolver) scalarOutput(expression query.Expr) (bool, error) {
+	if _, literal := expression.(query.Literal); literal {
+		return true, nil
+	}
 	call, isCall := expression.(query.Call)
 	if !isCall {
 		return false, nil

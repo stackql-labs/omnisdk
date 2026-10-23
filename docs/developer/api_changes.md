@@ -18,6 +18,23 @@ positional literals must account for added fields or switch to keyed fields.
 
 ## Additions
 
+- **Explicit Azure authentication:** an explicitly configured API key or bearer credential
+  overrides default OAuth token acquisition. Planning does not require a service principal or
+  invoke the Azure CLI before applying that request credential. Default OAuth behavior is retained.
+
+- **Mutation star projections:** unqualified `RETURNING *` expands target columns only;
+  source relation fields remain internal to INSERT SELECT execution.
+- **Literal projections:** SELECT outputs may contain constants and NULL alongside resource
+  columns. They are evaluated after row filtering, preserving their native values.
+- **Server environment metadata:** optional `aot.ServerEnvironmentBindings` and
+  `omnisdk.ServerEnvironmentBindings` expose explicitly declared `x-stackQL-envVar` names.
+  `DocMethod.ServerEnvironment` carries the same metadata for method discovery. The SDK never
+  reads those environment variables or substitutes server defaults. A host may resolve the
+  annotations and pass ordinary query bindings, preserving explicit SQL precedence.
+- **AWS signed headers:** declared `Accept` headers remain signed. Automatically synthesized
+  response negotiation headers remain on the wire but are excluded from signing. Re-signing
+  excludes the previous `Authorization` value.
+
 - **Declared server precedence:** operations use their own server declaration, otherwise the
   path item's, otherwise the document's. Scope variables from the selected declaration remain
   accepted after endpoint rewrites; their defaults are never substituted for explicit caller scope.
