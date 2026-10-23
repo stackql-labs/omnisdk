@@ -18,6 +18,13 @@ positional literals must account for added fields or switch to keyed fields.
 
 ## Additions
 
+- **Mutation completion:** `Args.MutationCompletion` accepts a `MutationCompletion` interface
+  for graph mutations. Its `Complete` method receives the context, resource address, verb,
+  bound inputs and initial response, and returns the completed resource before RETURNING
+  projection. Implementations support independent concurrent calls and honor cancellation.
+  A nil row emits nothing. Completion errors preserve their cause and `ErrOutcomeUnknown`;
+  the accepted mutation is never resent. Nil retains immediate-response behavior.
+
 - **Explicit Azure authentication:** an explicitly configured API key or bearer credential
   overrides default OAuth token acquisition. Planning does not require a service principal or
   invoke the Azure CLI before applying that request credential. Default OAuth behavior is retained.

@@ -265,6 +265,8 @@ type HTTPReadErrorObserver interface {
 // Args are the inputs to run a resource: explicit scope Params, optional Auth (config-driven-auth
 // resources), an endpoint override, run Tuning, and an optional traffic log.
 type Args struct {
+	// MutationCompletion optionally follows accepted graph mutations before projection.
+	MutationCompletion MutationCompletion `json:"-"`
 	// StrictResponseSelection reports an absent declared JSON row key instead of an empty read.
 	StrictResponseSelection bool `json:"strict_response_selection,omitempty"`
 	// HTTPReadErrors is an explicit opt-in; nil preserves strict upstream errors.

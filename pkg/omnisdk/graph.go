@@ -936,6 +936,9 @@ func NewGraphQuery(dir string, g Graph, args Args) (Plan, error) {
 			required = requiredOf(ex, wiredInputs(g, alias))
 		}
 
+		if mutating && args.MutationCompletion != nil {
+			spec = plan.WithMutationCompletion(spec, completionBridge{completion: args.MutationCompletion}, addr, n.Verb())
+		}
 		// The select list is applied to this node's rows before they travel an edge, so a join
 		// may be on a value a function computed. Attached after T_in for the same reason T_in is
 		// attached last: wrapping Make hides the compiled form the auth expansion reads.

@@ -903,3 +903,20 @@ Optional `ServerEnvironmentBindings` metadata exposes only explicit `x-stackQL-e
 annotations. A host may resolve those names and add ordinary query bindings before calling
 `ResolveIn`; SQL bindings take precedence. `DocMethod.ServerEnvironment` supports the same host
 policy for SHOW METHODS. Omni does not read the environment or apply server scope defaults.
+
+
+A host can supply `Args.MutationCompletion` to follow accepted graph mutations before their
+RETURNING projection. It receives private input/response maps and must support concurrent calls
+and cancellation. Returning nil emits no resource row. Failure retains an unknown outcome and
+never retries the original mutation.
+
+The StackQL adapter uses this for explicit `/*+ AWAIT */` Google Compute mutations. It matches
+operation and target links against declared GET paths in the original provider/service, preserves
+explicit scope, polls at ten-second intervals with a ten-minute overall deadline, and reads the
+finished resource before RETURNING. Awaited DELETE reports progress without reading a deleted
+resource. Other providers require their own completion implementation. Storage and database
+handles remain host-owned.
+
+StackQL's read policy maps HTTP 404 to an empty resource read while retaining its diagnostic.
+Sibling reads continue, and an unmatched LEFT JOIN can feed INSERT SELECT. This is host policy:
+Omni remains strict by default, and mutation/authentication failures are never suppressed by it.
