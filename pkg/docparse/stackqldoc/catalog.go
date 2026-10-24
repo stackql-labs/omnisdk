@@ -349,3 +349,19 @@ func (c *catalog) MissingDocuments() map[string]string {
 	}
 	return out
 }
+
+func (c *catalog) ResourceNames(service string) (map[string]string, error) {
+	doc, err := c.doc(service)
+	if err != nil {
+		return nil, err
+	}
+	named, ok := doc.(interface{ ResourceNames() map[string]string })
+	if ok {
+		return named.ResourceNames(), nil
+	}
+	names := make(map[string]string)
+	for _, key := range doc.Resources() {
+		names[key] = key
+	}
+	return names, nil
+}
