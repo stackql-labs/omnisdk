@@ -159,9 +159,20 @@ args := omnisdk.Args{
 For explicit upstream read-error tolerance, pass `Args.HTTPReadErrors` with an
 `IsIgnored(statusCode int) bool` implementation. Ignored responses end the resource read without
 emitting a row; mutations and authentication stay strict. Implement `IgnoredStatus(int, string)`
-on the same policy to receive diagnostics in the host. Keep this opt-in separate from retry policy.
+on the same policy to receive diagnostics in the host. Retries run first; tolerance applies only when recovery ends.
 `Args.StrictResponseSelection` reports absent declared JSON row keys; its default is an empty read.
-A declared empty array is successful in either mode.
+A declared empty array is successful in either mode. A host may set
+`Args.ResponseSelectionErrors` to report a missing collection key and return zero rows
+without cancelling sibling reads. Failed selections never become cached empty results.
+
+`Args.HTTPObserver` enables request, raw-response, and selected-page diagnostics for
+document requests. It excludes credential exchanges and must be safe for concurrent
+callbacks. With no observer there are no additional diagnostic stages.
+
+Compatibility hosts can explicitly opt into `LegacyXMLValues` for complete XML child
+text and transformed integer booleans, and `LegacyResponseTransforms` for the old
+unknown-program decoder fallback. Standalone SDK defaults retain structured XML values
+and reject unsupported response programs.
 
 Credentials resolve direct flag → env var → file; env vars are never required. Scope (e.g. `--project`) is **required and never inferred** — no env or key-embedded fallback.
 
@@ -994,6 +1005,11 @@ Its costs include estimated container overhead; they are not exact process RSS. 
 entries stop caching while their live reads continue. Defaults are five minutes TTL,
 thirty seconds between collections, 64 MiB total, 4 MiB per entry and 1024 entries/pending
 writers. No collector or cache wrapper is created when the opt-in is absent.
+
+A host adapting an existing complete snapshot cache may set `ReadCacheLookupOnly`.
+Snapshot hits are reused even when live requests have a page cap; misses obey that
+cap and never write an entry. The host retains snapshot storage and expiry ownership.
+Normal cache mode continues to bypass capped reads entirely.
 
 Each managed cache owns one GC worker, independent of queries. Closing it or cancelling
 its application context stops and joins that worker; closing a query does neither. Existing

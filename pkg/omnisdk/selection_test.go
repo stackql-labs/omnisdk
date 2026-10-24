@@ -39,8 +39,15 @@ components:
       sqlVerbs:
         select: [{$ref: '#/components/x-stackQL-resources/items/methods/list'}]
 `)
-	for _, strict := range []bool{false, true} {
-		plan, err := omnisdk.NewFromDoc(doc, "fixture", "items", omnisdk.Args{Endpoint: srv.URL, StrictResponseSelection: strict})
+	for _, scenario := range []struct{ strict, tolerate bool }{{false, false}, {true, false}, {true, true}} {
+		strict := scenario.strict
+		var policy *missingKeyPolicy
+		var selectionPolicy omnisdk.ResponseSelectionErrorPolicy
+		if scenario.tolerate {
+			policy = &missingKeyPolicy{}
+			selectionPolicy = policy
+		}
+		plan, err := omnisdk.NewFromDoc(doc, "fixture", "items", omnisdk.Args{Endpoint: srv.URL, StrictResponseSelection: strict, ResponseSelectionErrors: selectionPolicy})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -53,11 +60,18 @@ components:
 		}
 		err = rows.Err()
 		rows.Close()
-		if (err != nil) != strict {
+		if (err != nil) != (strict && !scenario.tolerate) {
 			t.Fatalf("strict=%v error=%v", strict, err)
 		}
-		if strict && !strings.Contains(err.Error(), "unknown key items") {
+		if strict && !scenario.tolerate && !strings.Contains(err.Error(), "unknown key items") {
 			t.Fatal(err)
+		}
+		if scenario.tolerate && policy.key != "items" {
+			t.Fatalf("missing diagnostic: %q", policy.key)
 		}
 	}
 }
+
+type missingKeyPolicy struct{ key string }
+
+func (p *missingKeyPolicy) IgnoreMissingKey(key string) bool { p.key = key; return true }

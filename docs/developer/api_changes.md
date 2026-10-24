@@ -25,6 +25,26 @@ positional literals must account for added fields or switch to keyed fields.
   mutations, polls, local commands and capped reads bypass caching. Cacheable graph
   reads retain full response rows instead of pushing SQL projection/filter/limit
   controls into the API. Nil retains uncached execution.
+- **Host snapshot caches:** `Args.ReadCacheLookupOnly` permits reads from complete
+  host-owned snapshots even when a live API read has a page cap. Misses retain that
+  cap and never publish cache entries. Ordinary caches still bypass capped reads.
+- **Read failures:** retries run before read-error tolerance. Mutation and credential
+  exchanges remain strict. `ResponseSelectionErrors.IgnoreMissingKey` optionally
+  reports a missing collection key and returns zero rows; these failed selections
+  are excluded from cache publication.
+- **HTTP diagnostics:** optional `Args.HTTPObserver` receives document request,
+  raw response, and selected page callbacks. Authentication exchanges are excluded.
+  Callbacks may run concurrently. `AuthenticationError` distinguishes failed
+  credential exchanges and preserves the target request in OAuth diagnostics.
+- **Legacy XML presentation:** `LegacyXMLValues` preserves complete child text,
+  whitespace, and sibling order for native XML tables, and integer booleans for
+  transformed XML tables. `LegacyResponseTransforms` explicitly retains legacy
+  decoder fallback for unknown response-program versions. Both default off.
+- **Exact joins:** numeric comparisons and hash keys preserve adjacent 64-bit
+  identifiers rather than collapsing them through floating-point conversion.
+- **Method discovery:** unmapped conventional method names retain their SQL verb;
+  explicit duplicate verb mappings resolve deterministically. View discovery
+  exposes the `requiredParams` declared in its predicate.
 - **Document identity:** optional `aot.DocumentIdentity` exposes a source fingerprint
   for cache invalidation. The StackQL parser implements it; custom AOT descriptions
   without an identity remain uncached.

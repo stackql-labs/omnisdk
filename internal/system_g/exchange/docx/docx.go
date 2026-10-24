@@ -47,9 +47,14 @@ type Option func(*options)
 
 type options struct {
 	rowCache                      facade.RowCache
+	snapshotCache                 bool
+	httpObserver                  facade.HTTPObserver
 	cachePartition, cacheResource string
 	legacyPagination              bool
+	legacyXMLValues               bool
+	legacyResponseTransforms      bool
 	strictSelection               bool
+	selectionErrors               facade.ResponseSelectionErrorPolicy
 	ignoreDocumentRetry           bool
 	queryLimit                    int
 	provider                      string
@@ -346,6 +351,22 @@ func WithBound(names ...string) Option {
 }
 
 // WithStrictSelection reports an absent declared JSON row key as an error.
+func WithHTTPObserver(observer facade.HTTPObserver) Option {
+	return func(o *options) { o.httpObserver = observer }
+}
+
+func WithSnapshotCache() Option { return func(o *options) { o.snapshotCache = true } }
+
+func WithLegacyResponseTransforms() Option {
+	return func(o *options) { o.legacyResponseTransforms = true }
+}
+
+func WithLegacyXMLValues() Option { return func(o *options) { o.legacyXMLValues = true } }
+
+func WithSelectionErrors(policy facade.ResponseSelectionErrorPolicy) Option {
+	return func(o *options) { o.selectionErrors = policy }
+}
+
 func WithStrictSelection() Option { return func(o *options) { o.strictSelection = true } }
 
 // WithLegacyPagination preserves provider defaults in place of native API hints.
@@ -476,12 +497,24 @@ func compile(ex aot.AOTExchange, inputs map[string]any, reg dsl.Registry, o opti
 	// instructions are the document's own schema. Treating it as absent is what made a
 	// schema-driven document resolve its rows at a path only that transform produces.
 	hasProgram := tr.Type() != "" && (tr.Body() != "" || schemaDriven(reg, tr.Type()))
+	legacyFallback := false
 	if hasProgram {
 		if _, ok := reg.Get(tr.Type()); !ok {
-			return nil, fmt.Errorf("docx: exchange %q needs evaluator %q (have: %v): %w", ex.Name(), tr.Type(), reg.Types(), unsupportedProgramError{language: tr.Type()})
+			if o.legacyResponseTransforms {
+				legacyFallback = true
+				hasProgram = false
+			} else {
+				return nil, fmt.Errorf("docx: exchange %q needs evaluator %q (have: %v): %w", ex.Name(), tr.Type(), reg.Types(), unsupportedProgramError{language: tr.Type()})
+			}
 		}
 	}
 	decode := decoderFor(resp, hasProgram)
+	if legacyFallback {
+		decode = decoderFor(resp, true)
+		if decode != nil {
+			decode = responseDecodeDiagnostic{decode}
+		}
+	}
 	if o.wholeResponse {
 		// The whole response is the value: metadata beside the body, with no item list exploded out
 		// of it, so nothing the call reported is left unreachable.
@@ -499,6 +532,9 @@ func compile(ex aot.AOTExchange, inputs map[string]any, reg dsl.Registry, o opti
 	}
 	// The document states where the rows are, in one of two syntaxes it uses interchangeably.
 	rowPath := parseObjectKey(resp.ObjectKey())
+	if o.legacyXMLValues && !hasProgram && !legacyFallback && strings.Contains(strings.ToLower(resp.MediaType()), "xml") {
+		decode = legacyXMLDecoder{rowPath: rowPath}
+	}
 	selection := items{steps: rowPath, strict: o.strictSelection && !strings.HasPrefix(resp.ObjectKey(), "/")}
 	if declared, ok := resp.(aot.SelectedSchema); ok {
 		if scalar, ok := declared.RowSchema().(aot.ScalarRowSchema); ok {
@@ -521,7 +557,7 @@ func compile(ex aot.AOTExchange, inputs map[string]any, reg dsl.Registry, o opti
 	}
 
 	url := retarget(req.URL(), o.baseURL)
-	hreq := httpx.Request{Method: req.Method(), URL: url, Read: !o.wholeResponse}
+	hreq := httpx.Request{Method: req.Method(), URL: url, Read: !o.wholeResponse && !o.ignoreResponse}
 	if o.poll != nil {
 		hreq.Continuation = *o.poll
 	} else if native, ok := resp.Pagination().(aot.NativePagination); o.legacyPagination && ok && native.Native() {
@@ -835,16 +871,25 @@ func compile(ex aot.AOTExchange, inputs map[string]any, reg dsl.Registry, o opti
 			reqT = append(reqT, awsv4.NewSigV4Transform(
 				awsv4.NewSigV4Signer(str(bound["region"]), service, o.creds, signsPayload(service), unsignedHeaders...)))
 		}
+		if o.httpObserver != nil {
+			reqT = append(reqT, requestObservation{o.httpObserver})
+		}
 		rowReq, rowBound := hreq, bound
 		if req.Transpose() == AWSCanonical {
 			rowReq, rowBound = transposed(hreq, bound)
 		}
 		if gx, ok := ex.(aot.GraphQLExchange); ok {
 			if graph, ok := gx.GraphQL(); ok {
-				send := newGraphQLOperator(graph, resp.ObjectKey(), rowReq, rowBound, reqT, o.queryLimit, o.baseURL)
+				var send facade.Operator = newGraphQLOperator(graph, resp.ObjectKey(), rowReq, rowBound, reqT, o.queryLimit, o.baseURL)
+				if o.httpObserver != nil {
+					send = exchange.NewTransformExchange(0, send, responseObservation{o.httpObserver}, 1)
+				}
 				decoded := exchange.NewTransformExchange(0, send, decode, 1)
 				selected := exchange.NewTransformExchange(0, decoded, rowSelection, 1)
-				return withClient(withRetrySettings(namedRows(cachePlan.wrap(exchange.NewExplodeRows(selected, 1), rowBound), req, rowBound), retrySettings, req.Method()), o.client)
+				if o.httpObserver != nil {
+					selected = exchange.NewTransformExchange(0, selected, rowsObservation{o.httpObserver}, 1)
+				}
+				return withClient(withRetrySettings(namedRows(cachePlan.wrap(selectionRead(exchange.NewExplodeRows(selected, 1), o.selectionErrors), rowBound), req, rowBound), retrySettings, req.Method()), o.client)
 			}
 		}
 		tokens := tokenDecoder(resp)
@@ -852,6 +897,9 @@ func compile(ex aot.AOTExchange, inputs map[string]any, reg dsl.Registry, o opti
 			tokens = continuationDecoder{program(reg, tr.Type(), tr.Body(), dslContext(resp, rowPath)), decode}
 		}
 		send := httpx.Make(rowReq, tokens, reqT...)(rowBound)
+		if o.httpObserver != nil {
+			send = exchange.NewTransformExchange(0, send, responseObservation{o.httpObserver}, 1)
+		}
 		// non-2xx fails loudly rather than looking like an empty result
 		checked := exchange.NewTransformExchange(0, send, httpx.NewRequireOK(), 1)
 		// the document's own program, moved from source to here — when it declares one
@@ -867,11 +915,21 @@ func compile(ex aot.AOTExchange, inputs map[string]any, reg dsl.Registry, o opti
 			return withClient(withRetrySettings(namedRows(decoded, req, rowBound), retrySettings, req.Method()), o.client)
 		}
 		listed := exchange.NewTransformExchange(0, decoded, rowSelection, 1)
-		return withClient(withRetrySettings(namedRows(cachePlan.wrap(declaredXMLRows(exchange.NewExplodeRows(listed, 1), resp, hasProgram), rowBound), req, rowBound), retrySettings, req.Method()), o.client)
+		if o.httpObserver != nil {
+			listed = exchange.NewTransformExchange(0, listed, rowsObservation{o.httpObserver}, 1)
+		}
+		rows := declaredXMLRows(exchange.NewExplodeRows(listed, 1), resp, hasProgram)
+		if o.legacyXMLValues && hasProgram && strings.Contains(strings.ToLower(resp.MediaType()), "xml") {
+			rows = exchange.NewTransformExchange(0, rows, legacyBooleanValues{}, 1)
+		}
+		return withClient(withRetrySettings(namedRows(cachePlan.wrap(selectionRead(rows, o.selectionErrors), rowBound), req, rowBound), retrySettings, req.Method()), o.client)
 		// INNER, not left-outer: this is a SELECT, and an empty result set is zero rows. A left-outer
 		// would emit one row of bare inputs, which reads as "one instance with no fields".
 	}, bind.NewInnerFlatten())
 	if authSpec != nil {
+		if o.clientCreds != nil {
+			authSpec = authenticationSpec{ExchangeSpec: authSpec, method: hreq.Method, url: authenticationTarget(hreq.URL, inputs)}
+		}
 		return compiled{spec: spec, auth: providerSpec{ExchangeSpec: authSpec, provider: o.provider}, assertion: assertion, authInputs: authInputs, provider: o.provider}, nil
 	}
 	return compiled{spec: spec, provider: o.provider}, nil
@@ -1140,7 +1198,7 @@ func (t items) Apply(in facade.Page) (facade.Record, error) {
 		}
 		next, present := m[step]
 		if !present && t.strict {
-			return nil, fmt.Errorf("error processing response: unknown key %s", step)
+			return nil, missingSelectionKey{key: step}
 		}
 		cur = next
 	}

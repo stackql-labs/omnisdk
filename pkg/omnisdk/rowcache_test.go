@@ -323,3 +323,80 @@ func TestReadCacheHonorsProviderPageCap(t *testing.T) {
 		t.Fatal("provider-capped read published an entry")
 	}
 }
+
+func TestReadCacheDoesNotPublishToleratedSelectionFailure(t *testing.T) {
+	var calls atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if calls.Add(1) == 1 {
+			fmt.Fprint(w, `{}`)
+			return
+		}
+		fmt.Fprint(w, `{"items":[{"id":1,"name":"one"}]}`)
+	}))
+	defer server.Close()
+	dir := cachedFixture(t)
+	args := cachedArgs(t, server.URL)
+	args.StrictResponseSelection = true
+	args.ResponseSelectionErrors = &missingKeyPolicy{}
+	plan := cachedPlan(t, dir, args, "id", 0)
+	if rows := cacheRows(t, plan); len(rows) != 0 {
+		t.Fatal(rows)
+	}
+	if rows := cacheRows(t, plan); len(rows) != 1 {
+		t.Fatal(rows)
+	}
+	if rows := cacheRows(t, plan); len(rows) != 1 {
+		t.Fatal(rows)
+	}
+	if calls.Load() != 2 {
+		t.Fatalf("requests=%d; failed selection must not become cached absence", calls.Load())
+	}
+}
+
+func TestSnapshotCacheLookupsKeepLiveMissesUncached(t *testing.T) {
+	var calls atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls.Add(1)
+		fmt.Fprint(w, `{"items":[{"id":1,"name":"one"}]}`)
+	}))
+	defer server.Close()
+	dir := cachedFixture(t)
+	args := cachedArgs(t, server.URL)
+	cacheRows(t, cachedPlan(t, dir, args, "id", 0))
+	args.Tuning.PageLimit = 1
+	args.ReadCacheLookupOnly = true
+	cacheRows(t, cachedPlan(t, dir, args, "id", 0))
+	if calls.Load() != 1 {
+		t.Fatal("completed snapshot was not reused")
+	}
+	args.ReadCachePartition = "new-scope"
+	cacheRows(t, cachedPlan(t, dir, args, "id", 0))
+	cacheRows(t, cachedPlan(t, dir, args, "id", 0))
+	if calls.Load() != 3 {
+		t.Fatal("snapshot-only misses published a partial live read")
+	}
+}
+
+func TestReadErrorPolicyNeverSwallowsDocumentMutationFailure(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusNotFound) }))
+	defer server.Close()
+	args := omnisdk.Args{Endpoint: server.URL, HTTPReadErrors: ignoreNotFound{}, Tuning: omnisdk.Tuning{RetryTries: 1}}
+	graph, err := omnisdk.NewGraph([]omnisdk.Node{omnisdk.NewMutationNode("i", cachedAddress, "insert", nil, nil, nil)}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	plan, err := omnisdk.NewGraphQuery(cachedFixture(t), graph, args)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rows, err := plan.Open(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+	}
+	if rows.Err() == nil {
+		t.Fatal("read error policy silently accepted a failed mutation")
+	}
+}

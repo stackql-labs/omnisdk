@@ -258,6 +258,24 @@ type UnsupportedProgramError interface {
 // Mutations and authentication remain strict.
 type HTTPReadErrorPolicy interface{ IsIgnored(statusCode int) bool }
 
+// AuthenticationError identifies a failed credential exchange.
+type AuthenticationError interface {
+	error
+	AuthenticationFailure() bool
+}
+
+// HTTPObserver receives explicitly enabled document request diagnostics.
+// Callbacks may run concurrently and must not mutate supplied row documents.
+type HTTPObserver interface {
+	HTTPRequest(method, url string, body []byte)
+	HTTPResponse(status int, body []byte)
+	HTTPRows(rows any)
+}
+
+// ResponseSelectionErrorPolicy controls absent collection keys on document reads.
+// Nil preserves strict selection errors when StrictResponseSelection is enabled.
+type ResponseSelectionErrorPolicy interface{ IgnoreMissingKey(key string) bool }
+
 // HTTPReadErrorObserver optionally receives ignored responses for host diagnostics.
 type HTTPReadErrorObserver interface {
 	IgnoredStatus(statusCode int, body string)
@@ -269,18 +287,33 @@ type Args struct {
 	// ReadCache optionally caches complete transformed document reads before SQL.
 	// Nil adds no cache wrapper or collector. The caller owns the cache lifecycle.
 	ReadCache rowcache.Cache `json:"-"`
+	// ReadCacheLookupOnly reuses complete host snapshots without publishing live
+	// reads. Page limits still bound cache misses, while completed snapshots are
+	// read as stored. False preserves the normal page-cap cache bypass.
+	ReadCacheLookupOnly bool `json:"read_cache_lookup_only,omitempty"`
+
 	// ReadCachePartition is an explicit authorization/cache namespace. Required
 	// with ReadCache; it must differ between principals/tenants that cannot share rows.
 	ReadCachePartition string `json:"read_cache_partition,omitempty"`
 	// MutationCompletion optionally follows accepted graph mutations before projection.
 	MutationCompletion MutationCompletion `json:"-"`
+	// LegacyXMLValues preserves legacy XML table text and transformed boolean values.
+	LegacyXMLValues bool `json:"legacy_xml_values,omitempty"`
+	// LegacyResponseTransforms permits legacy decoding when a document names an
+	// unknown response evaluator. False rejects unsupported programs at planning.
+	LegacyResponseTransforms bool `json:"legacy_response_transforms,omitempty"`
+
 	// StrictResponseSelection reports an absent declared JSON row key instead of an empty read.
 	StrictResponseSelection bool `json:"strict_response_selection,omitempty"`
+	// ResponseSelectionErrors optionally tolerates missing collection keys with diagnostics.
+	ResponseSelectionErrors ResponseSelectionErrorPolicy `json:"-"`
 	// LegacyPagination retains any-sdk behavior for native API pagination hints.
 	// Explicit StackQL pagination remains authoritative. False preserves native inference.
 	LegacyPagination bool `json:"legacy_pagination,omitempty"`
 	// HTTPReadErrors is an explicit opt-in; nil preserves strict upstream errors.
 	HTTPReadErrors HTTPReadErrorPolicy `json:"-"`
+	// HTTPObserver optionally receives document request diagnostics; nil adds no stages.
+	HTTPObserver HTTPObserver `json:"-"`
 	// Relations binds opaque read handles resolved by the caller's analyzer.
 	// Handles take precedence over document lookup and cannot be mutation targets.
 	Relations map[string]Relation `json:"-"`
@@ -1408,7 +1441,13 @@ func docInputs(args Args) map[string]any {
 // oauth reports that the provider's OAuth grant is already settled (a token URL of its own), so
 // Azure's is not wanted.
 func docOptions(args Args, sec aot.Security, oauth bool) ([]docx.Option, error) {
-	opts := []docx.Option{docx.WithQueryLimit(args.Tuning.Limit)}
+	opts := []docx.Option{docx.WithQueryLimit(args.Tuning.Limit), docx.WithSelectionErrors(args.ResponseSelectionErrors), docx.WithHTTPObserver(args.HTTPObserver)}
+	if args.LegacyResponseTransforms {
+		opts = append(opts, docx.WithLegacyResponseTransforms())
+	}
+	if args.LegacyXMLValues {
+		opts = append(opts, docx.WithLegacyXMLValues())
+	}
 	if args.LegacyPagination {
 		opts = append(opts, docx.WithLegacyPagination())
 	}

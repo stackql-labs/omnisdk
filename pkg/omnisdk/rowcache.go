@@ -8,7 +8,10 @@ import (
 	"strings"
 )
 
-type readCacheBridge struct{ cache rowcache.Cache }
+type readCacheBridge struct {
+	cache      rowcache.Cache
+	lookupOnly bool
+}
 
 func cacheKey(k facade.RowCacheKey) rowcache.Key {
 	return rowcache.Key{Partition: k.Partition, Resource: k.Resource, Method: k.Method, Document: k.Document, Request: k.Request, Inputs: k.Inputs}
@@ -18,6 +21,9 @@ func (b readCacheBridge) Lookup(ctx context.Context, k facade.RowCacheKey) (faca
 	return rows, hit, err
 }
 func (b readCacheBridge) Begin(ctx context.Context, k facade.RowCacheKey) (facade.RowCacheWriter, error) {
+	if b.lookupOnly {
+		return nil, rowcache.ErrUnsupported
+	}
 	return b.cache.Begin(ctx, cacheKey(k))
 }
 func (b readCacheBridge) CacheError(err error) {
@@ -30,7 +36,10 @@ func appendReadCache(opts []docx.Option, args Args, address, provider string) []
 	if !canCacheRead(args, provider) {
 		return opts
 	}
-	return append(opts, docx.WithRowCache(readCacheBridge{args.ReadCache}, args.ReadCachePartition, address))
+	if args.ReadCacheLookupOnly {
+		opts = append(opts, docx.WithSnapshotCache())
+	}
+	return append(opts, docx.WithRowCache(readCacheBridge{cache: args.ReadCache, lookupOnly: args.ReadCacheLookupOnly}, args.ReadCachePartition, address))
 }
 
 func canCacheRead(args Args, provider string) bool {
@@ -46,5 +55,5 @@ func canCacheRead(args Args, provider string) bool {
 	if override.PageLimit != 0 {
 		pages = override.PageLimit
 	}
-	return pages <= 0
+	return args.ReadCacheLookupOnly || pages <= 0
 }

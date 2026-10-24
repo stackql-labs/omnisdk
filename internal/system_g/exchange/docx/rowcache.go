@@ -25,6 +25,7 @@ type rowCachePlan struct {
 	key       facade.RowCacheKey
 	bindings  []string
 	authToken bool
+	snapshot  bool
 }
 
 func cacheRowsPlan(ex aot.AOTExchange, resp aot.Response, request httpx.Request, bindings []string, authToken bool, o options) rowCachePlan {
@@ -41,7 +42,10 @@ func cacheRowsPlan(ex aot.AOTExchange, resp aot.Response, request httpx.Request,
 		"mediaType": resp.MediaType(), "overrideMediaType": resp.OverrideMediaType(),
 		"programType": resp.Transform().Type(), "program": resp.Transform().Body(),
 		"translate": ex.Request().Translate(), "transpose": ex.Request().Transpose(),
-		"schema": cacheSchema(resp.Schema(), 0),
+		"schema":                   cacheSchema(resp.Schema(), 0),
+		"legacyXMLValues":          o.legacyXMLValues,
+		"legacyResponseTransforms": o.legacyResponseTransforms,
+		"strictSelection":          o.strictSelection,
 	}
 	if selected, ok := resp.(aot.SelectedSchema); ok {
 		metadata["rowSchema"] = cacheSchema(selected.RowSchema(), 0)
@@ -64,7 +68,7 @@ func cacheRowsPlan(ex aot.AOTExchange, resp aot.Response, request httpx.Request,
 	return rowCachePlan{cache: o.rowCache, key: facade.RowCacheKey{
 		Partition: o.cachePartition, Resource: o.cacheResource, Method: ex.Name(),
 		Document: identity.DocumentIdentity(), Request: hex.EncodeToString(sum[:]),
-	}, bindings: names, authToken: authToken}
+	}, bindings: names, authToken: authToken, snapshot: o.snapshotCache}
 }
 func (p rowCachePlan) wrap(op facade.Operator, bound map[string]any) facade.Operator {
 	if p.cache == nil {
@@ -86,13 +90,16 @@ func (p rowCachePlan) wrap(op facade.Operator, bound map[string]any) facade.Oper
 		}
 		return op
 	}
-	return uncappedCacheRows{raw: op, cached: exchange.NewCachedRows(op, p.cache, key)}
+	return uncappedCacheRows{snapshot: p.snapshot, raw: op, cached: exchange.NewCachedRows(op, p.cache, key)}
 }
 
-type uncappedCacheRows struct{ raw, cached facade.Operator }
+type uncappedCacheRows struct {
+	raw, cached facade.Operator
+	snapshot    bool
+}
 
 func (o uncappedCacheRows) Open(ctx context.Context) facade.Records {
-	if httpx.PageLimit(ctx) > 0 {
+	if httpx.PageLimit(ctx) > 0 && !o.snapshot {
 		return o.raw.Open(ctx)
 	}
 	return o.cached.Open(ctx)

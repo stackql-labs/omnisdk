@@ -545,9 +545,18 @@ func (d *document) Methods(name string) ([]aot.Method, error) {
 		return nil, fmt.Errorf("stackqldoc: no resource %q", name)
 	}
 	verbOf := map[string]string{}
-	for verb, refs := range res.SQLVerbs {
-		for _, r := range refs {
-			verbOf[lastSegment(r.Ref)] = verb
+	verbs := make([]string, 0, len(res.SQLVerbs))
+	for verb := range res.SQLVerbs {
+		verbs = append(verbs, verb)
+	}
+	sort.Strings(verbs)
+	verbs = append([]string{"select", "insert", "delete", "update", "replace", "exec"}, verbs...)
+	for _, verb := range verbs {
+		for _, r := range res.SQLVerbs[verb] {
+			name := lastSegment(r.Ref)
+			if verbOf[name] == "" {
+				verbOf[name] = verb
+			}
 		}
 	}
 	out := make([]aot.Method, 0, len(res.Methods))
@@ -555,7 +564,7 @@ func (d *document) Methods(name string) ([]aot.Method, error) {
 		verb := verbOf[mName]
 		if verb == "" {
 			for _, candidate := range []string{"select", "insert", "delete"} {
-				if _, explicit := res.SQLVerbs[candidate]; !explicit && slices.Contains(defaultMethodKeys(candidate), mName) {
+				if slices.Contains(defaultMethodKeys(candidate), mName) {
 					verb = candidate
 					break
 				}
@@ -599,8 +608,8 @@ func (d *document) Methods(name string) ([]aot.Method, error) {
 		}
 		out = append(out, info)
 	}
-	if res.Config.Views["select"] != nil {
-		out = append(out, methodInfo{name: "__view__", verb: "select"})
+	if view := res.Config.Views["select"]; view != nil {
+		out = append(out, methodInfo{name: "__view__", verb: "select", required: view.requiredParams()})
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Name() < out[j].Name() })
 	return out, nil

@@ -252,7 +252,7 @@ func (s selectionRows) Apply(in facade.Page) (facade.Record, error) {
 			}
 			value, present := object[segment.Name()]
 			if !present {
-				return nil, fmt.Errorf("error processing response: unknown key %s", segment.Name())
+				return nil, missingSelectionKey{key: segment.Name()}
 			}
 			current = value
 		}

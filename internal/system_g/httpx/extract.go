@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"maps"
+	"strconv"
 	"strings"
 
 	"github.com/stackql-labs/omnisdk/internal/system_g/bind"
@@ -90,7 +91,8 @@ func (b statusBranch) Apply(in facade.Page) (facade.Record, error) {
 	if b.def != nil {
 		return b.def.Apply(in)
 	}
-	return nil, fmt.Errorf("http: status %s: %s", status, str(output[bind.KeyRaw]))
+	code, _ := strconv.Atoi(status)
+	return nil, &agnosticStatusError{StatusError{Status: code, Body: str(output[bind.KeyRaw])}}
 }
 
 // decodeDoc turns a raw body into an agnostic document via the swappable decoder (nil = JSON).
@@ -128,4 +130,10 @@ func setPath(row map[string]any, key string, v any) {
 		m = next
 	}
 	m[parts[len(parts)-1]] = v
+}
+
+type agnosticStatusError struct{ StatusError }
+
+func (e agnosticStatusError) Error() string {
+	return fmt.Sprintf("http: status %d: %s", e.Status, e.Body)
 }

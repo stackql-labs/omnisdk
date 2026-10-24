@@ -343,9 +343,6 @@ func (o *op) send(ctx context.Context, rec facade.Record) (int, []byte, error) {
 	for i := 0; ; i++ {
 		status, body, header, err := o.sendOnce(ctx, rec)
 		logWire(ctx, Method(rec), URL(rec), status, err, body)
-		if err == nil && status >= 400 && o.req.Read && ignoredReadStatus(ctx, status, body) {
-			return status, nil, errIgnoredRead
-		}
 		if err == nil && status < 400 {
 			o.lastHeader = header
 			return status, body, nil
@@ -355,6 +352,9 @@ func (o *op) send(ctx context.Context, rec facade.Record) (int, []byte, error) {
 			RetryAfter: retryAfter(header), Elapsed: time.Since(start), PrevWait: prev,
 		})
 		if !ok {
+			if err == nil && status >= 400 && o.req.Read && ignoredReadStatus(ctx, status, body) {
+				return status, nil, errIgnoredRead
+			}
 			return status, body, err // give up: permanent, or no retry policy
 		}
 		prev = wait
