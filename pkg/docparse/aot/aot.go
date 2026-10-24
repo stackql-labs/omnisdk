@@ -13,6 +13,10 @@ package aot
 
 import "time"
 
+// DocumentIdentity fingerprints the source document that defines an exchange.
+// It carries no response data and invalidates cached rows after document changes.
+type DocumentIdentity interface{ DocumentIdentity() string }
+
 // InverseDeclaration retains a declared inverse reference and token metadata.
 // Each token contains key, location and algorithm, in that order.
 type InverseDeclaration interface {

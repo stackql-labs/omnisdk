@@ -831,7 +831,7 @@ func NewGraphQuery(dir string, g Graph, args Args) (Plan, error) {
 			}
 			// What the server can do instead of the rows: a projection, a filter, a cap. Each value is a
 			// constant of the run, bound through a slot of its own so its wire name is sent as written.
-			if n.Verb() == "select" {
+			if n.Verb() == "select" && !canCacheRead(args, c.Provider().Name()) {
 				needed := slices.Clone(emits[alias])
 				for _, p := range n.On() {
 					for _, c := range predicateColumns(p) {
@@ -895,6 +895,9 @@ func NewGraphQuery(dir string, g Graph, args Args) (Plan, error) {
 				if p := o.Poll(); p.StatusPath != "" {
 					opts = append(opts, docx.WithPoll(p.StatusPath, p.Done, p.Interval, p.MaxAttempts))
 				}
+			}
+			if !mutating && !whole {
+				opts = appendReadCache(opts, args, addr, c.Provider().Name())
 			}
 			spec, err = docx.Spec(ex, local, reg, opts...)
 			if err != nil {

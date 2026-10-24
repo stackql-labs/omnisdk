@@ -12,6 +12,8 @@ package stackqldoc
 
 import (
 	"cmp"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"maps"
@@ -46,6 +48,8 @@ type Doc interface {
 // Parse reads a stackql provider document.
 func Parse(b []byte) (Doc, error) {
 	var d document
+	sum := sha256.Sum256(b)
+	d.fingerprint = hex.EncodeToString(sum[:])
 	if err := yaml.Unmarshal(b, &d); err != nil {
 		return nil, fmt.Errorf("stackqldoc: parse: %w", err)
 	}
@@ -61,7 +65,8 @@ func Parse(b []byte) (Doc, error) {
 // ---- document shape (only the parts an exchange needs) ----------------------
 
 type document struct {
-	Info struct {
+	fingerprint string
+	Info        struct {
 		ServiceName string `yaml:"x-serviceName"`
 	} `yaml:"info"`
 	source        string
@@ -725,7 +730,7 @@ func (d *document) build(name, verb, path string, op pathOp, m method) aot.AOTEx
 		inverseTokens[name] = [3]string{t.Key, t.Location, t.Algorithm}
 	}
 	return &aotExchange{
-		inverseRef: m.Inverse.Method.Ref, inverseTokens: inverseTokens,
+		fingerprint: d.fingerprint, inverseRef: m.Inverse.Method.Ref, inverseTokens: inverseTokens,
 		graphQL: graph,
 		name:    name,
 		sec:     d.security(),
@@ -1019,6 +1024,7 @@ func lastSegment(ref string) string {
 // ---- AOT exchange -----------------------------------------------------------
 
 type aotExchange struct {
+	fingerprint   string
 	inverseRef    string
 	inverseTokens map[string][3]string
 	inline        []string
@@ -1033,6 +1039,8 @@ type aotExchange struct {
 	beta          aot.Beta
 	pushdown      *pushdownSpec
 }
+
+func (e *aotExchange) DocumentIdentity() string { return e.fingerprint }
 
 func (e *aotExchange) InverseDeclaration() (string, map[string][3]string) {
 	return e.inverseRef, maps.Clone(e.inverseTokens)

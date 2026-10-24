@@ -18,6 +18,17 @@ positional literals must account for added fields or switch to keyed fields.
 
 ## Additions
 
+- **Opt-in API row cache:** `Args.ReadCache` accepts a `rowcache.Cache` and requires
+  an explicit `ReadCachePartition`. `pkg/rowcache` supplies abstract transactional
+  storage contracts, independently managed TTL collection, and a bounded memory
+  implementation. Only complete transformed document reads are cached, before SQL;
+  mutations, polls, local commands and capped reads bypass caching. Cacheable graph
+  reads retain full response rows instead of pushing SQL projection/filter/limit
+  controls into the API. Nil retains uncached execution.
+- **Document identity:** optional `aot.DocumentIdentity` exposes a source fingerprint
+  for cache invalidation. The StackQL parser implements it; custom AOT descriptions
+  without an identity remain uncached.
+
 - **Local inline operations:** document `inline` argv templates run as local exchanges
   without a shell and honor cancellation and request deadlines. Required inline inputs
   appear in method discovery. `golang_template_v0.1.0` text responses and

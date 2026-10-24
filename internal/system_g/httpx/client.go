@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/stackql-labs/omnisdk/internal/system_g/facade"
+	"github.com/stackql-labs/omnisdk/internal/system_g/readcache"
 	"github.com/stackql-labs/omnisdk/internal/system_g/requestpolicy"
 )
 
@@ -103,6 +104,7 @@ func ignoredReadStatus(ctx context.Context, status int, body []byte) bool {
 	if policy == nil || !policy.IsIgnored(status) {
 		return false
 	}
+	readcache.MarkIncomplete(ctx)
 	if observer, ok := policy.(facade.HTTPReadErrorObserver); ok {
 		observer.IgnoredStatus(status, string(body))
 	}

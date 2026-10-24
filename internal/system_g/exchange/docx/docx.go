@@ -46,17 +46,19 @@ import (
 type Option func(*options)
 
 type options struct {
-	legacyPagination    bool
-	strictSelection     bool
-	ignoreDocumentRetry bool
-	queryLimit          int
-	provider            string
-	baseURL             string
-	creds               awsv4.Credentials
-	signer              facade.Transform
-	noSign              bool
-	security            aot.Security
-	gcpCreds            *sdk.GCPCredentials
+	rowCache                      facade.RowCache
+	cachePartition, cacheResource string
+	legacyPagination              bool
+	strictSelection               bool
+	ignoreDocumentRetry           bool
+	queryLimit                    int
+	provider                      string
+	baseURL                       string
+	creds                         awsv4.Credentials
+	signer                        facade.Transform
+	noSign                        bool
+	security                      aot.Security
+	gcpCreds                      *sdk.GCPCredentials
 	// azureCreds is the client-credentials triple for a document declaring OAuth2.
 	azureCreds *azureCredentials
 	// clientCreds is a client-credentials grant at a stated token endpoint; it wins over azureCreds.
@@ -809,6 +811,7 @@ func compile(ex aot.AOTExchange, inputs map[string]any, reg dsl.Registry, o opti
 		bindings = withInput(bindings, "region")
 	}
 
+	cachePlan := cacheRowsPlan(ex, resp, hreq, bindings, authSpec != nil, o)
 	spec := plan.NewExchangeSpec(ex.Name(), bindings, nil, func(bound map[string]any) facade.Operator {
 		var reqT []facade.Transform
 		if shape, ok := req.(aot.RequestShape); ok && strings.Contains(req.BodyMediaType(), "json") {
@@ -841,7 +844,7 @@ func compile(ex aot.AOTExchange, inputs map[string]any, reg dsl.Registry, o opti
 				send := newGraphQLOperator(graph, resp.ObjectKey(), rowReq, rowBound, reqT, o.queryLimit, o.baseURL)
 				decoded := exchange.NewTransformExchange(0, send, decode, 1)
 				selected := exchange.NewTransformExchange(0, decoded, rowSelection, 1)
-				return withClient(withRetrySettings(namedRows(exchange.NewExplodeRows(selected, 1), req, rowBound), retrySettings, req.Method()), o.client)
+				return withClient(withRetrySettings(namedRows(cachePlan.wrap(exchange.NewExplodeRows(selected, 1), rowBound), req, rowBound), retrySettings, req.Method()), o.client)
 			}
 		}
 		tokens := tokenDecoder(resp)
@@ -864,7 +867,7 @@ func compile(ex aot.AOTExchange, inputs map[string]any, reg dsl.Registry, o opti
 			return withClient(withRetrySettings(namedRows(decoded, req, rowBound), retrySettings, req.Method()), o.client)
 		}
 		listed := exchange.NewTransformExchange(0, decoded, rowSelection, 1)
-		return withClient(withRetrySettings(namedRows(declaredXMLRows(exchange.NewExplodeRows(listed, 1), resp, hasProgram), req, rowBound), retrySettings, req.Method()), o.client)
+		return withClient(withRetrySettings(namedRows(cachePlan.wrap(declaredXMLRows(exchange.NewExplodeRows(listed, 1), resp, hasProgram), rowBound), req, rowBound), retrySettings, req.Method()), o.client)
 		// INNER, not left-outer: this is a SELECT, and an empty result set is zero rows. A left-outer
 		// would emit one row of bare inputs, which reads as "one instance with no fields".
 	}, bind.NewInnerFlatten())

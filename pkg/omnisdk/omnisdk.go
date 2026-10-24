@@ -24,6 +24,7 @@ import (
 	"errors"
 	"fmt"
 	"github.com/stackql-labs/omnisdk/pkg/cache"
+	"github.com/stackql-labs/omnisdk/pkg/rowcache"
 	"github.com/stackql-labs/omnisdk/pkg/sqlfn"
 	"io"
 	"io/fs"
@@ -265,6 +266,12 @@ type HTTPReadErrorObserver interface {
 // Args are the inputs to run a resource: explicit scope Params, optional Auth (config-driven-auth
 // resources), an endpoint override, run Tuning, and an optional traffic log.
 type Args struct {
+	// ReadCache optionally caches complete transformed document reads before SQL.
+	// Nil adds no cache wrapper or collector. The caller owns the cache lifecycle.
+	ReadCache rowcache.Cache `json:"-"`
+	// ReadCachePartition is an explicit authorization/cache namespace. Required
+	// with ReadCache; it must differ between principals/tenants that cannot share rows.
+	ReadCachePartition string `json:"read_cache_partition,omitempty"`
 	// MutationCompletion optionally follows accepted graph mutations before projection.
 	MutationCompletion MutationCompletion `json:"-"`
 	// StrictResponseSelection reports an absent declared JSON row key instead of an empty read.
@@ -1147,6 +1154,9 @@ func NewMerged(methods []string, args Args) (Plan, error) {
 // a base URL (every service at that one host), or a JSON object of service → base URL for pointing one
 // provider at a mock while another stays real.
 func checkEndpoint(args Args) error {
+	if args.ReadCache != nil && args.ReadCachePartition == "" {
+		return fmt.Errorf("omnisdk: ReadCache requires an explicit ReadCachePartition")
+	}
 	if _, err := endpoint.Parse(args.Endpoint); err != nil {
 		return fmt.Errorf("omnisdk: %w", err)
 	}
@@ -1173,6 +1183,7 @@ func NewFromDoc(doc []byte, provider, resource string, args Args) (Plan, error) 
 	if err != nil {
 		return nil, err
 	}
+	opts = appendReadCache(opts, args, provider+"."+resource, provider)
 	pl, err := docx.SelectPlan(doc, resource, docInputs(args), reg, opts...)
 	if err != nil {
 		return nil, err
@@ -1368,6 +1379,7 @@ func NewSelectFromCatalog(dir, address string, args Args) (Plan, error) {
 	if err != nil {
 		return nil, err
 	}
+	opts = appendReadCache(opts, args, address, c.Provider().Name())
 	pl, err := docx.PlanFor(ex, docInputs(args), reg, opts...)
 	if err != nil {
 		return nil, err

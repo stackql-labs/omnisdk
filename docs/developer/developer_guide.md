@@ -948,3 +948,55 @@ default. The host can bind that value before resolution; an explicit SQL value w
 not apply host, cluster, account, region or other scope defaults, and the SDK itself never
 substitutes the transport default. `DocMethod.TransportDefaults` exposes the same discovery
 metadata.
+
+## Optional API row cache
+
+`Args.ReadCache` opts document-driven reads into `pkg/rowcache`. It caches transformed
+API rows before input echoing, SQL projection, filters and joins. It is not a query-result
+cache. Mutations, local commands, polls and reads with a positive page/row cap bypass it.
+SQL pushdown is disabled for cacheable graph reads so a projection or filter cannot poison
+an entry used by another query. Authentication exchanges remain outside this cache.
+
+```go
+cache, err := rowcache.NewMemory(appContext,
+    rowcache.Config{TTL: 5 * time.Minute, GCInterval: 30 * time.Second},
+    rowcache.MemoryConfig{MaxBytes: 64 << 20, MaxEntryBytes: 4 << 20, MaxEntries: 1024})
+if err != nil {
+    return err
+}
+defer cache.Close()
+args.ReadCache = cache
+args.ReadCachePartition = "tenant-a/principal-a" // explicitly chosen by the host
+```
+
+The partition is required and must separate authorization contexts that cannot share rows.
+Keys also include the resource, selected method, source-document fingerprint, resolved
+request/response metadata, endpoint and bound request inputs. Changing the document,
+request or partition prevents reuse. The memory store retains key digests, not raw request
+credentials. Response data belongs only to this disposable cache, never to an intent
+journal or ledger. Cached values remain snapshots until TTL expiry; writes do not imply
+invalidation or read-your-writes behavior. Hosts needing immediate freshness must bypass
+or change their partition after mutations.
+
+Rows stream to the caller as they arrive. A private cache transaction receives copies and
+publishes atomically only after successful API completion. Failed pages, ignored HTTP
+errors, cancellation and incomplete producer cursors do not publish partial entries.
+Closing an outer query may leave a valid cache entry if its API producer already completed.
+Successful empty results are cacheable. Lookup/write failures fall back to live execution;
+a failure while reading an existing hit is returned rather than silently truncating rows
+or replaying already emitted rows. An optional `rowcache.Observer` receives cache errors.
+
+The standard-library-only package has no SQL, HTTP or System G dependency. `rowcache.Store`
+and `Transaction` allow host-owned storage. `rowcache.New` owns a collector but not an
+external store; the host owns that store's lifecycle. The memory implementation uses an
+expiry heap and LRU eviction, with one shared budget for committed data and pending writes.
+Its costs include estimated container overhead; they are not exact process RSS. Oversized
+entries stop caching while their live reads continue. Defaults are five minutes TTL,
+thirty seconds between collections, 64 MiB total, 4 MiB per entry and 1024 entries/pending
+writers. No collector or cache wrapper is created when the opt-in is absent.
+
+Each managed cache owns one GC worker, independent of queries. Closing it or cancelling
+its application context stops and joins that worker; closing a query does neither. Existing
+hit readers retain their snapshots through eviction. The existing StackQL analytics SQL
+namespace cache requires a separate host adapter; enabling this API does not implicitly
+connect or change those tables.
