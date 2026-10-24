@@ -108,6 +108,15 @@ func NewMutationNode(alias, address, verb string, params map[string]string, fano
 	return node{alias: alias, address: address, verb: verb, params: params, fanout: fanout, body: body}
 }
 
+// NewExecNode runs exactly the named document method for legacy EXEC callers.
+// Named execution still validates required inputs and never retries an effect.
+func NewExecNode(alias, address, method string, params map[string]string, body map[string]any) Node {
+	if alias == "" {
+		alias = address
+	}
+	return node{alias: alias, address: address, verb: "exec", pin: method, params: params, body: body}
+}
+
 type node struct {
 	alias, address, verb string
 	params               map[string]string
@@ -358,8 +367,10 @@ func NewGraphWithFilters(nodes []Node, wirings []Wiring, projections []Projectio
 			return nil, fmt.Errorf("omnisdk: alias %q contains a NUL byte", n.Alias())
 		case n.Address() == "" && n.Verb() != verbRecall && n.Verb() != verbDiff && n.Verb() != verbFunction && n.Verb() != verbShape:
 			return nil, fmt.Errorf("omnisdk: node %q has no address", n.Alias())
-		case !contains([]string{"select", "insert", "update", "replace", "delete", verbRecall, verbDiff, verbFunction, verbShape}, n.Verb()):
+		case !contains([]string{"select", "insert", "update", "replace", "delete", "exec", verbRecall, verbDiff, verbFunction, verbShape}, n.Verb()):
 			return nil, fmt.Errorf("omnisdk: node %q has unknown verb %q", n.Alias(), n.Verb())
+		case n.Verb() == "exec" && func() bool { pin, _, _ := tuningOf(n); return pin == "" }():
+			return nil, fmt.Errorf("omnisdk: EXEC requires a named method")
 		case known[n.Alias()]:
 			return nil, fmt.Errorf("omnisdk: %q is referenced twice; give each reference an alias", n.Alias())
 		}

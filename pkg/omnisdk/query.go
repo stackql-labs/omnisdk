@@ -55,6 +55,21 @@ func DescribeTable(dir, address string, opts ...stackqldoc.Option) (Table, error
 	return describeTable(dir, address, "select", opts...)
 }
 
+// DescribeMethod describes one explicitly named operation, including methods
+// that have no SQL verb mapping.
+func DescribeMethod(dir, address, method string, opts ...stackqldoc.Option) (MethodSignature, error) {
+	table, err := describeTable(dir, address, "exec", opts...)
+	if err != nil {
+		return nil, err
+	}
+	for _, signature := range table.Methods() {
+		if signature.Method() == method {
+			return signature, nil
+		}
+	}
+	return nil, fmt.Errorf("omnisdk: %s declares no method %q", address, method)
+}
+
 // DescribeMutation reads what the documents under dir say about an address's methods for a
 // mutating verb: "insert", "update", "replace" or "delete".
 func DescribeMutation(dir, address, verb string, opts ...stackqldoc.Option) (Table, error) {
@@ -1613,3 +1628,29 @@ func (r *resolver) aliasesOf(e query.Expr) []string {
 	walk(e)
 	return out
 }
+
+// NamedResponse preserves the declared row schema identity for host metadata.
+type NamedResponse interface{ RowSchemaName() string }
+
+func (s docSignature) RowSchemaName() string {
+	if named, ok := s.row().(aot.NamedSchema); ok {
+		return named.SchemaName()
+	}
+	return ""
+}
+
+// RequestMetadata exposes declared input names and body shape for host presentation.
+type RequestMetadata interface {
+	RequestBodySchema() aot.Schema
+	InputName(string) string
+}
+
+func (s docSignature) RequestBodySchema() aot.Schema {
+	if shape, ok := s.ex.Request().(aot.RequestShape); ok {
+		return shape.BodySchema()
+	}
+	return nil
+}
+
+func (s docSignature) InputName(name string) string { return s.surface(name) }
+func (p serverInput) Type() string                  { return "string" }

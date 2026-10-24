@@ -124,6 +124,7 @@ type serverVariable struct {
 }
 
 type resource struct {
+	Name     string            `yaml:"name"`
 	ID       string            `yaml:"id"`
 	Title    string            `yaml:"title"`
 	Methods  map[string]method `yaml:"methods"`
@@ -301,6 +302,17 @@ func (d *document) Verb(name, verb string) ([]aot.AOTExchange, error) {
 		return nil, fmt.Errorf("stackqldoc: no resource %q", name)
 	}
 	sel, explicit := res.SQLVerbs[verb]
+	if verb == "exec" {
+		names := make([]string, 0, len(res.Methods))
+		for method := range res.Methods {
+			names = append(names, method)
+		}
+		slices.Sort(names)
+		for _, method := range names {
+			sel = append(sel, ref{Ref: "#/methods/" + method})
+		}
+		explicit = true
+	}
 	if !explicit {
 		for _, key := range defaultMethodKeys(verb) {
 			if _, exists := res.Methods[key]; exists {
@@ -1323,3 +1335,17 @@ func (o pushdownOption) FixedColumn() string {
 }
 
 func (r request) RequestTransform() aot.Transform { return r.requestTransform }
+
+// ResourceNames preserves declared presentation names separately from routing keys.
+func (d *document) ResourceNames() map[string]string {
+	names := make(map[string]string, len(d.Components.Resources))
+	for key, resource := range d.Components.Resources {
+		names[key] = resource.Name
+		if names[key] == "" {
+			names[key] = key
+		}
+	}
+	return names
+}
+
+func (p parameter) Type() string { return p.p.Schema.Type }

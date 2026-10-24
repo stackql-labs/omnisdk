@@ -16,6 +16,8 @@ import (
 // schema would carry the document it came from — exactly what resolving an exchange exists to avoid.
 // Only what the response actually reaches is kept.
 type materialised struct {
+	readOnly   bool
+	name       string
 	stringOnly bool
 	props      map[string]*materialised
 	names      []string
@@ -78,6 +80,9 @@ func materialiseActive(node *yaml.Node, components map[string]*yaml.Node, depth 
 	// The annotation belongs to the property; the shape it references is shared by every property of
 	// that type, so the wire name is read BEFORE following the reference.
 	out := &materialised{wire: xmlName(node)}
+	if ref := field(node, "$ref"); ref != nil {
+		out.name = lastSegment(ref.Value)
+	}
 	resolved := resolve(node, components)
 	if resolved == nil {
 		return out
@@ -119,6 +124,9 @@ func materialiseActive(node *yaml.Node, components map[string]*yaml.Node, depth 
 			out.stringOnly = out.stringOnly || base.stringOnly
 			out.required = append(out.required, base.required...)
 		}
+	}
+	if readOnly := field(resolved, "readOnly"); readOnly != nil {
+		out.readOnly = readOnly.Value == "true"
 	}
 	if t := field(resolved, "type"); t != nil {
 		out.typ = t.Value
@@ -197,3 +205,7 @@ func field(n *yaml.Node, key string) *yaml.Node {
 	}
 	return nil
 }
+
+func (m *materialised) SchemaName() string { return m.name }
+
+func (m *materialised) ReadOnly() bool { return m.readOnly }
