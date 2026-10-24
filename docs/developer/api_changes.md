@@ -18,6 +18,16 @@ positional literals must account for added fields or switch to keyed fields.
 
 ## Additions
 
+- **Selected star metadata:** optional `omnisdk.SelectedMethods` exposes the methods
+  selected during document star resolution. `omnisdk.ServerBindings` exposes their
+  declared server-variable names, independently of ordinary path and query parameters.
+  Hosts can reproduce legacy star columns without treating every required input as output.
+  These interfaces supply metadata only; they introduce no scope values or defaults.
+
+- **XML property names:** native XML rows honor declared `xml.name` annotations,
+  including annotations inherited through `allOf`. SQL receives the declared property
+  name while unannotated and undeclared fields retain their existing behavior.
+
 - **XML program scalar parity:** mxj programs receive numeric and boolean XML values
   using legacy conversion rules. Integral identifiers outside the exact floating-point
   range remain strings, preserving existing SDK precision guarantees.

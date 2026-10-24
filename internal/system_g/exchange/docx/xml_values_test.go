@@ -1,6 +1,7 @@
 package docx
 
 import (
+	"github.com/stackql-labs/omnisdk/pkg/docparse/aot"
 	"reflect"
 	"testing"
 )
@@ -32,5 +33,38 @@ func TestXMLValuesNormalizeOnlyDeclaredScalarText(t *testing.T) {
 	}
 	if got := xmlSchemaValue(map[string]any{"-xmlns": "urn:empty"}, label); got != nil {
 		t.Fatalf("empty scalar=%#v", got)
+	}
+}
+
+// The logical SQL name may differ from the XML element, including allOf annotations.
+type renamedXMLSchema struct {
+	aot.Schema
+	wire string
+}
+
+func (s renamedXMLSchema) Type() string     { return "string" }
+func (s renamedXMLSchema) Format() string   { return "" }
+func (s renamedXMLSchema) WireName() string { return s.wire }
+
+type renamedXMLRow struct{ aot.Schema }
+
+func (s renamedXMLRow) Type() string         { return "object" }
+func (s renamedXMLRow) Properties() []string { return []string{"AvailabilityZone"} }
+func (s renamedXMLRow) Property(name string) (aot.Schema, bool) {
+	if name == "AvailabilityZone" {
+		return renamedXMLSchema{Schema: s.Schema, wire: "availabilityZone"}, true
+	}
+	return nil, false
+}
+func TestXMLValuesUseDeclaredWireNames(t *testing.T) {
+	scalar, _ := requestShape(t).BodySchema().Property("Label")
+	schema := renamedXMLRow{Schema: scalar}
+	source := map[string]any{"availabilityZone": map[string]any{"#text": "east-a"}, "unknown": "kept"}
+	want := map[string]any{"AvailabilityZone": "east-a", "unknown": "kept"}
+	if got := xmlSchemaValue(source, schema); !reflect.DeepEqual(got, want) {
+		t.Fatalf("got=%#v want=%#v", got, want)
+	}
+	if _, ok := source["availabilityZone"]; !ok {
+		t.Fatal("mutated input")
 	}
 }

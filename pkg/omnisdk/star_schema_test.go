@@ -67,6 +67,15 @@ components:
 		if err != nil {
 			t.Fatal(err)
 		}
+		methods := resolved.(omnisdk.SelectedMethods).SelectedMethods()
+		variables := methods["i"].(omnisdk.ServerBindings).ServerVariables()
+		if !reflect.DeepEqual(variables, []string{"region"}) {
+			t.Fatalf("server variables=%v; path id must not be included", variables)
+		}
+		delete(methods, "i")
+		if len(resolved.(omnisdk.SelectedMethods).SelectedMethods()) != 1 {
+			t.Fatal("selected methods exposed mutable resolution state")
+		}
 		var names []string
 		for _, col := range resolved.Graph().Projections()[0].Columns() {
 			if !strings.HasPrefix(col.Out(), "\x00") {

@@ -39,7 +39,12 @@ func (r *resolver) starColumns(alias string) ([]string, error) {
 		// the executable graph. Preserve deferred resolution in that case.
 		return starColumnsOf(source), nil
 	}
-	columns := docSignature{ex: exchange}.Columns()
+	method := docSignature{ex: exchange}
+	if r.selected == nil {
+		r.selected = map[string]MethodSignature{}
+	}
+	r.selected[alias] = method
+	columns := method.Columns()
 
 	slices.Sort(columns)
 	return columns, nil

@@ -198,3 +198,27 @@ running; retry counts and expected output were not changed.
 Both checkouts contain required changes: the SDK, StackQL's intrinsic adapter, and its GraphQL
 registry URL rewriter. Testing used a temporary Go modfile pointing at the SDK checkout;
 CI must consume the updated SDK and adapter together to measure the new result. API notes remain relative to `v0.1.5-beta06` in [api_changes.md](api_changes.md).
+
+## Declared server variables and XML wire names
+
+The focused unchanged Robot run passed **34/36**
+(`/private/tmp/omni-server-star-xml-robot/output.xml`). Both IAM policy cases,
+`Server Parameter in Select Star`, and the flattened paginated JSON star case pass.
+All 15 XML Walker cases pass. The two failures (transformed XML boolean formatting
+and naive XML star projection) also fail in the previous star-host artifact;
+no previously passing case in this selection was lost.
+
+The host now obtains declared server-variable names from the method selected by
+Omni, replacing the bound-path-parameter heuristic. Required query inputs such as
+IAM `UserName` remain inputs; ordinary path inputs are not added to star output.
+AWS query transposition and GET-to-POST form translation are unchanged. Native XML
+rows map declared wire names to logical schema names, recovering `AvailabilityZone`.
+
+This focused run does not replace either the full-run total or the larger subset
+results above. Provider files and Robot inputs and assertions are unchanged.
+
+Validation for this batch: full `pkg/omnisdk` race suite passed
+(`/private/tmp/omni-server-star-sdk-race.log`); XML exchange, document parser and
+schema-XML race suites passed (`/private/tmp/omni-server-star-xml-tests.log`).
+Repository-wide build and vet passed. Host intrinsic tests and lint passed
+(`/private/tmp/omni-server-star-lint.log`, zero issues).

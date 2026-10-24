@@ -48,6 +48,19 @@ func xmlSchemaValue(value any, schema aot.Schema) any {
 			declaration, _ := schema.Property(key)
 			out[key] = xmlSchemaValue(child, declaration)
 		}
+		// Decode XML element names into the document's logical property names.
+		// Read from the source so renaming cannot consume another property's value.
+		for _, name := range schema.Properties() {
+			property, ok := schema.Property(name)
+			if !ok || property.WireName() == "" || property.WireName() == name {
+				continue
+			}
+			wire := property.WireName()
+			if child, present := values[wire]; present {
+				delete(out, wire)
+				out[name] = xmlSchemaValue(child, property)
+			}
+		}
 		return out
 	case []any:
 		item, ok := schema.Items()

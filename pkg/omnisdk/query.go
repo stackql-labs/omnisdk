@@ -96,7 +96,18 @@ type ServerEnvironmentBindings interface{ ServerEnvironmentBindings() map[string
 // It never includes scope defaults, and Omni never substitutes these values.
 type ServerTransportDefaults interface{ ServerTransportDefaults() map[string]string }
 
+// ServerBindings exposes declared server-variable names independently of path
+// parameters. It supplies metadata only, never values or scope defaults.
+type ServerBindings interface{ ServerVariables() []string }
+
 type docSignature struct{ ex aot.AOTExchange }
+
+func (s docSignature) ServerVariables() []string {
+	if declared, ok := s.ex.Request().(aot.ServerBindings); ok {
+		return declared.ServerVariables()
+	}
+	return nil
+}
 
 func (s docSignature) ServerEnvironmentBindings() map[string]string {
 	if declared, ok := s.ex.Request().(aot.ServerEnvironmentBindings); ok {
@@ -300,9 +311,24 @@ type Resolution interface {
 	Params() map[string]string
 }
 
+// SelectedMethods exposes the operation selected while resolving document stars.
+// Entries are absent when operation selection requires later runtime bindings.
+type SelectedMethods interface {
+	SelectedMethods() map[string]MethodSignature
+}
+
 type resolution struct {
-	graph  Graph
-	params map[string]string
+	selected map[string]MethodSignature
+	graph    Graph
+	params   map[string]string
+}
+
+func (r resolution) SelectedMethods() map[string]MethodSignature {
+	out := make(map[string]MethodSignature, len(r.selected))
+	for alias, method := range r.selected {
+		out[alias] = method
+	}
+	return out
 }
 
 func (r resolution) Graph() Graph              { return r.graph }
@@ -764,6 +790,7 @@ func columnsOf(t Table) []string {
 }
 
 type resolver struct {
+	selected   map[string]MethodSignature
 	empty      bool
 	dialect    sqlfn.Dialect
 	tables     map[string]Table
@@ -1366,7 +1393,7 @@ func (r *resolver) build(sel []query.Output) (Resolution, error) {
 		empty.empty = true
 		g = empty
 	}
-	return resolution{graph: g, params: r.params}, nil
+	return resolution{graph: g, params: r.params, selected: r.selected}, nil
 }
 
 func (r *resolver) scalarOutput(expression query.Expr) (bool, error) {
