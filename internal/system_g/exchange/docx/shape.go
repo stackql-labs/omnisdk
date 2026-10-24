@@ -242,7 +242,10 @@ func nestBodyInputs(body map[string]any, schema aot.Schema, algorithm string, na
 	return nil
 }
 
-type rowNames struct{ naming namespace.Naming }
+type rowNames struct {
+	naming namespace.Naming
+	scope  map[string]any
+}
 
 func (n rowNames) Apply(in facade.Page) (facade.Record, error) {
 	doc, ok := in.Doc(facade.AnonymousPayload)
@@ -266,6 +269,14 @@ func (n rowNames) Apply(in facade.Page) (facade.Record, error) {
 	for key, v := range m {
 		if _, exists := out[key]; !exists {
 			out[key] = v
+		}
+	}
+	// Request scope is not provider data. Add it after naming provider fields,
+	// retaining native response names when a generated alias overlaps scope.
+	for name, value := range n.scope {
+		if _, providerField := m[name]; !providerField {
+			out[name] = value
+			out[n.naming.Surface(name)] = value
 		}
 	}
 	return bind.NewDocRecord(out), nil
@@ -293,8 +304,8 @@ func (s rowScope) Apply(in facade.Page) (facade.Record, error) {
 }
 
 func namedRows(op facade.Operator, req aot.Request, bindings ...map[string]any) facade.Operator {
+	scope := map[string]any{}
 	if len(bindings) > 0 {
-		scope := map[string]any{}
 		for _, p := range req.Parameters() {
 			if p.In() == aot.InPath || p.In() == aot.InQuery || p.In() == aot.InBody {
 				if v, ok := bindings[0][p.Name()]; ok {
@@ -302,13 +313,12 @@ func namedRows(op facade.Operator, req aot.Request, bindings ...map[string]any) 
 				}
 			}
 		}
-		if len(scope) > 0 {
-			op = exchange.NewTransformExchange(0, op, rowScope{scope}, 1)
-		}
 	}
-	shape, ok := req.(aot.RequestShape)
-	if !ok || !shape.SnakeCaseAliases() {
-		return op
+	if shape, ok := req.(aot.RequestShape); ok && shape.SnakeCaseAliases() {
+		return exchange.NewTransformExchange(0, op, rowNames{naming: namespace.NewNaming(shape.NativeCasing(), true), scope: scope}, 1)
 	}
-	return exchange.NewTransformExchange(0, op, rowNames{namespace.NewNaming(shape.NativeCasing(), true)}, 1)
+	if len(scope) > 0 {
+		return exchange.NewTransformExchange(0, op, rowScope{scope}, 1)
+	}
+	return op
 }

@@ -2026,6 +2026,13 @@ func (r *rows) Next() bool { return r.recs.Next(r.read) }
 
 func (r *rows) Row() Row {
 	m, _ := bind.DocMap(r.recs.Record())
+	// Public rows carry ordinary values, including literal projections. Keep
+	// dialect wrappers internal so host staging preserves numeric values.
+	settled := make(Row, len(m))
+	for key, value := range m {
+		settled[key] = sqlfn.Settle(value)
+	}
+	m = settled
 	if len(r.echo) == 0 {
 		return m
 	}
@@ -2100,4 +2107,24 @@ func UnionAll(plans ...Plan) (Plan, error) {
 		legs = append(legs, c.plan)
 	}
 	return &mergedPlan{plans: legs, args: args}, nil
+}
+
+// DocResourceNames distinguishes declared resource names from address keys.
+func DocResourceNames(dir, provider, service string, opts ...stackqldoc.Option) (map[string]string, error) {
+	c, err := openDocs(dir, provider, opts...)
+	if err != nil {
+		return nil, err
+	}
+	if named, ok := c.(aot.ResourceNames); ok {
+		return named.ResourceNames(service)
+	}
+	keys, err := c.Resources(service)
+	if err != nil {
+		return nil, err
+	}
+	names := make(map[string]string, len(keys))
+	for _, key := range keys {
+		names[key] = key
+	}
+	return names, nil
 }

@@ -502,3 +502,14 @@ type OrderSyntax interface {
 	Syntax() string
 	FixedColumn() string
 }
+
+// ResourceNames supplies resource display names keyed by their document routing keys.
+type ResourceNames interface {
+	ResourceNames(service string) (map[string]string, error)
+}
+
+// NamedSchema preserves the document identity of a referenced schema.
+type NamedSchema interface{ SchemaName() string }
+
+// ReadOnlySchema identifies response-only properties in a shared schema.
+type ReadOnlySchema interface{ ReadOnly() bool }

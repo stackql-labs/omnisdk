@@ -124,6 +124,7 @@ type serverVariable struct {
 }
 
 type resource struct {
+	Name     string            `yaml:"name"`
 	ID       string            `yaml:"id"`
 	Title    string            `yaml:"title"`
 	Methods  map[string]method `yaml:"methods"`
@@ -159,6 +160,7 @@ type method struct {
 	Parameters  map[string]pathParam `yaml:"parameters"`
 	ServiceName string               `yaml:"serviceName"`
 	Operation   ref                  `yaml:"operation"`
+	Path        ref                  `yaml:"path"`
 	Config      struct {
 		RequestBodyTranslate algorithmSpec  `yaml:"requestBodyTranslate"`
 		Retry                *retrySpec     `yaml:"retry"`
@@ -168,6 +170,7 @@ type method struct {
 		Pagination           paginationSpec `yaml:"pagination"`
 	} `yaml:"config"`
 	Request struct {
+		Required          []string      `yaml:"required"`
 		Transform         transformSpec `yaml:"transform"`
 		XMLDeclaration    string        `yaml:"xmlDeclaration"`
 		XMLRootAnnotation string        `yaml:"xmlRootAnnotation"`
@@ -301,6 +304,17 @@ func (d *document) Verb(name, verb string) ([]aot.AOTExchange, error) {
 		return nil, fmt.Errorf("stackqldoc: no resource %q", name)
 	}
 	sel, explicit := res.SQLVerbs[verb]
+	if verb == "exec" {
+		names := make([]string, 0, len(res.Methods))
+		for method := range res.Methods {
+			names = append(names, method)
+		}
+		slices.Sort(names)
+		for _, method := range names {
+			sel = append(sel, ref{Ref: "#/methods/" + method})
+		}
+		explicit = true
+	}
 	if !explicit {
 		for _, key := range defaultMethodKeys(verb) {
 			if _, exists := res.Methods[key]; exists {
@@ -353,6 +367,11 @@ func (d *document) resolve(name, mName string, withBeta bool) (aot.AOTExchange, 
 		ex := d.build(mName, "POST", "", op, m).(*aotExchange)
 		ex.inline = slices.Clone(m.Inline)
 		return ex, nil
+	}
+	// Older documents state the path and verb separately.
+	if m.Path.Ref != "" && !strings.Contains(m.Operation.Ref, "#") {
+		escaped := strings.ReplaceAll(strings.ReplaceAll(m.Path.Ref, "~", "~0"), "/", "~1")
+		m.Operation.Ref = "#/paths/" + escaped + "/" + strings.ToLower(m.Operation.Ref)
 	}
 	target, resolved, err := d.operationDocument(name, mName, m)
 	if err != nil {
@@ -662,11 +681,11 @@ func (d *document) build(name, verb, path string, op pathOp, m method) aot.AOTEx
 	if m.Config.RequestTranslate.Algorithm == "drop_double_underscore_params" {
 		params = nil
 	}
-	schema := d.responseSchemaAt(op, m.Response.OpenAPIDocKey, "", &m.Response.SchemaOverride)
+	schema := d.responseSchemaAt(op, m.Response.OpenAPIDocKey, "", m.Response.MediaType, &m.Response.SchemaOverride)
 	var graph aot.GraphQL
 	var rowSchema aot.Schema
 	if m.Response.ObjectKey != "" {
-		rowSchema = d.responseSchemaAt(op, m.Response.OpenAPIDocKey, m.Response.ObjectKey, &m.Response.SchemaOverride)
+		rowSchema = d.responseSchemaAt(op, m.Response.OpenAPIDocKey, m.Response.ObjectKey, m.Response.MediaType, &m.Response.SchemaOverride)
 	}
 	if op.GraphQL != nil {
 		graph = graphQL{op.GraphQL}
@@ -674,7 +693,7 @@ func (d *document) build(name, verb, path string, op pathOp, m method) aot.AOTEx
 		if selection == "" {
 			selection = m.Response.ObjectKey
 		}
-		rowSchema = d.responseSchemaAt(op, m.Response.OpenAPIDocKey, selection, &m.Response.SchemaOverride)
+		rowSchema = d.responseSchemaAt(op, m.Response.OpenAPIDocKey, selection, m.Response.MediaType, &m.Response.SchemaOverride)
 	}
 	parameters := d.operationParams(op)
 	// A mock or private-endpoint override can replace the host while retaining
@@ -710,6 +729,16 @@ func (d *document) build(name, verb, path string, op pathOp, m method) aot.AOTEx
 			components[name] = &v
 		}
 		bodySchema = newSchema(&node, components)
+		if declared, ok := bodySchema.(*materialised); ok && len(m.Request.Required) > 0 {
+			copy := *declared
+			copy.required = slices.Clone(declared.required)
+			for _, name := range m.Request.Required {
+				if !slices.Contains(copy.required, name) {
+					copy.required = append(copy.required, name)
+				}
+			}
+			bodySchema = &copy
+		}
 		bodyRootName = schemaXMLName(&node, components, 0)
 		if bodyRootName == "" {
 			if title := schemaField(&node, components, "title", 0); title != nil {
@@ -721,9 +750,9 @@ func (d *document) build(name, verb, path string, op pathOp, m method) aot.AOTEx
 	if bodySchema != nil {
 		base := map[string]any{}
 		_ = json.Unmarshal([]byte(m.Request.Base), &base)
-		var required []string
+		required := slices.Clone(m.Request.Required)
 		if shape, ok := bodySchema.(aot.RequiredSchema); ok && op.RequestBody.Required {
-			required = shape.RequiredProperties()
+			required = append(required, shape.RequiredProperties()...)
 		}
 		for _, name := range bodySchema.Properties() {
 			if !slices.ContainsFunc(parameters, func(p aot.Parameter) bool { return p.Name() == name && p.In() == aot.InBody }) {
@@ -848,9 +877,9 @@ func bodyMediaType(op pathOp) string {
 // other instructions, so this is what makes one runnable — and its absence is why a document naming
 // such a transform silently yields nothing.
 func (d *document) responseSchema(op pathOp, key string) aot.Schema {
-	return d.responseSchemaAt(op, key, "")
+	return d.responseSchemaAt(op, key, "", "")
 }
-func (d *document) responseSchemaAt(op pathOp, key, selection string, overrides ...*yaml.Node) aot.Schema {
+func (d *document) responseSchemaAt(op pathOp, key, selection, mediaType string, overrides ...*yaml.Node) aot.Schema {
 	components := map[string]*yaml.Node{}
 	for name := range d.Components.Schemas {
 		node := d.Components.Schemas[name]
@@ -878,10 +907,14 @@ func (d *document) responseSchemaAt(op pathOp, key, selection string, overrides 
 		if !ok {
 			continue
 		}
-		// Media type is not matched here: a document states one success shape, and the response's
-		// declared media type already says how the body arrives.
-		for _, content := range resp.Content {
-			node := content.Schema
+		// An operation can expose different row shapes for different media types.
+		// Respect the method declaration; any fallback must also be deterministic.
+		mediaTypes := slices.Sorted(maps.Keys(resp.Content))
+		if _, present := resp.Content[mediaType]; present {
+			mediaTypes = append([]string{mediaType}, mediaTypes...)
+		}
+		for _, selected := range mediaTypes {
+			node := resp.Content[selected].Schema
 			if node.Kind == 0 {
 				continue
 			}
@@ -1323,3 +1356,17 @@ func (o pushdownOption) FixedColumn() string {
 }
 
 func (r request) RequestTransform() aot.Transform { return r.requestTransform }
+
+// ResourceNames preserves declared presentation names separately from routing keys.
+func (d *document) ResourceNames() map[string]string {
+	names := make(map[string]string, len(d.Components.Resources))
+	for key, resource := range d.Components.Resources {
+		names[key] = resource.Name
+		if names[key] == "" {
+			names[key] = key
+		}
+	}
+	return names
+}
+
+func (p parameter) Type() string { return p.p.Schema.Type }

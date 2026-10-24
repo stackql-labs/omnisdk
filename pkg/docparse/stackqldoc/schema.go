@@ -16,6 +16,8 @@ import (
 // schema would carry the document it came from — exactly what resolving an exchange exists to avoid.
 // Only what the response actually reaches is kept.
 type materialised struct {
+	readOnly   bool
+	name       string
 	stringOnly bool
 	props      map[string]*materialised
 	names      []string
@@ -78,6 +80,9 @@ func materialiseActive(node *yaml.Node, components map[string]*yaml.Node, depth 
 	// The annotation belongs to the property; the shape it references is shared by every property of
 	// that type, so the wire name is read BEFORE following the reference.
 	out := &materialised{wire: xmlName(node)}
+	if ref := field(node, "$ref"); ref != nil {
+		out.name = lastSegment(ref.Value)
+	}
 	resolved := resolve(node, components)
 	if resolved == nil {
 		return out
@@ -90,35 +95,48 @@ func materialiseActive(node *yaml.Node, components map[string]*yaml.Node, depth 
 	if annotation := field(resolved, "x-stackQL-stringOnly"); annotation != nil {
 		out.stringOnly = annotation.Value == "true"
 	}
-	// allOf adds constraints at the same object depth. Copy each branch's
+	// Compositions declare fields at the same object depth. Copy each branch's
 	// declared fields, with local properties taking precedence over inherited ones.
-	if branches := field(resolved, "allOf"); branches != nil {
-		for _, branch := range branches.Content {
-			base := materialiseActive(branch, components, depth, active)
-			if base == nil {
-				continue
+	for _, composition := range []string{"allOf", "anyOf", "oneOf"} {
+		if branches := field(resolved, composition); branches != nil {
+			types := map[string]bool{}
+			for _, branch := range branches.Content {
+				base := materialiseActive(branch, components, depth, active)
+				if base == nil {
+					continue
+				}
+				if out.props == nil {
+					out.props = map[string]*materialised{}
+				}
+				for name, property := range base.props {
+					out.props[name] = property
+				}
+				if base.typ != "" {
+					types[base.typ] = true
+					out.typ = base.typ
+				}
+				if base.fmt != "" {
+					out.fmt = base.fmt
+				}
+				if base.items != nil {
+					out.items = base.items
+				}
+				if out.wire == "" {
+					out.wire = base.wire
+				}
+				out.stringOnly = out.stringOnly || base.stringOnly
+				if composition == "allOf" {
+					out.required = append(out.required, base.required...)
+				}
 			}
-			if out.props == nil {
-				out.props = map[string]*materialised{}
+			// Alternatives are a union of accepted types, not the last branch's type.
+			if composition != "allOf" && len(types) > 1 {
+				out.typ, out.fmt, out.items = "", "", nil
 			}
-			for name, property := range base.props {
-				out.props[name] = property
-			}
-			if base.typ != "" {
-				out.typ = base.typ
-			}
-			if base.fmt != "" {
-				out.fmt = base.fmt
-			}
-			if base.items != nil {
-				out.items = base.items
-			}
-			if out.wire == "" {
-				out.wire = base.wire
-			}
-			out.stringOnly = out.stringOnly || base.stringOnly
-			out.required = append(out.required, base.required...)
 		}
+	}
+	if readOnly := field(resolved, "readOnly"); readOnly != nil {
+		out.readOnly = readOnly.Value == "true"
 	}
 	if t := field(resolved, "type"); t != nil {
 		out.typ = t.Value
@@ -197,3 +215,7 @@ func field(n *yaml.Node, key string) *yaml.Node {
 	}
 	return nil
 }
+
+func (m *materialised) SchemaName() string { return m.name }
+
+func (m *materialised) ReadOnly() bool { return m.readOnly }

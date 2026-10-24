@@ -1,6 +1,7 @@
 package docx
 
 import (
+	"encoding/json"
 	"github.com/stackql-labs/omnisdk/pkg/docparse/aot"
 	"reflect"
 	"testing"
@@ -16,7 +17,7 @@ func TestXMLValuesNormalizeOnlyDeclaredScalarText(t *testing.T) {
 	}
 	want := map[string]any{
 		"Label":     "ap-southeast-1",
-		"Options":   map[string]any{"Retries": "3", "-xmlns": "urn:options"},
+		"Options":   map[string]any{"Retries": json.Number("3"), "-xmlns": "urn:options"},
 		"Protocols": []any{"sftp", "ftp"},
 		"Unknown":   map[string]any{"#text": "keep", "-xmlns": "urn:business"},
 	}
