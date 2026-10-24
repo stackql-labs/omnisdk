@@ -222,3 +222,30 @@ Validation for this batch: full `pkg/omnisdk` race suite passed
 schema-XML race suites passed (`/private/tmp/omni-server-star-xml-tests.log`).
 Repository-wide build and vet passed. Host intrinsic tests and lint passed
 (`/private/tmp/omni-server-star-lint.log`, zero issues).
+
+## Inline operations, transactions and explicit credential errors
+
+The next unchanged 471-case run passed **447/471**, with four recovered cases and
+no lost passes against the preceding 443/471 artifact
+(`/private/tmp/omni-batch15-robot/output.xml`). This binary includes inline command
+execution but predates the transaction and credential-error follow-up.
+
+The follow-up unchanged transaction/local/auth selection passed **33/34**
+(`/private/tmp/omni-batch15c-robot/output.xml`). It recovers six additional cases:
+all three previously failing transaction cases, both remaining OpenSSL cases,
+and authentication recovery after an explicitly invalid credential file. No previously
+passing selected case was lost. The sole selected failure is OAuth token-error wording.
+Do not add these results into a claimed completed 471-case run: the final combined
+binary has not had that entire selection rerun.
+
+Local argv templates execute without a shell; response text uses its declared DSL.
+The host registers only explicitly declared delete reversals, captures accepted response
+identities and passes only inputs accepted by that inverse method. Missing identity
+never creates a reversal. Mutation diagnostics preserve unknown-outcome error identity.
+Explicit credential-file failures no longer fall back to environmental authentication.
+Robot inputs, assertions and provider files are unchanged; database access stays in the host.
+
+Validation: targeted public SDK race tests (`/private/tmp/omni-batch15-public-race.log`),
+XML/local exchange and parser race tests (`/private/tmp/omni-batch15-sdk-tests.log`),
+host race tests (`/private/tmp/omni-batch15-host-race.log`), repository build/vet
+(`/private/tmp/omni-batch15-vet.log`) and host lint (`/private/tmp/omni-batch15-lint.log`).

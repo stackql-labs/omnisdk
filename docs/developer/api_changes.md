@@ -18,6 +18,16 @@ positional literals must account for added fields or switch to keyed fields.
 
 ## Additions
 
+- **Local inline operations:** document `inline` argv templates run as local exchanges
+  without a shell and honor cancellation and request deadlines. Required inline inputs
+  appear in method discovery. `golang_template_v0.1.0` text responses and
+  `getRegexpFirstMatch` are supported.
+- **Declared reversals:** `DocInverse` exposes explicit inverse metadata and token
+  bindings; `NewInverseMutationNode` pins the declared method. The host attaches these
+  exchanges to transaction inverse graphs using accepted response identities. No inverse
+  is inferred from a resource name; ambiguous declarations are rejected.
+
+
 - **Selected star metadata:** optional `omnisdk.SelectedMethods` exposes the methods
   selected during document star resolution. `omnisdk.ServerBindings` exposes their
   declared server-variable names, independently of ordinary path and query parameters.

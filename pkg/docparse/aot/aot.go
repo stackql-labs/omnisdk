@@ -13,6 +13,16 @@ package aot
 
 import "time"
 
+// InverseDeclaration retains a declared inverse reference and token metadata.
+// Each token contains key, location and algorithm, in that order.
+type InverseDeclaration interface {
+	InverseDeclaration() (string, map[string][3]string)
+}
+
+// InlineCommand declares an argv template executed locally, without a shell.
+// Empty means the exchange uses its ordinary transport.
+type InlineCommand interface{ InlineCommand() []string }
+
 // NativePagination identifies pagination inferred from native API annotations,
 // rather than an explicit StackQL pagination contract.
 type NativePagination interface{ Native() bool }

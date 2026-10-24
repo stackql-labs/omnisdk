@@ -142,8 +142,18 @@ type algorithmSpec struct {
 }
 
 type method struct {
-	ServiceName string `yaml:"serviceName"`
-	Operation   ref    `yaml:"operation"`
+	Inverse struct {
+		Method ref `yaml:"sqlVerb"`
+		Tokens map[string]struct {
+			Key       string `yaml:"key"`
+			Location  string `yaml:"location"`
+			Algorithm string `yaml:"algorithm"`
+		} `yaml:"tokens"`
+	} `yaml:"inverse"`
+	Inline      []string             `yaml:"inline"`
+	Parameters  map[string]pathParam `yaml:"parameters"`
+	ServiceName string               `yaml:"serviceName"`
+	Operation   ref                  `yaml:"operation"`
 	Config      struct {
 		RequestBodyTranslate algorithmSpec  `yaml:"requestBodyTranslate"`
 		Retry                *retrySpec     `yaml:"retry"`
@@ -327,6 +337,17 @@ func (d *document) resolve(name, mName string, withBeta bool) (aot.AOTExchange, 
 	m, ok := res.Methods[mName]
 	if !ok {
 		return nil, fmt.Errorf("stackqldoc: resource %q references unknown method %q", name, mName)
+	}
+	if len(m.Inline) > 0 {
+		op := pathOp{Servers: []server{{URL: "local://command"}}}
+		for name, param := range m.Parameters {
+			param.Name = name
+			op.Parameters = append(op.Parameters, param)
+		}
+		slices.SortFunc(op.Parameters, func(a, b pathParam) int { return strings.Compare(a.Name, b.Name) })
+		ex := d.build(mName, "POST", "", op, m).(*aotExchange)
+		ex.inline = slices.Clone(m.Inline)
+		return ex, nil
 	}
 	target, resolved, err := d.operationDocument(name, mName, m)
 	if err != nil {
@@ -699,7 +720,12 @@ func (d *document) build(name, verb, path string, op pathOp, m method) aot.AOTEx
 		}
 	}
 
+	inverseTokens := map[string][3]string{}
+	for name, t := range m.Inverse.Tokens {
+		inverseTokens[name] = [3]string{t.Key, t.Location, t.Algorithm}
+	}
 	return &aotExchange{
+		inverseRef: m.Inverse.Method.Ref, inverseTokens: inverseTokens,
 		graphQL: graph,
 		name:    name,
 		sec:     d.security(),
@@ -993,17 +1019,25 @@ func lastSegment(ref string) string {
 // ---- AOT exchange -----------------------------------------------------------
 
 type aotExchange struct {
-	retry    aot.HTTPRetry
-	graphQL  aot.GraphQL
-	name     string
-	sec      security
-	inputs   []string
-	opID     string
-	req      request
-	resp     response
-	beta     aot.Beta
-	pushdown *pushdownSpec
+	inverseRef    string
+	inverseTokens map[string][3]string
+	inline        []string
+	retry         aot.HTTPRetry
+	graphQL       aot.GraphQL
+	name          string
+	sec           security
+	inputs        []string
+	opID          string
+	req           request
+	resp          response
+	beta          aot.Beta
+	pushdown      *pushdownSpec
 }
+
+func (e *aotExchange) InverseDeclaration() (string, map[string][3]string) {
+	return e.inverseRef, maps.Clone(e.inverseTokens)
+}
+func (e *aotExchange) InlineCommand() []string { return slices.Clone(e.inline) }
 
 func (e *aotExchange) Retry() (aot.HTTPRetry, bool) { return e.retry, e.retry != nil }
 

@@ -96,6 +96,16 @@ type ServerEnvironmentBindings interface{ ServerEnvironmentBindings() map[string
 // It never includes scope defaults, and Omni never substitutes these values.
 type ServerTransportDefaults interface{ ServerTransportDefaults() map[string]string }
 
+// InlineCommand exposes the declared local argv template for host presentation.
+type InlineCommand interface{ InlineCommand() []string }
+
+func (s docSignature) InlineCommand() []string {
+	if local, ok := s.ex.(aot.InlineCommand); ok {
+		return local.InlineCommand()
+	}
+	return nil
+}
+
 // ServerBindings exposes declared server-variable names independently of path
 // parameters. It supplies metadata only, never values or scope defaults.
 type ServerBindings interface{ ServerVariables() []string }

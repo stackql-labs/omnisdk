@@ -26,6 +26,7 @@ import (
 
 // Declared type identifiers, exactly as documents spell them.
 const (
+	TypePlain = "golang_template_v0.1.0"
 	TypeText1 = "golang_template_text_v0.1.0"
 	TypeText  = "golang_template_text_v0.3.0"
 	TypeMXJ   = "golang_template_mxj_v0.2.0"
@@ -56,7 +57,7 @@ func JSON3() dsl.Evaluator { return evaluator{typ: TypeJSON3, bind: bindJSON} }
 
 // Evaluators is every language this package implements, for building a registry.
 func Evaluators() []dsl.Evaluator {
-	return []dsl.Evaluator{Text1(), Text(), MXJ1(), MXJ(), MXJ3(), JSON1(), JSON3()}
+	return []dsl.Evaluator{evaluator{typ: TypePlain, bind: bindString}, Text1(), Text(), MXJ1(), MXJ(), MXJ3(), JSON1(), JSON3()}
 }
 
 type evaluator struct {

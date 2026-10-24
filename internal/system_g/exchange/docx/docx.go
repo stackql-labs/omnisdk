@@ -448,6 +448,9 @@ func Spec(ex aot.AOTExchange, inputs map[string]any, reg dsl.Registry, opts ...O
 
 // compile is Spec for one call, beta aside.
 func compile(ex aot.AOTExchange, inputs map[string]any, reg dsl.Registry, o options) (plan.ExchangeSpec, error) {
+	if local, ok := ex.(aot.InlineCommand); ok && len(local.InlineCommand()) > 0 {
+		return localSpec(ex, local.InlineCommand(), inputs, reg, o)
+	}
 	req, resp := ex.Request(), ex.Response()
 	var retrySettings aot.HTTPRetry
 	if declared, ok := ex.(aot.RetryExchange); ok && !o.ignoreDocumentRetry {
