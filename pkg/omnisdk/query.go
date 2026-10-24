@@ -75,12 +75,13 @@ func describeTable(dir, address, verb string) (Table, error) {
 	for _, ex := range ops {
 		methods = append(methods, docSignature{ex: ex})
 	}
-	return table{address: address, methods: methods}, nil
+	return table{address: address, methods: methods, catalog: c}, nil
 }
 
 type table struct {
 	address string
 	methods []MethodSignature
+	catalog aot.Catalog
 }
 
 func (t table) Address() string            { return t.address }
@@ -713,7 +714,10 @@ func (r *resolver) expand(sel []query.Output) ([]query.Output, error) {
 			aliases = []string{st.Qualifier()}
 		}
 		for _, alias := range aliases {
-			cols := starColumnsOf(r.tables[alias])
+			cols, err := r.starColumns(alias)
+			if err != nil {
+				return nil, err
+			}
 			if len(cols) == 0 {
 				return nil, fmt.Errorf("omnisdk: %s.*: the document declares no columns for %s", alias, r.tables[alias].Address())
 			}

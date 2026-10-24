@@ -113,3 +113,28 @@ properties:
 		t.Fatalf("member schema=%#v", value)
 	}
 }
+
+func TestAllOfRetainsXMLWireNameAndLocalOverride(t *testing.T) {
+	for _, local := range []bool{false, true} {
+		source := `allOf:
+  - type: string
+  - xml: {name: availabilityZone}
+`
+		want := "availabilityZone"
+		if local {
+			source += "xml: {name: localZone}\n"
+			want = "localZone"
+		}
+		var root yaml.Node
+		if err := yaml.Unmarshal([]byte(source), &root); err != nil {
+			t.Fatal(err)
+		}
+		schema := newSchema(root.Content[0], nil)
+		if schema.WireName() != want {
+			t.Fatalf("local=%v: wire name=%q want=%q", local, schema.WireName(), want)
+		}
+		if schema.(*materialised).Type() != "string" {
+			t.Fatal("allOf scalar type lost")
+		}
+	}
+}

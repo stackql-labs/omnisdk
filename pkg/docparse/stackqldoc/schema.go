@@ -113,6 +113,9 @@ func materialiseActive(node *yaml.Node, components map[string]*yaml.Node, depth 
 			if base.items != nil {
 				out.items = base.items
 			}
+			if out.wire == "" {
+				out.wire = base.wire
+			}
 			out.stringOnly = out.stringOnly || base.stringOnly
 			out.required = append(out.required, base.required...)
 		}
