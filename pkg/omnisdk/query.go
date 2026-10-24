@@ -2,16 +2,16 @@ package omnisdk
 
 import (
 	"fmt"
-	"github.com/stackql-labs/omnisdk/internal/system_g/exchange/docx"
-	"github.com/stackql-labs/omnisdk/pkg/sqlfn"
 	"slices"
 	"strings"
 
+	"github.com/stackql-labs/omnisdk/internal/system_g/exchange/docx"
 	"github.com/stackql-labs/omnisdk/internal/system_g/fn"
 	"github.com/stackql-labs/omnisdk/pkg/docparse/aot"
 	"github.com/stackql-labs/omnisdk/pkg/docparse/stackqldoc"
 	"github.com/stackql-labs/omnisdk/pkg/namespace"
 	"github.com/stackql-labs/omnisdk/pkg/query"
+	"github.com/stackql-labs/omnisdk/pkg/sqlfn"
 )
 
 // Table describes a read source's address and select signatures. A provider
@@ -78,18 +78,63 @@ func describeTable(dir, address, verb string, opts ...stackqldoc.Option) (Table,
 	for _, ex := range ops {
 		methods = append(methods, docSignature{ex: ex})
 	}
-	return table{address: address, methods: methods}, nil
+	return table{address: address, methods: methods, catalog: c}, nil
 }
 
 type table struct {
 	address string
 	methods []MethodSignature
+	catalog aot.Catalog
 }
 
 func (t table) Address() string            { return t.address }
 func (t table) Methods() []MethodSignature { return t.methods }
 
+// ServerEnvironmentBindings is optional document metadata for a host analyzer.
+// Hosts resolve only the explicitly named environment variables and supply values
+// as query inputs; Omni never reads scope values from the environment.
+type ServerEnvironmentBindings interface{ ServerEnvironmentBindings() map[string]string }
+
+// ServerTransportDefaults exposes declared HTTP(S) URL-scheme defaults to hosts.
+// It never includes scope defaults, and Omni never substitutes these values.
+type ServerTransportDefaults interface{ ServerTransportDefaults() map[string]string }
+
+// InlineCommand exposes the declared local argv template for host presentation.
+type InlineCommand interface{ InlineCommand() []string }
+
+func (s docSignature) InlineCommand() []string {
+	if local, ok := s.ex.(aot.InlineCommand); ok {
+		return local.InlineCommand()
+	}
+	return nil
+}
+
+// ServerBindings exposes declared server-variable names independently of path
+// parameters. It supplies metadata only, never values or scope defaults.
+type ServerBindings interface{ ServerVariables() []string }
+
 type docSignature struct{ ex aot.AOTExchange }
+
+func (s docSignature) ServerVariables() []string {
+	if declared, ok := s.ex.Request().(aot.ServerBindings); ok {
+		return declared.ServerVariables()
+	}
+	return nil
+}
+
+func (s docSignature) ServerEnvironmentBindings() map[string]string {
+	if declared, ok := s.ex.Request().(aot.ServerEnvironmentBindings); ok {
+		return declared.ServerEnvironmentBindings()
+	}
+	return nil
+}
+
+func (s docSignature) ServerTransportDefaults() map[string]string {
+	if declared, ok := s.ex.Request().(aot.ServerTransportDefaults); ok {
+		return declared.ServerTransportDefaults()
+	}
+	return nil
+}
 
 func (s docSignature) Method() string  { return s.ex.Name() }
 func (s docSignature) TakesBody() bool { return s.ex.Request().BodyMediaType() != "" }
@@ -279,9 +324,24 @@ type Resolution interface {
 	Params() map[string]string
 }
 
+// SelectedMethods exposes the operation selected while resolving document stars.
+// Entries are absent when operation selection requires later runtime bindings.
+type SelectedMethods interface {
+	SelectedMethods() map[string]MethodSignature
+}
+
 type resolution struct {
-	graph  Graph
-	params map[string]string
+	selected map[string]MethodSignature
+	graph    Graph
+	params   map[string]string
+}
+
+func (r resolution) SelectedMethods() map[string]MethodSignature {
+	out := make(map[string]MethodSignature, len(r.selected))
+	for alias, method := range r.selected {
+		out[alias] = method
+	}
+	return out
 }
 
 func (r resolution) Graph() Graph              { return r.graph }
@@ -301,7 +361,7 @@ func Resolve(q query.Unresolved, tables map[string]Table) (Resolution, error) {
 func ResolveIn(q query.Unresolved, tables map[string]Table, d sqlfn.Dialect) (Resolution, error) {
 	r := resolver{dialect: d, tables: map[string]Table{}, params: map[string]string{}, nodeParams: map[string]map[string]string{},
 		fanout: map[string]map[string][]string{}, wide: map[string][]string{}, arrivals: map[string][]arrival{}, retain: map[string][]string{},
-		computed: map[string][]SelectColumn{}, body: map[string]any{},
+		computed: map[string][]SelectColumn{}, body: map[string]any{}, readBodies: map[string]map[string]any{},
 		outer: map[string][]query.Predicate{}, on: map[string][]query.Predicate{}, funcs: map[string]query.Call{}}
 	var conjuncts, listed []query.Predicate
 	for _, j := range q.From() {
@@ -686,11 +746,17 @@ func (r *resolver) expand(sel []query.Output) ([]query.Output, error) {
 			continue
 		}
 		aliases := r.order
+		if r.mutating != "" {
+			aliases = []string{r.mutating}
+		}
 		if st.Qualifier() != "" {
 			aliases = []string{st.Qualifier()}
 		}
 		for _, alias := range aliases {
-			cols := starColumnsOf(r.tables[alias])
+			cols, err := r.starColumns(alias)
+			if err != nil {
+				return nil, err
+			}
 			if len(cols) == 0 {
 				return nil, fmt.Errorf("omnisdk: %s.*: the document declares no columns for %s", alias, r.tables[alias].Address())
 			}
@@ -737,11 +803,13 @@ func columnsOf(t Table) []string {
 }
 
 type resolver struct {
+	selected   map[string]MethodSignature
 	empty      bool
 	dialect    sqlfn.Dialect
 	tables     map[string]Table
 	order      []string
 	params     map[string]string
+	readBodies map[string]map[string]any
 	nodeParams map[string]map[string]string
 	fanout     map[string]map[string][]string
 	wide       map[string][]string
@@ -776,6 +844,7 @@ type arrival struct{ from, src, as string }
 func (r *resolver) bindConstant(p query.Predicate) (bool, error) {
 	var col query.Column
 	var values []string
+	var literalValue any
 	switch p := p.(type) {
 	case query.Compare:
 		left, err := r.constant(p.Left())
@@ -792,6 +861,7 @@ func (r *resolver) bindConstant(p query.Predicate) (bool, error) {
 			return false, nil
 		}
 		col, values = c, []string{fmt.Sprint(lit.Value())}
+		literalValue = lit.Value()
 	case query.In:
 		c, ok := p.Expr().(query.Column)
 		set, isSet := p.Set().(query.Collection)
@@ -839,11 +909,17 @@ func (r *resolver) bindConstant(p query.Predicate) (bool, error) {
 		}
 		alias = owners[0]
 	}
+	explicitBody := strings.HasPrefix(col.Name(), "data__") && r.mutating == "" && literalValue != nil
 	col = query.NewColumn(alias, canonicalName(r.tables[alias], col.Name()))
 	if !accepts(r.tables[alias], col.Name()) {
 		return false, nil
 	}
-	if len(values) == 1 {
+	if explicitBody {
+		if r.readBodies[alias] == nil {
+			r.readBodies[alias] = map[string]any{}
+		}
+		r.readBodies[alias][col.Name()] = literalValue
+	} else if len(values) == 1 {
 		if r.nodeParams[alias] == nil {
 			r.nodeParams[alias] = map[string]string{}
 		}
@@ -1075,8 +1151,11 @@ func (r *resolver) bindComputed(c query.Compare, col query.Column, e query.Expr)
 // flows there; where both do, it flows into the relation joined later — the one the ON belongs to —
 // and, under a left join, into the joined side. Where neither takes it, it is not an edge.
 func (r *resolver) optionalEdge(l, rc query.Column) (to, from query.Column, ok bool) {
-	lTakes := accepts(r.tables[l.Qualifier()], l.Name())
-	rTakes := accepts(r.tables[rc.Qualifier()], rc.Name())
+	// A declared constant or fanout already supplies that input. The equality
+	// constrains its rows; wiring another value would both overwrite explicit
+	// scope and give the graph two producers for the same request input.
+	lTakes := accepts(r.tables[l.Qualifier()], l.Name()) && !r.known(l.Qualifier())[l.Name()]
+	rTakes := accepts(r.tables[rc.Qualifier()], rc.Name()) && !r.known(rc.Qualifier())[rc.Name()]
 	if r.onTarget != "" {
 		switch {
 		case l.Qualifier() == r.onTarget && lTakes:
@@ -1232,8 +1311,13 @@ func (r *resolver) keep(alias, name string) {
 func (r *resolver) build(sel []query.Output) (Resolution, error) {
 	byAlias := map[string][]SelectColumn{}
 	for _, o := range sel {
-		if len(r.aliasesOf(o.Expr())) > 1 {
-			// Reads several tables: computed on the finished row, from what each node keeps.
+		scalar, err := r.scalarOutput(o.Expr())
+		if err != nil {
+			return nil, err
+		}
+		if scalar || len(r.aliasesOf(o.Expr())) > 1 {
+			// Scalar SELECT expressions run after WHERE, including single-source
+			// expressions: a discarded row must not evaluate an erroring branch.
 			e, err := r.rewriteExpr(o.Expr())
 			if err != nil {
 				return nil, fmt.Errorf("omnisdk: output %q: %w", o.Name(), err)
@@ -1254,7 +1338,7 @@ func (r *resolver) build(sel []query.Output) (Resolution, error) {
 		if alias == r.mutating {
 			verb = r.verb
 		}
-		var body map[string]any
+		body := r.readBodies[alias]
 		if alias == r.mutating {
 			body = r.body
 		}
@@ -1322,7 +1406,23 @@ func (r *resolver) build(sel []query.Output) (Resolution, error) {
 		empty.empty = true
 		g = empty
 	}
-	return resolution{graph: g, params: r.params}, nil
+	return resolution{graph: g, params: r.params, selected: r.selected}, nil
+}
+
+func (r *resolver) scalarOutput(expression query.Expr) (bool, error) {
+	if _, literal := expression.(query.Literal); literal {
+		return true, nil
+	}
+	call, isCall := expression.(query.Call)
+	if !isCall {
+		return false, nil
+	}
+	registry, err := fn.Builtins(r.dialect)
+	if err != nil {
+		return false, err
+	}
+	rows, err := fn.RowProducing(registry, call.Func())
+	return !rows, err
 }
 
 // projected converts an output expression to the engine's, reporting the one table it reads.
@@ -1334,12 +1434,13 @@ func (r *resolver) projected(e query.Expr) (string, Expression, error) {
 		switch {
 		case err != nil:
 			failed = err
+			return fn.Literal(nil)
 		case alias != "" && alias != q.Qualifier():
 			failed = fmt.Errorf("reads %s and %s; an expression across tables is not yet supported", alias, q.Qualifier())
 		default:
 			alias = q.Qualifier()
 		}
-		return fn.Field(c.Name())
+		return fn.Field(q.Name())
 	})
 	switch {
 	case err != nil:
@@ -1387,6 +1488,9 @@ func (r *resolver) known(alias string) map[string]bool {
 	for name := range r.wide {
 		k[name] = true
 	}
+	for name := range r.readBodies[alias] {
+		k[name] = true
+	}
 	for name := range r.nodeParams[alias] {
 		k[name] = true
 	}
@@ -1422,7 +1526,7 @@ func accepts(t Table, name string) bool {
 // needs reports whether the table cannot run on known alone and name would help: no method is
 // satisfiable from known, and some method takes name.
 func needs(t Table, name string, known map[string]bool) bool {
-	if !accepts(t, name) {
+	if known[name] || !accepts(t, name) {
 		return false
 	}
 	for _, m := range t.Methods() {

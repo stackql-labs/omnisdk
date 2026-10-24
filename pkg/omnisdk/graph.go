@@ -831,7 +831,7 @@ func NewGraphQuery(dir string, g Graph, args Args) (Plan, error) {
 			}
 			// What the server can do instead of the rows: a projection, a filter, a cap. Each value is a
 			// constant of the run, bound through a slot of its own so its wire name is sent as written.
-			if n.Verb() == "select" {
+			if n.Verb() == "select" && !canCacheRead(args, c.Provider().Name()) {
 				needed := slices.Clone(emits[alias])
 				for _, p := range n.On() {
 					for _, c := range predicateColumns(p) {
@@ -896,6 +896,9 @@ func NewGraphQuery(dir string, g Graph, args Args) (Plan, error) {
 					opts = append(opts, docx.WithPoll(p.StatusPath, p.Done, p.Interval, p.MaxAttempts))
 				}
 			}
+			if !mutating && !whole {
+				opts = appendReadCache(opts, args, addr, c.Provider().Name())
+			}
 			spec, err = docx.Spec(ex, local, reg, opts...)
 			if err != nil {
 				return nil, fmt.Errorf("omnisdk: %s (%s): %w", alias, addr, err)
@@ -936,6 +939,9 @@ func NewGraphQuery(dir string, g Graph, args Args) (Plan, error) {
 			required = requiredOf(ex, wiredInputs(g, alias))
 		}
 
+		if mutating && args.MutationCompletion != nil {
+			spec = plan.WithMutationCompletion(spec, completionBridge{completion: args.MutationCompletion}, addr, n.Verb())
+		}
 		// The select list is applied to this node's rows before they travel an edge, so a join
 		// may be on a value a function computed. Attached after T_in for the same reason T_in is
 		// attached last: wrapping Make hides the compiled form the auth expansion reads.

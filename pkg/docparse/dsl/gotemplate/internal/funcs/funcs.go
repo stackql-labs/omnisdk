@@ -11,6 +11,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"reflect"
+	"regexp"
 	"strings"
 	"text/template"
 
@@ -20,6 +21,20 @@ import (
 // Map is the helper set, ready for template.Funcs.
 func Map() template.FuncMap {
 	return template.FuncMap{
+		"getRegexpFirstMatch": func(input, pattern string) (string, error) {
+			r, err := regexp.Compile(pattern)
+			if err != nil {
+				return "", err
+			}
+			match := r.FindStringSubmatch(input)
+			if len(match) > 1 {
+				return match[1], nil
+			}
+			if len(match) > 0 {
+				return match[0], nil
+			}
+			return "", nil
+		},
 		"toJson":            ToJSON,
 		"jsonMapFromString": JSONMapFromString,
 		"plus1":             Plus1,

@@ -12,6 +12,29 @@ import (
 
 const module = "github.com/stackql-labs/omnisdk"
 
+// Database-backed relations are supplied by the host through Relation and Rows.
+// Check production dependencies, including external packages: parity tests may
+// use database drivers as oracles, but library consumers must not inherit them.
+func TestLibraryHasNoRDBMSDependencies(t *testing.T) {
+	cmd := exec.Command("go", "list", "-deps", "../../pkg/...", "../../internal/...")
+	var stderr strings.Builder
+	cmd.Stderr = &stderr
+	out, err := cmd.Output()
+	if err != nil {
+		t.Fatalf("go list production dependencies: %v: %s", err, stderr.String())
+	}
+	for _, dependency := range strings.Fields(string(out)) {
+		for _, forbidden := range []string{
+			"database/sql", "modernc.org/sqlite", "github.com/mattn/go-sqlite3",
+			"github.com/jackc/pgx", "github.com/lib/pq", "github.com/go-sql-driver/mysql",
+		} {
+			if dependency == forbidden || strings.HasPrefix(dependency, forbidden+"/") {
+				t.Errorf("production dependency %s violates the host-owned RDBMS boundary", dependency)
+			}
+		}
+	}
+}
+
 // deps returns every package in this module that pkg depends on, transitively, excluding itself.
 func deps(t *testing.T, pkg string) []string {
 	t.Helper()
@@ -43,7 +66,7 @@ func TestFacadeDependsOnStdlibOnly(t *testing.T) {
 // query is what a front end builds. It must stay standard-library only, so a front end in another
 // language's toolchain depends on it and nothing else of the module.
 func TestQueryDependsOnStdlibOnly(t *testing.T) {
-	for _, pkg := range []string{"/pkg/query", "/pkg/cache", "/pkg/encode"} {
+	for _, pkg := range []string{"/pkg/query", "/pkg/cache", "/pkg/rowcache", "/pkg/encode"} {
 		if got := deps(t, module+pkg); len(got) > 0 {
 			t.Errorf("%s depends on %v, want stdlib only", pkg, got)
 		}

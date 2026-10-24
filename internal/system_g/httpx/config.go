@@ -67,6 +67,8 @@ type Continuation struct {
 
 // Request fully describes one HTTP exchange as data. Every string is a {name} template.
 type Request struct {
+	// Read marks an operation that has no mutation or authentication effects.
+	Read         bool
 	Method       string
 	URL          string
 	Query        map[string]string

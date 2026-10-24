@@ -172,3 +172,49 @@ func TestExternalOperationCannotEscapeBundle(t *testing.T) {
 		t.Fatalf("escaping reference: %v", err)
 	}
 }
+
+func TestOperationAndPathServersOverrideDocumentServer(t *testing.T) {
+	for _, tc := range []struct{ name, root, path, operation, want, variable string }{
+		{"document", "servers: [{url: 'https://document.test'}]\n", "", "", "https://document.test/items", ""},
+		{"path", "servers: [{url: 'https://document.test'}]\n", "    servers: [{url: 'https://path.test', variables: {Bucket: {default: ignored}}}]\n", "", "https://path.test/items", "Bucket"},
+		{"operation", "servers: [{url: 'https://document.test'}]\n", "    servers: [{url: 'https://path.test'}]\n", "      servers: [{url: 'https://operation.test'}]\n", "https://operation.test/items", ""},
+		{"path without root", "", "    servers: [{url: 'https://path.test'}]\n", "", "https://path.test/items", ""},
+		{"operation without root", "", "", "      servers: [{url: 'https://operation.test'}]\n", "https://operation.test/items", ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			source := "openapi: 3.0.0\n" + tc.root + "paths:\n  /items:\n" + tc.path + "    get:\n" + tc.operation + `      responses:
+        '200': {description: OK}
+components:
+  x-stackQL-resources:
+    items:
+      methods:
+        list:
+          operation: {$ref: '#/paths/~1items/get'}
+      sqlVerbs:
+        select: [{$ref: '#/components/x-stackQL-resources/items/methods/list'}]
+`
+			doc, err := stackqldoc.Parse([]byte(source))
+			if err != nil {
+				t.Fatal(err)
+			}
+			exchange, err := doc.Select("items")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := exchange.Request().URL(); got != tc.want {
+				t.Fatalf("URL=%q want=%q", got, tc.want)
+			}
+			if tc.variable != "" {
+				found := false
+				for _, parameter := range exchange.Request().Parameters() {
+					if parameter.Name() == tc.variable {
+						found = true
+					}
+				}
+				if !found {
+					t.Fatalf("lost declared scope variable %s", tc.variable)
+				}
+			}
+		})
+	}
+}

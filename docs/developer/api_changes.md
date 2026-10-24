@@ -18,6 +18,138 @@ positional literals must account for added fields or switch to keyed fields.
 
 ## Additions
 
+- **Opt-in API row cache:** `Args.ReadCache` accepts a `rowcache.Cache` and requires
+  an explicit `ReadCachePartition`. `pkg/rowcache` supplies abstract transactional
+  storage contracts, independently managed TTL collection, and a bounded memory
+  implementation. Only complete transformed document reads are cached, before SQL;
+  mutations, polls, local commands and capped reads bypass caching. Cacheable graph
+  reads retain full response rows instead of pushing SQL projection/filter/limit
+  controls into the API. Nil retains uncached execution.
+- **Host snapshot caches:** `Args.ReadCacheLookupOnly` permits reads from complete
+  host-owned snapshots even when a live API read has a page cap. Misses retain that
+  cap and never publish cache entries. Ordinary caches still bypass capped reads.
+- **Read failures:** retries run before read-error tolerance. Mutation and credential
+  exchanges remain strict. `ResponseSelectionErrors.IgnoreMissingKey` optionally
+  reports a missing collection key and returns zero rows; these failed selections
+  are excluded from cache publication.
+- **HTTP diagnostics:** optional `Args.HTTPObserver` receives document request,
+  raw response, and selected page callbacks. Authentication exchanges are excluded.
+  Callbacks may run concurrently. `AuthenticationError` distinguishes failed
+  credential exchanges and preserves the target request in OAuth diagnostics.
+- **Legacy XML presentation:** `LegacyXMLValues` preserves complete child text,
+  whitespace, and sibling order for native XML tables, and integer booleans for
+  transformed XML tables. `LegacyResponseTransforms` explicitly retains legacy
+  decoder fallback for unknown response-program versions. Both default off.
+- **Exact joins:** numeric comparisons and hash keys preserve adjacent 64-bit
+  identifiers rather than collapsing them through floating-point conversion.
+- **Method discovery:** unmapped conventional method names retain their SQL verb;
+  explicit duplicate verb mappings resolve deterministically. View discovery
+  exposes the `requiredParams` declared in its predicate.
+- **Document identity:** optional `aot.DocumentIdentity` exposes a source fingerprint
+  for cache invalidation. The StackQL parser implements it; custom AOT descriptions
+  without an identity remain uncached.
+
+- **Local inline operations:** document `inline` argv templates run as local exchanges
+  without a shell and honor cancellation and request deadlines. Required inline inputs
+  appear in method discovery. `golang_template_v0.1.0` text responses and
+  `getRegexpFirstMatch` are supported.
+- **Declared reversals:** `DocInverse` exposes explicit inverse metadata and token
+  bindings; `NewInverseMutationNode` pins the declared method. The host attaches these
+  exchanges to transaction inverse graphs using accepted response identities. No inverse
+  is inferred from a resource name; ambiguous declarations are rejected.
+
+
+- **Selected star metadata:** optional `omnisdk.SelectedMethods` exposes the methods
+  selected during document star resolution. `omnisdk.ServerBindings` exposes their
+  declared server-variable names, independently of ordinary path and query parameters.
+  Hosts can reproduce legacy star columns without treating every required input as output.
+  These interfaces supply metadata only; they introduce no scope values or defaults.
+
+- **XML property names:** native XML rows honor declared `xml.name` annotations,
+  including annotations inherited through `allOf`. SQL receives the declared property
+  name while unannotated and undeclared fields retain their existing behavior.
+
+- **XML program scalar parity:** mxj programs receive numeric and boolean XML values
+  using legacy conversion rules. Integral identifiers outside the exact floating-point
+  range remain strings, preserving existing SDK precision guarantees.
+
+- **Pagination parity:** `Args.LegacyPagination` lets hosts use any-sdk provider defaults
+  instead of native `x-ms-pageable` inference. Explicit StackQL pagination remains
+  authoritative. False preserves existing native pagination support. Optional
+  `aot.NativePagination` exposes inference provenance without changing `aot.Pagination`.
+
+- **Bound-input resolution:** a missing required input no longer causes another,
+  already-bound input to be wired again. Constant and fan-out bindings remain intact;
+  join equalities still constrain the resulting rows.
+
+- **Server transport metadata:** optional `aot.ServerTransportDefaults` and
+  `omnisdk.ServerTransportDefaults` expose a declared HTTP or HTTPS URL-scheme default.
+  `DocMethod.TransportDefaults` carries it for discovery. The SDK leaves the URL placeholder
+  unresolved; a host may supply the transport binding, with explicit SQL taking precedence.
+  Host, cluster, account and region defaults are excluded.
+
+- **Mutation completion:** `Args.MutationCompletion` accepts a `MutationCompletion` interface
+  for graph mutations. Its `Complete` method receives the context, resource address, verb,
+  bound inputs and initial response, and returns the completed resource before RETURNING
+  projection. Implementations support independent concurrent calls and honor cancellation.
+  A nil row emits nothing. Completion errors preserve their cause and `ErrOutcomeUnknown`;
+  the accepted mutation is never resent. Nil retains immediate-response behavior.
+
+- **Explicit Azure authentication:** an explicitly configured API key or bearer credential
+  overrides default OAuth token acquisition. Planning does not require a service principal or
+  invoke the Azure CLI before applying that request credential. Default OAuth behavior is retained.
+
+- **Mutation star projections:** unqualified `RETURNING *` expands target columns only;
+  source relation fields remain internal to INSERT SELECT execution.
+- **Literal projections:** SELECT outputs may contain constants and NULL alongside resource
+  columns. They are evaluated after row filtering, preserving their native values.
+- **Server environment metadata:** optional `aot.ServerEnvironmentBindings` and
+  `omnisdk.ServerEnvironmentBindings` expose explicitly declared `x-stackQL-envVar` names.
+  `DocMethod.ServerEnvironment` carries the same metadata for method discovery. The SDK never
+  reads those environment variables or substitutes server defaults. A host may resolve the
+  annotations and pass ordinary query bindings, preserving explicit SQL precedence.
+- **AWS signed headers:** declared `Accept` headers remain signed. Automatically synthesized
+  response negotiation headers remain on the wire but are excluded from signing. Re-signing
+  excludes the previous `Authorization` value.
+
+- **Declared server precedence:** operations use their own server declaration, otherwise the
+  path item's, otherwise the document's. Scope variables from the selected declaration remain
+  accepted after endpoint rewrites; their defaults are never substituted for explicit caller scope.
+- **Request programs:** optional `aot.RequestTransform` exposes a declared request-body program.
+  It runs before signing and takes precedence over generic XML envelope serialization. The
+  `golang_template_text_v0.1.0` evaluator is now registered alongside v0.3.0; unknown versions fail
+  before dispatch. Existing request implementations need no additional methods.
+  Unsupported request and response programs expose `UnsupportedProgramError.ProgramType()`
+  through wrapped errors, allowing hosts to retain their own diagnostic wording.
+
+- **Explicit upstream read-error policy:** `Args.HTTPReadErrors` accepts an
+  `HTTPReadErrorPolicy` interface (`IsIgnored(int) bool`). A matching HTTP error ends that
+  document-backed resource read cleanly without a synthetic row or another retry. Prior pages remain available.
+  This opt-in never suppresses mutation or authentication failures. A policy may also implement
+  `HTTPReadErrorObserver.IgnoredStatus(int, string)` for host-owned diagnostics. Both interfaces
+  stay outside serialized arguments; nil retains strict handling.
+- **Response selection diagnostics:** `Args.StrictResponseSelection` optionally reports an absent
+  declared JSON row key, including JSON-path selections. Default behavior remains an empty read;
+  a declared empty array remains successful in either mode. StackQL opts in for CLI parity.
+- **Scalar XML rows:** optional `aot.ScalarRowSchema` declares the column associated with a
+  scalar XML selection. The supplied parser exposes the terminal element as a column (for example,
+  `PolicyNames/member` becomes `member`), consistently across discovery and row acquisition.
+
+- **Conditional expressions:** the function catalogue supports lazy searched and simple CASE
+  (`case_when`, `case_value`) plus three-valued `and`, `or`, and `not`. SQLite `if` and `iif`
+  skip unselected branches. Optional `sqlfn.LazyFunc` lets custom functions request deferred
+  argument evaluation; existing `Func` implementations remain compatible. Scalar query outputs
+  are evaluated after filtering, so rejected rows cannot trigger projection errors.
+- **SQLite arithmetic:** scalar `+`, `-`, `*`, `/`, and `%` follow SQLite numeric conversion,
+  integer division, overflow promotion, and NULL-on-division-by-zero behavior.
+- **XML requests:** optional `aot.XMLRequest` exposes declared root names, declarations, and
+  root attributes. The StackQL parser supplies these automatically. Structured XML fragments
+  are validated; scalar strings remain escaped.
+- **Read controls:** `Tuning.PageLimit` caps pages per resource read and ends cleanly at the cap.
+  Global zero or negative means unlimited; provider zero inherits and negative removes the cap.
+  Retries and polling are separate. Document-declared body controls remain in the JSON body
+  and preserve existing defaults instead of becoming query parameters.
+
 - **Template conversions:** document Go templates now provide `toInt` and `toBool`, including
   XML-to-JSON programs for transformed volumes. Their absent-value defaults are zero and false.
 
@@ -44,7 +176,7 @@ without invoking read handles or provider exchanges.
   **30 seconds**. Zero selects the fallback; a negative duration explicitly disables it.
 - **Provider overrides:** `omnisdk.Args.TuningByProvider` (`tuning_by_provider` in JSON) maps provider
   names to `omnisdk.ProviderTuning`. Its fields are `RequestTimeout`, `RetryTries`, `RetryRate`, and
-  `MaxPerHost`; zero fields inherit the global `Args.Tuning` value, then library defaults. Keys
+  `MaxPerHost`, and `PageLimit`; zero fields inherit the global `Args.Tuning` value, then library defaults. Keys
   accept `google` or `stackql_unstable_google`; the namespaced entry wins when both exist.
   Overrides apply to provider authentication exchanges as well as resource calls, in document-backed
   and built-in plans. Retry and per-host admission state is shared across a provider's exchanges
@@ -71,6 +203,10 @@ args := omnisdk.Args{
   `aot.MethodInputs` interface exposes this metadata.
 - **Document request metadata:** optional `aot.RequestShape` and `aot.RequestDefaults` interfaces
   expose naming, body schema, and fallback body declarations without changing existing implementers.
+  Optional `aot.SigningRequest` retains the declared signing service through endpoint rewrites;
+  method `serviceName` overrides document `info.x-serviceName`. Optional
+  `aot.BodyTranslationRequest` exposes `requestBodyTranslate`, and `aot.StringOnlySchema` exposes
+  `x-stackQL-stringOnly`: nested inputs are coerced against their schema before JSON stringification.
 - **OCI authentication:** `omnisdk.Auth` accepts OCI tenancy/user OCIDs, fingerprint, RSA private
   key, passphrase, configuration file and profile, including named environment variables for
   credentials. Set `Type: "oci_signing_v1"`. Explicit raw credentials must be complete; partial raw
@@ -98,6 +234,11 @@ args := omnisdk.Args{
   `errors.As`, preserving the distinction between a provider rejection and a transport failure.
 
 ## Behaviour changes
+
+XML row selection follows declared array-item element names, including annotations beside `allOf`
+references. Scalar comparison calls (`=`, `!=`, `<>`, `<`, `<=`, `>`, `>=`) use the configured SQL
+dialect, including NULL propagation. Join equalities on request inputs already supplied by explicit
+constants or fanouts constrain rows instead of introducing a second producer for the input.
 
 | Change | Who is affected |
 |--------|-----------------|

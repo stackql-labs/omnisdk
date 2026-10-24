@@ -61,21 +61,31 @@ func (e call) Eval(row map[string]any, r facade.FnRegistry) (any, error) {
 }
 
 func (e call) eval(row map[string]any, r facade.FnRegistry) (any, error) {
+	if function, found := r.Fn(e.name); found {
+		if lazy, ok := function.(facade.LazyFn); ok {
+			args := make([]func() (any, error), len(e.args))
+			for i, arg := range e.args {
+				args[i] = func() (any, error) { return evalValue(arg, row, r) }
+			}
+			return lazy.CallLazy(args)
+		}
+	}
 	args := make([]any, 0, len(e.args))
 	for _, a := range e.args {
-		var v any
-		var err error
-		if c, ok := a.(call); ok {
-			v, err = c.eval(row, r)
-		} else {
-			v, err = a.Eval(row, r)
-		}
+		v, err := evalValue(a, row, r)
 		if err != nil {
 			return nil, err
 		}
 		args = append(args, v)
 	}
 	return Invoke(r, e.name, args)
+}
+
+func evalValue(e Expr, row map[string]any, r facade.FnRegistry) (any, error) {
+	if c, ok := e.(call); ok {
+		return c.eval(row, r)
+	}
+	return e.Eval(row, r)
 }
 
 // Column is one output column of a select list: the name it is emitted under and the expression

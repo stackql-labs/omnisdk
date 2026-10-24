@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"math/big"
 	"strconv"
 	"strings"
 	"sync"
@@ -248,15 +249,38 @@ func compareValues(a, b any) (int, bool) {
 		return 0, false
 	}
 	as, bs := fmt.Sprint(a), fmt.Sprint(b)
-	if af, ok := number(as); ok {
-		if bf, ok := number(bs); ok {
-			switch {
-			case af < bf:
+	if as == bs {
+		return 0, true
+	}
+	if ai, err := strconv.ParseInt(as, 10, 64); err == nil {
+		if bi, err := strconv.ParseInt(bs, 10, 64); err == nil {
+			if ai < bi {
 				return -1, true
-			case af > bf:
+			}
+			if ai > bi {
 				return 1, true
 			}
 			return 0, true
+		}
+	}
+	if af, ok := number(as); ok {
+		if bf, ok := number(bs); ok {
+			// Compare finite numeric lexemes exactly. Float conversion collapses
+			// adjacent 64-bit provider identifiers into the same join key.
+			ar, aok := exactNumber(as)
+			br, bok := exactNumber(bs)
+			if aok && bok {
+				return ar.Cmp(br), true
+			}
+			if (aok || math.IsInf(af, 0)) && (bok || math.IsInf(bf, 0)) {
+				switch {
+				case af < bf:
+					return -1, true
+				case af > bf:
+					return 1, true
+				}
+				return 0, true
+			}
 		}
 	}
 	switch {
@@ -266,6 +290,26 @@ func compareValues(a, b any) (int, bool) {
 		return 1, true
 	}
 	return 0, true
+}
+
+// Bound exact parsing so a short provider value such as 1e-1000000000
+// cannot expand into an enormous denominator. Ordinary identifiers use the
+// integer fast path; bounded decimals retain exact comparison.
+func exactNumber(s string) (*big.Rat, bool) {
+	const limit = 4096
+	if integer, err := strconv.ParseInt(s, 10, 64); err == nil {
+		return big.NewRat(integer, 1), true
+	}
+	if len(s) > limit {
+		return nil, false
+	}
+	if position := strings.IndexAny(s, "eEpP"); position >= 0 {
+		exponent, err := strconv.ParseInt(s[position+1:], 10, 32)
+		if err != nil || exponent < -limit || exponent > limit {
+			return nil, false
+		}
+	}
+	return new(big.Rat).SetString(s)
 }
 
 // number reads s as a number compareValues orders by.
@@ -373,11 +417,16 @@ func joinKey(v any) (string, bool) {
 		return "", false
 	}
 	s := fmt.Sprint(v)
+	if integer, err := strconv.ParseInt(s, 10, 64); err == nil {
+		return "n" + strconv.FormatInt(integer, 10), true
+	}
 	if f, ok := number(s); ok {
-		if f == 0 {
-			f = 0 // -0 equals 0
+		if rational, finite := exactNumber(s); finite {
+			return "n" + rational.RatString(), true
 		}
-		return "n" + strconv.FormatFloat(f, 'g', -1, 64), true
+		if math.IsInf(f, 0) {
+			return "n" + strconv.FormatFloat(f, 'g', -1, 64), true
+		}
 	}
 	return "s" + s, true
 }

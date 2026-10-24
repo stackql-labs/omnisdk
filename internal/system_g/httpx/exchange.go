@@ -46,6 +46,8 @@ func Make(req Request, decode facade.Transform, reqT ...facade.Transform) func(b
 	}
 }
 
+var errIgnoredRead = errors.New("httpx: ignored read response")
+
 type op struct {
 	req    Request
 	bound  map[string]any
@@ -62,7 +64,12 @@ func (o *op) Open(ctx context.Context) facade.Records {
 	buf := buffer.NewBuffer(1, 1024, buffer.PagesAhead(ctx))
 	go func() {
 		var cerr error
-		defer func() { buf.Complete(cerr) }()
+		defer func() {
+			if errors.Is(cerr, errIgnoredRead) {
+				cerr = nil
+			}
+			buf.Complete(cerr)
+		}()
 		switch o.req.Continuation.Kind {
 		case ContPoll:
 			cerr = o.poll(ctx, buf)
@@ -112,7 +119,7 @@ func (o *op) poll(ctx context.Context, buf facade.Buffer) error {
 func (o *op) paginate(ctx context.Context, buf facade.Buffer) error {
 	token := ""
 	seen := map[string]bool{}
-	for {
+	for page := 0; WithinPageLimit(ctx, page); page++ {
 		status, body, reqURL, err := o.do(ctx, token, "")
 		if err != nil {
 			return err
@@ -130,6 +137,7 @@ func (o *op) paginate(ctx context.Context, buf facade.Buffer) error {
 		seen[next] = true
 		token = next
 	}
+	return nil
 }
 
 // pageNumber reads the current page and total count from the same response.
@@ -137,7 +145,7 @@ func (o *op) paginate(ctx context.Context, buf facade.Buffer) error {
 func (o *op) pageNumber(ctx context.Context, buf facade.Buffer) error {
 	c := o.req.Continuation
 	token := "1"
-	for {
+	for page := 0; WithinPageLimit(ctx, page); page++ {
 		status, body, reqURL, err := o.do(ctx, token, "")
 		if err != nil {
 			return err
@@ -159,6 +167,7 @@ func (o *op) pageNumber(ctx context.Context, buf facade.Buffer) error {
 		}
 		token = strconv.FormatInt(current+1, 10)
 	}
+	return nil
 }
 
 // follow paginates by following an absolute next-link URL from each response (Azure nextLink,
@@ -166,7 +175,7 @@ func (o *op) pageNumber(ctx context.Context, buf facade.Buffer) error {
 func (o *op) follow(ctx context.Context, buf facade.Buffer) error {
 	next := ""
 	seen := map[string]bool{}
-	for {
+	for page := 0; WithinPageLimit(ctx, page); page++ {
 		status, body, reqURL, err := o.do(ctx, "", next)
 		if err != nil {
 			return err
@@ -183,6 +192,7 @@ func (o *op) follow(ctx context.Context, buf facade.Buffer) error {
 		}
 		seen[next] = true
 	}
+	return nil
 }
 
 // link paginates by following the rel="next" URL in a response header, until a response has none.
@@ -193,7 +203,7 @@ func (o *op) link(ctx context.Context, buf facade.Buffer) error {
 	}
 	next := ""
 	seen := map[string]bool{}
-	for {
+	for page := 0; WithinPageLimit(ctx, page); page++ {
 		status, body, reqURL, err := o.do(ctx, "", next)
 		if err != nil {
 			return err
@@ -209,6 +219,7 @@ func (o *op) link(ctx context.Context, buf facade.Buffer) error {
 		}
 		seen[next] = true
 	}
+	return nil
 }
 
 // nextLink is the rel="next" target among Link header values, "" where there is none.
@@ -341,6 +352,9 @@ func (o *op) send(ctx context.Context, rec facade.Record) (int, []byte, error) {
 			RetryAfter: retryAfter(header), Elapsed: time.Since(start), PrevWait: prev,
 		})
 		if !ok {
+			if err == nil && status >= 400 && o.req.Read && ignoredReadStatus(ctx, status, body) {
+				return status, nil, errIgnoredRead
+			}
 			return status, body, err // give up: permanent, or no retry policy
 		}
 		prev = wait

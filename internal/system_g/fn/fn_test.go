@@ -11,6 +11,33 @@ import (
 	"github.com/stackql-labs/omnisdk/pkg/sqlfn"
 )
 
+func TestConditionalEvaluationSkipsDeadBranchesAndPreservesJSONSubtype(t *testing.T) {
+	r, registryErr := fn.Builtins(sqlfn.SQLite)
+	if registryErr != nil {
+		t.Fatal(registryErr)
+	}
+	bad := fn.Call("json", fn.Literal("not-json"))
+	for _, name := range []string{"case_when", "iif", "if"} {
+		expression := fn.Call("json_array", fn.Call(name,
+			fn.Literal(false), bad,
+			fn.Literal(true), fn.Call("json", fn.Literal("[1]")), bad))
+		value, err := expression.Eval(nil, r)
+		if err != nil || value != "[[1]]" {
+			t.Fatalf("%s: value=%#v error=%v", name, value, err)
+		}
+		if _, err := fn.Call(name, fn.Literal(true), bad, fn.Literal(nil)).Eval(nil, r); err == nil {
+			t.Fatalf("%s swallowed the selected branch's error", name)
+		}
+	}
+	value, err := fn.Call("case_when", fn.Literal(nil), bad, fn.Literal("fallback")).Eval(nil, r)
+	if err != nil || value != "fallback" {
+		t.Fatalf("NULL condition: value=%#v error=%v", value, err)
+	}
+	if _, err := fn.Call("case_when", fn.Literal(true), fn.Literal(1)).Eval(nil, r); err == nil {
+		t.Fatal("accepted an incomplete CASE expression")
+	}
+}
+
 // Every call goes through Invoke: arity and the declared argument kinds are enforced there, so a
 // test that called Call directly would be exercising a path no consumer can reach.
 func TestSplitPart(t *testing.T) {
@@ -212,4 +239,28 @@ func catalogue(t *testing.T) facade.FnRegistry {
 		t.Fatalf("Builtins: %v", err)
 	}
 	return r
+}
+
+func TestLazyBooleanNullAndShortCircuit(t *testing.T) {
+	r := catalogue(t)
+	bad := fn.Call("json", fn.Literal("invalid-json"))
+	for _, name := range []string{"and", "or"} {
+		first := name == "or"
+		got, err := fn.Call(name, fn.Literal(first), bad).Eval(nil, r)
+		want := int64(0)
+		if first {
+			want = 1
+		}
+		if err != nil || got != want {
+			t.Fatalf("%s: value=%#v error=%v", name, got, err)
+		}
+		got, err = fn.Call(name, fn.Literal(nil), fn.Literal(!first)).Eval(nil, r)
+		if err != nil || got != nil {
+			t.Fatalf("%s NULL: value=%#v error=%v", name, got, err)
+		}
+	}
+	got, err := fn.Call("case_value", fn.Literal(nil), fn.Literal(nil), bad, fn.Literal("fallback")).Eval(nil, r)
+	if err != nil || got != "fallback" {
+		t.Fatalf("NULL simple CASE: value=%#v error=%v", got, err)
+	}
 }

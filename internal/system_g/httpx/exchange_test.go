@@ -245,3 +245,59 @@ func TestHTTPXContinuationCyclesStopBeforeCallerDeadline(t *testing.T) {
 		})
 	}
 }
+
+func TestHTTPXPageLimitStopsWithoutError(t *testing.T) {
+	for _, kind := range []ContinuationKind{ContPaginate, ContFollow, ContLink, ContPageNumber} {
+		t.Run(string(kind), func(t *testing.T) {
+			calls := 0
+			var srv *httptest.Server
+			srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				calls++
+				next := fmt.Sprintf("%s/page/%d", srv.URL, calls+1)
+				w.Header().Set("Link", "<"+next+">; rel=\"next\"")
+				fmt.Fprintf(w, `{"next":%q,"page":%d,"total":100}`, next, calls)
+			}))
+			defer srv.Close()
+			continuation := Continuation{Kind: kind, NextTokenPath: "next", TokenParam: "page"}
+			if kind == ContPageNumber {
+				continuation.NextTokenPath = "page"
+				continuation.TerminatorPath = "total"
+			}
+			ctx := WithPageLimit(context.Background(), 2)
+			rows := Make(Request{Method: "GET", URL: srv.URL, Continuation: continuation}, nil)(nil).Open(ctx)
+			defer rows.Close()
+			pages := 0
+			for rows.Next(ctx) {
+				pages++
+			}
+			if rows.Err() != nil || calls != 2 || pages != 2 {
+				t.Fatalf("calls=%d pages=%d error=%v", calls, pages, rows.Err())
+			}
+		})
+	}
+}
+
+type ignoreServerFailures struct{}
+
+func (ignoreServerFailures) IsIgnored(status int) bool { return status == 503 }
+
+func TestReadErrorPolicyNeverSuppressesMutationOrOtherStatuses(t *testing.T) {
+	for _, tc := range []struct {
+		read         bool
+		status, want int
+	}{{true, 503, 0}, {false, 503, 1}, {true, 403, 1}} {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(tc.status); fmt.Fprint(w, "unavailable") }))
+		ctx := WithReadErrors(context.Background(), ignoreServerFailures{})
+		rows := Make(Request{Read: tc.read, Method: "POST", URL: srv.URL}, nil)(nil).Open(ctx)
+		count := 0
+		for rows.Next(ctx) {
+			count++
+		}
+		err := rows.Err()
+		rows.Close()
+		srv.Close()
+		if err != nil || count != tc.want {
+			t.Fatalf("read=%v status=%d rows=%d error=%v", tc.read, tc.status, count, err)
+		}
+	}
+}

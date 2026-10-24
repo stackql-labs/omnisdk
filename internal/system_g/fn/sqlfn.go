@@ -11,7 +11,30 @@ import (
 // FromSQL adapts a catalogue function to the engine. Its signatures are declared over the unknown
 // kind, one per accepted arity, so listing and row-shape checks work as for any function; calls go
 // straight to it with the row values as they are, since it takes row values rather than parsed ones.
-func FromSQL(f sqlfn.Func) facade.Fn { return sqlFn{f: f} }
+func FromSQL(f sqlfn.Func) facade.Fn {
+	base := sqlFn{f: f}
+	if lazy, ok := f.(sqlfn.LazyFunc); ok {
+		return lazySQLFn{sqlFn: base, lazy: lazy}
+	}
+	return base
+}
+
+type lazySQLFn struct {
+	sqlFn
+	lazy sqlfn.LazyFunc
+}
+
+func (s lazySQLFn) CallLazy(args []func() (any, error)) (any, error) {
+	lo, hi := s.f.Arity()
+	if len(args) < lo || hi >= 0 && len(args) > hi {
+		return nil, fmt.Errorf("fn: %s takes %s arguments, got %d", s.f.Name(), arity(lo, hi), len(args))
+	}
+	value, err := s.lazy.CallLazy(args)
+	if err != nil {
+		return nil, fmt.Errorf("fn: %s: %w", s.f.Name(), err)
+	}
+	return value, nil
+}
 
 type sqlFn struct{ f sqlfn.Func }
 

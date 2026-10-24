@@ -11,8 +11,12 @@
 package stackqldoc
 
 import (
+	"cmp"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"maps"
 	"slices"
 	"sort"
 	"strings"
@@ -44,6 +48,8 @@ type Doc interface {
 // Parse reads a stackql provider document.
 func Parse(b []byte) (Doc, error) {
 	var d document
+	sum := sha256.Sum256(b)
+	d.fingerprint = hex.EncodeToString(sum[:])
 	if err := yaml.Unmarshal(b, &d); err != nil {
 		return nil, fmt.Errorf("stackqldoc: parse: %w", err)
 	}
@@ -59,6 +65,10 @@ func Parse(b []byte) (Doc, error) {
 // ---- document shape (only the parts an exchange needs) ----------------------
 
 type document struct {
+	fingerprint string
+	Info        struct {
+		ServiceName string `yaml:"x-serviceName"`
+	} `yaml:"info"`
 	source        string
 	resolver      documentResolver
 	ResourcesRoot map[string]resource `yaml:"resources"`
@@ -109,7 +119,8 @@ type server struct {
 }
 
 type serverVariable struct {
-	Default string `yaml:"default"`
+	Default     string `yaml:"default"`
+	Environment string `yaml:"x-stackQL-envVar"`
 }
 
 type resource struct {
@@ -136,19 +147,34 @@ type algorithmSpec struct {
 }
 
 type method struct {
-	Operation ref `yaml:"operation"`
-	Config    struct {
-		Retry               *retrySpec     `yaml:"retry"`
-		RequestTranslate    algorithmSpec  `yaml:"requestTranslate"`
-		QueryParamTranspose algorithmSpec  `yaml:"queryParamTranspose"`
-		QueryParamPushdown  *pushdownSpec  `yaml:"queryParamPushdown"`
-		Pagination          paginationSpec `yaml:"pagination"`
+	Inverse struct {
+		Method ref `yaml:"sqlVerb"`
+		Tokens map[string]struct {
+			Key       string `yaml:"key"`
+			Location  string `yaml:"location"`
+			Algorithm string `yaml:"algorithm"`
+		} `yaml:"tokens"`
+	} `yaml:"inverse"`
+	Inline      []string             `yaml:"inline"`
+	Parameters  map[string]pathParam `yaml:"parameters"`
+	ServiceName string               `yaml:"serviceName"`
+	Operation   ref                  `yaml:"operation"`
+	Config      struct {
+		RequestBodyTranslate algorithmSpec  `yaml:"requestBodyTranslate"`
+		Retry                *retrySpec     `yaml:"retry"`
+		RequestTranslate     algorithmSpec  `yaml:"requestTranslate"`
+		QueryParamTranspose  algorithmSpec  `yaml:"queryParamTranspose"`
+		QueryParamPushdown   *pushdownSpec  `yaml:"queryParamPushdown"`
+		Pagination           paginationSpec `yaml:"pagination"`
 	} `yaml:"config"`
 	Request struct {
-		Default      string `yaml:"default"`
-		Base         string `yaml:"base"`
-		MediaType    string `yaml:"mediaType"`
-		NativeCasing string `yaml:"nativeCasing"`
+		Transform         transformSpec `yaml:"transform"`
+		XMLDeclaration    string        `yaml:"xmlDeclaration"`
+		XMLRootAnnotation string        `yaml:"xmlRootAnnotation"`
+		Default           string        `yaml:"default"`
+		Base              string        `yaml:"base"`
+		MediaType         string        `yaml:"mediaType"`
+		NativeCasing      string        `yaml:"nativeCasing"`
 	} `yaml:"request"`
 	Response struct {
 		SchemaOverride    yaml.Node     `yaml:"schema_override"`
@@ -196,13 +222,13 @@ type paginationSpec struct {
 }
 
 type pathOp struct {
-	GraphQL     *graphQLSpec `yaml:"x-stackQL-graphQL"`
-	OperationID string       `yaml:"operationId"`
-	Parameters  []pathParam  `yaml:"parameters"`
-	// MsPageable is Microsoft's pagination declaration: the body property holding the next page's URL.
 	MsPageable *struct {
 		NextLinkName *string `yaml:"nextLinkName"`
 	} `yaml:"x-ms-pageable"`
+	Servers     []server     `yaml:"servers"`
+	GraphQL     *graphQLSpec `yaml:"x-stackQL-graphQL"`
+	OperationID string       `yaml:"operationId"`
+	Parameters  []pathParam  `yaml:"parameters"`
 	// RequestBody declares the media type and schema used to validate caller-supplied fields.
 	RequestBody struct {
 		Required bool `yaml:"required"`
@@ -317,6 +343,17 @@ func (d *document) resolve(name, mName string, withBeta bool) (aot.AOTExchange, 
 	if !ok {
 		return nil, fmt.Errorf("stackqldoc: resource %q references unknown method %q", name, mName)
 	}
+	if len(m.Inline) > 0 {
+		op := pathOp{Servers: []server{{URL: "local://command"}}}
+		for name, param := range m.Parameters {
+			param.Name = name
+			op.Parameters = append(op.Parameters, param)
+		}
+		slices.SortFunc(op.Parameters, func(a, b pathParam) int { return strings.Compare(a.Name, b.Name) })
+		ex := d.build(mName, "POST", "", op, m).(*aotExchange)
+		ex.inline = slices.Clone(m.Inline)
+		return ex, nil
+	}
 	target, resolved, err := d.operationDocument(name, mName, m)
 	if err != nil {
 		return nil, err
@@ -325,9 +362,6 @@ func (d *document) resolve(name, mName string, withBeta bool) (aot.AOTExchange, 
 		return target.resolve(name, mName, withBeta)
 	}
 	m = resolved
-	if len(d.Servers) == 0 {
-		return nil, fmt.Errorf("stackqldoc: document declares no servers")
-	}
 	path, httpVerb, err := splitOperationRef(m.Operation.Ref)
 	if err != nil {
 		return nil, fmt.Errorf("stackqldoc: resource %q method %q: %w", name, mName, err)
@@ -339,6 +373,19 @@ func (d *document) resolve(name, mName string, withBeta bool) (aot.AOTExchange, 
 	var op pathOp
 	if err := node.Decode(&op); err != nil {
 		return nil, fmt.Errorf("stackqldoc: resource %q method %q: decode %s %s: %w", name, mName, httpVerb, path, err)
+	}
+	if len(op.Servers) == 0 {
+		if declaration, present := d.Paths[path]["servers"]; present {
+			if err := declaration.Decode(&op.Servers); err != nil {
+				return nil, fmt.Errorf("stackqldoc: path %q servers: %w", path, err)
+			}
+		}
+	}
+	if len(op.Servers) == 0 {
+		op.Servers = d.Servers
+	}
+	if len(op.Servers) == 0 {
+		return nil, fmt.Errorf("stackqldoc: document declares no servers")
 	}
 	params, err := d.parameters(path, op.Parameters)
 	if err != nil {
@@ -498,9 +545,18 @@ func (d *document) Methods(name string) ([]aot.Method, error) {
 		return nil, fmt.Errorf("stackqldoc: no resource %q", name)
 	}
 	verbOf := map[string]string{}
-	for verb, refs := range res.SQLVerbs {
-		for _, r := range refs {
-			verbOf[lastSegment(r.Ref)] = verb
+	verbs := make([]string, 0, len(res.SQLVerbs))
+	for verb := range res.SQLVerbs {
+		verbs = append(verbs, verb)
+	}
+	sort.Strings(verbs)
+	verbs = append([]string{"select", "insert", "delete", "update", "replace", "exec"}, verbs...)
+	for _, verb := range verbs {
+		for _, r := range res.SQLVerbs[verb] {
+			name := lastSegment(r.Ref)
+			if verbOf[name] == "" {
+				verbOf[name] = verb
+			}
 		}
 	}
 	out := make([]aot.Method, 0, len(res.Methods))
@@ -508,7 +564,7 @@ func (d *document) Methods(name string) ([]aot.Method, error) {
 		verb := verbOf[mName]
 		if verb == "" {
 			for _, candidate := range []string{"select", "insert", "delete"} {
-				if _, explicit := res.SQLVerbs[candidate]; !explicit && slices.Contains(defaultMethodKeys(candidate), mName) {
+				if slices.Contains(defaultMethodKeys(candidate), mName) {
 					verb = candidate
 					break
 				}
@@ -517,6 +573,12 @@ func (d *document) Methods(name string) ([]aot.Method, error) {
 		info := methodInfo{name: mName, verb: verb, opID: d.operationID(m)}
 		if ex, err := d.resolve(name, mName, false); err == nil {
 			info.opID = ex.OperationID()
+			if declared, ok := ex.Request().(aot.ServerTransportDefaults); ok {
+				info.transport = declared.ServerTransportDefaults()
+			}
+			if declared, ok := ex.Request().(aot.ServerEnvironmentBindings); ok {
+				info.environment = declared.ServerEnvironmentBindings()
+			}
 			naming := namespace.NewNaming(m.Request.NativeCasing, d.snakeAliases && m.Request.NativeCasing != "")
 			var variables []string
 			if declared, ok := ex.Request().(aot.ServerBindings); ok {
@@ -546,8 +608,8 @@ func (d *document) Methods(name string) ([]aot.Method, error) {
 		}
 		out = append(out, info)
 	}
-	if res.Config.Views["select"] != nil {
-		out = append(out, methodInfo{name: "__view__", verb: "select"})
+	if view := res.Config.Views["select"]; view != nil {
+		out = append(out, methodInfo{name: "__view__", verb: "select", required: view.requiredParams()})
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Name() < out[j].Name() })
 	return out, nil
@@ -574,9 +636,15 @@ func (d *document) operationID(m method) string {
 type methodInfo struct {
 	name, verb, opID string
 	required         []string
+	environment      map[string]string
+	transport        map[string]string
 }
 
 func (m methodInfo) RequiredParams() []string { return append([]string(nil), m.required...) }
+
+func (m methodInfo) ServerTransportDefaults() map[string]string { return maps.Clone(m.transport) }
+
+func (m methodInfo) ServerEnvironmentBindings() map[string]string { return maps.Clone(m.environment) }
 
 func (m methodInfo) Name() string        { return m.name }
 func (m methodInfo) SQLVerb() string     { return m.verb }
@@ -584,7 +652,7 @@ func (m methodInfo) OperationID() string { return m.opID }
 
 // build turns a resolved (server, path, operation, method) into an AOT exchange.
 func (d *document) build(name, verb, path string, op pathOp, m method) aot.AOTExchange {
-	srv := d.Servers[0]
+	srv := op.Servers[0]
 
 	// The path key carries the operation's identity as __-prefixed pseudo-parameters
 	// (/?__Action=DescribeInstances&__Version=2016-11-15). stackql's requestTranslate
@@ -612,8 +680,12 @@ func (d *document) build(name, verb, path string, op pathOp, m method) aot.AOTEx
 	// A mock or private-endpoint override can replace the host while retaining
 	// declared server variables. They remain accepted scope bindings even when
 	// the rewritten URL no longer needs them.
+	environment := map[string]string{}
 	variableNames := make([]string, 0, len(srv.Variables))
-	for name := range srv.Variables {
+	for name, variable := range srv.Variables {
+		if variable.Environment != "" {
+			environment[name] = variable.Environment
+		}
 		variableNames = append(variableNames, name)
 	}
 	sort.Strings(variableNames)
@@ -624,6 +696,7 @@ func (d *document) build(name, verb, path string, op pathOp, m method) aot.AOTEx
 	}
 	url := strings.TrimRight(serverURL(srv.URL), "/") + route
 	var bodySchema aot.Schema
+	var bodyRootName string
 	var bodyTypes []string
 	for media := range op.RequestBody.Content {
 		bodyTypes = append(bodyTypes, media)
@@ -637,6 +710,12 @@ func (d *document) build(name, verb, path string, op pathOp, m method) aot.AOTEx
 			components[name] = &v
 		}
 		bodySchema = newSchema(&node, components)
+		bodyRootName = schemaXMLName(&node, components, 0)
+		if bodyRootName == "" {
+			if title := schemaField(&node, components, "title", 0); title != nil {
+				bodyRootName = title.Value
+			}
+		}
 		break
 	}
 	if bodySchema != nil {
@@ -655,27 +734,40 @@ func (d *document) build(name, verb, path string, op pathOp, m method) aot.AOTEx
 		}
 	}
 
+	inverseTokens := map[string][3]string{}
+	for name, t := range m.Inverse.Tokens {
+		inverseTokens[name] = [3]string{t.Key, t.Location, t.Algorithm}
+	}
 	return &aotExchange{
+		fingerprint: d.fingerprint, inverseRef: m.Inverse.Method.Ref, inverseTokens: inverseTokens,
 		graphQL: graph,
 		name:    name,
 		sec:     d.security(),
 		inputs:  serverVars(srv),
 		opID:    op.OperationID,
 		req: request{
-			defaultBody:     m.Request.Default,
-			method:          strings.ToUpper(verb),
-			url:             url,
-			mediaType:       m.Request.MediaType,
-			params:          params,
-			parameters:      parameters,
-			baseBody:        m.Request.Base,
-			nativeCasing:    m.Request.NativeCasing,
-			snakeAliases:    d.snakeAliases,
-			serverVariables: variableNames,
-			bodySchema:      bodySchema,
-			bodyMediaType:   bodyMediaType(op),
-			translate:       m.Config.RequestTranslate.Algorithm,
-			transpose:       m.Config.QueryParamTranspose.Algorithm,
+			requestTransform:  transformDecl(m.Request.Transform),
+			xmlRootName:       bodyRootName,
+			xmlDeclaration:    m.Request.XMLDeclaration,
+			xmlAnnotation:     m.Request.XMLRootAnnotation,
+			bodyTranslation:   m.Config.RequestBodyTranslate.Algorithm,
+			signingService:    cmp.Or(m.ServiceName, d.Info.ServiceName),
+			defaultBody:       m.Request.Default,
+			method:            strings.ToUpper(verb),
+			url:               url,
+			mediaType:         m.Request.MediaType,
+			params:            params,
+			parameters:        parameters,
+			baseBody:          m.Request.Base,
+			nativeCasing:      m.Request.NativeCasing,
+			snakeAliases:      d.snakeAliases,
+			serverVariables:   variableNames,
+			serverEnvironment: environment,
+			transportDefaults: serverTransportDefaults(srv),
+			bodySchema:        bodySchema,
+			bodyMediaType:     bodyMediaType(op),
+			translate:         m.Config.RequestTranslate.Algorithm,
+			transpose:         m.Config.QueryParamTranspose.Algorithm,
 		},
 		resp: response{
 			rowSchema:  rowSchema,
@@ -690,8 +782,8 @@ func (d *document) build(name, verb, path string, op pathOp, m method) aot.AOTEx
 }
 
 // pagination is how a method's results continue past the first page, as the document states it:
-// the method's own declaration (or its resource's); else the document's; else Microsoft's
-// x-ms-pageable next link; else
+// the method's own declaration (or its resource's); else the document's; else native
+// x-ms-pageable metadata (tagged so hosts can opt into legacy pagination); else
 // the pageToken / nextPageToken pair a list method visibly declares (Google's), or AWS's Marker /
 // NextToken. Where the document states nothing, any-sdk's defaults apply, by provider name as any-sdk
 // applies them (any-sdk public/providerinvokers/anysdkhttp/invoker.go, inferNextPageResponseElement
@@ -706,7 +798,7 @@ func (d *document) pagination(m method, op pathOp, schema aot.Schema, verb strin
 		return p
 	}
 	if op.MsPageable != nil && op.MsPageable.NextLinkName != nil && *op.MsPageable.NextLinkName != "" {
-		return pagination{req: tokenSpec{Location: "request"}, resp: tokenSpec{Key: *op.MsPageable.NextLinkName, Location: "body"}}
+		return pagination{native: true, req: tokenSpec{Location: "request"}, resp: tokenSpec{Key: *op.MsPageable.NextLinkName, Location: "body"}}
 	}
 	for _, p := range op.Parameters {
 		switch {
@@ -824,6 +916,21 @@ type security struct {
 func (s security) Scheme() aot.Scheme { return s.scheme }
 func (s security) Name() string       { return s.name }
 
+// A URL scheme is transport configuration. Defaults for every other server
+// variable remain scope, even when the document supplies a default value.
+func serverTransportDefaults(s server) map[string]string {
+	scheme, _, ok := strings.Cut(serverURL(s.URL), "://")
+	if !ok || !strings.HasPrefix(scheme, "{") || !strings.HasSuffix(scheme, "}") {
+		return nil
+	}
+	name := strings.TrimSuffix(strings.TrimPrefix(scheme, "{"), "}")
+	value := s.Variables[name].Default
+	if value != "http" && value != "https" {
+		return nil
+	}
+	return map[string]string{name: value}
+}
+
 // serverVars are the server URL's {variables}, which become bound inputs — a region is a scope
 // decision the caller makes, never something a parser invents. Sorted for a stable signature.
 func serverVars(s server) []string {
@@ -926,17 +1033,28 @@ func lastSegment(ref string) string {
 // ---- AOT exchange -----------------------------------------------------------
 
 type aotExchange struct {
-	retry    aot.HTTPRetry
-	graphQL  aot.GraphQL
-	name     string
-	sec      security
-	inputs   []string
-	opID     string
-	req      request
-	resp     response
-	beta     aot.Beta
-	pushdown *pushdownSpec
+	fingerprint   string
+	inverseRef    string
+	inverseTokens map[string][3]string
+	inline        []string
+	retry         aot.HTTPRetry
+	graphQL       aot.GraphQL
+	name          string
+	sec           security
+	inputs        []string
+	opID          string
+	req           request
+	resp          response
+	beta          aot.Beta
+	pushdown      *pushdownSpec
 }
+
+func (e *aotExchange) DocumentIdentity() string { return e.fingerprint }
+
+func (e *aotExchange) InverseDeclaration() (string, map[string][3]string) {
+	return e.inverseRef, maps.Clone(e.inverseTokens)
+}
+func (e *aotExchange) InlineCommand() []string { return slices.Clone(e.inline) }
 
 func (e *aotExchange) Retry() (aot.HTTPRetry, bool) { return e.retry, e.retry != nil }
 
@@ -1005,23 +1123,45 @@ func (p parameter) List() bool   { return p.list }
 func (p parameter) Default() any { return p.p.Schema.Default }
 
 type request struct {
-	defaultBody     string
-	serverVariables []string
-	baseBody        string
-	nativeCasing    string
-	snakeAliases    bool
-	bodySchema      aot.Schema
-	method          string
-	url             string
-	mediaType       string
-	params          map[string]string
-	parameters      []aot.Parameter
-	bodyMediaType   string
-	translate       string
-	transpose       string
+	requestTransform  transformDeclType
+	xmlRootName       string
+	xmlDeclaration    string
+	xmlAnnotation     string
+	bodyTranslation   string
+	signingService    string
+	defaultBody       string
+	serverVariables   []string
+	serverEnvironment map[string]string
+	transportDefaults map[string]string
+	baseBody          string
+	nativeCasing      string
+	snakeAliases      bool
+	bodySchema        aot.Schema
+	method            string
+	url               string
+	mediaType         string
+	params            map[string]string
+	parameters        []aot.Parameter
+	bodyMediaType     string
+	translate         string
+	transpose         string
 }
 
+func (r request) XMLRootName() string       { return r.xmlRootName }
+func (r request) XMLDeclaration() string    { return r.xmlDeclaration }
+func (r request) XMLRootAnnotation() string { return r.xmlAnnotation }
+
+func (r request) SigningService() string { return r.signingService }
+
+func (r request) BodyTranslation() string { return r.bodyTranslation }
+
 func (r request) DefaultBody() string { return r.defaultBody }
+
+func (r request) ServerEnvironmentBindings() map[string]string {
+	return maps.Clone(r.serverEnvironment)
+}
+
+func (r request) ServerTransportDefaults() map[string]string { return maps.Clone(r.transportDefaults) }
 
 func (r request) ServerVariables() []string { return slices.Clone(r.serverVariables) }
 
@@ -1075,12 +1215,14 @@ func (t transformDeclType) Type() string { return t.typ }
 func (t transformDeclType) Body() string { return t.body }
 
 type pagination struct {
+	native     bool
 	req, resp  tokenSpec
 	algorithm  string
 	terminator tokenSpec
 }
 
 func (p pagination) Algorithm() string { return p.algorithm }
+func (p pagination) Native() bool      { return p.native }
 func (p pagination) ResponseTerminator() (string, string) {
 	return p.terminator.Key, p.terminator.Location
 }
@@ -1179,3 +1321,5 @@ func (o pushdownOption) FixedColumn() string {
 	}
 	return ""
 }
+
+func (r request) RequestTransform() aot.Transform { return r.requestTransform }
