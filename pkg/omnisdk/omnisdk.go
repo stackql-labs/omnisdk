@@ -269,6 +269,9 @@ type Args struct {
 	MutationCompletion MutationCompletion `json:"-"`
 	// StrictResponseSelection reports an absent declared JSON row key instead of an empty read.
 	StrictResponseSelection bool `json:"strict_response_selection,omitempty"`
+	// LegacyPagination retains any-sdk behavior for native API pagination hints.
+	// Explicit StackQL pagination remains authoritative. False preserves native inference.
+	LegacyPagination bool `json:"legacy_pagination,omitempty"`
 	// HTTPReadErrors is an explicit opt-in; nil preserves strict upstream errors.
 	HTTPReadErrors HTTPReadErrorPolicy `json:"-"`
 	// Relations binds opaque read handles resolved by the caller's analyzer.
@@ -1394,6 +1397,9 @@ func docInputs(args Args) map[string]any {
 // Azure's is not wanted.
 func docOptions(args Args, sec aot.Security, oauth bool) ([]docx.Option, error) {
 	opts := []docx.Option{docx.WithQueryLimit(args.Tuning.Limit)}
+	if args.LegacyPagination {
+		opts = append(opts, docx.WithLegacyPagination())
+	}
 	if args.StrictResponseSelection {
 		opts = append(opts, docx.WithStrictSelection())
 	}

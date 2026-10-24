@@ -46,6 +46,7 @@ import (
 type Option func(*options)
 
 type options struct {
+	legacyPagination    bool
 	strictSelection     bool
 	ignoreDocumentRetry bool
 	queryLimit          int
@@ -345,6 +346,9 @@ func WithBound(names ...string) Option {
 // WithStrictSelection reports an absent declared JSON row key as an error.
 func WithStrictSelection() Option { return func(o *options) { o.strictSelection = true } }
 
+// WithLegacyPagination preserves provider defaults in place of native API hints.
+func WithLegacyPagination() Option { return func(o *options) { o.legacyPagination = true } }
+
 // WithWholeResponse emits the decoded body as a single record instead of exploding the item list
 // the document's objectKey names. It is for mutating operations, which answer about one object: the
 // objectKey describes where a SELECT finds its items, and a create's reply has no such list.
@@ -515,6 +519,10 @@ func compile(ex aot.AOTExchange, inputs map[string]any, reg dsl.Registry, o opti
 	hreq := httpx.Request{Method: req.Method(), URL: url, Read: !o.wholeResponse}
 	if o.poll != nil {
 		hreq.Continuation = *o.poll
+	} else if native, ok := resp.Pagination().(aot.NativePagination); o.legacyPagination && ok && native.Native() {
+		if strings.EqualFold(req.Method(), "get") {
+			hreq.Continuation = httpx.Continuation{Kind: httpx.ContPaginate, TokenParam: "pageToken", NextTokenPath: "nextPageToken"}
+		}
 	} else if c, ok := continuation(resp.Pagination()); ok {
 		// Every page is fetched, and each is emitted as it arrives: a list is never cut to its first
 		// page, and never waits for its last.

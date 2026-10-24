@@ -868,6 +868,15 @@ from the offset it applies locally. Omitting hints retains the existing local be
 `DocServices` returns declared provider service metadata, including services whose operation files
 are absent. `DocCatalog` continues to enumerate locally addressable services and exchanges.
 
+The StackQL host sets `Args.LegacyPagination` to match any-sdk: native `x-ms-pageable` hints alone
+do not enable next-link traversal. Explicit `x-stackQL-config.pagination` remains authoritative.
+Other SDK callers retain native inference by default. An explicit URL continuation is followed
+as declared; the SDK does not rewrite its destination.
+
+MXJ programs receive numeric and boolean XML scalars using the legacy number-before-boolean
+conversion rules. Large integral identifiers remain exact strings. This conversion belongs to
+the program's input transformation; bindings themselves continue transferring values unchanged.
+
 ### Analyzer-resolved relations
 
 A front end can resolve a subquery, database table or another read source before handing a graph

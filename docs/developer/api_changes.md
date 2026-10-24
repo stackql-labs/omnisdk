@@ -18,6 +18,15 @@ positional literals must account for added fields or switch to keyed fields.
 
 ## Additions
 
+- **XML program scalar parity:** mxj programs receive numeric and boolean XML values
+  using legacy conversion rules. Integral identifiers outside the exact floating-point
+  range remain strings, preserving existing SDK precision guarantees.
+
+- **Pagination parity:** `Args.LegacyPagination` lets hosts use any-sdk provider defaults
+  instead of native `x-ms-pageable` inference. Explicit StackQL pagination remains
+  authoritative. False preserves existing native pagination support. Optional
+  `aot.NativePagination` exposes inference provenance without changing `aot.Pagination`.
+
 - **Bound-input resolution:** a missing required input no longer causes another,
   already-bound input to be wired again. Constant and fan-out bindings remain intact;
   join equalities still constrain the resulting rows.

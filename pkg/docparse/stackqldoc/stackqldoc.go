@@ -207,14 +207,13 @@ type paginationSpec struct {
 }
 
 type pathOp struct {
+	MsPageable *struct {
+		NextLinkName *string `yaml:"nextLinkName"`
+	} `yaml:"x-ms-pageable"`
 	Servers     []server     `yaml:"servers"`
 	GraphQL     *graphQLSpec `yaml:"x-stackQL-graphQL"`
 	OperationID string       `yaml:"operationId"`
 	Parameters  []pathParam  `yaml:"parameters"`
-	// MsPageable is Microsoft's pagination declaration: the body property holding the next page's URL.
-	MsPageable *struct {
-		NextLinkName *string `yaml:"nextLinkName"`
-	} `yaml:"x-ms-pageable"`
 	// RequestBody declares the media type and schema used to validate caller-supplied fields.
 	RequestBody struct {
 		Required bool `yaml:"required"`
@@ -743,8 +742,8 @@ func (d *document) build(name, verb, path string, op pathOp, m method) aot.AOTEx
 }
 
 // pagination is how a method's results continue past the first page, as the document states it:
-// the method's own declaration (or its resource's); else the document's; else Microsoft's
-// x-ms-pageable next link; else
+// the method's own declaration (or its resource's); else the document's; else native
+// x-ms-pageable metadata (tagged so hosts can opt into legacy pagination); else
 // the pageToken / nextPageToken pair a list method visibly declares (Google's), or AWS's Marker /
 // NextToken. Where the document states nothing, any-sdk's defaults apply, by provider name as any-sdk
 // applies them (any-sdk public/providerinvokers/anysdkhttp/invoker.go, inferNextPageResponseElement
@@ -759,7 +758,7 @@ func (d *document) pagination(m method, op pathOp, schema aot.Schema, verb strin
 		return p
 	}
 	if op.MsPageable != nil && op.MsPageable.NextLinkName != nil && *op.MsPageable.NextLinkName != "" {
-		return pagination{req: tokenSpec{Location: "request"}, resp: tokenSpec{Key: *op.MsPageable.NextLinkName, Location: "body"}}
+		return pagination{native: true, req: tokenSpec{Location: "request"}, resp: tokenSpec{Key: *op.MsPageable.NextLinkName, Location: "body"}}
 	}
 	for _, p := range op.Parameters {
 		switch {
@@ -1165,12 +1164,14 @@ func (t transformDeclType) Type() string { return t.typ }
 func (t transformDeclType) Body() string { return t.body }
 
 type pagination struct {
+	native     bool
 	req, resp  tokenSpec
 	algorithm  string
 	terminator tokenSpec
 }
 
 func (p pagination) Algorithm() string { return p.algorithm }
+func (p pagination) Native() bool      { return p.native }
 func (p pagination) ResponseTerminator() (string, string) {
 	return p.terminator.Key, p.terminator.Location
 }

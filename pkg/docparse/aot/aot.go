@@ -13,6 +13,10 @@ package aot
 
 import "time"
 
+// NativePagination identifies pagination inferred from native API annotations,
+// rather than an explicit StackQL pagination contract.
+type NativePagination interface{ Native() bool }
+
 // ParameterDefault exposes a declared wire default without making request
 // scope optional. Compilers may apply it to non-scope metadata such as headers.
 type ParameterDefault interface{ Default() any }

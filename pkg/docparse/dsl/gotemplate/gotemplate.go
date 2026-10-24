@@ -114,5 +114,5 @@ func bindXML(in []byte) (any, error) {
 	if err != nil {
 		return nil, fmt.Errorf("decode xml: %w", err)
 	}
-	return map[string]any(m), nil
+	return xmlScalars(map[string]any(m)), nil
 }

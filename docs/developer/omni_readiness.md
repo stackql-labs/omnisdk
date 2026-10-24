@@ -131,7 +131,7 @@ or database-discovery code. An architecture test rejects production database dep
 
 Nonrecursive CTEs use the same boundaries, with lexical scoping, earlier-definition references,
 explicit column names and nested shadowing. Stored view definitions keep an independent scope.
-Recursive provider CTEs and correlated subqueries still require additional analyzer/executor work.
+Features unsupported by any-sdk are outside this behavioral-parity target.
 
 ## Results by suite
 
@@ -167,7 +167,7 @@ Remaining failures include parameterized/resource-view composition, analytics-ca
 resolution, multi-step dataflow, remaining expression/projection differences and provider-specific mutation completion,
 transaction diagnostics, metadata fidelity, XML request/response shapes, non-HTTP local execution,
 and deeper server/view binding composition. Information-schema objects on explicitly configured external SQL connections now use host-owned
-relation handles. Correlated subqueries and recursive provider CTEs still require analyzer/executor work. This is not a complete compatibility cutover.
+relation handles. Features unsupported by any-sdk are not counted as parity gaps. This is not a complete compatibility cutover.
 
 The rewritten S3 ABAC test document explicitly maps UPDATE to `put_bucket_abac`. An earlier diagnosis
 incorrectly inspected the native source document instead. The missing `Bucket` input was fixed by retaining path-level server variables after mock URL rewrites;
