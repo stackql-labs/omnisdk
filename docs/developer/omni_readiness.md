@@ -4,16 +4,16 @@ Historical CI reference: **658/733 passed, 75 failed** in
 [run 39960274810](https://github.com/stackql/stackql-devel/actions/runs/39960274810),
 using the downloaded `stackql_linux_omni_robot_reports` artifact.
 
-The latest completed local full run is **660/733 passed, 73 failed**
-(`/private/tmp/omni-remainder4-full-robot/output.xml`), up from 651/733. Comparing individual
-scenarios found nine new passes and no lost passes. This run includes asynchronous mutation
-completion and the host's legacy HTTP 404 read policy. The latter resolves the S3 sibling-read
-cancellation and positive INSERT SELECT failure while preserving the original 404 diagnostic.
+The latest completed local full run is **661/733 passed, 72 failed**
+(`/private/tmp/omni-remainder7-full-robot/output.xml`), up from 651/733. Comparing individual
+scenarios found ten new passes and no lost passes. This run includes asynchronous mutation
+completion, host-owned external SQL relations, declared transport metadata and the host's
+legacy HTTP 404 read policy. The latter resolves the S3 sibling-read cancellation and positive
+INSERT SELECT failure while preserving the original 404 diagnostic.
 
-Subsequent unchanged focused runs passed all eight async/await scenarios, all four external
-PostgreSQL scenarios with `SHOULD_RUN_DOCKER_EXTERNAL_TESTS:true` (actual execution, not the
-usual local skip), and the Kubernetes JSON-path scenario. The last two fixes are newer than
-the completed full run; their focused passes must not be added to that total.
+All eight async/await scenarios and the Kubernetes JSON-path scenario pass. All four external
+PostgreSQL scenarios ran with `SHOULD_RUN_DOCKER_EXTERNAL_TESTS:true` and passed; they were
+actually executed, rather than counted as passes through the usual local gate.
 
 Local MCP failures and build-version metadata make the local total different from CI; compare
 individual scenarios as well as totals. A join also varies in row order between runs. No Robot
@@ -23,6 +23,33 @@ inputs and is withdrawn as parity evidence.
 The migration order is behavioral parity first, removal of the `any-sdk` dependency second,
 and semantic improvements afterward. Existing SQLite boolean representation (`0`/`1`) remains
 part of the parity target for this work.
+
+## View and inbox binding follow-up
+
+The subsequent unchanged mocked-query/server-variable run passed **370/404**, versus
+367/404 for the same scenarios in the last full run. Four previously failing view cases passed:
+polymorphic S3 with explicit inputs, the EC2 view-parameter scenario, repeated EC2 VPC view
+invocation, and EC2 instance region tuple replacement. One previously passing join returned the
+same two rows in the opposite order. The identical ordering failure exists in earlier artifacts
+(`/private/tmp/omni-parity-order-robot/output.xml` and `omni-parity7-robot/output.xml`);
+this run is not evidence that ordering parity is resolved.
+
+Document-view variants now recognize declared dialect/required-input predicates. Caller constant
+and IN bindings replace literal view inputs while preserving column-to-column dependencies and
+business predicates. The SDK resolver no longer wires an already-bound inbox slot because a
+different required input is missing. Bindings remain identity transfers; request conversion stays
+in input transformations. No RDBMS code enters the SDK.
+
+Validation: `/private/tmp/omni-inbox-next-robot/output.xml`, comparison
+`/private/tmp/omni-inbox-next-comparison.json`, full SDK race checks
+`/private/tmp/omni-inbox-next-full-sdk.log`, host race checks
+`/private/tmp/omni-inbox-next-host.log` and lint `/private/tmp/omni-inbox-next-lint.log` (zero issues).
+Robot inputs, assertions and provider files remain unchanged. This 404-case subset does not replace
+the completed 733-case full-run total above.
+
+A focused confirmation passed **5/5**, including all four recovered view cases and the
+intermittent join-order case (`/private/tmp/omni-inbox-next-confirm-robot/output.xml`). Its passing
+rerun does not remove the observed ordering instability from the backlog.
 
 ## Current compatibility batch
 
@@ -120,7 +147,7 @@ Recursive provider CTEs and correlated subqueries still require additional analy
 | Stackql Function Projection | 8/8 | 8/8 |
 | Stackql Graphql Pagination | 9/9 | 9/9 |
 | Stackql Legacy Cli Surface | 25/25 | 25/25 |
-| Stackql Mocked From Cmd Line | 329/398 | 360/398 |
+| Stackql Mocked From Cmd Line | 329/398 | 361/398 |
 | Stackql Oci Auth | 11/11 | 11/11 |
 | Stackql Odata Pushdown | 24/24 | 24/24 |
 | Stackql Postgres Housekeeping | 6/6 | 6/6 |
@@ -131,6 +158,10 @@ Recursive provider CTEs and correlated subqueries still require additional analy
 | Stackql Xml Walker | 15/15 | 15/15 |
 
 ## Remaining failures
+
+The latest local run has 37 mocked-query failures, 31 MCP failures and four CLI/metadata failures.
+The historical CI reference passed all 85 MCP tests; the local MCP count is not evidence that
+this batch introduced 31 SDK regressions.
 
 Remaining failures include parameterized/resource-view composition, analytics-cache namespace
 resolution, multi-step dataflow, remaining expression/projection differences and provider-specific mutation completion,
@@ -149,10 +180,12 @@ are not being treated as intentional differences or a cutover-ready result.
 ## Validation and artifacts
 
 - Historical CI: `/private/tmp/omni-ci-39960274810/output.xml` (658/733).
-- Latest completed full local run: `/private/tmp/omni-remainder4-full-robot/output.xml` (660/733).
+- Latest completed full local run: `/private/tmp/omni-remainder7-full-robot/output.xml` (661/733).
 - Async/await: `/private/tmp/omni-remainder3-async-robot/output.xml` (8/8).
 - External PostgreSQL, Docker gate enabled: `/private/tmp/omni-remainder5-external-robot/output.xml` (4/4).
 - Kubernetes transport binding: `/private/tmp/omni-remainder6-k8s/output.xml` (1/1).
+- Scenario comparison: `/private/tmp/omni-remainder7-comparison.json` (ten gains, zero losses against the prior full run).
+- Response-exchange race checks: `/private/tmp/omni-remainder7-docx.log`; final vet: `/private/tmp/omni-remainder7-vet.log`.
 - SDK checks: `/private/tmp/omni-remainder-final-sdk.log`.
 - Host race checks and lint: `/private/tmp/omni-remainder-final-host.log`,
   `/private/tmp/omni-remainder-final-lint.log` (zero lint issues).

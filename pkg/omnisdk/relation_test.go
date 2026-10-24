@@ -269,3 +269,75 @@ func TestRelationLeftAntiJoinPreservesUnmatchedSource(t *testing.T) {
 		})
 	}
 }
+
+func TestBoundInboxInputIsNotWiredAgainWhenAnotherInputIsMissing(t *testing.T) {
+	for _, form := range []query.JoinForm{query.Inner, query.Left} {
+		for _, multiple := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%v/fanout=%v", form, multiple), func(t *testing.T) {
+				columns := map[string]omnisdk.ColumnType{"id": {Type: "string"}, "region": {Type: "string"}}
+				source, err := omnisdk.NewRelation("local.listing", []omnisdk.Param{{Name: "region", Required: true}}, columns,
+					func(_ context.Context, inputs map[string]any) (omnisdk.Rows, error) {
+						return &handleRows{rows: []omnisdk.Row{{"id": "one", "region": inputs["region"]}}}, nil
+					})
+				if err != nil {
+					t.Fatal(err)
+				}
+				detail, err := omnisdk.NewRelation("local.detail", []omnisdk.Param{{Name: "region", Required: true}, {Name: "owner", Required: true}}, columns,
+					func(_ context.Context, inputs map[string]any) (omnisdk.Rows, error) {
+						if inputs["owner"] != "one" {
+							return nil, fmt.Errorf("owner inbox=%v", inputs)
+						}
+						return &handleRows{rows: []omnisdk.Row{{"id": inputs["owner"], "region": inputs["region"]}}}, nil
+					})
+				if err != nil {
+					t.Fatal(err)
+				}
+				var predicates []query.Predicate
+				for _, alias := range []string{"s", "d"} {
+					col := query.NewColumn(alias, "region")
+					if multiple {
+						predicates = append(predicates, query.NewIn(col, query.NewCollection(query.NewLiteral("east"), query.NewLiteral("west"))))
+					} else {
+						predicates = append(predicates, query.NewEq(col, query.NewLiteral("east")))
+					}
+				}
+				q, err := query.New([]query.Join{
+					query.NewJoin(query.NewResource("s", source.Address()), query.Base),
+					query.NewJoin(query.NewResource("d", detail.Address()), form,
+						query.NewEq(query.NewColumn("d", "region"), query.NewColumn("s", "region")),
+						query.NewEq(query.NewColumn("d", "owner"), query.NewColumn("s", "id"))),
+				}, predicates, []query.Output{query.NewOutput("region", query.NewColumn("d", "region"))})
+				if err != nil {
+					t.Fatal(err)
+				}
+				res, err := omnisdk.Resolve(q, map[string]omnisdk.Table{"s": source, "d": detail})
+				if err != nil {
+					t.Fatal(err)
+				}
+				plan, err := omnisdk.NewGraphQuery("unused", res.Graph(), omnisdk.Args{Params: res.Params(), Relations: map[string]omnisdk.Relation{source.Address(): source, detail.Address(): detail}})
+				if err != nil {
+					t.Fatal(err)
+				}
+				rows, err := plan.Open(context.Background())
+				if err != nil {
+					t.Fatal(err)
+				}
+				defer rows.Close()
+				got := map[any]int{}
+				for rows.Next() {
+					got[rows.Row()["region"]]++
+				}
+				if rows.Err() != nil {
+					t.Fatal(rows.Err())
+				}
+				want := map[any]int{"east": 1}
+				if multiple {
+					want["west"] = 1
+				}
+				if !reflect.DeepEqual(got, want) {
+					t.Fatalf("rows=%v want=%v", got, want)
+				}
+			})
+		}
+	}
+}

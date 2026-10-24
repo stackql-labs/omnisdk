@@ -1482,7 +1482,7 @@ func accepts(t Table, name string) bool {
 // needs reports whether the table cannot run on known alone and name would help: no method is
 // satisfiable from known, and some method takes name.
 func needs(t Table, name string, known map[string]bool) bool {
-	if !accepts(t, name) {
+	if known[name] || !accepts(t, name) {
 		return false
 	}
 	for _, m := range t.Methods() {

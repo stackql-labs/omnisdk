@@ -927,6 +927,13 @@ metadata query and opens data rows only during execution. Connection lookup, quo
 database drivers and cursor handling stay in the host; Omni receives the same `Relation`
 interface used for other sources.
 
+Bindings transfer values into transformation inboxes; input transformations own their conversion
+into request fields. A slot already supplied by an explicit constant or fan-out does not acquire
+another producer merely because a different required slot is missing. Join conditions still
+constrain which rows match. The host selects declared document-view variants from the SQL dialect
+and explicitly supplied required inputs. Literal view inputs can be replaced by caller bindings;
+column-to-column dependencies and business predicates remain intact.
+
 Optional `ServerTransportDefaults` metadata exposes only a declared HTTP or HTTPS URL-scheme
 default. The host can bind that value before resolution; an explicit SQL value wins. This does
 not apply host, cluster, account, region or other scope defaults, and the SDK itself never

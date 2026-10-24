@@ -18,6 +18,10 @@ positional literals must account for added fields or switch to keyed fields.
 
 ## Additions
 
+- **Bound-input resolution:** a missing required input no longer causes another,
+  already-bound input to be wired again. Constant and fan-out bindings remain intact;
+  join equalities still constrain the resulting rows.
+
 - **Server transport metadata:** optional `aot.ServerTransportDefaults` and
   `omnisdk.ServerTransportDefaults` expose a declared HTTP or HTTPS URL-scheme default.
   `DocMethod.TransportDefaults` carries it for discovery. The SDK leaves the URL placeholder
