@@ -62,7 +62,7 @@ func (r bundleResolver) ResolveDocument(reference, origin string) (*document, er
 			}
 		}
 	}
-	b, err := fs.ReadFile(r.catalog.fsys, file)
+	b, err := r.catalog.settings.readDocument(r.catalog.fsys, file)
 	if err != nil {
 		return nil, fmt.Errorf("stackqldoc: read referenced document %s: %w", file, err)
 	}

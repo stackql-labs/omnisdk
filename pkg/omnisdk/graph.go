@@ -806,7 +806,7 @@ func NewGraphQuery(dir string, g Graph, args Args) (Plan, error) {
 				return nil, err
 			}
 		} else {
-			c, err = openDocs(dir, addr)
+			c, err = openDocs(dir, addr, args.documentOptions()...)
 			if err != nil {
 				return nil, err
 			}

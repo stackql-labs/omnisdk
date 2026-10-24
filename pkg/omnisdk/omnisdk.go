@@ -64,6 +64,7 @@ import (
 	"github.com/stackql-labs/omnisdk/pkg/docparse/dsl/gotemplate"
 	"github.com/stackql-labs/omnisdk/pkg/docparse/dsl/schemaxml"
 	"github.com/stackql-labs/omnisdk/pkg/docparse/stackqldoc"
+	"github.com/stackql/stackql-provider-registry/signing/pqsig"
 )
 
 // Auth is the caller-supplied authentication config (a pared, stackql-shaped auth struct). It is the
@@ -249,6 +250,9 @@ type Method struct {
 // Args are the inputs to run a resource: explicit scope Params, optional Auth (config-driven-auth
 // resources), an endpoint override, run Tuning, and an optional traffic log.
 type Args struct {
+	// DocumentVerifier opts document-backed plans into signature verification.
+	// Nil preserves the default unverified behavior.
+	DocumentVerifier pqsig.Verifier `json:"-"`
 	// Relations binds opaque read handles resolved by the caller's analyzer.
 	// Handles take precedence over document lookup and cannot be mutation targets.
 	Relations map[string]Relation `json:"-"`
@@ -1134,6 +1138,13 @@ func checkEndpoint(args Args) error {
 // provider names whose credentials the call uses — its key in Args.AuthByProvider. A document alone does not
 // say which provider it belongs to.
 func NewFromDoc(doc []byte, provider, resource string, args Args) (Plan, error) {
+	if args.DocumentVerifier != nil {
+		var err error
+		doc, err = args.DocumentVerifier.Verify(doc)
+		if err != nil {
+			return nil, fmt.Errorf("omnisdk: verify document: %w", err)
+		}
+	}
 	if err := checkEndpoint(args); err != nil {
 		return nil, err
 	}
@@ -1157,13 +1168,13 @@ func NewFromDoc(doc []byte, provider, resource string, args Args) (Plan, error) 
 // holding many providers. Which one it is, is a fact about the directory; asking a caller to declare
 // it would be asking them to restate what is already on disk. address names the provider inside a
 // registry and is ignored for a bundle.
-func openDocs(dir, address string) (aot.Catalog, error) {
+func openDocs(dir, address string, opts ...stackqldoc.Option) (aot.Catalog, error) {
 	fsys := os.DirFS(dir)
-	cached := docCacheOption(dir)
+	options := append([]stackqldoc.Option{docCacheOption(dir)}, opts...)
 	if _, err := fs.Stat(fsys, "provider.yaml"); err == nil {
-		return stackqldoc.Open(fsys, cached)
+		return stackqldoc.Open(fsys, options...)
 	}
-	reg, err := stackqldoc.OpenRegistry(fsys, cached)
+	reg, err := stackqldoc.OpenRegistry(fsys, options...)
 	if err != nil {
 		return nil, err
 	}
@@ -1173,6 +1184,13 @@ func openDocs(dir, address string) (aot.Catalog, error) {
 			dir, len(reg.Providers()), firstOr(reg.Providers()))
 	}
 	return reg.Catalog(provider)
+}
+
+func (a Args) documentOptions() []stackqldoc.Option {
+	if a.DocumentVerifier == nil {
+		return nil
+	}
+	return []stackqldoc.Option{stackqldoc.WithVerifier(a.DocumentVerifier)}
 }
 
 // documents is the process's parsed-document cache. Entries are keyed by the directory a document is
@@ -1212,8 +1230,8 @@ func firstOr(ss []string) string {
 
 // DocProviders lists a registry root's providers with the version resolved for each — the newest
 // present, discovered rather than configured.
-func DocProviders(dir string) (map[string]string, error) {
-	reg, err := stackqldoc.OpenRegistry(os.DirFS(dir))
+func DocProviders(dir string, opts ...stackqldoc.Option) (map[string]string, error) {
+	reg, err := stackqldoc.OpenRegistry(os.DirFS(dir), opts...)
 	if err != nil {
 		return nil, err
 	}
@@ -1253,8 +1271,8 @@ type DocService struct {
 }
 
 // DocServices lists provider declarations rather than only runnable services.
-func DocServices(dir, provider string) ([]DocService, error) {
-	c, err := openDocs(dir, provider)
+func DocServices(dir, provider string, opts ...stackqldoc.Option) ([]DocService, error) {
+	c, err := openDocs(dir, provider, opts...)
 	if err != nil {
 		return nil, err
 	}
@@ -1274,8 +1292,8 @@ func DocServices(dir, provider string) ([]DocService, error) {
 }
 
 // DocResources lists every declared resource, including those without a runnable SELECT.
-func DocResources(dir, provider, service string) ([]string, error) {
-	c, err := openDocs(dir, provider)
+func DocResources(dir, provider, service string, opts ...stackqldoc.Option) ([]string, error) {
+	c, err := openDocs(dir, provider, opts...)
 	if err != nil {
 		return nil, err
 	}
@@ -1292,8 +1310,8 @@ type DocMethod struct {
 }
 
 // DocMethods lists a resource's methods.
-func DocMethods(dir, provider, service, resource string) ([]DocMethod, error) {
-	c, err := openDocs(dir, provider)
+func DocMethods(dir, provider, service, resource string, opts ...stackqldoc.Option) ([]DocMethod, error) {
+	c, err := openDocs(dir, provider, opts...)
 	if err != nil {
 		return nil, err
 	}
@@ -1317,7 +1335,7 @@ func NewSelectFromCatalog(dir, address string, args Args) (Plan, error) {
 	if err := checkEndpoint(args); err != nil {
 		return nil, err
 	}
-	c, err := openDocs(dir, address)
+	c, err := openDocs(dir, address, args.documentOptions()...)
 	if err != nil {
 		return nil, err
 	}

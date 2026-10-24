@@ -129,7 +129,7 @@ func converge(registry, name, state, runID string, resources []ManagedResource, 
 // and the residue its document leaves unsaid, so a new service is data a caller supplies rather than
 // an entry someone adds to this package.
 func providerWiring(registry string, resources []ManagedResource, args Args) (facade.Effector, facade.Semantics, error) {
-	reg, err := openRegistry(registry)
+	reg, err := openRegistry(registry, args.documentOptions()...)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -227,7 +227,7 @@ func qualify(cat aot.Catalog, addr string) (string, error) {
 }
 
 // openRegistry resolves a registry root once per run.
-func openRegistry(root string) (aot.Registry, error) {
+func openRegistry(root string, opts ...stackqldoc.Option) (aot.Registry, error) {
 	if root == "" {
 		return nil, fmt.Errorf("omnisdk: a document registry is required")
 	}
@@ -236,7 +236,7 @@ func openRegistry(root string) (aot.Registry, error) {
 	if _, err := os.Stat(root); err != nil {
 		return nil, fmt.Errorf("omnisdk: document registry %q: %w", root, err)
 	}
-	return stackqldoc.OpenRegistry(os.DirFS(root), docCacheOption(root))
+	return stackqldoc.OpenRegistry(os.DirFS(root), append([]stackqldoc.Option{docCacheOption(root)}, opts...)...)
 }
 
 // leaseTTL bounds how long a dead run can hold the collection before another may break it.
