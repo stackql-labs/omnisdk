@@ -2,6 +2,7 @@ package omnisdk_test
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"reflect"
@@ -11,6 +12,7 @@ import (
 
 	"github.com/stackql-labs/omnisdk/pkg/omnisdk"
 	"github.com/stackql-labs/omnisdk/pkg/query"
+	"github.com/stackql-labs/omnisdk/pkg/sqlfn"
 )
 
 type handleRows struct {
@@ -339,5 +341,75 @@ func TestBoundInboxInputIsNotWiredAgainWhenAnotherInputIsMissing(t *testing.T) {
 				}
 			})
 		}
+	}
+}
+
+func TestPostgresRelationReadReturnsNativeLiteralValues(t *testing.T) {
+	relation, err := omnisdk.NewRelation("local.constants", nil, map[string]omnisdk.ColumnType{"id": {Type: "string"}},
+		func(context.Context, map[string]any) (omnisdk.Rows, error) {
+			return &handleRows{rows: []omnisdk.Row{{"id": "keep"}, {"id": "drop"}}}, nil
+		})
+	if err != nil {
+		t.Fatal(err)
+	}
+	q, err := query.New([]query.Join{query.NewJoin(query.NewResource("s", relation.Address()), query.Base)},
+		[]query.Predicate{query.NewEq(query.NewColumn("s", "id"), query.NewLiteral("keep"))},
+		[]query.Output{query.NewOutput("id", query.NewColumn("s", "id")), query.NewOutput("scope", query.NewLiteral("explicit")), query.NewOutput("empty", query.NewLiteral(nil)), query.NewOutput("priority", query.NewLiteral(int64(3000)))})
+	if err != nil {
+		t.Fatal(err)
+	}
+	resolved, err := omnisdk.Resolve(q, map[string]omnisdk.Table{"s": relation})
+	if err != nil {
+		t.Fatal(err)
+	}
+	plan, err := omnisdk.NewGraphQuery("", resolved.Graph(), omnisdk.Args{Dialect: sqlfn.Postgres, Params: resolved.Params(), Relations: map[string]omnisdk.Relation{relation.Address(): relation}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	rows, err := plan.Open(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rows.Close()
+	if !rows.Next() || !reflect.DeepEqual(rows.Row(), omnisdk.Row{"id": "keep", "scope": "explicit", "empty": nil, "priority": int64(3000)}) {
+		t.Fatalf("row=%v err=%v", rows.Row(), rows.Err())
+	}
+	if rows.Next() || rows.Err() != nil {
+		t.Fatalf("continuation=%v", rows.Err())
+	}
+}
+
+func TestPostgresRelationFiltersWithColumnExpression(t *testing.T) {
+	relation, err := omnisdk.NewRelation("local.constants", nil, map[string]omnisdk.ColumnType{"id": {Type: "string"}, "size": {Type: "integer"}},
+		func(context.Context, map[string]any) (omnisdk.Rows, error) {
+			return &handleRows{rows: []omnisdk.Row{{"id": "keep", "size": json.Number("8")}, {"id": "drop", "size": json.Number("-8")}}}, nil
+		})
+	if err != nil {
+		t.Fatal(err)
+	}
+	q, err := query.New([]query.Join{query.NewJoin(query.NewResource("s", relation.Address()), query.Base)},
+		[]query.Predicate{query.NewEq(query.NewColumn("s", "size"), query.NewCall("abs", query.NewColumn("s", "size")))},
+		[]query.Output{query.NewOutput("id", query.NewColumn("s", "id")), query.NewOutput("scope", query.NewLiteral("explicit")), query.NewOutput("empty", query.NewLiteral(nil)), query.NewOutput("priority", query.NewLiteral(int64(3000)))})
+	if err != nil {
+		t.Fatal(err)
+	}
+	resolved, err := omnisdk.Resolve(q, map[string]omnisdk.Table{"s": relation})
+	if err != nil {
+		t.Fatal(err)
+	}
+	plan, err := omnisdk.NewGraphQuery("", resolved.Graph(), omnisdk.Args{Dialect: sqlfn.Postgres, Params: resolved.Params(), Relations: map[string]omnisdk.Relation{relation.Address(): relation}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	rows, err := plan.Open(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rows.Close()
+	if !rows.Next() || !reflect.DeepEqual(rows.Row(), omnisdk.Row{"id": "keep", "scope": "explicit", "empty": nil, "priority": int64(3000)}) {
+		t.Fatalf("row=%v err=%v", rows.Row(), rows.Err())
+	}
+	if rows.Next() || rows.Err() != nil {
+		t.Fatalf("continuation=%v", rows.Err())
 	}
 }

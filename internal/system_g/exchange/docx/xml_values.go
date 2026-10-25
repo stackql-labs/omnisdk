@@ -1,6 +1,7 @@
 package docx
 
 import (
+	"encoding/json"
 	"fmt"
 	"strings"
 
@@ -37,7 +38,13 @@ func xmlSchemaValue(value any, schema aot.Schema) any {
 					return value
 				}
 			}
-			return object["#text"]
+			value = object["#text"]
+		}
+		if text, ok := value.(string); ok && (typed.Type() == "integer" || typed.Type() == "number") {
+			var number json.Number
+			if len(text) > 0 && (text[0] == '-' || text[0] >= '0' && text[0] <= '9') && json.Unmarshal([]byte(text), &number) == nil {
+				return number
+			}
 		}
 		return value
 	}

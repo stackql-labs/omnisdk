@@ -156,6 +156,43 @@ func pgOperators(env pgEnv) []Func {
 	}, func(b bool) any { return b })
 	functions := append(comparisons, booleanFunctions(pgTruth, func(value bool) any { return value })...)
 	return append(functions, []Func{
+		// Legacy document programs use JSON_EXTRACT in either host dialect.
+		NewScalar("json_extract", 2, -1, func(args []any) (any, error) {
+			plain := make([]any, len(args))
+			for i, value := range args {
+				plain[i] = Settle(value)
+			}
+			return jsonExtractFunc(plain, 0)
+		}),
+		NewScalar("string", 1, 1, func(args []any) (any, error) {
+			if text, ok := pgTextOf(args[0]); ok {
+				return text, nil
+			}
+			return nil, nil
+		}),
+		// StackQL's JSON wrapper is a validated JSON value in either dialect.
+		NewScalar("json", 1, 1, func(args []any) (any, error) {
+			if args[0] == nil {
+				return nil, nil
+			}
+			text, ok := pgTextOf(args[0])
+			if !ok {
+				return nil, pgErrorf("JSON requires a scalar or JSON input")
+			}
+			return pgJSONIn(text)
+		}),
+		newDeferredScalar("coalesce", 1, -1, func(args []func() (any, error)) (any, error) {
+			for _, argument := range args {
+				value, err := argument()
+				if err != nil {
+					return nil, err
+				}
+				if value != nil {
+					return value, nil
+				}
+			}
+			return nil, nil
+		}),
 		newChoice("case_when", 3, true, pgTruth),
 		newSimpleCase(func(left, right any) (bool, error) {
 			comparison, err := pgCompareNullable(env, left, right, "=")

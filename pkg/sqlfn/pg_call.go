@@ -1,6 +1,7 @@
 package sqlfn
 
 import (
+	"encoding/json"
 	"math"
 	"sort"
 	"strconv"
@@ -307,7 +308,7 @@ func pgTextOrEmpty(v any) string {
 // array to the text of its JSON, as stackql stores them.
 func pgNormalize(v any) any {
 	switch x := v.(type) {
-	case float64, float32:
+	case float64, float32, json.Number:
 		n, err := pgNumericOf(x)
 		if err != nil {
 			return v

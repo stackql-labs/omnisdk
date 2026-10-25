@@ -95,3 +95,70 @@ func TestSimpleCaseEvaluatesBaseOnce(t *testing.T) {
 		t.Fatalf("value=%#v calls=%d error=%v", value, calls, err)
 	}
 }
+
+func TestPostgresCoalesceDoesNotEvaluateUnusedArguments(t *testing.T) {
+	catalog := pgCatalog(t)
+	function, exists := catalog.Get("coalesce")
+	if !exists {
+		t.Fatal("PostgreSQL COALESCE is absent")
+	}
+	lazy, ok := function.(sqlfn.LazyFunc)
+	if !ok {
+		t.Fatal("COALESCE must evaluate lazily")
+	}
+	value, err := lazy.CallLazy([]func() (any, error){
+		func() (any, error) { return nil, nil },
+		func() (any, error) { return "fallback", nil },
+		func() (any, error) { t.Fatal("unused argument evaluated"); return nil, nil },
+	})
+	if err != nil || value != "fallback" {
+		t.Fatalf("value=%v err=%v", value, err)
+	}
+}
+
+func TestPostgresJSONWrapperPreservesStructuredInputs(t *testing.T) {
+	catalog := pgCatalog(t)
+	function, exists := catalog.Get("json")
+	if !exists {
+		t.Fatal("JSON wrapper is absent")
+	}
+	for _, value := range []any{int64(10), `["id-001"]`, `{"Min":2}`} {
+		result, err := function.Call([]any{sqlfn.Literal(sqlfn.Postgres, value)})
+		if err != nil || sqlfn.Settle(result) == nil {
+			t.Fatalf("input=%v value=%v err=%v", value, result, err)
+		}
+	}
+	if _, err := function.Call([]any{sqlfn.Literal(sqlfn.Postgres, "invalid")}); err == nil {
+		t.Fatal("accepted invalid JSON")
+	}
+}
+
+func TestPostgresLegacyStringWrapper(t *testing.T) {
+	function, exists := pgCatalog(t).Get("string")
+	if !exists {
+		t.Fatal("STRING wrapper is absent")
+	}
+	for _, input := range []any{nil, `{"key":"value"}`, int64(3000)} {
+		value, err := function.Call([]any{sqlfn.Literal(sqlfn.Postgres, input)})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if input == nil && value != nil {
+			t.Fatalf("NULL = %v", value)
+		}
+		if input != nil && value == nil {
+			t.Fatalf("lost %v", input)
+		}
+	}
+}
+
+func TestPostgresLegacyJSONExtract(t *testing.T) {
+	function, exists := pgCatalog(t).Get("json_extract")
+	if !exists {
+		t.Fatal("JSON_EXTRACT wrapper is absent")
+	}
+	value, err := function.Call([]any{sqlfn.Literal(sqlfn.Postgres, `{"user":{"name":"alice"}}`), sqlfn.Literal(sqlfn.Postgres, "$.user.name")})
+	if err != nil || sqlfn.Settle(value) != "alice" {
+		t.Fatalf("value=%v err=%v", value, err)
+	}
+}

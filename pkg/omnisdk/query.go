@@ -55,6 +55,21 @@ func DescribeTable(dir, address string, opts ...stackqldoc.Option) (Table, error
 	return describeTable(dir, address, "select", opts...)
 }
 
+// DescribeMethod describes one explicitly named operation, including methods
+// that have no SQL verb mapping.
+func DescribeMethod(dir, address, method string, opts ...stackqldoc.Option) (MethodSignature, error) {
+	table, err := describeTable(dir, address, "exec", opts...)
+	if err != nil {
+		return nil, err
+	}
+	for _, signature := range table.Methods() {
+		if signature.Method() == method {
+			return signature, nil
+		}
+	}
+	return nil, fmt.Errorf("omnisdk: %s declares no method %q", address, method)
+}
+
 // DescribeMutation reads what the documents under dir say about an address's methods for a
 // mutating verb: "insert", "update", "replace" or "delete".
 func DescribeMutation(dir, address, verb string, opts ...stackqldoc.Option) (Table, error) {
@@ -182,7 +197,7 @@ func (s docSignature) Columns() []string {
 	}
 	out := append([]string(nil), row.Properties()...)
 	for i := range out {
-		out[i] = s.surface(out[i])
+		out[i] = s.responseName(out[i])
 	}
 	return out
 }
@@ -192,6 +207,20 @@ func (s docSignature) surface(name string) string {
 		return namespace.NewNaming(shape.NativeCasing(), shape.SnakeCaseAliases()).Surface(name)
 	}
 	return name
+}
+
+// A response's native spelling stays distinct when its presentation alias is
+// already a request parameter, e.g. IAM Region versus the endpoint region.
+func (s docSignature) responseName(name string) string {
+	surface := s.surface(name)
+	if name != surface {
+		for _, parameter := range s.ex.Request().Parameters() {
+			if parameter.Name() != name && s.surface(parameter.Name()) == surface {
+				return name
+			}
+		}
+	}
+	return surface
 }
 
 func canonicalName(t Table, name string) string {
@@ -225,7 +254,7 @@ func canonicalName(t Table, name string) string {
 		}
 		if shape.SnakeCaseAliases() && s.row() != nil {
 			if _, ok := s.row().Property(name); ok {
-				return s.surface(name)
+				return s.responseName(name)
 			}
 		}
 	}
@@ -244,7 +273,7 @@ func (s docSignature) ColumnTypes() map[string]ColumnType {
 			continue
 		}
 		if ts, ok := p.(aot.TypedSchema); ok && (ts.Type() != "" || ts.Format() != "") {
-			out[s.surface(name)] = ColumnType{Type: ts.Type(), Format: ts.Format()}
+			out[s.responseName(name)] = ColumnType{Type: ts.Type(), Format: ts.Format()}
 		}
 	}
 	return out
@@ -649,7 +678,11 @@ func requestNamespace(t Table) (namespace.Namespace, error) {
 	var attrs []namespace.Attribute
 	for _, m := range t.Methods() {
 		for _, p := range m.Params() {
-			a := namespace.New(namespace.Space(p.In()), p.Name())
+			name := p.Name()
+			if p.In() == aot.InBody {
+				name = "data__" + name
+			}
+			a := namespace.New(namespace.Space(p.In()), name)
 			if !seen[a.Qualified()] {
 				seen[a.Qualified()] = true
 				attrs = append(attrs, a)
@@ -666,7 +699,10 @@ func requestNamespace(t Table) (namespace.Namespace, error) {
 func placeAssignment(ns namespace.Namespace, t Table, column string) (string, bool, error) {
 	column = canonicalName(t, column)
 	if a, err := ns.Resolve(column); err == nil {
-		return a.Name(), a.Space() == namespace.Body, nil
+		if a.Space() == namespace.Body {
+			return strings.TrimPrefix(a.Name(), "data__"), true, nil
+		}
+		return a.Name(), false, nil
 	}
 	name := strings.TrimPrefix(strings.TrimPrefix(column, string(namespace.Body)+"."), "data__")
 	for _, m := range t.Methods() {
@@ -1613,3 +1649,29 @@ func (r *resolver) aliasesOf(e query.Expr) []string {
 	walk(e)
 	return out
 }
+
+// NamedResponse preserves the declared row schema identity for host metadata.
+type NamedResponse interface{ RowSchemaName() string }
+
+func (s docSignature) RowSchemaName() string {
+	if named, ok := s.row().(aot.NamedSchema); ok {
+		return named.SchemaName()
+	}
+	return ""
+}
+
+// RequestMetadata exposes declared input names and body shape for host presentation.
+type RequestMetadata interface {
+	RequestBodySchema() aot.Schema
+	InputName(string) string
+}
+
+func (s docSignature) RequestBodySchema() aot.Schema {
+	if shape, ok := s.ex.Request().(aot.RequestShape); ok {
+		return shape.BodySchema()
+	}
+	return nil
+}
+
+func (s docSignature) InputName(name string) string { return s.surface(name) }
+func (p serverInput) Type() string                  { return "string" }
