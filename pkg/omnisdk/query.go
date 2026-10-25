@@ -664,7 +664,11 @@ func requestNamespace(t Table) (namespace.Namespace, error) {
 	var attrs []namespace.Attribute
 	for _, m := range t.Methods() {
 		for _, p := range m.Params() {
-			a := namespace.New(namespace.Space(p.In()), p.Name())
+			name := p.Name()
+			if p.In() == aot.InBody {
+				name = "data__" + name
+			}
+			a := namespace.New(namespace.Space(p.In()), name)
 			if !seen[a.Qualified()] {
 				seen[a.Qualified()] = true
 				attrs = append(attrs, a)
@@ -681,7 +685,10 @@ func requestNamespace(t Table) (namespace.Namespace, error) {
 func placeAssignment(ns namespace.Namespace, t Table, column string) (string, bool, error) {
 	column = canonicalName(t, column)
 	if a, err := ns.Resolve(column); err == nil {
-		return a.Name(), a.Space() == namespace.Body, nil
+		if a.Space() == namespace.Body {
+			return strings.TrimPrefix(a.Name(), "data__"), true, nil
+		}
+		return a.Name(), false, nil
 	}
 	name := strings.TrimPrefix(strings.TrimPrefix(column, string(namespace.Body)+"."), "data__")
 	for _, m := range t.Methods() {

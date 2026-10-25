@@ -581,8 +581,17 @@ func compile(ex aot.AOTExchange, inputs map[string]any, reg dsl.Registry, o opti
 	// httpx.Request is a {name} template resolved from the bound row, so placing a parameter is
 	// declaring where its template goes — and binding its name so a value reaches it.
 	bindings := ex.Inputs()
+	scoped := map[string]bool{}
+	for _, parameter := range req.Parameters() {
+		if parameter.In() != aot.InBody {
+			scoped[parameter.Name()] = true
+		}
+	}
 	placed := map[string]bool{}
 	for _, p := range req.Parameters() {
+		if p.In() == aot.InBody && scoped[p.Name()] && !o.bodyFields[p.Name()] {
+			continue
+		}
 		if o.bodyFields[p.Name()] && p.In() != aot.InBody {
 			continue
 		}

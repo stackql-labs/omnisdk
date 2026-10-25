@@ -169,6 +169,7 @@ type method struct {
 		Pagination           paginationSpec `yaml:"pagination"`
 	} `yaml:"config"`
 	Request struct {
+		Required          []string      `yaml:"required"`
 		Transform         transformSpec `yaml:"transform"`
 		XMLDeclaration    string        `yaml:"xmlDeclaration"`
 		XMLRootAnnotation string        `yaml:"xmlRootAnnotation"`
@@ -722,6 +723,16 @@ func (d *document) build(name, verb, path string, op pathOp, m method) aot.AOTEx
 			components[name] = &v
 		}
 		bodySchema = newSchema(&node, components)
+		if declared, ok := bodySchema.(*materialised); ok && len(m.Request.Required) > 0 {
+			copy := *declared
+			copy.required = slices.Clone(declared.required)
+			for _, name := range m.Request.Required {
+				if !slices.Contains(copy.required, name) {
+					copy.required = append(copy.required, name)
+				}
+			}
+			bodySchema = &copy
+		}
 		bodyRootName = schemaXMLName(&node, components, 0)
 		if bodyRootName == "" {
 			if title := schemaField(&node, components, "title", 0); title != nil {
@@ -733,9 +744,9 @@ func (d *document) build(name, verb, path string, op pathOp, m method) aot.AOTEx
 	if bodySchema != nil {
 		base := map[string]any{}
 		_ = json.Unmarshal([]byte(m.Request.Base), &base)
-		var required []string
+		required := slices.Clone(m.Request.Required)
 		if shape, ok := bodySchema.(aot.RequiredSchema); ok && op.RequestBody.Required {
-			required = shape.RequiredProperties()
+			required = append(required, shape.RequiredProperties()...)
 		}
 		for _, name := range bodySchema.Properties() {
 			if !slices.ContainsFunc(parameters, func(p aot.Parameter) bool { return p.Name() == name && p.In() == aot.InBody }) {
