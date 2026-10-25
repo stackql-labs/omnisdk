@@ -160,6 +160,7 @@ type method struct {
 	Parameters  map[string]pathParam `yaml:"parameters"`
 	ServiceName string               `yaml:"serviceName"`
 	Operation   ref                  `yaml:"operation"`
+	Path        ref                  `yaml:"path"`
 	Config      struct {
 		RequestBodyTranslate algorithmSpec  `yaml:"requestBodyTranslate"`
 		Retry                *retrySpec     `yaml:"retry"`
@@ -366,6 +367,11 @@ func (d *document) resolve(name, mName string, withBeta bool) (aot.AOTExchange, 
 		ex := d.build(mName, "POST", "", op, m).(*aotExchange)
 		ex.inline = slices.Clone(m.Inline)
 		return ex, nil
+	}
+	// Older documents state the path and verb separately.
+	if m.Path.Ref != "" && !strings.Contains(m.Operation.Ref, "#") {
+		escaped := strings.ReplaceAll(strings.ReplaceAll(m.Path.Ref, "~", "~0"), "/", "~1")
+		m.Operation.Ref = "#/paths/" + escaped + "/" + strings.ToLower(m.Operation.Ref)
 	}
 	target, resolved, err := d.operationDocument(name, mName, m)
 	if err != nil {

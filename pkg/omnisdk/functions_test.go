@@ -32,12 +32,12 @@ func TestFunctionCatalogPublishesSignatures(t *testing.T) {
 	}
 	pg, postgres := functionNames(t, sqlfn.Postgres)
 	for _, want := range []string{"split_part", "string_to_table", "json_extract_path_text", "json_array_elements_text",
-		"jsonb_set", "generate_series", "format", "||", "cast"} {
+		"jsonb_set", "generate_series", "format", "||", "cast", "json_extract", "string", "json", "coalesce"} {
 		if !slices.Contains(postgres, want) {
 			t.Errorf("Postgres Functions() lacks %s", want)
 		}
 	}
-	if slices.Contains(postgres, "json_extract") || slices.Contains(sqlite, "string_to_table") {
+	if slices.Contains(postgres, "julianday") || slices.Contains(sqlite, "string_to_table") {
 		t.Error("a dialect lists another's function")
 	}
 

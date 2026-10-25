@@ -218,3 +218,38 @@ components:
 		})
 	}
 }
+
+func TestLegacyPathAndVerbResolveTheSameOperation(t *testing.T) {
+	fsys := fstest.MapFS{
+		"provider.yaml": {Data: []byte("name: p\nproviderServices:\n  things:\n    service: {$ref: 'services/things.yaml'}\n")},
+		"services/things.yaml": {Data: []byte(`openapi: 3.0.0
+servers: [{url: 'https://example.test'}]
+paths:
+  /widgets:
+    get:
+      operationId: listWidgets
+      responses:
+        '200': {description: ok}
+components:
+  x-stackQL-resources:
+    widgets:
+      methods:
+        list:
+          operation: {$ref: get}
+          path: {$ref: /widgets}
+      sqlVerbs:
+        select: [{$ref: '#/components/x-stackQL-resources/widgets/methods/list'}]
+`)},
+	}
+	catalog, err := stackqldoc.Open(fsys)
+	if err != nil {
+		t.Fatal(err)
+	}
+	exchange, err := catalog.Exchange("stackql_unstable_p.things.widgets")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if exchange.OperationID() != "listWidgets" || exchange.Request().URL() != "https://example.test/widgets" {
+		t.Fatalf("wrong operation: %s %s", exchange.OperationID(), exchange.Request().URL())
+	}
+}

@@ -95,34 +95,44 @@ func materialiseActive(node *yaml.Node, components map[string]*yaml.Node, depth 
 	if annotation := field(resolved, "x-stackQL-stringOnly"); annotation != nil {
 		out.stringOnly = annotation.Value == "true"
 	}
-	// allOf adds constraints at the same object depth. Copy each branch's
+	// Compositions declare fields at the same object depth. Copy each branch's
 	// declared fields, with local properties taking precedence over inherited ones.
-	if branches := field(resolved, "allOf"); branches != nil {
-		for _, branch := range branches.Content {
-			base := materialiseActive(branch, components, depth, active)
-			if base == nil {
-				continue
+	for _, composition := range []string{"allOf", "anyOf", "oneOf"} {
+		if branches := field(resolved, composition); branches != nil {
+			types := map[string]bool{}
+			for _, branch := range branches.Content {
+				base := materialiseActive(branch, components, depth, active)
+				if base == nil {
+					continue
+				}
+				if out.props == nil {
+					out.props = map[string]*materialised{}
+				}
+				for name, property := range base.props {
+					out.props[name] = property
+				}
+				if base.typ != "" {
+					types[base.typ] = true
+					out.typ = base.typ
+				}
+				if base.fmt != "" {
+					out.fmt = base.fmt
+				}
+				if base.items != nil {
+					out.items = base.items
+				}
+				if out.wire == "" {
+					out.wire = base.wire
+				}
+				out.stringOnly = out.stringOnly || base.stringOnly
+				if composition == "allOf" {
+					out.required = append(out.required, base.required...)
+				}
 			}
-			if out.props == nil {
-				out.props = map[string]*materialised{}
+			// Alternatives are a union of accepted types, not the last branch's type.
+			if composition != "allOf" && len(types) > 1 {
+				out.typ, out.fmt, out.items = "", "", nil
 			}
-			for name, property := range base.props {
-				out.props[name] = property
-			}
-			if base.typ != "" {
-				out.typ = base.typ
-			}
-			if base.fmt != "" {
-				out.fmt = base.fmt
-			}
-			if base.items != nil {
-				out.items = base.items
-			}
-			if out.wire == "" {
-				out.wire = base.wire
-			}
-			out.stringOnly = out.stringOnly || base.stringOnly
-			out.required = append(out.required, base.required...)
 		}
 	}
 	if readOnly := field(resolved, "readOnly"); readOnly != nil {

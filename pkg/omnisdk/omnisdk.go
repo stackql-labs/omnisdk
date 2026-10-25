@@ -2026,6 +2026,13 @@ func (r *rows) Next() bool { return r.recs.Next(r.read) }
 
 func (r *rows) Row() Row {
 	m, _ := bind.DocMap(r.recs.Record())
+	// Public rows carry ordinary values, including literal projections. Keep
+	// dialect wrappers internal so host staging preserves numeric values.
+	settled := make(Row, len(m))
+	for key, value := range m {
+		settled[key] = sqlfn.Settle(value)
+	}
+	m = settled
 	if len(r.echo) == 0 {
 		return m
 	}

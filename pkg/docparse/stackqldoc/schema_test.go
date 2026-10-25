@@ -138,3 +138,44 @@ func TestAllOfRetainsXMLWireNameAndLocalOverride(t *testing.T) {
 		}
 	}
 }
+
+func TestAlternativeSchemasExposeFieldsWithoutRequiringEveryAlternative(t *testing.T) {
+	for _, composition := range []string{"anyOf", "oneOf"} {
+		t.Run(composition, func(t *testing.T) {
+			var root yaml.Node
+			document := composition + `:
+  - type: object
+    required: [left]
+    properties:
+      left: {type: string}
+  - type: object
+    required: [right]
+    properties:
+      right: {type: integer}
+`
+			if err := yaml.Unmarshal([]byte(document), &root); err != nil {
+				t.Fatal(err)
+			}
+			schema := newSchema(root.Content[0], nil)
+			if !reflect.DeepEqual(schema.Properties(), []string{"left", "right"}) {
+				t.Fatalf("properties = %v", schema.Properties())
+			}
+			if len(schema.(*materialised).RequiredProperties()) != 0 {
+				t.Fatal("alternatives became conjunctive requirements")
+			}
+		})
+	}
+}
+
+func TestAlternativeScalarTypesDoNotForceTheLastBranch(t *testing.T) {
+	for _, composition := range []string{"anyOf", "oneOf"} {
+		var root yaml.Node
+		if err := yaml.Unmarshal([]byte(composition+": [{type: string}, {type: integer}]"), &root); err != nil {
+			t.Fatal(err)
+		}
+		shape := newSchema(root.Content[0], nil).(*materialised)
+		if shape.Type() != "" {
+			t.Fatalf("%s forced every value to %s", composition, shape.Type())
+		}
+	}
+}
