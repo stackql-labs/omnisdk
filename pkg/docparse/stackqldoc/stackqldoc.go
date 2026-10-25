@@ -681,11 +681,11 @@ func (d *document) build(name, verb, path string, op pathOp, m method) aot.AOTEx
 	if m.Config.RequestTranslate.Algorithm == "drop_double_underscore_params" {
 		params = nil
 	}
-	schema := d.responseSchemaAt(op, m.Response.OpenAPIDocKey, "", &m.Response.SchemaOverride)
+	schema := d.responseSchemaAt(op, m.Response.OpenAPIDocKey, "", m.Response.MediaType, &m.Response.SchemaOverride)
 	var graph aot.GraphQL
 	var rowSchema aot.Schema
 	if m.Response.ObjectKey != "" {
-		rowSchema = d.responseSchemaAt(op, m.Response.OpenAPIDocKey, m.Response.ObjectKey, &m.Response.SchemaOverride)
+		rowSchema = d.responseSchemaAt(op, m.Response.OpenAPIDocKey, m.Response.ObjectKey, m.Response.MediaType, &m.Response.SchemaOverride)
 	}
 	if op.GraphQL != nil {
 		graph = graphQL{op.GraphQL}
@@ -693,7 +693,7 @@ func (d *document) build(name, verb, path string, op pathOp, m method) aot.AOTEx
 		if selection == "" {
 			selection = m.Response.ObjectKey
 		}
-		rowSchema = d.responseSchemaAt(op, m.Response.OpenAPIDocKey, selection, &m.Response.SchemaOverride)
+		rowSchema = d.responseSchemaAt(op, m.Response.OpenAPIDocKey, selection, m.Response.MediaType, &m.Response.SchemaOverride)
 	}
 	parameters := d.operationParams(op)
 	// A mock or private-endpoint override can replace the host while retaining
@@ -877,9 +877,9 @@ func bodyMediaType(op pathOp) string {
 // other instructions, so this is what makes one runnable — and its absence is why a document naming
 // such a transform silently yields nothing.
 func (d *document) responseSchema(op pathOp, key string) aot.Schema {
-	return d.responseSchemaAt(op, key, "")
+	return d.responseSchemaAt(op, key, "", "")
 }
-func (d *document) responseSchemaAt(op pathOp, key, selection string, overrides ...*yaml.Node) aot.Schema {
+func (d *document) responseSchemaAt(op pathOp, key, selection, mediaType string, overrides ...*yaml.Node) aot.Schema {
 	components := map[string]*yaml.Node{}
 	for name := range d.Components.Schemas {
 		node := d.Components.Schemas[name]
@@ -907,10 +907,14 @@ func (d *document) responseSchemaAt(op pathOp, key, selection string, overrides 
 		if !ok {
 			continue
 		}
-		// Media type is not matched here: a document states one success shape, and the response's
-		// declared media type already says how the body arrives.
-		for _, content := range resp.Content {
-			node := content.Schema
+		// An operation can expose different row shapes for different media types.
+		// Respect the method declaration; any fallback must also be deterministic.
+		mediaTypes := slices.Sorted(maps.Keys(resp.Content))
+		if _, present := resp.Content[mediaType]; present {
+			mediaTypes = append([]string{mediaType}, mediaTypes...)
+		}
+		for _, selected := range mediaTypes {
+			node := resp.Content[selected].Schema
 			if node.Kind == 0 {
 				continue
 			}

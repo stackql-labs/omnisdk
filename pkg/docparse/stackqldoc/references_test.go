@@ -253,3 +253,57 @@ components:
 		t.Fatalf("wrong operation: %s %s", exchange.OperationID(), exchange.Request().URL())
 	}
 }
+
+func TestResponseSchemaUsesDeclaredMediaType(t *testing.T) {
+	fsys := fstest.MapFS{
+		"provider.yaml": {Data: []byte(`name: p
+providerServices:
+  activity:
+    service: {$ref: 'services/activity.yaml'}
+`)},
+		"services/activity.yaml": {Data: []byte(`openapi: 3.0.0
+servers: [{url: 'https://example.test'}]
+paths:
+  /stars:
+    get:
+      responses:
+        '200':
+          content:
+            application/json:
+              schema: {type: array, items: {type: object, properties: {login: {type: string}}}}
+            application/vnd.github.star+json:
+              schema: {type: array, items: {type: object, properties: {user: {type: object}}}}
+components:
+  x-stackQL-resources:
+    stars:
+      methods:
+        list:
+          operation: {$ref: '#/paths/~1stars/get'}
+          response: {mediaType: application/json}
+    extended:
+      methods:
+        list:
+          operation: {$ref: '#/paths/~1stars/get'}
+          response: {mediaType: application/vnd.github.star+json}
+`)},
+	}
+	for range 50 {
+		cat, err := stackqldoc.Open(fsys)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for resource, field := range map[string]string{"stars": "login", "extended": "user"} {
+			ex, err := cat.Exchange("stackql_unstable_p.activity." + resource)
+			if err != nil {
+				t.Fatal(err)
+			}
+			row, ok := ex.Response().Schema().Items()
+			if !ok {
+				t.Fatal("missing item schema")
+			}
+			if _, ok := row.Property(field); !ok {
+				t.Fatalf("%s lost %s", resource, field)
+			}
+		}
+	}
+}
