@@ -197,7 +197,7 @@ func (s docSignature) Columns() []string {
 	}
 	out := append([]string(nil), row.Properties()...)
 	for i := range out {
-		out[i] = s.surface(out[i])
+		out[i] = s.responseName(out[i])
 	}
 	return out
 }
@@ -207,6 +207,20 @@ func (s docSignature) surface(name string) string {
 		return namespace.NewNaming(shape.NativeCasing(), shape.SnakeCaseAliases()).Surface(name)
 	}
 	return name
+}
+
+// A response's native spelling stays distinct when its presentation alias is
+// already a request parameter, e.g. IAM Region versus the endpoint region.
+func (s docSignature) responseName(name string) string {
+	surface := s.surface(name)
+	if name != surface {
+		for _, parameter := range s.ex.Request().Parameters() {
+			if parameter.Name() != name && s.surface(parameter.Name()) == surface {
+				return name
+			}
+		}
+	}
+	return surface
 }
 
 func canonicalName(t Table, name string) string {
@@ -240,7 +254,7 @@ func canonicalName(t Table, name string) string {
 		}
 		if shape.SnakeCaseAliases() && s.row() != nil {
 			if _, ok := s.row().Property(name); ok {
-				return s.surface(name)
+				return s.responseName(name)
 			}
 		}
 	}
@@ -259,7 +273,7 @@ func (s docSignature) ColumnTypes() map[string]ColumnType {
 			continue
 		}
 		if ts, ok := p.(aot.TypedSchema); ok && (ts.Type() != "" || ts.Format() != "") {
-			out[s.surface(name)] = ColumnType{Type: ts.Type(), Format: ts.Format()}
+			out[s.responseName(name)] = ColumnType{Type: ts.Type(), Format: ts.Format()}
 		}
 	}
 	return out
