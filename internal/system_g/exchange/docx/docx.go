@@ -928,9 +928,6 @@ func compile(ex aot.AOTExchange, inputs map[string]any, reg dsl.Registry, o opti
 			listed = exchange.NewTransformExchange(0, listed, rowsObservation{o.httpObserver}, 1)
 		}
 		rows := declaredXMLRows(exchange.NewExplodeRows(listed, 1), resp, hasProgram)
-		if o.legacyXMLValues && hasProgram && strings.Contains(strings.ToLower(resp.MediaType()), "xml") {
-			rows = exchange.NewTransformExchange(0, rows, legacyBooleanValues{}, 1)
-		}
 		return withClient(withRetrySettings(namedRows(cachePlan.wrap(selectionRead(rows, o.selectionErrors), rowBound), req, rowBound), retrySettings, req.Method()), o.client)
 		// INNER, not left-outer: this is a SELECT, and an empty result set is zero rows. A left-outer
 		// would emit one row of bare inputs, which reads as "one instance with no fields".

@@ -3,7 +3,6 @@ package docx
 import (
 	"bytes"
 	"encoding/xml"
-	"github.com/stackql-labs/omnisdk/internal/system_g/bind"
 	"github.com/stackql-labs/omnisdk/internal/system_g/facade"
 	"github.com/stackql-labs/omnisdk/internal/system_g/record"
 	"github.com/stackql-labs/omnisdk/internal/system_g/value"
@@ -83,29 +82,4 @@ func (d legacyXMLDecoder) object(node *xmlTextNode, path []string) any {
 		}
 	}
 	return output
-}
-
-type legacyBooleanValues struct{}
-
-func (legacyBooleanValues) Apply(page facade.Page) (facade.Record, error) {
-	doc, ok := page.Doc(facade.AnonymousPayload)
-	if !ok {
-		return nil, nil
-	}
-	row, ok := doc.(map[string]any)
-	if !ok {
-		return record.NewRecord(map[string]facade.Value{facade.AnonymousPayload: value.NewDocValue(doc)}), nil
-	}
-	output := make(map[string]any, len(row))
-	for key, value := range row {
-		if flag, ok := value.(bool); ok {
-			if flag {
-				value = int64(1)
-			} else {
-				value = int64(0)
-			}
-		}
-		output[key] = value
-	}
-	return bind.NewDocRecord(output), nil
 }
