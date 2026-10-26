@@ -302,7 +302,7 @@ type Args struct {
 	ReadCachePartition string `json:"read_cache_partition,omitempty"`
 	// MutationCompletion optionally follows accepted graph mutations before projection.
 	MutationCompletion MutationCompletion `json:"-"`
-	// LegacyXMLValues preserves legacy XML table text and transformed boolean values.
+	// LegacyXMLValues preserves legacy XML table text.
 	LegacyXMLValues bool `json:"legacy_xml_values,omitempty"`
 	// LegacyResponseTransforms permits legacy decoding when a document names an
 	// unknown response evaluator. False rejects unsupported programs at planning.
