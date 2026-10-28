@@ -251,6 +251,14 @@ func takesBody(cat aot.Catalog, addr, verb string) bool {
 }
 
 func (p *desiredPlan) Open(ctx context.Context) (Rows, error) {
+	var accessErr error
+	ctx, accessErr = executionContext(ctx, p.args)
+	if accessErr != nil {
+		return nil, accessErr
+	}
+	if err := facade.CheckAccess(ctx, "collection/"+p.name, "converge"); err != nil {
+		return nil, err
+	}
 	h, err := hold(ctx, p.state, p.name, p.runID)
 	if err != nil {
 		return nil, err

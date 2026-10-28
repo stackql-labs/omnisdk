@@ -1016,3 +1016,9 @@ its application context stops and joins that worker; closing a query does neithe
 hit readers retain their snapshots through eviction. The existing StackQL analytics SQL
 namespace cache requires a separate host adapter; enabling this API does not implicitly
 connect or change those tables.
+
+## Caller access management
+
+Caller authentication, principal directories and authorization are separate from provider
+credentials. For opt-in CLI configuration, library sessions, policy resource/action names and
+the current StackQL integration boundary, see [access management](access_management.md).

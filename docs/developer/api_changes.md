@@ -18,6 +18,12 @@ positional literals must account for added fields or switch to keyed fields.
 
 ## Additions
 
+- **Opt-in caller access management:** new `public/authentication`, `public/principal`, and
+  `public/authorization` packages supply verified issuer-qualified identities, directory snapshots,
+  Casbin policy and authenticated execution sessions. `Args.Caller` and `Args.RequireCaller` protect
+  actual operations independently of provider credentials. Omni CLI adds `--access-config` and
+  `--caller-token-env`. See [access management](access_management.md).
+
 - **Opt-in API row cache:** `Args.ReadCache` accepts a `rowcache.Cache` and requires
   an explicit `ReadCachePartition`. `pkg/rowcache` supplies abstract transactional
   storage contracts, independently managed TTL collection, and a bounded memory

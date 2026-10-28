@@ -664,6 +664,14 @@ func hold(ctx context.Context, state, name, runID string) (*held, error) {
 }
 
 func (p *convergeGraphPlan) Open(ctx context.Context) (Rows, error) {
+	var accessErr error
+	ctx, accessErr = executionContext(ctx, p.args)
+	if accessErr != nil {
+		return nil, accessErr
+	}
+	if err := facade.CheckAccess(ctx, "collection/"+p.name, "converge"); err != nil {
+		return nil, err
+	}
 	h, err := hold(ctx, p.state, p.name, p.runID)
 	if err != nil {
 		return nil, err

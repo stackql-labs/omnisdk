@@ -10,7 +10,6 @@ package main
 
 import (
 	"bytes"
-	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -23,10 +22,12 @@ import (
 	"github.com/stackql-labs/omnisdk/pkg/encode"
 	"github.com/stackql-labs/omnisdk/pkg/omnisdk"
 	"github.com/stackql-labs/omnisdk/pkg/query"
+	"github.com/stackql-labs/omnisdk/public/authorization"
 )
 
 func main() {
 	var outPath, logPath, endpoint string
+	var accessPath, callerTokenEnv string
 	var insecureTLS, showCredentials bool
 	var awsRegion string
 	var t tune
@@ -37,7 +38,28 @@ func main() {
 		SilenceUsage:  true,
 		SilenceErrors: true,
 	}
+	root.PersistentPreRunE = func(cmd *cobra.Command, _ []string) error {
+		ctx, err := accessContext(cmd.Context(), accessPath, callerTokenEnv)
+		if err != nil {
+			return err
+		}
+		if accessPath != "" {
+			if showCredentials {
+				if err := authorization.Check(ctx, "credentials", "reveal"); err != nil {
+					return err
+				}
+			}
+			if err := authorization.Check(ctx, "command/omnicli/"+cmd.Name(), "execute"); err != nil {
+				return err
+			}
+		}
+		root.SetContext(ctx)
+		cmd.SetContext(ctx)
+		return nil
+	}
 	pf := root.PersistentFlags()
+	pf.StringVar(&accessPath, "access-config", "", "caller authentication, directory and policy JSON file")
+	pf.StringVar(&callerTokenEnv, "caller-token-env", "", "environment variable containing the caller bearer credential")
 	pf.StringVarP(&outPath, "out", "o", "", "output file (default stdout)")
 	pf.StringVar(&logPath, "log", "", "log raw responses to this file (default off)")
 	pf.StringVar(&endpoint, "endpoint", "", "endpoint override, path-style (e.g. http://localhost:8085); default real cloud")
@@ -55,7 +77,7 @@ func main() {
 	// streamRows opens a planned query and encodes each row as JSONL. Shared by the single-method and
 	// merged paths — the facade owns the run policies, ret/abort/limit, and the concurrency-safe log.
 	streamRows := func(pl omnisdk.Plan, w io.Writer) error {
-		rows, err := pl.Open(context.Background())
+		rows, err := pl.Open(root.Context())
 		if err != nil {
 			return err
 		}
@@ -92,6 +114,29 @@ func main() {
 			return fn(cmd, w, logw)
 		}
 	}
+	root.AddCommand(&cobra.Command{
+		Use: "whoami", Short: "Show the authenticated caller's directory principal", Args: cobra.NoArgs,
+		RunE: withSinks(func(cmd *cobra.Command, w, _ io.Writer) error {
+			caller, err := currentCaller(cmd.Context())
+			if err != nil {
+				return err
+			}
+			return writeLine(w, map[string]any{"principal": caller.ID()})
+		}),
+	}, &cobra.Command{
+		Use: "groups", Short: "Show the authenticated caller's directory groups", Args: cobra.NoArgs,
+		RunE: withSinks(func(cmd *cobra.Command, w, _ io.Writer) error {
+			caller, err := currentCaller(cmd.Context())
+			if err != nil {
+				return err
+			}
+			groups := caller.Groups()
+			if groups == nil {
+				groups = []string{}
+			}
+			return writeLine(w, map[string]any{"groups": groups})
+		}),
+	})
 	// withArgs is the shared shape: mkArgs assembles the method's scope/auth Args from flags; the run
 	// knobs, endpoint, and log are filled in here so every command applies them identically.
 	withArgs := func(mkArgs func(*cobra.Command) (omnisdk.Args, error), plan func(omnisdk.Args) (omnisdk.Plan, error)) func(*cobra.Command, []string) error {

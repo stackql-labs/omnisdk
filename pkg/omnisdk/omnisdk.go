@@ -66,6 +66,7 @@ import (
 	"github.com/stackql-labs/omnisdk/pkg/docparse/dsl/gotemplate"
 	"github.com/stackql-labs/omnisdk/pkg/docparse/dsl/schemaxml"
 	"github.com/stackql-labs/omnisdk/pkg/docparse/stackqldoc"
+	"github.com/stackql-labs/omnisdk/public/authorization"
 	"github.com/stackql/stackql-provider-registry/signing/pqsig"
 )
 
@@ -286,6 +287,11 @@ type HTTPReadErrorObserver interface {
 // Args are the inputs to run a resource: explicit scope Params, optional Auth (config-driven-auth
 // resources), an endpoint override, run Tuning, and an optional traffic log.
 type Args struct {
+	// Caller is a verified directory/policy snapshot, independent of provider Auth.
+	Caller authorization.Session `json:"-"`
+	// RequireCaller refuses execution without a Caller or a session-bearing context.
+	RequireCaller bool `json:"-"`
+
 	// DocumentVerifier opts document-backed plans into signature verification.
 	// Nil preserves the default unverified behavior.
 	DocumentVerifier pqsig.Verifier `json:"-"`
@@ -1228,6 +1234,7 @@ func NewFromDoc(doc []byte, provider, resource string, args Args) (Plan, error) 
 	if err != nil {
 		return nil, err
 	}
+	opts = append(opts, docx.WithProvider(provider))
 	opts = appendReadCache(opts, args, provider+"."+resource, provider)
 	pl, err := docx.SelectPlan(doc, resource, docInputs(args), reg, opts...)
 	if err != nil {
@@ -1925,6 +1932,11 @@ type cannedPlan struct {
 }
 
 func (c *cannedPlan) Open(parent context.Context) (Rows, error) {
+	var accessErr error
+	parent, accessErr = executionContext(parent, c.args)
+	if accessErr != nil {
+		return nil, accessErr
+	}
 	if err := parent.Err(); err != nil {
 		return nil, err
 	}
@@ -1992,6 +2004,11 @@ type mergedPlan struct {
 }
 
 func (m *mergedPlan) Open(parent context.Context) (Rows, error) {
+	var accessErr error
+	parent, accessErr = executionContext(parent, m.args)
+	if accessErr != nil {
+		return nil, accessErr
+	}
 	c := &cannedPlan{args: m.args}
 	runCtx, cancel := c.decorate(parent)
 	// Engine on runCtx (abort/limit stop PRODUCERS); cursor read on parent so a limit-abort drains the

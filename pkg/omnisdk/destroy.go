@@ -33,6 +33,14 @@ type destroyPlan struct {
 }
 
 func (p *destroyPlan) Open(ctx context.Context) (Rows, error) {
+	var accessErr error
+	ctx, accessErr = executionContext(ctx, p.args)
+	if accessErr != nil {
+		return nil, accessErr
+	}
+	if err := facade.CheckAccess(ctx, "collection/"+p.name, "destroy"); err != nil {
+		return nil, err
+	}
 	h, err := hold(ctx, p.state, p.name, p.runID)
 	if err != nil {
 		return nil, err
