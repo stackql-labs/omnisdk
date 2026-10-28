@@ -58,6 +58,7 @@ type target struct {
 	// it: insert and update, or replace where a PUT is the only write it declares.
 	createVerb, updateVerb string
 	updates                []facade.Method
+	routes                 []aot.UpdateRoute
 	// read is how the object is read back: a get addressed by its identity, or — where the document
 	// has none — a list whose rows are matched on the identity column. readParams are the resource's
 	// own parameters the read takes, a resource group, say.
@@ -192,6 +193,13 @@ func targetOf(cat aot.Catalog, addr string, r ManagedResource, args Args, incomi
 		}
 	}
 	t.createBody, t.updateBody = takesBody(cat, addr, t.createVerb), takesBody(cat, addr, t.updateVerb)
+	if routing, ok := cat.(aot.UpdateRouting); ok {
+		var err error
+		t.routes, err = routing.UpdateRoutes(addr)
+		if err != nil {
+			return nil, err
+		}
+	}
 
 	// The read: a GET is all that may read an object back — a POST bound to select, such as a key
 	// listing, is a call with effects of its own. Addressed by the identity where one takes it,
@@ -459,6 +467,21 @@ func (p *desiredPlan) lower(prior func(string) map[string]any, outside func(stri
 			}
 		}
 		all := slices.Sorted(maps.Keys(want))
+		// Existing objects can acquire intent for attributes only update operations accept.
+		// Keep those out of the unused create arm, but refuse them if the object is absent.
+		createMethods, _ := docsem.Capabilities(t.cat).Methods(t.addr, t.createVerb)
+		createFields := slices.Clone(fields)
+		var updateOnly []string
+		createFields = slices.DeleteFunc(createFields, func(field string) bool {
+			if slices.ContainsFunc(createMethods, func(m facade.Method) bool { return m.Accepts(field) }) {
+				return false
+			}
+			if slices.ContainsFunc(t.updates, func(m facade.Method) bool { return m.Accepts(field) }) {
+				updateOnly = append(updateOnly, field)
+				return true
+			}
+			return false // Unknown attributes retain the normal validation error.
+		})
 
 		// What the resource reads from others: an identity from a resource in the run arrives over
 		// edges; one from outside it was live before the run, and is a constant.
@@ -514,10 +537,21 @@ func (p *desiredPlan) lower(prior func(string) map[string]any, outside func(stri
 		// The read runs only once there is an identity to read by: a resource never made is absent,
 		// and a read without its address would list everything.
 		ln := node{alias: live, address: t.addr, verb: "select", outer: true, params: maps.Clone(t.readParams)}
-		maps.Copy(ln.params, consts)
+		if ln.params == nil {
+			ln.params = map[string]string{}
+		}
+		for k, v := range consts {
+			if t.read != nil && declares(t.read, k) {
+				ln.params[k] = v
+			}
+		}
 		// The read is addressed only by the identity the ledger recorded, never by a value arriving
 		// from another resource, or it would find an object this run did not make.
-		readIn := slices.DeleteFunc(slices.Clone(arrivals), func(in Inbound) bool { return in.As() == r.AddressedBy() })
+		// A dependency needed to create an object is not necessarily an input to reading it.
+		// Preserve declared parent scopes, but do not leak create-only bindings into the read.
+		readIn := slices.DeleteFunc(slices.Clone(arrivals), func(in Inbound) bool {
+			return in.As() == r.AddressedBy() || t.read == nil || !declares(t.read, in.As())
+		})
 		delete(ln.params, r.AddressedBy())
 		switch {
 		case t.read == nil || (r.AddressedBy() == "" && !t.listed):
@@ -534,6 +568,7 @@ func (p *desiredPlan) lower(prior func(string) map[string]any, outside func(stri
 		}
 		nodes = append(nodes, NewRecallNode(recall, r.Key()), ln)
 		d := NewDiffNode(diff, r.Key(), live, liveIdentity, want).(intrinsicNode)
+		d.createUnsupported = updateOnly
 		d.route = p.route(r, t, all)
 		nodes = append(nodes, d)
 
@@ -547,11 +582,11 @@ func (p *desiredPlan) lower(prior func(string) map[string]any, outside func(stri
 		}
 		c := node{alias: create, address: t.addr, verb: t.createVerb, params: createParams, whole: true}
 		if t.createBody {
-			c.body = nilFields(fields)
+			c.body = nilFields(createFields)
 		}
 		nodes = append(nodes, c)
 		createIn := slices.Clone(arrivals)
-		for _, f := range fields {
+		for _, f := range createFields {
 			createIn = append(createIn, NewInbound(diff, f, f))
 		}
 		if len(createIn) > 0 {
@@ -565,18 +600,24 @@ func (p *desiredPlan) lower(prior func(string) map[string]any, outside func(stri
 			u := fmt.Sprintf("%s_u%d", b, j)
 			// The update takes the resource's own parameters it declares — a resource group, say —
 			// but not the address, which arrives from the diff, nor anything only the create takes.
-			params := maps.Clone(consts)
+			params := map[string]string{}
+			for k, v := range consts {
+				if declares(m, k) {
+					params[k] = v
+				}
+			}
 			for k, v := range r.Params() {
 				if k != r.AddressedBy() && declares(m, k) {
 					params[k] = v
 				}
 			}
 			un := node{alias: u, address: t.addr, verb: t.updateVerb, params: params, pin: m.Name(), whole: true}
-			if t.updateBody {
+			if m.TakesBody() {
 				un.body = nilFields(all)
 			}
 			nodes = append(nodes, un)
-			in := append(slices.Clone(arrivals), NewInbound(diff, "identity", r.AddressedBy()))
+			in := slices.DeleteFunc(slices.Clone(arrivals), func(in Inbound) bool { return !m.Accepts(in.As()) })
+			in = append(in, NewInbound(diff, "identity", r.AddressedBy()))
 			for _, f := range all {
 				in = append(in, NewInbound(diff, f, f))
 			}
@@ -722,7 +763,10 @@ func (p *desiredPlan) reachable(r ManagedResource, t *target, fields []string, c
 // accepts the object's address and everything sent, chosen by the same analysis as any statement.
 func (p *desiredPlan) route(r ManagedResource, t *target, fields []string) driftRoute {
 	an := analyze.New(docsem.Capabilities(t.cat), analyze.PermitAll())
-	return func(mutation, live map[string]any) (string, map[string]any, error) {
+	return func(ctx context.Context, mutation, live map[string]any) (string, map[string]any, error) {
+		if len(t.routes) > 0 {
+			return p.routeDeclared(ctx, r, t, mutation, live)
+		}
 		send := mutation
 		if !t.updateBody {
 			send = map[string]any{}
@@ -741,7 +785,7 @@ func (p *desiredPlan) route(r ManagedResource, t *target, fields []string) drift
 		available := append(slices.Clone(sent), slices.Collect(maps.Keys(p.args.Params))...)
 		available = append(available, slices.Collect(maps.Keys(r.Params()))...)
 		available = append(available, t.incoming...)
-		m, err := an.Analyze(context.Background(), analyze.NewStatement(principalOf(p.args), t.addr, t.updateVerb, available, sent, ""))
+		m, err := an.Analyze(ctx, analyze.NewStatement(principalOf(p.args), t.addr, t.updateVerb, available, sent, ""))
 		if err != nil {
 			return "", nil, err
 		}
@@ -756,8 +800,9 @@ func declares(m facade.Method, k string) bool {
 	if !ok {
 		return false
 	}
-	return slices.Contains(ex.Inputs(), k) ||
-		slices.ContainsFunc(ex.Request().Parameters(), func(p aot.Parameter) bool { return p.Name() == k })
+	base, _, _ := strings.Cut(k, ".")
+	return slices.Contains(ex.Inputs(), k) || slices.Contains(ex.Inputs(), base) ||
+		slices.ContainsFunc(ex.Request().Parameters(), func(p aot.Parameter) bool { return p.Name() == k || p.Name() == base })
 }
 
 func nilFields(names []string) map[string]any {

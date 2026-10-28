@@ -53,10 +53,13 @@ func describe(w http.ResponseWriter, r *http.Request, act string, live, cidrs ma
 func fakeEC2(t *testing.T, seen *[]string, tags *map[string]string) *httptest.Server {
 	t.Helper()
 	n := 0
+	var mu sync.Mutex
 	// id → correlation key, so Describe can answer both by id and by the tag filter.
 	live := map[string]string{}
 	cidrs := map[string]string{}
 	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		defer mu.Unlock()
 		if err := r.ParseForm(); err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
@@ -68,6 +71,10 @@ func fakeEC2(t *testing.T, seen *[]string, tags *map[string]string) *httptest.Se
 		w.Header().Set("Content-Type", "text/xml")
 		switch act {
 		case "CreateVpc", "CreateSubnet", "CreateSecurityGroup":
+			if act == "CreateSubnet" && live[param(r, "VpcId")] == "" {
+				http.Error(w, "CreateSubnet requires its parent VpcId", http.StatusBadRequest)
+				return
+			}
 			for i := 1; ; i++ {
 				k := param(r, fmt.Sprintf("TagSpecification.1.Tag.%d.Key", i))
 				if k == "" {
@@ -93,6 +100,10 @@ func fakeEC2(t *testing.T, seen *[]string, tags *map[string]string) *httptest.Se
 			live[id], cidrs[id] = corr, param(r, "CidrBlock")
 			fmt.Fprintf(w, `<CreateSubnetResponse><subnet><subnetId>%s</subnetId><cidrBlock>%s</cidrBlock></subnet></CreateSubnetResponse>`, id, param(r, "CidrBlock"))
 		case "DescribeVpcs", "DescribeSubnets":
+			if act == "DescribeSubnets" && param(r, "VpcId") != "" {
+				http.Error(w, "UnknownParameter: VpcId is not recognized by DescribeSubnets", http.StatusBadRequest)
+				return
+			}
 			describe(w, r, act, live, cidrs)
 		case "DescribeSecurityGroups":
 			fmt.Fprint(w, `<DescribeSecurityGroupsResponse><securityGroupInfo></securityGroupInfo></DescribeSecurityGroupsResponse>`)

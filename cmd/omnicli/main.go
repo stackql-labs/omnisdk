@@ -137,6 +137,30 @@ func main() {
 			return writeLine(w, map[string]any{"groups": groups})
 		}),
 	})
+	root.AddCommand(&cobra.Command{
+		Use:   "doc-update-routes <registry> <resource-address> <changed-attributes-json>",
+		Short: "List declared update recommendations without executing them", Args: cobra.ExactArgs(3),
+		RunE: withSinks(func(cmd *cobra.Command, w, _ io.Writer) error {
+			pos := cmd.Flags().Args()
+			var changed []string
+			if err := json.Unmarshal([]byte(pos[2]), &changed); err != nil {
+				return fmt.Errorf("changed attributes must be a JSON string array: %w", err)
+			}
+			if strings.TrimSpace(pos[2]) == "null" {
+				return fmt.Errorf("changed attributes must be a JSON string array")
+			}
+			candidates, err := omnisdk.UpdateCandidates(cmd.Context(), pos[0], map[string][]string{pos[1]: changed}, omnisdk.Args{})
+			if err != nil {
+				return err
+			}
+			for _, c := range candidates {
+				if err := writeLine(w, map[string]any{"resource": c.Resource(), "target": c.Target(), "target_resource": c.TargetResource(), "target_method": c.TargetMethod(), "priority": c.Priority(), "source": c.Source(), "location": c.Location()}); err != nil {
+					return err
+				}
+			}
+			return nil
+		}),
+	})
 	// withArgs is the shared shape: mkArgs assembles the method's scope/auth Args from flags; the run
 	// knobs, endpoint, and log are filled in here so every command applies them identically.
 	withArgs := func(mkArgs func(*cobra.Command) (omnisdk.Args, error), plan func(omnisdk.Args) (omnisdk.Plan, error)) func(*cobra.Command, []string) error {
