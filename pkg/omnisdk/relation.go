@@ -126,6 +126,9 @@ func (o relationOperator) Open(ctx context.Context) facade.Records {
 	if err := ctx.Err(); err != nil {
 		return &relationRecords{err: err}
 	}
+	if err := facade.CheckAccess(ctx, "relation/"+o.relation.Address(), "read"); err != nil {
+		return &relationRecords{err: err}
+	}
 	rows, err := o.relation.Open(ctx, maps.Clone(o.inputs))
 	if err == nil && rows == nil {
 		err = fmt.Errorf("omnisdk: relation %s returned a nil cursor", o.relation.Address())

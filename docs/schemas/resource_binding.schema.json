@@ -1,0 +1,11 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Structured resource binding",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["from", "attribute"],
+  "properties": {
+    "from": {"enum": ["self", "input", "env"]},
+    "attribute": {"type": "string", "minLength": 1}
+  }
+}

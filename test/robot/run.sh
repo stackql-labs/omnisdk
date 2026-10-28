@@ -15,4 +15,4 @@ go build -o build/omnicli ./cmd/omnicli
 "$VENV/bin/pip" install -q --upgrade pip
 "$VENV/bin/pip" install -q -r test/mock/requirements.txt
 
-exec "$VENV/bin/robot" --outputdir test/robot/out test/robot/omnicli.robot
+exec "$VENV/bin/robot" --outputdir test/robot/out test/robot

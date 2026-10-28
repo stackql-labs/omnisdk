@@ -105,7 +105,7 @@ func Prepare(registry string, s Statement, w WALConfig, args Args) (Plan, error)
 		if !ok {
 			return nil, fmt.Errorf("omnisdk: destroy needs NewLedger: the ledger is what says what the collection holds")
 		}
-		return &destroyPlan{registry: registry, name: l.collection, state: l.state, runID: l.runID, args: args}, nil
+		return &destroyPlan{registry: registry, name: l.collection, state: l.state, runID: l.runID, args: args, keys: st.keys}, nil
 	case desiredStatement:
 		l, ok := w.(ledgerWAL)
 		if !ok {

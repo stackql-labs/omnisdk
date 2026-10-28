@@ -60,13 +60,12 @@ res := []omnisdk.ManagedResource{
         "aws", "ec2.vpcs",               // registry provider, document address
         []byte(`{"CidrBlock":"10.42.0.0/16"}`),
         map[string]string{
-            "TagSpecification.1.ResourceType": "vpc",
-            "TagSpecification.1.Tag.1.Key":    "omnisdk:key",
+
         },
         nil, "", "",                     // inbound, T_in type, T_in program
         "line_items.VpcId",              // where the minted id sits in the projected response
         "VpcId",                         // the parameter addressing an existing object
-        "TagSpecification.1.Tag.1.Value", // the parameter taking the correlation stamp
+        "",                              // no debug correlation requested
     ),
     omnisdk.NewResource(
         "aws/ec2/subnet", "aws", "ec2.subnets",

@@ -1,6 +1,7 @@
 package omnisdk
 
 import (
+	"context"
 	"strings"
 	"testing"
 )
@@ -24,7 +25,7 @@ func TestDriftRouteOnAVPC(t *testing.T) {
 	p := pl.(*desiredPlan)
 	route := p.route(vpc, p.targets["aws/ec2/vpc"], nil)
 
-	method, send, err := route(map[string]any{"CidrBlock": "10.0.0.0/16", "InstanceTenancy": "default"},
+	method, send, err := route(context.Background(), map[string]any{"CidrBlock": "10.0.0.0/16", "InstanceTenancy": "default"},
 		map[string]any{"CidrBlock": "10.0.0.0/16", "InstanceTenancy": "dedicated"})
 	if err != nil || method != "modify_vpc_tenancy" || len(send) != 1 || send["InstanceTenancy"] != "default" {
 		t.Errorf("tenancy drift: %s %v %v; want modify_vpc_tenancy sent only the tenancy", method, send, err)
@@ -33,7 +34,7 @@ func TestDriftRouteOnAVPC(t *testing.T) {
 		"unaccepted field": {map[string]any{"EnableDnsSupport": "true"}, map[string]any{"EnableDnsSupport": "false"}},
 		"unset field":      {map[string]any{"InstanceTenancy": nil}, map[string]any{"InstanceTenancy": "dedicated"}},
 	} {
-		if m, _, err := route(c.mutation, c.live); err == nil {
+		if m, _, err := route(context.Background(), c.mutation, c.live); err == nil {
 			t.Errorf("%s: routed to %s; want a refusal", name, m)
 		} else if name == "unset field" && !strings.Contains(err.Error(), "cannot remove") {
 			t.Errorf("%s: err = %v", name, err)

@@ -132,10 +132,7 @@ document leaves unsaid.
   "resources": [
     {"key": "aws/ec2/vpc", "provider": "aws", "address": "ec2.vpcs",
      "desired": {"CidrBlock": "10.42.0.0/16"},
-     "params": {"TagSpecification.1.ResourceType": "vpc",
-                "TagSpecification.1.Tag.1.Key": "omnisdk:key"},
-     "identity": "line_items.VpcId", "addressed_by": "VpcId",
-     "correlation_param": "TagSpecification.1.Tag.1.Value"},
+     "identity": "line_items.VpcId", "addressed_by": "VpcId"},
     {"key": "aws/ec2/subnet", "provider": "aws", "address": "ec2.subnets",
      "desired": {"CidrBlock": "10.42.1.0/24"},
      "inbound": [{"from": "aws/ec2/vpc", "as": "VpcId"}],
@@ -149,13 +146,16 @@ document leaves unsaid.
 from what the next call accepts, `via_type`/`via` reshape what arrives — the same `T_in` a query
 uses.
 
-The three fields a document does not state:
+Resource identity and optional debugging configuration:
 
 | field | why the document cannot say it |
 |---|---|
 | `identity` | where the minted id sits in the **projected** response — `line_items.VpcId` after the schema-driven transform has run |
 | `addressed_by` | which parameter carries an existing object's id, so a read or a delete is buildable from the ledger entry alone |
-| `correlation_param` | which parameter takes the stamp linking the object back to its ledger key. Absent means losing the ledger orphans the resource |
+| structured references | `{"from":"self|input|env", "attribute":"..."}` supplies explicit values in `desired` and `write_once` |
+
+See [resource bindings](resource_bindings.md). Correlation/debug-correlation options are retired;
+all labels are ordinary user-declared data. The ledger and journal remain authoritative.
 
 **Google.** Client-named, so `identity` is empty — the caller chose the name and nothing has to be
 read back out of the async Operation to know what was made. The intent goes in the request **body**,
@@ -456,3 +456,6 @@ provider: the first is deleted, and the final row says so — `{"status":"failed
   put back. EC2 declares tags as their own resource (`ec2.tags`: `CreateTags`, `DeleteTags`).
 - **Local disk only.** `O_EXCL` and `link` are unreliable on NFSv3; a network share is not a
   supported backing store.
+
+Identity lifecycle walkthroughs (generated IDs, async early/late IDs and caller names):
+[create, repeated updates, partial deletion, local key generation and teardown](../../cicd/examples/identity-lifecycle/README.md).

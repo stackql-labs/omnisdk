@@ -67,6 +67,9 @@ func (o *op) Open(ctx context.Context) facade.Records {
 }
 
 func (o *op) run(ctx context.Context, emit func(facade.Record) error) error {
+	if err := facade.CheckTransport(ctx, "transport/grpc/"+o.req.Target, o.req.Method); err != nil {
+		return err
+	}
 	conn, err := grpc.NewClient(o.req.Target, o.dialOpts...)
 	if err != nil {
 		return fmt.Errorf("grpcx: dial %s: %w", o.req.Target, err)

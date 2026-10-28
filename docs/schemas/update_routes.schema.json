@@ -1,0 +1,28 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$defs": {
+    "reference": {
+      "oneOf": [
+        {"type": "string", "minLength": 1},
+        {"type": "object", "additionalProperties": false, "required": ["$ref"], "properties": {"$ref": {"type": "string", "minLength": 1}}}
+      ]
+    },
+    "attributes": {"type": "array", "uniqueItems": true, "items": {"type": "string", "minLength": 1}},
+    "updateRoute": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["priority", "permits", "target"],
+      "properties": {
+        "resources": {"oneOf": [{"$ref": "#/$defs/reference"}, {"type": "array", "minItems": 1, "uniqueItems": true, "items": {"$ref": "#/$defs/reference"}}]},
+        "priority": {"type": "integer"},
+        "requires": {"$ref": "#/$defs/attributes", "default": []},
+        "permits": {"$ref": "#/$defs/attributes"},
+        "target": {"$ref": "#/$defs/reference"}
+      }
+    },
+    "updateRoutes": {"type": "array", "items": {"$ref": "#/$defs/updateRoute"}}
+  },
+  "type": "object",
+  "required": ["updates"],
+  "properties": {"updates": {"$ref": "#/$defs/updateRoutes"}}
+}

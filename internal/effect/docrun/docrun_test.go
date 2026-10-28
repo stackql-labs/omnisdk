@@ -53,7 +53,7 @@ func fixtureAs(t *testing.T, srv *httptest.Server, principal string, policy faca
 	}
 	eff := docrun.New(cat, analyze.New(docsem.Capabilities(cat), policy), principal, dslReg,
 		map[string]docrun.Residue{
-			addr: docrun.NewResidue("CreateVpcResponse.vpc.vpcId", "VpcId", ""),
+			addr: docrun.NewResidue("CreateVpcResponse.vpc.vpcId", "VpcId"),
 		},
 		docx.WithBaseURL(srv.URL),
 		docx.WithAWSCredentials(awsv4.Credentials{AccessKeyID: "AKIATEST", SecretAccessKey: "secret"}),

@@ -20,7 +20,11 @@ func ParseProvider(b []byte) (aot.Provider, error) {
 	if raw.Name == "" && len(raw.Services) == 0 {
 		return nil, fmt.Errorf("stackqldoc: not a provider document (no name, no providerServices)")
 	}
-	return &provider{doc: raw}, nil
+	updates, err := parseUpdateDeclarations(b)
+	if err != nil {
+		return nil, err
+	}
+	return &provider{doc: raw, updates: updates}, nil
 }
 
 // providerDoc is the wire shape; provider is what satisfies the contract. They are separate types
@@ -52,7 +56,10 @@ type providerService struct {
 	} `yaml:"service"`
 }
 
-type provider struct{ doc providerDoc }
+type provider struct {
+	doc     providerDoc
+	updates []updateDeclaration
+}
 
 func (p *provider) ID() string      { return p.doc.ID }
 func (p *provider) Name() string    { return p.doc.Name }

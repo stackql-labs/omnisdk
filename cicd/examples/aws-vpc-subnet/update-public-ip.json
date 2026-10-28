@@ -1,0 +1,48 @@
+{
+  "resources": [
+    {
+      "key": "aws/ec2/vpc",
+      "provider": "aws",
+      "address": "ec2.vpcs",
+      "identity": "line_items.VpcId",
+      "addressed_by": "VpcId",
+      "write_once": {
+        "TagSpecification.1.ResourceType": "vpc",
+        "TagSpecification.1.Tag.1.Key": "resource-key"
+      },
+      "desired": {
+        "CidrBlock": "10.42.0.0/16",
+        "Name": "omni-demo-vpc",
+        "TagSpecification.1.Tag.1.Value": {
+          "from": "self",
+          "attribute": "key"
+        }
+      }
+    },
+    {
+      "key": "aws/ec2/subnet",
+      "provider": "aws",
+      "address": "ec2.subnets",
+      "identity": "line_items.SubnetId",
+      "addressed_by": "SubnetId",
+      "write_once": {
+        "TagSpecification.1.ResourceType": "subnet",
+        "TagSpecification.1.Tag.1.Key": "resource-key"
+      },
+      "desired": {
+        "CidrBlock": "10.42.1.0/24",
+        "MapPublicIpOnLaunch.Value": true,
+        "TagSpecification.1.Tag.1.Value": {
+          "from": "self",
+          "attribute": "key"
+        }
+      },
+      "inbound": [
+        {
+          "from": "aws/ec2/vpc",
+          "as": "VpcId"
+        }
+      ]
+    }
+  ]
+}

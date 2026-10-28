@@ -4,8 +4,10 @@ go 1.27.3
 
 require (
 	github.com/bufbuild/protocompile v0.14.1
+	github.com/casbin/casbin/v2 v2.135.0
 	github.com/clbanning/mxj/v2 v2.7.0
 	github.com/fullstorydev/grpcurl v1.9.3
+	github.com/golang-jwt/jwt/v5 v5.3.1
 	github.com/jackc/pgx/v5 v5.9.2
 	github.com/jhump/protoreflect v1.18.0
 	github.com/spf13/cobra v1.10.2
@@ -17,6 +19,8 @@ require (
 )
 
 require (
+	github.com/bmatcuk/doublestar/v4 v4.6.1 // indirect
+	github.com/casbin/govaluate v1.3.0 // indirect
 	github.com/cncf/xds/go v0.0.0-20260202195803-dba9d589def2 // indirect
 	github.com/dustin/go-humanize v1.0.1 // indirect
 	github.com/envoyproxy/go-control-plane/envoy v1.37.0 // indirect

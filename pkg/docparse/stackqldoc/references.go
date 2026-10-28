@@ -70,6 +70,9 @@ func (r bundleResolver) ResolveDocument(reference, origin string) (*document, er
 	if err := yaml.Unmarshal(b, &d); err != nil {
 		return nil, fmt.Errorf("stackqldoc: parse referenced document %s: %w", file, err)
 	}
+	if d.updates, err = parseUpdateDeclarations(b); err != nil {
+		return nil, err
+	}
 	d.source, d.resolver = file, r
 	d.providerName = r.catalog.provider.Name()
 	if p, ok := r.catalog.provider.(*provider); ok {

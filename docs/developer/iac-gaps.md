@@ -79,7 +79,7 @@ can carry any column, fan out, and poll; an IaC dependency cannot.
 - A ledger entry that records the attributes an edge reads, not only identity — still resolved
   values, never a stored API response.
 - A place on a mutation node for what a document cannot say: `identity`, `addressed_by` and
-  `correlation_param`.
+  `debug_correlation_param`.
 - A decision on fan-out: one node producing N objects needs a key per object, derived from its
   inputs, so a re-run addresses the same N.
 
@@ -92,14 +92,13 @@ can carry any column, fan out, and poll; an IaC dependency cannot.
   addressed by `AddressedBy`; an update or delete it made stays done, and is reported as completed.
 - **One object per managed key.** A mutation node that runs for several rows writes every row to the
   same ledger key.
-- **No correlation stamp.** Nothing links a created object back to its key, so losing the ledger
-  orphans it.
+- **Ledger required.** Remote labels do not recover ownership or deployment state.
 - **No CLI.** It is reachable from Go only.
 
 **Needs.**
 - Journal-driven undo for a hand-written graph's managed nodes, as desired state has.
 - A key per row for fan-out, derived from the node's inputs.
-- The correlation parameter on `Managed`, stamped at create and used to adopt.
+- Optional debug-label reconciliation; never tag-based adoption.
 - A `doc-graph`-style CLI command taking `managed`.
 
 ## 7. Smaller limits
