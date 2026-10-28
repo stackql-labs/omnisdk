@@ -155,7 +155,12 @@ The three fields a document does not state:
 |---|---|
 | `identity` | where the minted id sits in the **projected** response — `line_items.VpcId` after the schema-driven transform has run |
 | `addressed_by` | which parameter carries an existing object's id, so a read or a delete is buildable from the ledger entry alone |
-| `correlation_param` | which parameter takes the stamp linking the object back to its ledger key. Absent means losing the ledger orphans the resource |
+| `correlation_param` | optional destination request parameter into which Omni injects exactly `<collection>/<resource key>` during creation; see the rule below |
+
+On creation, `correlation_param` names the exact request parameter Omni sets to
+`<collection>/<resource key>`, overriding `params`. Empty or omitted disables injection.
+Example: `TagSpecification.1.Tag.1.Value` receives `demo/aws/ec2/vpc`.
+This is a debugging label, not durable state or ownership proof. It is not reconciled on update.
 
 **Google.** Client-named, so `identity` is empty — the caller chose the name and nothing has to be
 read back out of the async Operation to know what was made. The intent goes in the request **body**,

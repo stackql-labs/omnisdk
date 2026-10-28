@@ -34,8 +34,9 @@ type ManagedResource interface {
 	// AddressedBy is the parameter carrying an existing object's identity, so a read or a delete can
 	// be built from the ledger entry alone.
 	AddressedBy() string
-	// CorrelationParam is the parameter taking the correlation stamp, empty where the provider
-	// offers no writable searchable field — in which case losing the ledger orphans the resource.
+	// CorrelationParam names the exact creation request parameter to set to
+	// <collection>/<resource key>, overriding Params at that name. Empty disables injection.
+	// The value is a debugging label, not durable state or proof of ownership.
 	CorrelationParam() string
 	// Desired is the resolved intent to converge on.
 	Desired() []byte
