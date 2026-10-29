@@ -1,0 +1,15 @@
+{
+  "resources": [
+    {
+      "key": "widget",
+      "provider": "widgets",
+      "address": "things.widgets",
+      "identity": "id",
+      "addressed_by": "id",
+      "desired": {
+        "size": "L",
+        "color": "blue"
+      }
+    }
+  ]
+}

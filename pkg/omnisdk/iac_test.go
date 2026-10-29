@@ -26,22 +26,14 @@ func param(r *http.Request, name string) string {
 	return r.PostForm.Get(name)
 }
 
-// describe answers a read either by id or by the correlation tag filter, which is what lets an
-// object be adopted when the ledger no longer knows about it.
+// describe answers only an identity supplied from the ledger.
 func describe(w http.ResponseWriter, r *http.Request, act string, live, cidrs map[string]string) {
 	set, item, idAttr := "vpcSet", "vpcId", "VpcId.1"
 	if act == "DescribeSubnets" {
 		set, item, idAttr = "subnetSet", "subnetId", "SubnetId.1"
 	}
 	id := param(r, idAttr)
-	if want := param(r, "Filter.1.Value.1"); want != "" {
-		id = ""
-		for candidate, corr := range live {
-			if corr == want && strings.HasPrefix(candidate, strings.TrimSuffix(item, "Id")) {
-				id = candidate
-			}
-		}
-	}
+
 	if _, ok := live[id]; !ok {
 		fmt.Fprintf(w, `<%sResponse><%s></%s></%sResponse>`, act, set, set, act)
 		return
@@ -53,10 +45,13 @@ func describe(w http.ResponseWriter, r *http.Request, act string, live, cidrs ma
 func fakeEC2(t *testing.T, seen *[]string, tags *map[string]string) *httptest.Server {
 	t.Helper()
 	n := 0
-	// id → correlation key, so Describe can answer both by id and by the tag filter.
+	var mu sync.Mutex
+	// Records are addressed only by identity.
 	live := map[string]string{}
 	cidrs := map[string]string{}
 	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		defer mu.Unlock()
 		if err := r.ParseForm(); err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
@@ -68,6 +63,10 @@ func fakeEC2(t *testing.T, seen *[]string, tags *map[string]string) *httptest.Se
 		w.Header().Set("Content-Type", "text/xml")
 		switch act {
 		case "CreateVpc", "CreateSubnet", "CreateSecurityGroup":
+			if _, exists := live[param(r, "VpcId")]; act == "CreateSubnet" && !exists {
+				http.Error(w, "CreateSubnet requires its parent VpcId", http.StatusBadRequest)
+				return
+			}
 			for i := 1; ; i++ {
 				k := param(r, fmt.Sprintf("TagSpecification.1.Tag.%d.Key", i))
 				if k == "" {
@@ -93,6 +92,10 @@ func fakeEC2(t *testing.T, seen *[]string, tags *map[string]string) *httptest.Se
 			live[id], cidrs[id] = corr, param(r, "CidrBlock")
 			fmt.Fprintf(w, `<CreateSubnetResponse><subnet><subnetId>%s</subnetId><cidrBlock>%s</cidrBlock></subnet></CreateSubnetResponse>`, id, param(r, "CidrBlock"))
 		case "DescribeVpcs", "DescribeSubnets":
+			if act == "DescribeSubnets" && param(r, "VpcId") != "" {
+				http.Error(w, "UnknownParameter: VpcId is not recognized by DescribeSubnets", http.StatusBadRequest)
+				return
+			}
 			describe(w, r, act, live, cidrs)
 		case "DescribeSecurityGroups":
 			fmt.Fprint(w, `<DescribeSecurityGroupsResponse><securityGroupInfo></securityGroupInfo></DescribeSecurityGroupsResponse>`)
@@ -160,16 +163,19 @@ func TestNetworkProvisionAppliesBothStepsAndStampsTags(t *testing.T) {
 		t.Errorf("identities = %v / %v, want vpc-001 / subnet-002", got[0]["identity"], got[1]["identity"])
 	}
 
-	// Caller tags are stamped alongside the correlation key, which is what makes the objects
-	// rediscoverable without the ledger.
+	// Only explicitly requested tags are sent.
 	for k, want := range map[string]string{
-		"CreateVpc:Name":        "demo-vpc",
-		"CreateVpc:env":         "dev",
-		"CreateSubnet:Name":     "demo-subnet",
-		"CreateVpc:omnisdk:key": "demo/aws/ec2/vpc",
+		"CreateVpc:Name":    "demo-vpc",
+		"CreateVpc:env":     "dev",
+		"CreateSubnet:Name": "demo-subnet",
 	} {
 		if stamped[k] != want {
 			t.Errorf("tag %s = %q, want %q", k, stamped[k], want)
+		}
+	}
+	for _, action := range []string{"CreateVpc", "CreateSubnet"} {
+		if _, stampedDebug := stamped[action+":omnisdk:key"]; stampedDebug {
+			t.Fatalf("%s added an undeclared debug tag", action)
 		}
 	}
 }
@@ -317,9 +323,8 @@ func TestConvergeParallelismIsTunable(t *testing.T) {
 		var res []omnisdk.ManagedResource
 		for _, k := range []string{"a", "b", "c"} {
 			res = append(res, omnisdk.NewResource("aws/ec2/vpc-"+k, "aws", "ec2.vpcs",
-				[]byte(`{"CidrBlock":"10.0.0.0/16"}`), map[string]string{"TagSpecification.1.ResourceType": "vpc",
-					"TagSpecification.1.Tag.1.Key": "omnisdk:key"},
-				nil, "", "", "line_items.VpcId", "VpcId", "TagSpecification.1.Tag.1.Value"))
+				[]byte(`{"CidrBlock":"10.0.0.0/16"}`), nil,
+				nil, "", "", "line_items.VpcId", "VpcId", ""))
 		}
 		args := awsArgs(srv)
 		args.Tuning.Parallelism = parallelism

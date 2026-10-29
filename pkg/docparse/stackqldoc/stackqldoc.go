@@ -59,12 +59,17 @@ func Parse(b []byte) (Doc, error) {
 	if len(d.Components.Resources) == 0 {
 		return nil, fmt.Errorf("stackqldoc: no x-stackQL-resources in document")
 	}
+	var err error
+	if d.updates, err = parseUpdateDeclarations(b); err != nil {
+		return nil, err
+	}
 	return &d, nil
 }
 
 // ---- document shape (only the parts an exchange needs) ----------------------
 
 type document struct {
+	updates     []updateDeclaration
 	fingerprint string
 	Info        struct {
 		ServiceName string `yaml:"x-serviceName"`

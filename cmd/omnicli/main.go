@@ -10,7 +10,6 @@ package main
 
 import (
 	"bytes"
-	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -23,10 +22,12 @@ import (
 	"github.com/stackql-labs/omnisdk/pkg/encode"
 	"github.com/stackql-labs/omnisdk/pkg/omnisdk"
 	"github.com/stackql-labs/omnisdk/pkg/query"
+	"github.com/stackql-labs/omnisdk/public/authorization"
 )
 
 func main() {
 	var outPath, logPath, endpoint string
+	var accessPath, callerTokenEnv string
 	var insecureTLS, showCredentials bool
 	var awsRegion string
 	var t tune
@@ -37,7 +38,28 @@ func main() {
 		SilenceUsage:  true,
 		SilenceErrors: true,
 	}
+	root.PersistentPreRunE = func(cmd *cobra.Command, _ []string) error {
+		ctx, err := accessContext(cmd.Context(), accessPath, callerTokenEnv)
+		if err != nil {
+			return err
+		}
+		if accessPath != "" {
+			if showCredentials {
+				if err := authorization.Check(ctx, "credentials", "reveal"); err != nil {
+					return err
+				}
+			}
+			if err := authorization.Check(ctx, "command/omnicli/"+cmd.Name(), "execute"); err != nil {
+				return err
+			}
+		}
+		root.SetContext(ctx)
+		cmd.SetContext(ctx)
+		return nil
+	}
 	pf := root.PersistentFlags()
+	pf.StringVar(&accessPath, "access-config", "", "caller authentication, directory and policy JSON file")
+	pf.StringVar(&callerTokenEnv, "caller-token-env", "", "environment variable containing the caller bearer or JWT credential")
 	pf.StringVarP(&outPath, "out", "o", "", "output file (default stdout)")
 	pf.StringVar(&logPath, "log", "", "log raw responses to this file (default off)")
 	pf.StringVar(&endpoint, "endpoint", "", "endpoint override, path-style (e.g. http://localhost:8085); default real cloud")
@@ -55,7 +77,7 @@ func main() {
 	// streamRows opens a planned query and encodes each row as JSONL. Shared by the single-method and
 	// merged paths — the facade owns the run policies, ret/abort/limit, and the concurrency-safe log.
 	streamRows := func(pl omnisdk.Plan, w io.Writer) error {
-		rows, err := pl.Open(context.Background())
+		rows, err := pl.Open(root.Context())
 		if err != nil {
 			return err
 		}
@@ -92,6 +114,53 @@ func main() {
 			return fn(cmd, w, logw)
 		}
 	}
+	root.AddCommand(&cobra.Command{
+		Use: "whoami", Short: "Show the authenticated caller's directory principal", Args: cobra.NoArgs,
+		RunE: withSinks(func(cmd *cobra.Command, w, _ io.Writer) error {
+			caller, err := currentCaller(cmd.Context())
+			if err != nil {
+				return err
+			}
+			return writeLine(w, map[string]any{"principal": caller.ID()})
+		}),
+	}, &cobra.Command{
+		Use: "groups", Short: "Show the authenticated caller's directory groups", Args: cobra.NoArgs,
+		RunE: withSinks(func(cmd *cobra.Command, w, _ io.Writer) error {
+			caller, err := currentCaller(cmd.Context())
+			if err != nil {
+				return err
+			}
+			groups := caller.Groups()
+			if groups == nil {
+				groups = []string{}
+			}
+			return writeLine(w, map[string]any{"groups": groups})
+		}),
+	})
+	root.AddCommand(&cobra.Command{
+		Use:   "doc-update-routes <registry> <resource-address> <changed-attributes-json>",
+		Short: "List declared update recommendations without executing them", Args: cobra.ExactArgs(3),
+		RunE: withSinks(func(cmd *cobra.Command, w, _ io.Writer) error {
+			pos := cmd.Flags().Args()
+			var changed []string
+			if err := json.Unmarshal([]byte(pos[2]), &changed); err != nil {
+				return fmt.Errorf("changed attributes must be a JSON string array: %w", err)
+			}
+			if strings.TrimSpace(pos[2]) == "null" {
+				return fmt.Errorf("changed attributes must be a JSON string array")
+			}
+			candidates, err := omnisdk.UpdateCandidates(cmd.Context(), pos[0], map[string][]string{pos[1]: changed}, omnisdk.Args{})
+			if err != nil {
+				return err
+			}
+			for _, c := range candidates {
+				if err := writeLine(w, map[string]any{"resource": c.Resource(), "target": c.Target(), "target_resource": c.TargetResource(), "target_method": c.TargetMethod(), "priority": c.Priority(), "source": c.Source(), "location": c.Location()}); err != nil {
+					return err
+				}
+			}
+			return nil
+		}),
+	})
 	// withArgs is the shared shape: mkArgs assembles the method's scope/auth Args from flags; the run
 	// knobs, endpoint, and log are filled in here so every command applies them identically.
 	withArgs := func(mkArgs func(*cobra.Command) (omnisdk.Args, error), plan func(omnisdk.Args) (omnisdk.Plan, error)) func(*cobra.Command, []string) error {
@@ -186,14 +255,17 @@ its ledger lives, over whatever the spec says; a file holding only resources nee
 				raw = b
 			}
 			var spec struct {
-				Name  string        `json:"name"`
-				State string        `json:"state"`
-				RunID string        `json:"run_id,omitempty"`
-				Args  *omnisdk.Args `json:"args,omitempty"`
+				Name   string         `json:"name"`
+				State  string         `json:"state"`
+				RunID  string         `json:"run_id,omitempty"`
+				Inputs map[string]any `json:"inputs,omitempty"`
+				Args   *omnisdk.Args  `json:"args,omitempty"`
 			}
 			// A file of resources alone is a list; it carries no collection, state or args.
 			if trimmed := bytes.TrimSpace(raw); len(trimmed) > 0 && trimmed[0] == '{' {
-				if err := json.Unmarshal(raw, &spec); err != nil {
+				decoder := json.NewDecoder(bytes.NewReader(raw))
+				decoder.UseNumber()
+				if err := decoder.Decode(&spec); err != nil {
 					return fmt.Errorf("spec json: %w", err)
 				}
 			}
@@ -209,6 +281,10 @@ its ledger lives, over whatever the spec says; a file holding only resources nee
 			a := omnisdk.Args{}
 			if spec.Args != nil {
 				a = *spec.Args
+			}
+			bindingInput, _ := cmd.Flags().GetString("input")
+			if err := configureResourceBindings(resources, &a, spec.Inputs, bindingInput); err != nil {
+				return err
 			}
 			if a.Params == nil {
 				a.Params = map[string]string{}
@@ -235,6 +311,7 @@ its ledger lives, over whatever the spec says; a file holding only resources nee
 			return streamRows(pl, w)
 		}),
 	}
+	iacApply.Flags().String("input", "", "explicit binding inputs as a JSON object or @file; overrides matching file inputs")
 	iacApply.Flags().String("name", "", "collection to apply under, over the spec's name")
 	iacApply.Flags().String("state", "", "directory holding the collection's ledger, over the spec's state")
 	iacApply.Flags().String("run-id", "", "journal name for this run, over the spec's (default: a UTC timestamp)")
@@ -301,7 +378,14 @@ its ledger lives, over whatever the spec says; a file holding only resources nee
 			}
 			a.Endpoint, a.Log, a.Tuning = endpoint, logw, t.facade()
 			a.InsecureSkipTLSVerify = insecureTLS
-			pl, err := omnisdk.Prepare(mustFlag(cmd, "registry"), omnisdk.Destroy(),
+			keys, err := cmd.Flags().GetStringArray("key")
+			if err != nil {
+				return err
+			}
+			if cmd.Flags().Changed("key") && len(keys) == 0 {
+				return fmt.Errorf("--key requires a nonempty resource key")
+			}
+			pl, err := omnisdk.Prepare(mustFlag(cmd, "registry"), omnisdk.Destroy(keys...),
 				omnisdk.NewLedger(mustFlag(cmd, "name"), mustFlag(cmd, "state"), runIDOr(mustFlag(cmd, "run-id"))), a)
 			if err != nil {
 				return err
@@ -309,6 +393,7 @@ its ledger lives, over whatever the spec says; a file holding only resources nee
 			return streamRows(pl, w)
 		}),
 	}
+	iacDestroy.Flags().StringArray("key", nil, "delete only this resource key; repeat for multiple keys; retained dependents block deletion")
 	iacDestroy.Flags().String("registry", "", "provider-document registry root (required)")
 	iacDestroy.Flags().String("name", "", "collection to destroy (required)")
 	iacDestroy.Flags().String("state", "", "directory holding the collection's ledger (required)")

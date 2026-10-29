@@ -28,7 +28,9 @@ func TestLibraryHasNoRDBMSDependencies(t *testing.T) {
 			"database/sql", "modernc.org/sqlite", "github.com/mattn/go-sqlite3",
 			"github.com/jackc/pgx", "github.com/lib/pq", "github.com/go-sql-driver/mysql",
 		} {
-			if dependency == forbidden || strings.HasPrefix(dependency, forbidden+"/") {
+			// UUID value conversion uses database/sql/driver without importing
+			// database/sql or opening a database. Concrete drivers remain forbidden.
+			if dependency == forbidden || (forbidden != "database/sql" && strings.HasPrefix(dependency, forbidden+"/")) {
 				t.Errorf("production dependency %s violates the host-owned RDBMS boundary", dependency)
 			}
 		}

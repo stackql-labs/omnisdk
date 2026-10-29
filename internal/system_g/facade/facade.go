@@ -569,10 +569,7 @@ type Effector interface {
 	// usable read. Where it is false the log degrades from fact to belief — a property of the
 	// target, not of the design.
 	//
-	// identity is the object's address as found on the target. When the caller supplied none, a
-	// non-empty identity here means the object was rediscovered by its correlation key: the caller
-	// may adopt it rather than create a duplicate, which is what keeps the ledger a cache instead
-	// of the sole link to reality.
+	// Identity comes from the durable record. Remote labels never authorize adoption.
 	Read(ctx context.Context, exchange string, k LedgerKey, in EffectInput) (actual, identity []byte, readable bool, err error)
 }
 
