@@ -315,3 +315,13 @@ The existing retry flags do not make cancellation or deadline errors retryable u
 classification.
 
 Value encoding and output-stream APIs already present in `v0.1.5-beta06` are unchanged by this work.
+
+### Debug correlation configuration
+
+`correlation_param` / `correlationParam` are rejected. Use
+`debug_correlation_param: {"target":"...", "transformer":"standard"}`; a blank transformer
+also selects `standard`. Omission or an empty target disables creation and reconciles removal
+through the provider's declared binding. Unknown transformers or unsupported targets fail planning.
+`ManagedResource.CorrelationParam()` is replaced by `DebugCorrelationParam()` returning the
+new DTO; `WithDebugCorrelationParam` supplies it for Go callers. Built-in blueprints no longer
+stamp undeclared debug tags. Labels never supply ownership or recovery state.

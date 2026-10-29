@@ -36,6 +36,8 @@ func TestLiveSubnetExampleUpdatesThenConverges(t *testing.T) {
 	modifications := 0
 	name := ""
 	nameUpdates := 0
+	debugLabels := map[string]string{}
+	debugCreates, debugDeletes := 0, 0
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		mu.Lock()
 		defer mu.Unlock()
@@ -45,6 +47,26 @@ func TestLiveSubnetExampleUpdatesThenConverges(t *testing.T) {
 			return
 		}
 		action := param(r, "Action")
+
+		if (action == "CreateTags" || action == "DeleteTags") && param(r, "Tag.1.Key") == "omnisdk:key" {
+			id := param(r, "ResourceId.1")
+			if r.Method != "POST" || (id != "vpc-001" && id != "subnet-002") || param(r, "VpcId") != "" || param(r, "SubnetId") != "" {
+				t.Errorf("debug request: %s %v", r.Method, r.Form)
+			}
+			if action == "CreateTags" {
+				debugLabels[id] = param(r, "Tag.1.Value")
+				debugCreates++
+			} else {
+				if param(r, "Tag.1.Value") != "" {
+					t.Error("debug removal must delete by key, including a drifted value")
+				}
+				delete(debugLabels, id)
+				debugDeletes++
+			}
+			w.Header().Set("Content-Type", "text/xml")
+			fmt.Fprintf(w, "<%sResponse><return>true</return></%sResponse>", action, action)
+			return
+		}
 		if action == "CreateTags" {
 			if r.Method != "POST" || param(r, "ResourceId.1") != "vpc-001" || param(r, "Tag.1.Key") != "Name" || param(r, "VpcId") != "" || param(r, "CidrBlock") != "" {
 				t.Errorf("tag request: %s %v", r.Method, r.Form)
@@ -79,14 +101,30 @@ func TestLiveSubnetExampleUpdatesThenConverges(t *testing.T) {
 		}
 		w.WriteHeader(recorded.Code)
 		body := recorded.Body.String()
+		if action == "CreateVpc" {
+			if label := tags["CreateVpc:omnisdk:key"]; label != "" {
+				debugLabels["vpc-001"] = label
+			}
+		}
+		if action == "CreateSubnet" {
+			if label := tags["CreateSubnet:omnisdk:key"]; label != "" {
+				debugLabels["subnet-002"] = label
+			}
+		}
 		if action == "DescribeVpcs" {
-			tagsXML := `<tagSet><item><key>omnisdk:key</key><value>demo/aws/ec2/vpc</value></item><item><key>owner</key><value>someone-else</value></item>`
+			tagsXML := `<tagSet><item><key>owner</key><value>someone-else</value></item>`
+			if label := debugLabels["vpc-001"]; label != "" {
+				tagsXML += `<item><key>omnisdk:key</key><value>` + html.EscapeString(label) + `</value></item>`
+			}
 			if name != "" {
 				tagsXML += `<item><key>Name</key><value>` + html.EscapeString(name) + `</value></item>`
 			}
 			body = strings.ReplaceAll(body, "</cidrBlock>", "</cidrBlock>"+tagsXML+`</tagSet>`)
 		}
 		if action == "DescribeSubnets" {
+			if label := debugLabels["subnet-002"]; label != "" {
+				body = strings.ReplaceAll(body, "</cidrBlock>", "</cidrBlock><tagSet><item><key>omnisdk:key</key><value>"+html.EscapeString(label)+"</value></item></tagSet>")
+			}
 			body = strings.ReplaceAll(body, "</cidrBlock>", fmt.Sprintf("</cidrBlock><mapPublicIpOnLaunch>%t</mapPublicIpOnLaunch>", public))
 			if missing {
 				body = `<DescribeSubnetsResponse><subnetSet/></DescribeSubnetsResponse>`
@@ -132,7 +170,33 @@ func TestLiveSubnetExampleUpdatesThenConverges(t *testing.T) {
 			t.Fatalf("%s: %s", id, failed)
 		}
 	}
-	run("create", "resources.json")
+	initialRaw, err := os.ReadFile("../../cicd/examples/aws-vpc-subnet/resources.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var initialSpec map[string]any
+	if err := json.Unmarshal(initialRaw, &initialSpec); err != nil {
+		t.Fatal(err)
+	}
+	for _, item := range initialSpec["resources"].([]any) {
+		delete(item.(map[string]any), "debug_correlation_param")
+	}
+	initialRaw, err = json.Marshal(initialSpec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	initialPath := filepath.Join(t.TempDir(), "initial-no-debug.json")
+	if err := os.WriteFile(initialPath, initialRaw, 0600); err != nil {
+		t.Fatal(err)
+	}
+	run("create", initialPath)
+	mu.Lock()
+	if len(debugLabels) != 0 || debugCreates != 0 {
+		t.Errorf("undeclared debug labels: %v", debugLabels)
+	}
+	mu.Unlock()
+	run("enable-debug", "resources.json")
+	run("enable-debug-again", "resources.json")
 	run("enable", "update-public-ip.json")
 	run("enable-again", "update-public-ip.json")
 	mu.Lock()
@@ -174,6 +238,50 @@ func TestLiveSubnetExampleUpdatesThenConverges(t *testing.T) {
 	mu.Unlock()
 	run("repair-drift", path)
 	run("repair-drift-again", path)
+
+	// Omitting or leaving an empty target disables the label, and a subsequent apply is a no-op.
+	mu.Lock()
+	debugLabels["vpc-001"] = "externally-changed-label"
+	mu.Unlock()
+	for _, item := range spec["resources"].([]any) {
+		delete(item.(map[string]any), "debug_correlation_param")
+	}
+	disabledRaw, _ := json.Marshal(spec)
+	disabledPath := filepath.Join(t.TempDir(), "no-debug.json")
+	if err := os.WriteFile(disabledPath, disabledRaw, 0600); err != nil {
+		t.Fatal(err)
+	}
+	run("remove-debug", disabledPath)
+	run("remove-debug-again", disabledPath)
+	mu.Lock()
+	if len(debugLabels) != 0 || debugDeletes != 2 || debugCreates != 2 {
+		t.Errorf("labels=%v deletes=%d creates=%d", debugLabels, debugDeletes, debugCreates)
+	}
+	mu.Unlock()
+	for _, item := range spec["resources"].([]any) {
+		item.(map[string]any)["debug_correlation_param"] = map[string]any{"target": "", "transformer": "standard"}
+	}
+	disabledRaw, _ = json.Marshal(spec)
+	if err := os.WriteFile(disabledPath, disabledRaw, 0600); err != nil {
+		t.Fatal(err)
+	}
+	run("empty-debug-target", disabledPath)
+	// Re-enabling creates the explicitly requested labels; it does not recreate infrastructure.
+	run("restore-debug", path)
+	run("restore-debug-again", path)
+	mu.Lock()
+	if debugLabels["vpc-001"] != "demo/aws/ec2/vpc" || debugLabels["subnet-002"] != "demo/aws/ec2/subnet" || debugCreates != 4 || debugDeletes != 2 {
+		t.Errorf("labels=%v creates=%d deletes=%d", debugLabels, debugCreates, debugDeletes)
+	}
+	mu.Unlock()
+	run("empty-target-removes-existing", disabledPath)
+	run("empty-target-removes-existing-again", disabledPath)
+	mu.Lock()
+	if len(debugLabels) != 0 || debugDeletes != 4 {
+		t.Errorf("empty target left labels=%v deletes=%d", debugLabels, debugDeletes)
+	}
+	mu.Unlock()
+	run("restore-after-empty-target", path)
 	mu.Lock()
 	if name != renamed || nameUpdates != 3 {
 		t.Errorf("drift repair=%q updates=%d", name, nameUpdates)

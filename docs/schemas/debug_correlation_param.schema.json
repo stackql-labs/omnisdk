@@ -1,0 +1,10 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Optional debug correlation parameter",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "target": {"type": "string"},
+    "transformer": {"type": "string", "enum": ["", "standard"]}
+  }
+}

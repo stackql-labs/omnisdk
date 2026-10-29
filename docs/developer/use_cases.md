@@ -132,10 +132,7 @@ document leaves unsaid.
   "resources": [
     {"key": "aws/ec2/vpc", "provider": "aws", "address": "ec2.vpcs",
      "desired": {"CidrBlock": "10.42.0.0/16"},
-     "params": {"TagSpecification.1.ResourceType": "vpc",
-                "TagSpecification.1.Tag.1.Key": "omnisdk:key"},
-     "identity": "line_items.VpcId", "addressed_by": "VpcId",
-     "correlation_param": "TagSpecification.1.Tag.1.Value"},
+     "identity": "line_items.VpcId", "addressed_by": "VpcId"},
     {"key": "aws/ec2/subnet", "provider": "aws", "address": "ec2.subnets",
      "desired": {"CidrBlock": "10.42.1.0/24"},
      "inbound": [{"from": "aws/ec2/vpc", "as": "VpcId"}],
@@ -149,18 +146,20 @@ document leaves unsaid.
 from what the next call accepts, `via_type`/`via` reshape what arrives — the same `T_in` a query
 uses.
 
-The three fields a document does not state:
+Resource identity and optional debugging configuration:
 
 | field | why the document cannot say it |
 |---|---|
 | `identity` | where the minted id sits in the **projected** response — `line_items.VpcId` after the schema-driven transform has run |
 | `addressed_by` | which parameter carries an existing object's id, so a read or a delete is buildable from the ledger entry alone |
-| `correlation_param` | optional destination request parameter into which Omni injects exactly `<collection>/<resource key>` during creation; see the rule below |
+| `debug_correlation_param` | optional debug-label configuration: `{"target":"request parameter", "transformer":"standard"}` |
 
-On creation, `correlation_param` names the exact request parameter Omni sets to
-`<collection>/<resource key>`, overriding `params`. Empty or omitted disables injection.
-Example: `TagSpecification.1.Tag.1.Value` receives `demo/aws/ec2/vpc`.
-This is a debugging label, not durable state or ownership proof. It is not reconciled on update.
+A nonempty `target` opts in to a debug label. Blank or `standard` transformer produces
+`<collection>/<resource key>`. Omission, `{}`, or an empty target requests no label:
+none is created, and an existing label on the ledger-addressed resource is removed.
+Unknown transformers and the old `correlation_param` key are errors. The provider document
+must declare the creation inputs, live attribute and update/removal route for that target;
+unsupported targets fail planning. Debug labels never recover state or establish ownership.
 
 **Google.** Client-named, so `identity` is empty — the caller chose the name and nothing has to be
 read back out of the async Operation to know what was made. The intent goes in the request **body**,

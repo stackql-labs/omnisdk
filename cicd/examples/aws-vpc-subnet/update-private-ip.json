@@ -6,14 +6,14 @@
       "address": "ec2.vpcs",
       "identity": "line_items.VpcId",
       "addressed_by": "VpcId",
-      "correlation_param": "TagSpecification.1.Tag.1.Value",
-      "params": {
-        "TagSpecification.1.ResourceType": "vpc",
-        "TagSpecification.1.Tag.1.Key": "omnisdk:key"
-      },
+      "params": {},
       "desired": {
         "CidrBlock": "10.42.0.0/16",
         "Name": "omni-demo-vpc"
+      },
+      "debug_correlation_param": {
+        "target": "TagSpecification.1.Tag.1.Value",
+        "transformer": "standard"
       }
     },
     {
@@ -22,11 +22,7 @@
       "address": "ec2.subnets",
       "identity": "line_items.SubnetId",
       "addressed_by": "SubnetId",
-      "correlation_param": "TagSpecification.1.Tag.1.Value",
-      "params": {
-        "TagSpecification.1.ResourceType": "subnet",
-        "TagSpecification.1.Tag.1.Key": "omnisdk:key"
-      },
+      "params": {},
       "desired": {
         "CidrBlock": "10.42.1.0/24",
         "MapPublicIpOnLaunch.Value": false
@@ -36,7 +32,11 @@
           "from": "aws/ec2/vpc",
           "as": "VpcId"
         }
-      ]
+      ],
+      "debug_correlation_param": {
+        "target": "TagSpecification.1.Tag.1.Value",
+        "transformer": "standard"
+      }
     }
   ]
 }

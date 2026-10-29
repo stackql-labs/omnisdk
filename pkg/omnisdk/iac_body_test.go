@@ -96,7 +96,7 @@ func TestRerunConvergesRatherThanReportingDrift(t *testing.T) {
 	res := []omnisdk.ManagedResource{
 		omnisdk.NewResource("aws/ec2/vpc", "aws", "ec2.vpcs",
 			[]byte(`{"CidrBlock":"10.0.0.0/16"}`), nil, nil, "", "",
-			"line_items.VpcId", "VpcId", "TagSpecification.1.Tag.1.Value"),
+			"line_items.VpcId", "VpcId", ""),
 	}
 	state := t.TempDir()
 	run := func(id string) []omnisdk.Row {

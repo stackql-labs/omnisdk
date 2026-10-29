@@ -34,10 +34,7 @@ type ManagedResource interface {
 	// AddressedBy is the parameter carrying an existing object's identity, so a read or a delete can
 	// be built from the ledger entry alone.
 	AddressedBy() string
-	// CorrelationParam names the exact creation request parameter to set to
-	// <collection>/<resource key>, overriding Params at that name. Empty disables injection.
-	// The value is a debugging label, not durable state or proof of ownership.
-	CorrelationParam() string
+	DebugCorrelationParam() DebugCorrelationParam
 	// Desired is the resolved intent to converge on.
 	Desired() []byte
 	// Params address the object on the wire.
@@ -58,10 +55,10 @@ type ManagedResource interface {
 // NewResource builds a ManagedResource. A client that assembles its own deployment — rather than
 // naming a blueprint — uses this.
 func NewResource(key, provider, address string, desired []byte, params map[string]string,
-	inbound []Arrival, viaType, viaProgram, identity, addressedBy, correlationParam string) ManagedResource {
+	inbound []Arrival, viaType, viaProgram, identity, addressedBy, debugCorrelationTarget string) ManagedResource {
 	return resource{key: key, provider: provider, address: address, desired: desired, params: params,
 		inbound: inbound, viaType: viaType, viaProgram: viaProgram,
-		identity: identity, addressedBy: addressedBy, correlation: correlationParam}
+		identity: identity, addressedBy: addressedBy, debugTarget: debugCorrelationTarget}
 }
 
 // Arrival is one value reaching a resource from a sibling in the same collection.
@@ -82,15 +79,17 @@ type resource struct {
 	viaType, viaProgram string
 	identity            string
 	addressedBy         string
-	correlation         string
+	debugTarget         string
 }
 
-func (r resource) Key() string               { return r.key }
-func (r resource) Provider() string          { return r.provider }
-func (r resource) Address() string           { return r.address }
-func (r resource) Identity() string          { return r.identity }
-func (r resource) AddressedBy() string       { return r.addressedBy }
-func (r resource) CorrelationParam() string  { return r.correlation }
+func (r resource) Key() string         { return r.key }
+func (r resource) Provider() string    { return r.provider }
+func (r resource) Address() string     { return r.address }
+func (r resource) Identity() string    { return r.identity }
+func (r resource) AddressedBy() string { return r.addressedBy }
+func (r resource) DebugCorrelationParam() DebugCorrelationParam {
+	return DebugCorrelationParam{Target: r.debugTarget}
+}
 func (r resource) Desired() []byte           { return r.desired }
 func (r resource) Params() map[string]string { return r.params }
 func (r resource) Inbound() []Arrival        { return r.inbound }
@@ -102,8 +101,7 @@ func (r resource) Via() (string, string)     { return r.viaType, r.viaProgram }
 //
 //   - registry is the provider-document root. Every effect is compiled from the document that
 //     declares it, so a new service is a document plus its residue rather than Go code.
-//   - name is the collection: the handle a later run uses to address the same resources, and the
-//     correlation tag stamped on each object.
+//   - name is the collection used by later runs to address the same resources.
 //   - state holds the ledger and run journals. Local disk only — O_EXCL and link are unreliable on a
 //     network share. One state directory holds many collections, separated by name.
 //   - runID names this run's journal.
@@ -163,7 +161,7 @@ func providerWiring(registry string, resources []ManagedResource, args Args) (fa
 		if err != nil {
 			return nil, nil, err
 		}
-		residues[r.Provider()][qualified] = docrun.NewResidue(r.Identity(), r.AddressedBy(), r.CorrelationParam())
+		residues[r.Provider()][qualified] = docrun.NewResidue(r.Identity(), r.AddressedBy())
 		// The inverse of a create is the same resource's delete, chosen by signature when it runs; a
 		// resource made by a whole-object PUT is undone the same way. Its absence in the document is
 		// what declares the create non-invertible. A document does not say whether a delete loses

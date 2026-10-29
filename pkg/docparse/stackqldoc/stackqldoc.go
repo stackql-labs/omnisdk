@@ -129,12 +129,13 @@ type serverVariable struct {
 }
 
 type resource struct {
-	Name     string            `yaml:"name"`
-	ID       string            `yaml:"id"`
-	Title    string            `yaml:"title"`
-	Methods  map[string]method `yaml:"methods"`
-	SQLVerbs map[string][]ref  `yaml:"sqlVerbs"`
-	Config   struct {
+	DebugCorrelations []debugCorrelationBinding `yaml:"debugCorrelations"`
+	Name              string                    `yaml:"name"`
+	ID                string                    `yaml:"id"`
+	Title             string                    `yaml:"title"`
+	Methods           map[string]method         `yaml:"methods"`
+	SQLVerbs          map[string][]ref          `yaml:"sqlVerbs"`
+	Config            struct {
 		Retry               *retrySpec           `yaml:"retry"`
 		Views               map[string]*viewSpec `yaml:"views"`
 		RequestTranslate    algorithmSpec        `yaml:"requestTranslate"`

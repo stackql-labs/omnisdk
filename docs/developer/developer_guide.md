@@ -272,20 +272,8 @@ A converged run writes **no journal file** — that is what the no-op looks like
 ls "${_st}/journal"        # one file from the first run only
 ```
 
-**7. Rediscovery.** Throw the ledger away and re-run: the objects are found by their correlation tag
-and adopted, rather than created a second time.
-
-```bash
-rm -rf "${_st}"
-./build/omnicli iac --registry $R --handle aws-vpc-subnet \
-  --aws-region "${_AWS_REGION}" --state "${_st}" --name smoke \
-  --input '{"vpc_cidr":"10.99.0.0/16","subnet_cidr":"10.99.1.0/24"}' 
-
-aws ec2 describe-vpcs --region "${_AWS_REGION}" \
-  --filters Name=tag:omnisdk:key,Values=smoke/aws/ec2/vpc --query 'Vpcs[].VpcId'
-```
-
-One id, unchanged from the first run.
+**7. Keep the ledger.** Debug labels cannot restore state or authorize adoption. Do not delete
+an active deployment's ledger. Missing identity is reported as unknown, never inferred from tags.
 
 **8. Compensation.** A subnet CIDR outside the VPC range fails the second step, and the VPC it
 already created is removed.

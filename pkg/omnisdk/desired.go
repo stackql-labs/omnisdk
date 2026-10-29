@@ -110,6 +110,7 @@ func incomingOf(r ManagedResource) ([]string, error) {
 const unaddressable = "\x00unaddressable"
 
 func newDesiredPlan(registry, name, state, runID string, resources []ManagedResource, args Args) (Plan, error) {
+	resources = slices.Clone(resources)
 	// What the caller wrote is checked before anything is looked up on their behalf: an empty value
 	// is a value nobody gave — an unset environment variable, most often — and would otherwise
 	// surface far from its cause, as a credential or a method that cannot be found.
@@ -120,19 +121,15 @@ func newDesiredPlan(registry, name, state, runID string, resources []ManagedReso
 			}
 		}
 	}
-	effector, sem, err := providerWiring(registry, resources, args)
-	if err != nil {
-		return nil, err
-	}
 	reg, err := openRegistry(registry)
 	if err != nil {
 		return nil, err
 	}
 	p := &desiredPlan{registry: registry, name: name, state: state, runID: runID, resources: resources, args: args,
-		targets: map[string]*target{}, effector: effector, semantics: sem}
+		targets: map[string]*target{}}
 	seen := map[string]bool{}
 	catalogs := map[string]aot.Catalog{}
-	for _, r := range resources {
+	for i, r := range resources {
 		if seen[r.Key()] {
 			return nil, fmt.Errorf("omnisdk: %s appears twice", r.Key())
 		}
@@ -148,6 +145,11 @@ func newDesiredPlan(registry, name, state, runID string, resources []ManagedReso
 		if err != nil {
 			return nil, err
 		}
+		r, err = bindDebugCorrelation(r, cat, addr, name)
+		if err != nil {
+			return nil, err
+		}
+		resources[i] = r
 		incoming, err := incomingOf(r)
 		if err != nil {
 			return nil, err
@@ -157,6 +159,10 @@ func newDesiredPlan(registry, name, state, runID string, resources []ManagedReso
 			return nil, err
 		}
 		p.targets[r.Key()] = t
+	}
+	p.effector, p.semantics, err = providerWiring(registry, resources, args)
+	if err != nil {
+		return nil, err
 	}
 	// Lowered now against no prior state, so a desired state that cannot run is refused before
 	// anything is held.
@@ -473,11 +479,16 @@ func (p *desiredPlan) lower(prior func(string) map[string]any, outside func(stri
 		createFields := slices.Clone(fields)
 		var updateOnly []string
 		createFields = slices.DeleteFunc(createFields, func(field string) bool {
+			if debug, ok := r.(debugConfiguredResource); ok && slices.Contains(debug.attributes, field) {
+				return true
+			}
 			if slices.ContainsFunc(createMethods, func(m facade.Method) bool { return m.Accepts(field) }) {
 				return false
 			}
 			if slices.ContainsFunc(t.updates, func(m facade.Method) bool { return m.Accepts(field) }) {
-				updateOnly = append(updateOnly, field)
+				if desired[field] != nil {
+					updateOnly = append(updateOnly, field)
+				}
 				return true
 			}
 			return false // Unknown attributes retain the normal validation error.
@@ -577,9 +588,6 @@ func (p *desiredPlan) lower(prior func(string) map[string]any, outside func(stri
 			createParams = map[string]string{}
 		}
 		maps.Copy(createParams, consts)
-		if c := r.CorrelationParam(); c != "" {
-			createParams[c] = p.name + "/" + r.Key()
-		}
 		c := node{alias: create, address: t.addr, verb: t.createVerb, params: createParams, whole: true}
 		if t.createBody {
 			c.body = nilFields(createFields)

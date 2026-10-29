@@ -26,8 +26,7 @@ python3 cicd/examples/aws-vpc-subnet/prepare-update.py \
 
 Then use the apply command below with a fresh run ID. The overlay uses the existing response
 and request template DSLs to project the Name tag and encode the tagging request. The SDK
-contains no special AWS tag-reconciliation logic. Creation-only `TagSpecification` entries
-are still creation inputs; mutable Name intent belongs in `desired.Name`.
+contains no special AWS tag-reconciliation logic. Mutable Name intent belongs in `desired.Name`.
 
 ## Live update of the existing subnet
 
@@ -70,10 +69,27 @@ exposes the read-back boolean under its EC2 Query input name `MapPublicIpOnLaunc
 diffing, sending and subsequent read-back agree. The source corpus is left untouched. Prepare
 the overlay once; use a fresh output directory if regenerating it.
 
+
+## Optional debug labels
+
+```json
+"debug_correlation_param": {
+  "target": "TagSpecification.1.Tag.1.Value",
+  "transformer": "standard"
+}
+```
+
+This explicitly requests `omnisdk:key=<collection>/<resource key>` through the example's
+provider binding. Blank `transformer` means `standard`; other values are rejected.
+Remove the configuration or empty its target and reapply to remove the debug tag.
+Reapply again to verify no further tag mutations. No tag is created when disabled.
+The label is never used as a ledger, WAL or ownership source. The old `correlation_param`
+field is rejected. Refresh the generated registry before using this configuration.
+
 ## Initial creation and teardown
 
 `resources.json` explicitly declares a VPC and a subnet. The subnet receives the created
-VPC identity through its inbox. Both resources carry the collection correlation tag.
+VPC identity through its inbox. Both resources explicitly opt into debug labels.
 This is the existing supported network foundation: it does not create public routing,
 an instance, SSH keys, nginx or a load balancer.
 
@@ -81,7 +97,9 @@ From the repository root, supply your registry, region, collection and state dir
 
 ```sh
 go build -o build/omnicli ./cmd/omnicli
-export REGISTRY=/absolute/path/to/registry
+python3 cicd/examples/aws-vpc-subnet/prepare-update.py \
+  --registry test/corpus/registry --out cicd/out/aws-update-registry --refresh
+export REGISTRY="$PWD/cicd/out/aws-update-registry"
 export REGION=YOUR_REGION
 export COLLECTION=YOUR_COLLECTION
 export STATE="$PWD/cicd/out/YOUR_DEPLOYMENT/state"

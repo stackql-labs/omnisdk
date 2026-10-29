@@ -1,6 +1,7 @@
 package omnisdk
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -60,10 +61,27 @@ func resourceFrom(m map[string]json.RawMessage) (ManagedResource, error) {
 		}
 		return "", nil
 	}
-	var fields [8]string
+	if _, old := m["correlation_param"]; old {
+		return nil, fmt.Errorf("correlation_param was removed; use debug_correlation_param with target and transformer")
+	}
+	if _, old := m["correlationParam"]; old {
+		return nil, fmt.Errorf("correlationParam was removed; use debug_correlation_param with target and transformer")
+	}
+	var debug DebugCorrelationParam
+	if raw, ok := m["debug_correlation_param"]; ok {
+		dec := json.NewDecoder(bytes.NewReader(raw))
+		dec.DisallowUnknownFields()
+		if err := dec.Decode(&debug); err != nil {
+			return nil, fmt.Errorf("debug_correlation_param: %w", err)
+		}
+	}
+	if err := validateDebugCorrelation(debug); err != nil {
+		return nil, err
+	}
+	var fields [7]string
 	for i, names := range [][]string{
 		{"key"}, {"provider"}, {"address"}, {"identity"},
-		{"addressed_by", "addressedBy"}, {"correlation_param", "correlationParam"},
+		{"addressed_by", "addressedBy"},
 		{"via_type", "viaType"}, {"via", "via_program", "viaProgram"},
 	} {
 		v, err := str(names...)
@@ -98,6 +116,6 @@ func resourceFrom(m map[string]json.RawMessage) (ManagedResource, error) {
 			inbound = append(inbound, Arrival{From: a.From, As: a.As})
 		}
 	}
-	return NewResource(fields[0], fields[1], fields[2], desired, params, inbound, fields[6], fields[7],
-		fields[3], fields[4], fields[5]), nil
+	return WithDebugCorrelationParam(NewResource(fields[0], fields[1], fields[2], desired, params, inbound, fields[5], fields[6],
+		fields[3], fields[4], ""), debug), nil
 }
