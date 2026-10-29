@@ -255,14 +255,17 @@ its ledger lives, over whatever the spec says; a file holding only resources nee
 				raw = b
 			}
 			var spec struct {
-				Name  string        `json:"name"`
-				State string        `json:"state"`
-				RunID string        `json:"run_id,omitempty"`
-				Args  *omnisdk.Args `json:"args,omitempty"`
+				Name   string         `json:"name"`
+				State  string         `json:"state"`
+				RunID  string         `json:"run_id,omitempty"`
+				Inputs map[string]any `json:"inputs,omitempty"`
+				Args   *omnisdk.Args  `json:"args,omitempty"`
 			}
 			// A file of resources alone is a list; it carries no collection, state or args.
 			if trimmed := bytes.TrimSpace(raw); len(trimmed) > 0 && trimmed[0] == '{' {
-				if err := json.Unmarshal(raw, &spec); err != nil {
+				decoder := json.NewDecoder(bytes.NewReader(raw))
+				decoder.UseNumber()
+				if err := decoder.Decode(&spec); err != nil {
 					return fmt.Errorf("spec json: %w", err)
 				}
 			}
@@ -278,6 +281,10 @@ its ledger lives, over whatever the spec says; a file holding only resources nee
 			a := omnisdk.Args{}
 			if spec.Args != nil {
 				a = *spec.Args
+			}
+			bindingInput, _ := cmd.Flags().GetString("input")
+			if err := configureResourceBindings(resources, &a, spec.Inputs, bindingInput); err != nil {
+				return err
 			}
 			if a.Params == nil {
 				a.Params = map[string]string{}
@@ -304,6 +311,7 @@ its ledger lives, over whatever the spec says; a file holding only resources nee
 			return streamRows(pl, w)
 		}),
 	}
+	iacApply.Flags().String("input", "", "explicit binding inputs as a JSON object or @file; overrides matching file inputs")
 	iacApply.Flags().String("name", "", "collection to apply under, over the spec's name")
 	iacApply.Flags().String("state", "", "directory holding the collection's ledger, over the spec's state")
 	iacApply.Flags().String("run-id", "", "journal name for this run, over the spec's (default: a UTC timestamp)")

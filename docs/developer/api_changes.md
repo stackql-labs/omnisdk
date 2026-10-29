@@ -316,12 +316,17 @@ classification.
 
 Value encoding and output-stream APIs already present in `v0.1.5-beta06` are unchanged by this work.
 
-### Debug correlation configuration
+### Structured resource bindings
 
-`correlation_param` / `correlationParam` are rejected. Use
-`debug_correlation_param: {"target":"...", "transformer":"standard"}`; a blank transformer
-also selects `standard`. Omission or an empty target disables creation and reconciles removal
-through the provider's declared binding. Unknown transformers or unsupported targets fail planning.
-`ManagedResource.CorrelationParam()` is replaced by `DebugCorrelationParam()` returning the
-new DTO; `WithDebugCorrelationParam` supplies it for Go callers. Built-in blueprints no longer
-stamp undeclared debug tags. Labels never supply ownership or recovery state.
+IaC `desired` values and `write_once` support `{"from":"self|input|env", "attribute":"..."}`.
+`Args.Inputs` and `Args.Environment` provide explicit SDK data. `ResourceEnvironmentVariables`
+lists process variables the CLI may read; the SDK performs no implicit environment lookup.
+`iac-apply --input` accepts a JSON object or `@file`, overriding matching file inputs.
+Missing references and cycles fail before mutation. See [resource bindings](resource_bindings.md).
+
+Both correlation configuration keys are retired and rejected. Legacy Go DTOs remain only to
+report a migration error when requested; no special label is injected. Ordinary declared tags
+use the existing provider request/response templates and update routes.
+
+IaC resource `params` is renamed to `write_once`: these request inputs are not reconciled.
+`params` is rejected; there is no compatibility alias. Self references use `write_once`.

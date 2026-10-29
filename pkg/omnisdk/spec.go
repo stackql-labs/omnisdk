@@ -62,22 +62,15 @@ func resourceFrom(m map[string]json.RawMessage) (ManagedResource, error) {
 		return "", nil
 	}
 	if _, old := m["correlation_param"]; old {
-		return nil, fmt.Errorf("correlation_param was removed; use debug_correlation_param with target and transformer")
+		return nil, fmt.Errorf("correlation_param is retired; use structured self, input or env references")
 	}
 	if _, old := m["correlationParam"]; old {
-		return nil, fmt.Errorf("correlationParam was removed; use debug_correlation_param with target and transformer")
+		return nil, fmt.Errorf("correlationParam is retired; use structured self, input or env references")
+	}
+	if _, old := m["debug_correlation_param"]; old {
+		return nil, fmt.Errorf("debug_correlation_param is retired; use ordinary desired/write_once values with structured self, input or env references")
 	}
 	var debug DebugCorrelationParam
-	if raw, ok := m["debug_correlation_param"]; ok {
-		dec := json.NewDecoder(bytes.NewReader(raw))
-		dec.DisallowUnknownFields()
-		if err := dec.Decode(&debug); err != nil {
-			return nil, fmt.Errorf("debug_correlation_param: %w", err)
-		}
-	}
-	if err := validateDebugCorrelation(debug); err != nil {
-		return nil, err
-	}
 	var fields [7]string
 	for i, names := range [][]string{
 		{"key"}, {"provider"}, {"address"}, {"identity"},
@@ -97,10 +90,27 @@ func resourceFrom(m map[string]json.RawMessage) (ManagedResource, error) {
 	if len(desired) == 0 {
 		desired = []byte(`{}`)
 	}
-	var params map[string]string
-	if raw, ok := m["params"]; ok {
-		if err := json.Unmarshal(raw, &params); err != nil {
-			return nil, fmt.Errorf("%s: params: %w", fields[0], err)
+	params := map[string]string{}
+	var rawParams map[string]any
+	raw, ok := m["write_once"]
+	if _, legacy := m["params"]; legacy {
+		return nil, fmt.Errorf("%s: params is not supported; use write_once", fields[0])
+	}
+	if ok {
+		dec := json.NewDecoder(bytes.NewReader(raw))
+		dec.UseNumber()
+		if err := dec.Decode(&rawParams); err != nil {
+			return nil, fmt.Errorf("%s: write_once: %w", fields[0], err)
+		}
+		for name, value := range rawParams {
+			if text, ok := value.(string); ok {
+				params[name] = text
+				continue
+			}
+			ref, ok := value.(map[string]any)
+			if !ok || ref["from"] == nil || ref["attribute"] == nil {
+				return nil, fmt.Errorf("%s: write_once.%s must be a string or reference", fields[0], name)
+			}
 		}
 	}
 	var inbound []Arrival
@@ -116,6 +126,9 @@ func resourceFrom(m map[string]json.RawMessage) (ManagedResource, error) {
 			inbound = append(inbound, Arrival{From: a.From, As: a.As})
 		}
 	}
-	return WithDebugCorrelationParam(NewResource(fields[0], fields[1], fields[2], desired, params, inbound, fields[5], fields[6],
-		fields[3], fields[4], ""), debug), nil
+	r := WithDebugCorrelationParam(NewResource(fields[0], fields[1], fields[2], desired, params, inbound, fields[5], fields[6], fields[3], fields[4], ""), debug)
+	if rawParams != nil {
+		return bindingResource{ManagedResource: r, rawParams: rawParams, params: params}, nil
+	}
+	return r, nil
 }

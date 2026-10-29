@@ -14,7 +14,7 @@ The VPC in `update-public-ip.json` and `update-private-ip.json` now declares:
 Change `desired.Name` and reapply the same file, collection and state directory. The
 document's `Name` route calls `CreateTags` for the recorded VPC ID. Reapplying an unchanged
 name reads the live tags and performs no tag mutation. External Name drift is repaired.
-This route sets or overwrites only `Name`, preserving the correlation and all other tags.
+This route sets or overwrites only `Name`, preserving all other tags.
 It does not implement tag deletion: keep a string Name in subsequent update inputs.
 
 Regenerate an existing overlay after updating this example:
@@ -40,7 +40,7 @@ From the repository root, using the existing `demo` collection and ledger:
 ```sh
 go build -o build/omnicli ./cmd/omnicli
 python3 cicd/examples/aws-vpc-subnet/prepare-update.py \
-  --registry test/corpus/registry --out cicd/out/aws-update-registry
+  --registry test/corpus/registry --out cicd/out/aws-update-registry --refresh
 
 build/omnicli iac-apply cicd/out/aws-update-registry \
   @cicd/examples/aws-vpc-subnet/update-public-ip.json \
@@ -70,26 +70,35 @@ diffing, sending and subsequent read-back agree. The source corpus is left untou
 the overlay once; use a fresh output directory if regenerating it.
 
 
-## Optional debug labels
+## Self, input and environment bindings
+
+The files declare ordinary `resource-key` tags. Their values use:
 
 ```json
-"debug_correlation_param": {
-  "target": "TagSpecification.1.Tag.1.Value",
-  "transformer": "standard"
-}
+"TagSpecification.1.Tag.1.Value": {"from":"self", "attribute":"key"}
 ```
 
-This explicitly requests `omnisdk:key=<collection>/<resource key>` through the example's
-provider binding. Blank `transformer` means `standard`; other values are rejected.
-Remove the configuration or empty its target and reapply to remove the debug tag.
-Reapply again to verify no further tag mutations. No tag is created when disabled.
-The label is never used as a ledger, WAL or ownership source. The old `correlation_param`
-field is rejected. Refresh the generated registry before using this configuration.
+`write_once` explicitly names the tag key and resource type. No label or collection prefix is
+injected. The provider document supplies ordinary tag create/read/update/delete mappings.
+Removing the owned tag value from `desired` requests tag deletion on reapply.
+
+`bindings.json` also demonstrates top-level caller inputs and an explicit environment reference:
+
+```sh
+AWS_REGION=ap-southeast-2 build/omnicli iac-apply cicd/out/aws-update-registry \
+  @cicd/examples/aws-vpc-subnet/bindings.json \
+  --input '{"vpc_label":"chosen-by-caller"}' \
+  --name demo --state "$PWD/cicd/out/aws-demo/state" --run-id bindings-001
+```
+
+This is a real apply command. Refresh the registry first. Missing inputs or referenced environment
+variables fail before mutation. The [binding contract](../../../docs/developer/resource_bindings.md)
+lists available attributes and API inputs. The old correlation/debug-correlation options are rejected.
 
 ## Initial creation and teardown
 
 `resources.json` explicitly declares a VPC and a subnet. The subnet receives the created
-VPC identity through its inbox. Both resources explicitly opt into debug labels.
+VPC identity through its inbox. Both resources explicitly declare their own tags.
 This is the existing supported network foundation: it does not create public routing,
 an instance, SSH keys, nginx or a load balancer.
 

@@ -12,10 +12,12 @@ import (
 // field in either spelling the callers already use.
 func TestResourcesFile(t *testing.T) {
 	for name, body := range map[string]string{
+		"write_once": `[{"key":"a","provider":"aws","address":"s3.buckets","desired":{"x":1},
+			"write_once":{"bucket":"b"},"inbound":[{"from":"z","as":"bucket"}],"identity":"Name","addressed_by":"bucket"}]`,
 		"list, snake_case": `[{"key":"a","provider":"aws","address":"s3.buckets","desired":{"x":1},
-			"params":{"bucket":"b"},"inbound":[{"from":"z","as":"bucket"}],"identity":"Name","addressed_by":"bucket"}]`,
+			"write_once":{"bucket":"b"},"inbound":[{"from":"z","as":"bucket"}],"identity":"Name","addressed_by":"bucket"}]`,
 		"object, camelCase": `{"name":"ignored","resources":[{"key":"a","provider":"aws","address":"s3.buckets","desired":{"x":1},
-			"params":{"bucket":"b"},"inbound":[{"from":"z","as":"bucket"}],"identity":"Name","addressedBy":"bucket"}]}`,
+			"write_once":{"bucket":"b"},"inbound":[{"from":"z","as":"bucket"}],"identity":"Name","addressedBy":"bucket"}]}`,
 	} {
 		path := filepath.Join(t.TempDir(), "spec.json")
 		if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
@@ -34,5 +36,13 @@ func TestResourcesFile(t *testing.T) {
 	}
 	if _, err := omnisdk.ParseResources([]byte(`{"nope":1}`)); err == nil {
 		t.Error("accepted a document holding no resources")
+	}
+	for _, body := range []string{
+		`[{"key":"a","params":{}}]`,
+		`[{"key":"a","params":{},"write_once":{}}]`,
+	} {
+		if _, err := omnisdk.ParseResources([]byte(body)); err == nil {
+			t.Error("accepted removed params field")
+		}
 	}
 }

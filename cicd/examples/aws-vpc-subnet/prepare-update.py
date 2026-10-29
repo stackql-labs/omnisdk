@@ -7,13 +7,7 @@ import re
 
 
 
-NAME_METHOD = """      debugCorrelations:
-        - target: TagSpecification.1.Tag.1.Value
-          attribute: DebugCorrelation
-          createParams:
-            TagSpecification.1.ResourceType: vpc
-            TagSpecification.1.Tag.1.Key: omnisdk:key
-      updates:
+NAME_METHOD = """      updates:
         - priority: 100
           requires: [DebugCorrelation]
           permits: [DebugCorrelation]
@@ -48,7 +42,7 @@ NAME_OPERATION = """    post:
         '200': {description: Tag set}
 """
 
-NAME_READ = '''{{ define "tag" }}{{ if eq (index . "key") "Name" }},"Name":{{ toJson (index . "value") }}{{ else if eq (index . "key") "omnisdk:key" }},"DebugCorrelation":{{ toJson (index . "value") }}{{ end }}{{ end }}
+NAME_READ = '''{{ define "tag" }}{{ if eq (index . "key") "Name" }},"Name":{{ toJson (index . "value") }}{{ else if eq (index . "key") "omnisdk:key" }},"DebugCorrelation":{{ toJson (index . "value") }}{{ else if eq (index . "key") "resource-key" }},"TagSpecification.1.Tag.1.Value":{{ toJson (index . "value") }}{{ end }}{{ end }}
 {{ define "vpc" }}{"VpcId":{{ toJson (index . "vpcId") }},"CidrBlock":{{ toJson (index . "cidrBlock") }},"InstanceTenancy":{{ toJson (index . "instanceTenancy") }}
 {{ $tags := index . "tagSet" "item" }}{{ if eq (kindOf $tags) "slice" }}{{ range $tags }}{{ template "tag" . }}{{ end }}{{ else if eq (kindOf $tags) "map" }}{{ template "tag" $tags }}{{ end }}}
 {{ end }}
@@ -80,6 +74,17 @@ def add_debug_method(resource, name, identity):
     return resource.replace('        update:\n', "        update:\n          - $ref: '#/components/x-stackQL-resources/" + name + "/methods/debug_correlation'\n", 1)
 
 
+
+def add_resource_tag_method(resource, name, identity):
+    attribute = 'TagSpecification.1.Tag.1.Value'
+    program = '{{ $d := jsonMapFromString . }}{{ if ne (index $d "' + attribute + '") nil }}Action=CreateTags{{ else }}Action=DeleteTags{{ end }}&ResourceId.1={{ urlquery (index $d "' + identity + '") }}&Tag.1.Key=resource-key{{ if ne (index $d "' + attribute + '") nil }}&Tag.1.Value={{ urlquery (index $d "' + attribute + '") }}{{ end }}'
+    method = "        resource_key_tag:\n          operation: {$ref: '#/paths/~1?Version=2016-11-15/post'}\n          request:\n            mediaType: application/x-www-form-urlencoded\n            transform:\n              type: golang_template_text_v0.3.0\n              body: '" + program + "'\n          response: {openAPIDocKey: '200'}\n"
+    route = "      updates:\n        - priority: 100\n          requires: [TagSpecification.1.Tag.1.Value]\n          permits: [TagSpecification.1.Tag.1.Value]\n          target: {$ref: '#/components/x-stackQL-resources/" + name + "/methods/resource_key_tag'}\n"
+    resource = resource.replace('      updates:\n', route, 1)
+    resource = resource.replace('      methods:\n', '      methods:\n' + method, 1)
+    return resource.replace('        update:\n', "        update:\n          - $ref: '#/components/x-stackQL-resources/" + name + "/methods/resource_key_tag'\n", 1)
+
+
 def prepare(registry, output, refresh=False):
     source = Path(registry) / 'aws/v00.00.00000'
     target = Path(output) / 'aws/v00.00.00000'
@@ -87,13 +92,7 @@ def prepare(registry, output, refresh=False):
     start = document.index('    subnets:\n')
     end = document.index('\n    transit_gateway_multicast_domains:', start)
     resource = document[start:end]
-    resource = resource.replace('      methods:\n', '''      debugCorrelations:
-        - target: TagSpecification.1.Tag.1.Value
-          attribute: DebugCorrelation
-          createParams:
-            TagSpecification.1.ResourceType: subnet
-            TagSpecification.1.Tag.1.Key: omnisdk:key
-      updates:
+    resource = resource.replace('      methods:\n', '''      updates:
         - priority: 100
           requires: [DebugCorrelation]
           permits: [DebugCorrelation]
@@ -107,6 +106,7 @@ def prepare(registry, output, refresh=False):
     anchor = '        update:\n'
     resource = resource.replace(anchor, anchor + "          - $ref: '#/components/x-stackQL-resources/subnets/methods/modify_subnet_attribute'\n", 1)
     resource = add_debug_method(resource, 'subnets', 'SubnetId')
+    resource = add_resource_tag_method(resource, 'subnets', 'SubnetId')
     document = document[:start] + resource + document[end:]
     # Expose the observed boolean under the same attribute name as the EC2 Query input.
     start = document.index('    SubnetDisplay:\n')
@@ -115,7 +115,7 @@ def prepare(registry, output, refresh=False):
     old = '        MapPublicIpOnLaunch:\n'
     if schema.count(old) != 1:
         raise ValueError('SubnetDisplay public-IP field differs from the supported corpus')
-    schema = schema.replace(old, '        DebugCorrelation: {type: string}\n        MapPublicIpOnLaunch.Value:\n', 1)
+    schema = schema.replace(old, '        TagSpecification.1.Tag.1.Value: {type: string}\n        DebugCorrelation: {type: string}\n        MapPublicIpOnLaunch.Value:\n', 1)
     document = document[:start] + schema + document[end:]
     start = document.index('    subnets:\n')
     end = start + re.search(r'\n    \S', document[start + 5:]).start() + 5
@@ -135,6 +135,7 @@ def prepare(registry, output, refresh=False):
     resource = document[start:end]
     resource = resource.replace('      methods:\n', NAME_METHOD, 1)
     resource = add_debug_method(resource, 'vpcs', 'VpcId')
+    resource = add_resource_tag_method(resource, 'vpcs', 'VpcId')
     read_start = resource.index('        describe_vpcs:\n')
     read_end = read_start + re.search(r'\n        \S', resource[read_start + 9:]).start() + 9
     read = resource[read_start:read_end]
@@ -146,7 +147,7 @@ def prepare(registry, output, refresh=False):
         "        update:\n          - $ref: '#/components/x-stackQL-resources/vpcs/methods/set_name'\n", 1)
     document = document[:start] + resource + document[end:]
     document = document.replace('    VpcDisplay:\n      type: object\n      properties:\n',
-        '    VpcDisplay:\n      type: object\n      properties:\n        Name: {type: string}\n        DebugCorrelation: {type: string}\n', 1)
+        '    VpcDisplay:\n      type: object\n      properties:\n        Name: {type: string}\n        TagSpecification.1.Tag.1.Value: {type: string}\n        DebugCorrelation: {type: string}\n', 1)
     start = document.index('  /?Action=CreateTags&Version=2016-11-15:\n')
     post = document.index('    post:\n', start)
     end = document.index('\n  /', post)

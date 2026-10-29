@@ -287,6 +287,8 @@ type HTTPReadErrorObserver interface {
 // Args are the inputs to run a resource: explicit scope Params, optional Auth (config-driven-auth
 // resources), an endpoint override, run Tuning, and an optional traffic log.
 type Args struct {
+	Inputs      map[string]any `json:"inputs,omitempty"`
+	Environment map[string]any `json:"environment,omitempty"`
 	// Caller is a verified directory/policy snapshot, independent of provider Auth.
 	Caller authorization.Session `json:"-"`
 	// RequireCaller refuses execution without a Caller or a session-bearing context.

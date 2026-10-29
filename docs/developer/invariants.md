@@ -58,8 +58,8 @@ and destroyed, or would have destroyed, real resources.
 **9. Persist resolved intent, never API responses.** Actual state is read live. Only identity is
 kept from a response, and identity means everything the inverse call needs to address the object.
 
-**10. Infrastructure content is explicit user intent.** Debug labels are opt-in and reconciled,
-including removal when disabled. The ledger and journal are authoritative; cloud tags never
+**10. Infrastructure content is explicit user intent.** Labels are ordinary user-declared request data,
+never special injected metadata. The ledger and journal are authoritative; cloud tags never
 recover intent, establish ownership or authorize adoption. Never stamp undeclared tracking data.
 
 ## Confidentiality

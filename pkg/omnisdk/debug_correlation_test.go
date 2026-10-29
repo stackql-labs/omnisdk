@@ -13,10 +13,10 @@ func TestDebugCorrelationConfig(t *testing.T) {
 		wantError   bool
 	}{
 		{"absent", "", false},
-		{"empty-object", `,"debug_correlation_param":{}`, false},
-		{"empty-target", `,"debug_correlation_param":{"target":""}`, false},
-		{"standard", `,"debug_correlation_param":{"target":"label","transformer":"standard"}`, false},
-		{"blank-transformer", `,"debug_correlation_param":{"target":"label","transformer":""}`, false},
+		{"empty-object", `,"debug_correlation_param":{}`, true},
+		{"empty-target", `,"debug_correlation_param":{"target":""}`, true},
+		{"standard", `,"debug_correlation_param":{"target":"label","transformer":"standard"}`, true},
+		{"blank-transformer", `,"debug_correlation_param":{"target":"label","transformer":""}`, true},
 		{"unknown-transformer", `,"debug_correlation_param":{"target":"label","transformer":"guess"}`, true},
 		{"unknown-option", `,"debug_correlation_param":{"target":"label","magic":true}`, true},
 		{"wrong-shape", `,"debug_correlation_param":"label"`, true},

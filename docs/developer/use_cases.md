@@ -152,14 +152,10 @@ Resource identity and optional debugging configuration:
 |---|---|
 | `identity` | where the minted id sits in the **projected** response — `line_items.VpcId` after the schema-driven transform has run |
 | `addressed_by` | which parameter carries an existing object's id, so a read or a delete is buildable from the ledger entry alone |
-| `debug_correlation_param` | optional debug-label configuration: `{"target":"request parameter", "transformer":"standard"}` |
+| structured references | `{"from":"self|input|env", "attribute":"..."}` supplies explicit values in `desired` and `write_once` |
 
-A nonempty `target` opts in to a debug label. Blank or `standard` transformer produces
-`<collection>/<resource key>`. Omission, `{}`, or an empty target requests no label:
-none is created, and an existing label on the ledger-addressed resource is removed.
-Unknown transformers and the old `correlation_param` key are errors. The provider document
-must declare the creation inputs, live attribute and update/removal route for that target;
-unsupported targets fail planning. Debug labels never recover state or establish ownership.
+See [resource bindings](resource_bindings.md). Correlation/debug-correlation options are retired;
+all labels are ordinary user-declared data. The ledger and journal remain authoritative.
 
 **Google.** Client-named, so `identity` is empty — the caller chose the name and nothing has to be
 read back out of the async Operation to know what was made. The intent goes in the request **body**,

@@ -110,11 +110,18 @@ func incomingOf(r ManagedResource) ([]string, error) {
 const unaddressable = "\x00unaddressable"
 
 func newDesiredPlan(registry, name, state, runID string, resources []ManagedResource, args Args) (Plan, error) {
-	resources = slices.Clone(resources)
+	var resolveErr error
+	resources, resolveErr = resolveResourceBindings(resources, args, name)
+	if resolveErr != nil {
+		return nil, resolveErr
+	}
 	// What the caller wrote is checked before anything is looked up on their behalf: an empty value
 	// is a value nobody gave — an unset environment variable, most often — and would otherwise
 	// surface far from its cause, as a credential or a method that cannot be found.
 	for _, r := range resources {
+		if err := validateDebugCorrelation(r.DebugCorrelationParam()); err != nil {
+			return nil, err
+		}
 		for _, k := range slices.Sorted(maps.Keys(r.Params())) {
 			if r.Params()[k] == "" {
 				return nil, fmt.Errorf("omnisdk: %s: parameter %q is empty", r.Key(), k)
@@ -129,7 +136,7 @@ func newDesiredPlan(registry, name, state, runID string, resources []ManagedReso
 		targets: map[string]*target{}}
 	seen := map[string]bool{}
 	catalogs := map[string]aot.Catalog{}
-	for i, r := range resources {
+	for _, r := range resources {
 		if seen[r.Key()] {
 			return nil, fmt.Errorf("omnisdk: %s appears twice", r.Key())
 		}
@@ -145,11 +152,6 @@ func newDesiredPlan(registry, name, state, runID string, resources []ManagedReso
 		if err != nil {
 			return nil, err
 		}
-		r, err = bindDebugCorrelation(r, cat, addr, name)
-		if err != nil {
-			return nil, err
-		}
-		resources[i] = r
 		incoming, err := incomingOf(r)
 		if err != nil {
 			return nil, err
@@ -479,9 +481,6 @@ func (p *desiredPlan) lower(prior func(string) map[string]any, outside func(stri
 		createFields := slices.Clone(fields)
 		var updateOnly []string
 		createFields = slices.DeleteFunc(createFields, func(field string) bool {
-			if debug, ok := r.(debugConfiguredResource); ok && slices.Contains(debug.attributes, field) {
-				return true
-			}
 			if slices.ContainsFunc(createMethods, func(m facade.Method) bool { return m.Accepts(field) }) {
 				return false
 			}

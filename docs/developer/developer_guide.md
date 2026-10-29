@@ -1010,3 +1010,8 @@ connect or change those tables.
 Caller authentication, principal directories and authorization are separate from provider
 credentials. For opt-in CLI configuration, library sessions, policy resource/action names and
 the current StackQL integration boundary, see [access management](access_management.md).
+
+## Resource bindings
+
+IaC self references, explicit user inputs and environment/context values are documented in
+[resource bindings](resource_bindings.md).
