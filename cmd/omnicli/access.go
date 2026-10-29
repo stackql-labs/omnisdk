@@ -21,6 +21,7 @@ type accessConfig struct {
 	Issuer    string               `json:"issuer"`
 	Mechanism string               `json:"mechanism"`
 	Directory json.RawMessage      `json:"directory"`
+	JWT       *jwtConfig           `json:"jwt,omitempty"`
 	Tokens    []tokenConfig        `json:"tokens,omitempty"`
 	Rules     []authorization.Rule `json:"rules"`
 }
@@ -61,6 +62,9 @@ func accessContext(ctx context.Context, path, tokenEnv string) (context.Context,
 	var evidence authentication.Evidence
 	switch cfg.Mechanism {
 	case "bearer":
+		if cfg.JWT != nil {
+			return nil, errors.New("bearer authentication accepts no JWT configuration")
+		}
 		if tokenEnv == "" {
 			return nil, errors.New("bearer authentication requires --caller-token-env")
 		}
@@ -74,13 +78,19 @@ func accessContext(ctx context.Context, path, tokenEnv string) (context.Context,
 			tokens[i] = authentication.Token{Subject: t.Subject, Digest: hash}
 		}
 		authn, err = authentication.NewBearer(cfg.Issuer, tokens)
+	case "jwt":
+		if tokenEnv == "" || len(cfg.Tokens) > 0 {
+			return nil, errors.New("JWT authentication requires --caller-token-env and accepts no static tokens")
+		}
+		evidence.Token = os.Getenv(tokenEnv)
+		authn, err = configuredJWT(cfg.Issuer, cfg.JWT)
 	case "os":
-		if tokenEnv != "" || len(cfg.Tokens) > 0 {
+		if tokenEnv != "" || len(cfg.Tokens) > 0 || cfg.JWT != nil {
 			return nil, errors.New("OS authentication accepts no bearer configuration")
 		}
 		authn, err = authentication.NewLocalOS(cfg.Issuer)
 	default:
-		return nil, errors.New("CLI access mechanism must be bearer or os")
+		return nil, errors.New("CLI access mechanism must be bearer, jwt or os")
 	}
 	if err != nil {
 		return nil, err

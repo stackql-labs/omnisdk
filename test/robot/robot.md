@@ -30,3 +30,15 @@ To run only access management after building the CLI:
 go build -o build/omnicli ./cmd/omnicli
 test/mock/.venv/bin/robot --outputdir test/robot/out test/robot/access.robot
 ```
+
+## JWT caller policy
+
+`jwt_access.robot` invokes the compiled CLI with signed Ed25519/RSA JWTs and a local API. It checks
+reader SELECT success, mutation/EXEC/IaC denial, token validity, directory membership and provider
+permission boundaries. Test keys are generated per suite; tokens are passed through environment
+variables and are not printed. This tests an in-memory directory; the RDBMS adapter is host-owned.
+
+```sh
+go build -o build/omnicli ./cmd/omnicli
+test/mock/.venv/bin/robot --outputdir test/robot/out/jwt test/robot/jwt_access.robot
+```

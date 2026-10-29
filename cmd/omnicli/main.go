@@ -59,7 +59,7 @@ func main() {
 	}
 	pf := root.PersistentFlags()
 	pf.StringVar(&accessPath, "access-config", "", "caller authentication, directory and policy JSON file")
-	pf.StringVar(&callerTokenEnv, "caller-token-env", "", "environment variable containing the caller bearer credential")
+	pf.StringVar(&callerTokenEnv, "caller-token-env", "", "environment variable containing the caller bearer or JWT credential")
 	pf.StringVarP(&outPath, "out", "o", "", "output file (default stdout)")
 	pf.StringVar(&logPath, "log", "", "log raw responses to this file (default off)")
 	pf.StringVar(&endpoint, "endpoint", "", "endpoint override, path-style (e.g. http://localhost:8085); default real cloud")

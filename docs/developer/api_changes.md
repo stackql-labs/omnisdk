@@ -1,336 +1,121 @@
 # API changes
 
-Migrating from `v0.1.5-beta06` to the current tree.
+Migrating from **`v0.1.8-alpha02`** to the current tree. This is the delta from that tag;
+features already present there are not listed as additions.
 
-## Compile-time breaks
+## Required migration
 
-Custom implementations of `pkg/docparse/aot.Pagination` must implement three additional methods:
+| Surface | Change | Caller action |
+| --- | --- | --- |
+| IaC resource JSON | `params` becomes `write_once`; `params` is rejected, without an alias | Rename the resource-level object. Execution-scope `Args.Params` / `args.params` and graph-node `params` are unchanged |
+| Correlation JSON | `correlation_param`, `correlationParam` and `debug_correlation_param` are rejected | Declare ordinary tag/label data with structured references if wanted; otherwise omit it |
+| `ManagedResource` implementations | `CorrelationParam() string` is replaced by `DebugCorrelationParam() DebugCorrelationParam` | Implement the latter returning the zero DTO; remove calls to the former |
+| `NewResource` | Signature length/types are unchanged; its final string no longer enables stamping | Pass `""`. A nonempty legacy debug target fails during preparation |
+| Debug configuration in Go | `DebugCorrelationParam` and `WithDebugCorrelationParam` retain migration validation only | Nonzero values are rejected; use ordinary `desired` or `write_once` data |
+| `Destroy` function type | `Destroy()` becomes `Destroy(keys ...string)` | Existing calls still compile; update stored `func() Statement` references or wrap the call |
+| `Args` literals | New fields listed below | Keyed literals remain compatible; update unkeyed literals |
 
-| Method | Return to retain the previous token-pagination behaviour |
-|--------|---------------------------------------------------------|
-| `Algorithm() string` | `""` |
-| `ResponseTerminator() (key, location string)` | `"", ""` |
-| `RequestTokenEncoding() string` | `""` (normal query escaping) |
+The preview deliberately removes the misleading IaC field names rather than retaining aliases.
+The Go `ManagedResource.Params()` accessor and `NewResource` map argument still supply the values
+represented by `write_once` in JSON; that interface method has not been renamed.
 
-The supplied StackQL document parser implements these methods. Callers using that parser need no
-source changes. Keyed `omnisdk.Args`, `omnisdk.Tuning`, and `omnisdk.DocMethod` literals remain compatible;
-positional literals must account for added fields or switch to keyed fields.
+## Caller access management: opt-in
 
-## Additions
+New public packages:
 
-- **Opt-in caller access management:** new `public/authentication`, `public/principal`, and
-  `public/authorization` packages supply verified issuer-qualified identities, directory snapshots,
-  Casbin policy and authenticated execution sessions. `Args.Caller` and `Args.RequireCaller` protect
-  actual operations independently of provider credentials. Omni CLI adds `--access-config` and
-  `--caller-token-env`. See [access management](access_management.md).
+- `public/authentication`: `NewBearer`, `NewJWT`, `NewMTLS`, `NewLocalOS`, `Authenticator`,
+  `Evidence` and provisioned bearer `Token` DTOs. Verified identities are issuer-qualified.
+- `public/principal`: immutable `Principal` snapshots, `Identity`, `Directory`,
+  `NewPrincipal`, `NewIdentity`, and `NewMemoryDirectoryFromBytes`.
+- `public/authorization`: `NewCasbin`, `Rule`, `Authorizer`, `NewSession`, `Session`,
+  `Check` and `ErrDenied`.
 
-- **Opt-in API row cache:** `Args.ReadCache` accepts a `rowcache.Cache` and requires
-  an explicit `ReadCachePartition`. `pkg/rowcache` supplies abstract transactional
-  storage contracts, independently managed TTL collection, and a bounded memory
-  implementation. Only complete transformed document reads are cached, before SQL;
-  mutations, polls, local commands and capped reads bypass caching. Cacheable graph
-  reads retain full response rows instead of pushing SQL projection/filter/limit
-  controls into the API. Nil retains uncached execution.
-- **Host snapshot caches:** `Args.ReadCacheLookupOnly` permits reads from complete
-  host-owned snapshots even when a live API read has a page cap. Misses retain that
-  cap and never publish cache entries. Ordinary caches still bypass capped reads.
-- **Read failures:** retries run before read-error tolerance. Mutation and credential
-  exchanges remain strict. `ResponseSelectionErrors.IgnoreMissingKey` optionally
-  reports a missing collection key and returns zero rows; these failed selections
-  are excluded from cache publication.
-- **HTTP diagnostics:** optional `Args.HTTPObserver` receives document request,
-  raw response, and selected page callbacks. Authentication exchanges are excluded.
-  Callbacks may run concurrently. `AuthenticationError` distinguishes failed
-  credential exchanges and preserves the target request in OAuth diagnostics.
-- **Legacy XML presentation:** `LegacyXMLValues` preserves complete child text,
-  whitespace, and sibling order for native XML tables, and integer booleans for
-  transformed XML tables. `LegacyResponseTransforms` explicitly retains legacy
-  decoder fallback for unknown response-program versions. Both default off.
-- **Exact joins:** numeric comparisons and hash keys preserve adjacent 64-bit
-  identifiers rather than collapsing them through floating-point conversion.
-- **Method discovery:** unmapped conventional method names retain their SQL verb;
-  explicit duplicate verb mappings resolve deterministically. View discovery
-  exposes the `requiredParams` declared in its predicate.
-- **Document identity:** optional `aot.DocumentIdentity` exposes a source fingerprint
-  for cache invalidation. The StackQL parser implements it; custom AOT descriptions
-  without an identity remain uncached.
+`Args.Caller` accepts an authenticated session; `Args.RequireCaller` refuses an execution without
+one. These are Go-only fields (`json:"-"`), not user-deserializable identity assertions. A caller can
+also provide the session through `Session.Context(ctx)` when opening a plan. `Args.Principal`
+is not authentication evidence. Existing unprotected executions remain unchanged unless the host
+opts in; enabled hosts must require a session on every relevant path and never fall back after failure.
 
-- **Local inline operations:** document `inline` argv templates run as local exchanges
-  without a shell and honor cancellation and request deadlines. Required inline inputs
-  appear in method discovery. `golang_template_v0.1.0` text responses and
-  `getRegexpFirstMatch` are supported.
-- **Declared reversals:** `DocInverse` exposes explicit inverse metadata and token
-  bindings; `NewInverseMutationNode` pins the declared method. The host attaches these
-  exchanges to transaction inverse graphs using accepted response identities. No inverse
-  is inferred from a resource name; ambiguous declarations are rejected.
+Enforcement covers document operations, generated dependencies/polls, provider credential use,
+native exchanges/transports, relation reads and collection converge/destroy. Denied mutations are
+not attempted and do not record mutation intent. Cached reads retain authorization checks.
+Provider authentication remains separate from caller authentication.
 
+CLI additions: `--access-config`, `--caller-token-env`, `whoami`, `groups`. Mechanisms are static
+`bearer`, local `os`, and `jwt`. JWT configuration pins issuer, audience, algorithm allowlist and
+`kid`-indexed PKIX public keys; the CLI supports RS256 with RSA keys of at least 2048 bits, and
+EdDSA with Ed25519 keys. Tokens come from the named environment variable. Expiration is required;
+signature, issuer, audience and temporal checks precede directory resolution. Token group claims
+do not supply directory membership. Key rotation and session lifetime remain host responsibilities.
 
-- **Selected star metadata:** optional `omnisdk.SelectedMethods` exposes the methods
-  selected during document star resolution. `omnisdk.ServerBindings` exposes their
-  declared server-variable names, independently of ordinary path and query parameters.
-  Hosts can reproduce legacy star columns without treating every required input as output.
-  These interfaces supply metadata only; they introduce no scope values or defaults.
+See [access management](access_management.md) and the
+[StackQL agent integration briefing](stackql_iac_access_integration.md). The RDBMS directory belongs
+to StackQL; Omni adds no SQL directory implementation or database driver.
 
-- **XML property names:** native XML rows honor declared `xml.name` annotations,
-  including annotations inherited through `allOf`. SQL receives the declared property
-  name while unannotated and undeclared fields retain their existing behavior.
+## Resource bindings
 
-- **XML program scalar parity:** mxj programs receive numeric and boolean XML values
-  using legacy conversion rules. Integral identifiers outside the exact floating-point
-  range remain strings, preserving existing SDK precision guarantees.
+New `Args.Inputs map[string]any` and `Args.Environment map[string]any` provide explicit binding
+sources. `desired` supports references recursively; `write_once` values accept references that
+resolve to strings:
 
-- **Pagination parity:** `Args.LegacyPagination` lets hosts use any-sdk provider defaults
-  instead of native `x-ms-pageable` inference. Explicit StackQL pagination remains
-  authoritative. False preserves existing native pagination support. Optional
-  `aot.NativePagination` exposes inference provenance without changing `aot.Pagination`.
-
-- **Bound-input resolution:** a missing required input no longer causes another,
-  already-bound input to be wired again. Constant and fan-out bindings remain intact;
-  join equalities still constrain the resulting rows.
-
-- **Server transport metadata:** optional `aot.ServerTransportDefaults` and
-  `omnisdk.ServerTransportDefaults` expose a declared HTTP or HTTPS URL-scheme default.
-  `DocMethod.TransportDefaults` carries it for discovery. The SDK leaves the URL placeholder
-  unresolved; a host may supply the transport binding, with explicit SQL taking precedence.
-  Host, cluster, account and region defaults are excluded.
-
-- **Mutation completion:** `Args.MutationCompletion` accepts a `MutationCompletion` interface
-  for graph mutations. Its `Complete` method receives the context, resource address, verb,
-  bound inputs and initial response, and returns the completed resource before RETURNING
-  projection. Implementations support independent concurrent calls and honor cancellation.
-  A nil row emits nothing. Completion errors preserve their cause and `ErrOutcomeUnknown`;
-  the accepted mutation is never resent. Nil retains immediate-response behavior.
-
-- **Explicit Azure authentication:** an explicitly configured API key or bearer credential
-  overrides default OAuth token acquisition. Planning does not require a service principal or
-  invoke the Azure CLI before applying that request credential. Default OAuth behavior is retained.
-
-- **Mutation star projections:** unqualified `RETURNING *` expands target columns only;
-  source relation fields remain internal to INSERT SELECT execution.
-- **Literal projections:** SELECT outputs may contain constants and NULL alongside resource
-  columns. They are evaluated after row filtering, preserving their native values.
-- **Server environment metadata:** optional `aot.ServerEnvironmentBindings` and
-  `omnisdk.ServerEnvironmentBindings` expose explicitly declared `x-stackQL-envVar` names.
-  `DocMethod.ServerEnvironment` carries the same metadata for method discovery. The SDK never
-  reads those environment variables or substitutes server defaults. A host may resolve the
-  annotations and pass ordinary query bindings, preserving explicit SQL precedence.
-- **AWS signed headers:** declared `Accept` headers remain signed. Automatically synthesized
-  response negotiation headers remain on the wire but are excluded from signing. Re-signing
-  excludes the previous `Authorization` value.
-
-- **Declared server precedence:** operations use their own server declaration, otherwise the
-  path item's, otherwise the document's. Scope variables from the selected declaration remain
-  accepted after endpoint rewrites; their defaults are never substituted for explicit caller scope.
-- **Request programs:** optional `aot.RequestTransform` exposes a declared request-body program.
-  It runs before signing and takes precedence over generic XML envelope serialization. The
-  `golang_template_text_v0.1.0` evaluator is now registered alongside v0.3.0; unknown versions fail
-  before dispatch. Existing request implementations need no additional methods.
-  Unsupported request and response programs expose `UnsupportedProgramError.ProgramType()`
-  through wrapped errors, allowing hosts to retain their own diagnostic wording.
-
-- **Explicit upstream read-error policy:** `Args.HTTPReadErrors` accepts an
-  `HTTPReadErrorPolicy` interface (`IsIgnored(int) bool`). A matching HTTP error ends that
-  document-backed resource read cleanly without a synthetic row or another retry. Prior pages remain available.
-  This opt-in never suppresses mutation or authentication failures. A policy may also implement
-  `HTTPReadErrorObserver.IgnoredStatus(int, string)` for host-owned diagnostics. Both interfaces
-  stay outside serialized arguments; nil retains strict handling.
-- **Response selection diagnostics:** `Args.StrictResponseSelection` optionally reports an absent
-  declared JSON row key, including JSON-path selections. Default behavior remains an empty read;
-  a declared empty array remains successful in either mode. StackQL opts in for CLI parity.
-- **Scalar XML rows:** optional `aot.ScalarRowSchema` declares the column associated with a
-  scalar XML selection. The supplied parser exposes the terminal element as a column (for example,
-  `PolicyNames/member` becomes `member`), consistently across discovery and row acquisition.
-
-- **Conditional expressions:** the function catalogue supports lazy searched and simple CASE
-  (`case_when`, `case_value`) plus three-valued `and`, `or`, and `not`. SQLite `if` and `iif`
-  skip unselected branches. Optional `sqlfn.LazyFunc` lets custom functions request deferred
-  argument evaluation; existing `Func` implementations remain compatible. Scalar query outputs
-  are evaluated after filtering, so rejected rows cannot trigger projection errors.
-- **SQLite arithmetic:** scalar `+`, `-`, `*`, `/`, and `%` follow SQLite numeric conversion,
-  integer division, overflow promotion, and NULL-on-division-by-zero behavior.
-- **XML requests:** optional `aot.XMLRequest` exposes declared root names, declarations, and
-  root attributes. The StackQL parser supplies these automatically. Structured XML fragments
-  are validated; scalar strings remain escaped.
-- **Read controls:** `Tuning.PageLimit` caps pages per resource read and ends cleanly at the cap.
-  Global zero or negative means unlimited; provider zero inherits and negative removes the cap.
-  Retries and polling are separate. Document-declared body controls remain in the JSON body
-  and preserve existing defaults instead of becoming query parameters.
-
-- **Template conversions:** document Go templates now provide `toInt` and `toBool`, including
-  XML-to-JSON programs for transformed volumes. Their absent-value defaults are zero and false.
-
-- **Analyzer-resolved read relations:** `omnisdk.Relation` combines table metadata with
-  `Open(context.Context, map[string]any) (Rows, error)`. `NewRelation` builds an immutable
-  declaration from explicit input and column metadata plus an opener. `Args.Relations` registers
-  handles by exact address for `NewGraphQuery`, bypassing provider-document lookup for those
-  addresses. Supply the same relations to `ResolveIn` as tables. They support ordinary graph
-  bindings, projections, filters and joins, and reject mutation targets. Planning performs no
-  calls to the opener. Each execution owns its cursor and closes it; openers must honor the
-  supplied context and support independent concurrent executions. This is a read seam, not a
-  SQL parser, database connector or recursive-CTE executor.
-
-Opening a graph plan with an already-canceled context now returns the cancellation error immediately
-without invoking read handles or provider exchanges.
-
-- **Document request defaults:** declared header defaults and response `Accept` media types reach
-  the wire while explicit headers retain precedence. Vendor request content types survive body
-  encoding. `request.default` supplies an otherwise absent body; `request.base` fills missing
-  structured JSON fields. An explicit raw body remains complete and is not merged.
-
-- **Request deadlines:** `omnisdk.Tuning.RequestTimeout` bounds each outbound request, including
-  HTTP response body reads and gRPC response consumption. `omnisdk.DefaultRequestTimeout` is
-  **30 seconds**. Zero selects the fallback; a negative duration explicitly disables it.
-- **Provider overrides:** `omnisdk.Args.TuningByProvider` (`tuning_by_provider` in JSON) maps provider
-  names to `omnisdk.ProviderTuning`. Its fields are `RequestTimeout`, `RetryTries`, `RetryRate`, and
-  `MaxPerHost`, and `PageLimit`; zero fields inherit the global `Args.Tuning` value, then library defaults. Keys
-  accept `google` or `stackql_unstable_google`; the namespaced entry wins when both exist.
-  Overrides apply to provider authentication exchanges as well as resource calls, in document-backed
-  and built-in plans. Retry and per-host admission state is shared across a provider's exchanges
-  within a run. Retry and per-host concurrency settings govern HTTP exchanges.
-
-Whole-query `Timeout`, `Limit`, `Parallelism`, and buffering settings remain global. Duration values
-are Go `time.Duration` values; numeric JSON durations are in nanoseconds.
-
-```go
-args := omnisdk.Args{
-    Tuning: omnisdk.Tuning{RequestTimeout: 30 * time.Second},
-    TuningByProvider: map[string]omnisdk.ProviderTuning{
-        "google": {RequestTimeout: 60 * time.Second, RetryTries: 2},
-        "aws":    {MaxPerHost: 4}, // inherits the global timeout
-    },
-}
+```json
+{"from":"self", "attribute":"key"}
+{"from":"input", "attribute":"vpc_name"}
+{"from":"env", "attribute":"AWS_REGION"}
 ```
 
-- **Replacement mutations:** `query.Replace` and `query.NewReplace` use the resource's `replace`
-  mapping, keeping complete replacement distinct from a partial `update`. `DescribeMutation` accepts
-  `"replace"`.
-- **Required method parameters:** `omnisdk.DocMethod.RequiredParams` lists required parameters using
-  the method's SQL presentation names, including unresolved required server variables. The optional
-  `aot.MethodInputs` interface exposes this metadata.
-- **Document request metadata:** optional `aot.RequestShape` and `aot.RequestDefaults` interfaces
-  expose naming, body schema, and fallback body declarations without changing existing implementers.
-  Optional `aot.SigningRequest` retains the declared signing service through endpoint rewrites;
-  method `serviceName` overrides document `info.x-serviceName`. Optional
-  `aot.BodyTranslationRequest` exposes `requestBodyTranslate`, and `aot.StringOnlySchema` exposes
-  `x-stackQL-stringOnly`: nested inputs are coerced against their schema before JSON stringification.
-- **OCI authentication:** `omnisdk.Auth` accepts OCI tenancy/user OCIDs, fingerprint, RSA private
-  key, passphrase, configuration file and profile, including named environment variables for
-  credentials. Set `Type: "oci_signing_v1"`. Explicit raw credentials must be complete; partial raw
-  credentials fail instead of falling back to a profile. Document `oci_signing_v1` exchanges use
-  the existing request signing and deadline machinery.
-- **Read controls:** `Args.ReadHintsByAlias` carries original projection order, sort terms,
-  limit, offset and count intent as `ReadHints`/`ReadOrder` DTOs. Optional `ReadEffects` on returned
-  rows reports `AppliedOffset()`: a SQL adapter must subtract that offset from its local offset.
-  Unsupported filtering, joins, aggregation or ordering prevent unsafe offset pushdown. Existing
-  callers that omit hints retain local pagination. Optional `aot.ReadControls` and `aot.OrderSyntax`
-  describe document order/skip/count capabilities without extending mandatory interfaces.
-- **GraphQL documents:** optional `aot.GraphQLExchange`, `aot.GraphQL`, and `aot.SelectedSchema`
-  expose declared queries, continuation and selected row schemas. JSON selection supports property,
-  wildcard, array index and slice paths through `pkg/jsonpath.Selection`.
-- **Service discovery:** `DocServices` returns `DocService` metadata for all provider declarations,
-  including services without installed operation files. `DocCatalog` retains its existing meaning
-  of locally addressable exchanges. Colliding service names cannot replace separately keyed services.
-- **Document views:** `DocView` exposes an optional `aot.View` with its SQL definition, dialect
-  predicate and fallback. It performs no SQL execution. Optional `aot.RequiredSchema` and
-  `aot.ParameterDefault` expose required object fields and wire defaults.
-- **Document retries:** optional `aot.RetryExchange`/`aot.HTTPRetry` declarations inherit from
-  method, resource, then document. They retain the provider's shared retry governor. An explicit
-  provider `RetryTries` override wins; global settings supply the fallback when no declaration exists.
-- **HTTP errors:** `HTTPStatusError` exposes status, response body and request URL through
-  `errors.As`, preserving the distinction between a provider rejection and a transport failure.
+`self` exposes `key`, `collection`, `provider`, `address`, `desired` and `write_once`.
+Dotted attributes are supported, with exact-key lookup first. JSON types are preserved in desired
+state. Missing bindings, malformed references and cycles fail before mutations. Strings are not
+interpolated. API identities continue to travel through `inbound`, not `self`.
 
-## Behaviour changes
+`ResourceEnvironmentVariables(resources)` enumerates explicit environment references without
+reading the process environment. The SDK consumes only supplied context. The CLI captures only
+referenced environment names, respecting already-supplied `args.environment`, and adds
+`iac-apply --input '{...}'` / `--input @file`. Matching input keys resolve in this order:
+CLI input, top-level file `inputs`, then `args.inputs`.
 
-XML row selection follows declared array-item element names, including annotations beside `allOf`
-references. Scalar comparison calls (`=`, `!=`, `<>`, `<`, `<=`, `>`, `>=`) use the configured SQL
-dialect, including NULL propagation. Join equalities on request inputs already supplied by explicit
-constants or fanouts constrain rows instead of introducing a second producer for the input.
+See [resource bindings](resource_bindings.md).
 
-| Change | Who is affected |
-|--------|-----------------|
-| Requests without an explicit timeout now have a 30-second deadline instead of being unbounded. Each retry or pagination request gets a fresh deadline. Parent/query deadlines still bound the whole run, and explicit HTTP client timeouts retain precedence. | Callers with slow synchronous APIs: set a longer global or provider `RequestTimeout`. Use a negative duration to opt out explicitly. |
-| Cancellation and deadline errors are terminal under the default retry classification. Other configured transient transport errors and statuses remain retryable. | Callers relying on retries after a timed-out request. A stalled default request now returns after 30 seconds rather than repeating until a process guard terminates it. |
-| `page_number` pagination sends page 1, then advances the reported current page until it reaches `responseTerminator`. A missing or invalid page/count stops pagination; a non-advancing page before the terminator returns an error. | Documents declaring `algorithm: page_number`: the current page is no longer reused as an opaque next-page token, which could loop on page 1. |
-| Pagination configuration is resolved from method, then resource, then document. | Resources declaring `config.pagination`, including Link-header pagination and differently named continuation headers: their declarations are now honoured. |
-| A query pagination token with `requestToken.encoding: none` is sent verbatim. Other query parameters retain normal escaping. | APIs issuing tokens such as padded base64 cursors. With no encoding override, normal escaping is unchanged. |
+## Declared update routing
 
-Providers declaring `config.snake_case_aliases` now expose response columns and star projections
-in snake case. Native response names remain addressable. Methods declaring `request.nativeCasing`
-resolve snake parameter and body keys to the schema's declared wire names. Unknown WHERE symbols
-are rejected instead of silently retained as unused parameters; explicit server and signing scope
-bindings remain supported.
+New optional AOT interfaces `aot.UpdateRouting` and `aot.UpdateRoute` expose validated document
+recommendations. Existing catalog implementations need not implement the optional interface.
+Declarations can live at document/resource/method scope and retain source/order information.
 
-JSON bodies are coerced against declared schemas before transmission: numeric strings become
-numbers, integral values are required for integer properties, boolean strings become booleans, and
-scalar values for string properties become strings. Invalid values fail before the resource request.
-JSON strings for declared array/object fields are decoded and validated against that shape.
-Constant function expressions are accepted as mutation values without requiring a source table.
-Undeclared fields are preserved. A declared JSON `request.base` supplies missing fields when callers
-provide structured body fields. Explicit raw bodies retain precedence.
+New `omnisdk.UpdateCandidates(ctx, registry, changes, args)` returns `[]UpdateCandidate` without
+provider effects. CLI `doc-update-routes <registry> <address> '["attribute"]'` exposes discovery.
+Rules match the complete changed set: `requires ⊆ changes ⊆ permits`. Candidates are ranked
+and ordered deterministically; they are recommendations, not a greedy sequence of mutations.
 
-### Registry layouts and legacy methods
+Desired-state execution lowers eligible same-resource update/replace arms, checking policy and
+available inputs. An unsupported whole change set fails explicitly. Arbitrary cross-resource
+lifecycle synthesis remains unimplemented; supply an explicit managed graph for such plans.
+See [route schema](../schemas/update_routes.schema.json) and
+[the runnable routing example](../../cicd/examples/update-routing/README.md).
 
-Provider `resources` references can now resolve resource-only documents alongside their `service`
-references. Operation pointers retain their declared `services/`, `resources/`, or `services-split/`
-paths and resolve schemas in the operation's own OpenAPI document. Referenced documents are cached
-by file size and modification time, and references cannot escape the provider bundle. Byte-only
-`Parse` callers still need a catalog to resolve external files.
+## IaC lifecycle behavior
 
-When a SQL verb has no explicit mapping, legacy method names are supported in this order:
-`select`, `list`, `aggregatedList`, `get` for SELECT; `insert`, `create` for INSERT; and `delete`
-for DELETE. An explicit empty mapping disables the verb. HTTP verb segments in operation references
-are case-insensitive. No new update or replacement methods are inferred.
+- `write_once` supplies request inputs outside reconciliation; `desired` declares maintained state.
+  Update-only desired fields are excluded from the create arm, and non-null update-only intent
+  fails if the object is absent rather than being silently dropped.
+- Read/update/delete inputs are filtered against their declared operations. Dependency values no
+  longer overwrite the object's own recorded identity when deleting it. Explicit arrival mappings
+  take precedence over the older inferred dependency-parameter fallback.
+- Automatic correlation tagging is removed from built-in blueprints. Only caller-declared tags
+  are sent. The ledger and journal remain authoritative; cloud labels do not recover ownership,
+  intent or permission to adopt objects.
+- Awaited operations preserve early response fields missing from the completed response;
+  completed values take precedence. Dependents still wait for successful completion. A persisted,
+  resumable polling handle after process death is not implemented.
+- `Destroy(keys...)` / repeated `iac-destroy --key KEY` selectively remove resources. All selected
+  keys and retained dependencies are checked before deletes; selected dependents go first.
+  Empty `--key` cannot fall through to full teardown. No keys retains full collection destruction.
+  Omitting a resource from an apply file alone does not prune it.
+- Managed-graph validation aggregates undeclared mutations and rejects mutations of read-only
+  relations. Diff evaluation uses the execution context for cancellation and policy decisions.
 
-Document method signatures now include required server bindings. A path/server scope predicate
-binds the request without comparing its short identifier against a same-named response URI.
-Google service-account credentials accept RSA keys in both PKCS#8 and PKCS#1 PEM formats.
-
-GraphQL cursor, keyset, offset and page-info pagination use the shared HTTP client, signing,
-retry and timeout policies. Repeated cursors fail instead of looping. XML continuation paths
-are read from the document's transformed response, and singleton rows can sit beside metadata.
-OpenAPI `allOf` response schemas retain inherited properties and local overrides within the
-existing materialisation depth bound.
-Request translation and query transposition inherit from method, resource, then document. Declared
-JSON body properties join the request input vocabulary, including SQL `data__` bindings. Returned
-rows include explicitly bound path/server values when the response omits those fields; provider
-response fields retain precedence.
-Source-only WHERE filters run before dependent requests, while optional-side left-join filters retain
-their final evaluation. Qualified IN inputs count as known request inputs during dependency analysis.
-SQLite WHERE aliases retain source-column precedence, including through SQL staging. Constant false
-mutation predicates produce zero rows without sending a write. Tied UPDATE methods prefer a declared
-partial update; other ambiguities still fail and explicit method pins retain precedence.
-Declared header defaults, including routing headers, are applied when the caller supplies no value.
-Path/server scope is still explicit. Method `schema_override` declarations determine response columns;
-XML row selection follows nested envelopes before materialisation. Exact MXJ template version
-`golang_template_mxj_v0.1.0` is supported alongside the existing versions. SQLite's StackQL function
-catalog includes the `string(value)` constructor.
-
-Repeated REST continuation tokens or URLs now return an error rather than looping indefinitely.
-Requests use the declared response media type for Accept unless an explicit header overrides it.
-
-## CLI
-
-No new `omnicli` flags. CLI requests inherit the finite request timeout and pagination fixes above.
-The existing retry flags do not make cancellation or deadline errors retryable under the default
-classification.
-
-Value encoding and output-stream APIs already present in `v0.1.5-beta06` are unchanged by this work.
-
-### Structured resource bindings
-
-IaC `desired` values and `write_once` support `{"from":"self|input|env", "attribute":"..."}`.
-`Args.Inputs` and `Args.Environment` provide explicit SDK data. `ResourceEnvironmentVariables`
-lists process variables the CLI may read; the SDK performs no implicit environment lookup.
-`iac-apply --input` accepts a JSON object or `@file`, overriding matching file inputs.
-Missing references and cycles fail before mutation. See [resource bindings](resource_bindings.md).
-
-Both correlation configuration keys are retired and rejected. Legacy Go DTOs remain only to
-report a migration error when requested; no special label is injected. Ordinary declared tags
-use the existing provider request/response templates and update routes.
-
-IaC resource `params` is renamed to `write_once`: these request inputs are not reconciled.
-`params` is rejected; there is no compatibility alias. Self references use `write_once`.
-
-`Destroy(keys ...string)` and `iac-destroy --key KEY` support explicit partial deletion.
-Retained dependents block selected deletion before effects. Awaited responses preserve early fields
-when absent from the completed response; completed values take precedence.
+The [identity lifecycle walkthroughs](../../cicd/examples/identity-lifecycle/README.md) cover eager
+provider IDs, awaited early/late IDs, caller-named objects, repeated updates, partial deletion,
+local key generation and teardown. Robot checks are black-box CLI tests against local APIs;
+they do not establish that the live cloud walkthroughs have been executed.

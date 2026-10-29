@@ -86,7 +86,7 @@ content or redirect an allowed operation to an arbitrary endpoint.
 
 ## Omni CLI
 
-All commands accept `--access-config <file>` and, for bearer authentication,
+All commands accept `--access-config <file>` and, for bearer or JWT authentication,
 `--caller-token-env <environment-variable-name>`. The token is read from that named variable, not a
 command-line argument. The CLI reads the file; constructors perform no filesystem access.
 
@@ -171,15 +171,69 @@ Configuration format:
     {"subject": "group:readers", "resource": "command/omnicli/whoami", "action": "execute"},
     {"subject": "group:readers", "resource": "command/omnicli/groups", "action": "execute"},
     {"subject": "group:readers", "resource": "command/omnicli/doc-select", "action": "execute"},
-    {"subject": "group:readers", "resource": "operation/demo/**", "action": "execute"},
+    {"subject": "group:readers", "resource": "operation/demo/list/listItems", "action": "execute"},
     {"subject": "group:readers", "resource": "credential/demo", "action": "use"}
   ]
 }
 ```
 
-Use narrower operation rules for production. `mechanism: "os"` uses the effective UID as the
-subject and requires no tokens or token-env flag. JWT and mTLS are reusable library authenticators;
-the initial CLI configuration exposes bearer and local OS authentication only.
+The example grants only the trusted `listItems` method; use the actual safe method IDs from your documents. `mechanism: "os"` uses the effective UID as the
+subject and requires no tokens or token-env flag. JWT is also supported by the CLI as shown below; mTLS remains a library/transport integration.
+
+### JWT configuration
+
+Use `mechanism: "jwt"`, the same `directory` and `rules` structure, and this verification configuration
+instead of `tokens`:
+
+```json
+{
+  "issuer": "https://your-trusted-issuer.example",
+  "mechanism": "jwt",
+  "jwt": {
+    "audience": "stackql",
+    "algorithms": ["RS256"],
+    "keys": [{
+      "kid": "key-2026-01",
+      "algorithm": "RS256",
+      "public_key_pem": "-----BEGIN PUBLIC KEY-----\n<PKIX public key base64>\n-----END PUBLIC KEY-----\n"
+    }]
+  },
+  "directory": {
+    "groups": ["readers"],
+    "principals": [{
+      "id": "alice",
+      "identities": [{"issuer":"https://your-trusted-issuer.example", "subject":"alice-subject"}],
+      "groups": ["readers"]
+    }]
+  },
+  "rules": [
+    {"subject":"group:readers", "resource":"command/omnicli/whoami", "action":"execute"},
+    {"subject":"group:readers", "resource":"command/omnicli/groups", "action":"execute"},
+    {"subject":"group:readers", "resource":"command/omnicli/doc-run", "action":"execute"},
+    {"subject":"group:readers", "resource":"operation/demo/list/listItems", "action":"execute"},
+    {"subject":"group:readers", "resource":"credential/demo", "action":"use"}
+  ]
+}
+```
+
+The PEM placeholder must be replaced by a real public verification key. RSA keys require at least
+2048 bits and `RS256`; Ed25519 keys use `EdDSA`. Each `kid` is required and unique and each key's
+algorithm must be explicitly allowed. The CLI accepts PKIX `PUBLIC KEY` PEM blocks, not private keys,
+shared-secret HMAC keys or token-supplied key URLs. Configure key rotation through trusted deployment
+configuration. `issuer`, `audience` and expiry are verified before directory lookup; token groups
+never supply membership. There is no built-in privileged interpretation of a group named `readers`:
+the explicit policy gives it only the trusted read operations listed above.
+
+Pass a JWT from a securely populated environment variable:
+
+```sh
+build/omnicli whoami --access-config access-jwt.json --caller-token-env STACKQL_CALLER_JWT
+build/omnicli groups --access-config access-jwt.json --caller-token-env STACKQL_CALLER_JWT
+```
+
+Do not put tokens in command-line arguments, logs or test artifacts. Enabled access never falls back
+to an unprotected caller when verification fails. The CLI creates a fresh session per invocation;
+long-running hosts must enforce their own session lifetime and reauthentication boundaries.
 
 Unknown configuration fields, duplicate identities/principals/groups, undeclared memberships,
 missing credentials, and failed directory lookups are initialization errors. Configuration and policy
@@ -204,3 +258,9 @@ session on only one execution path would not protect the application as a whole.
 local OS authentication, and checks empty memberships and fail-closed authentication, directory
 and policy decisions. It is included in the standard `test/robot/run.sh` suite. See
 [Robot instructions](../../test/robot/robot.md#caller-access-management) for the focused command.
+
+`test/robot/jwt_access.robot` adds signed Ed25519/RSA caller authentication and reader-only policy
+checks through real CLI processes. It verifies allowed reads, denied INSERT/UPDATE/DELETE/EXEC and
+IaC, invalid JWTs, directory-owned groups and permission changes, observing provider calls externally.
+The test uses the SDK memory directory. The host RDBMS/transport acceptance matrix is in the
+[StackQL agent integration briefing](stackql_iac_access_integration.md).

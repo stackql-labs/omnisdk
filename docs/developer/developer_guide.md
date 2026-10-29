@@ -1015,3 +1015,6 @@ the current StackQL integration boundary, see [access management](access_managem
 
 IaC self references, explicit user inputs and environment/context values are documented in
 [resource bindings](resource_bindings.md).
+
+For host integration, see the [StackQL IaC and opt-in access briefing](stackql_iac_access_integration.md),
+including the SQL principal directory, caller-context wiring and reader-policy Robot acceptance matrix.
