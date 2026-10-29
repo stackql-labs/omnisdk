@@ -694,6 +694,9 @@ func (rec aboutRecord) inputs(ctx context.Context, log facade.Ledger) map[string
 	// addressed by: an account's identity is its account_name, which a container in it takes too. A
 	// record written before arrivals were kept still resolves this way.
 	for _, k := range rec.DependsOn {
+		if rec.Arrives != nil {
+			break
+		}
 		e, _, found, err := log.Get(ctx, facade.LedgerKey(k))
 		if err != nil || !found || len(e.Identity()) == 0 {
 			continue

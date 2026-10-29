@@ -456,3 +456,6 @@ provider: the first is deleted, and the final row says so — `{"status":"failed
   put back. EC2 declares tags as their own resource (`ec2.tags`: `CreateTags`, `DeleteTags`).
 - **Local disk only.** `O_EXCL` and `link` are unreliable on NFSv3; a network share is not a
   supported backing store.
+
+Identity lifecycle walkthroughs (generated IDs, async early/late IDs and caller names):
+[create, repeated updates, partial deletion, local key generation and teardown](../../cicd/examples/identity-lifecycle/README.md).

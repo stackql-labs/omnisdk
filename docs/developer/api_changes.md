@@ -330,3 +330,7 @@ use the existing provider request/response templates and update routes.
 
 IaC resource `params` is renamed to `write_once`: these request inputs are not reconciled.
 `params` is rejected; there is no compatibility alias. Self references use `write_once`.
+
+`Destroy(keys ...string)` and `iac-destroy --key KEY` support explicit partial deletion.
+Retained dependents block selected deletion before effects. Awaited responses preserve early fields
+when absent from the completed response; completed values take precedence.

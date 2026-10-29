@@ -218,7 +218,7 @@ func (e *effector) inputs(addr string, k facade.LedgerKey, in facade.EffectInput
 	// arguments — a tag specification, say — and an operation that does not take one would be ruled
 	// out by being sent it, exactly as a read would.
 	var declared map[string]bool
-	if verb == "update" {
+	if verb == "update" || verb == "delete" {
 		var err error
 		if declared, err = e.declared(addr, verb); err != nil {
 			return nil, err
@@ -229,6 +229,9 @@ func (e *effector) inputs(addr string, k facade.LedgerKey, in facade.EffectInput
 			continue
 		}
 		inputs[name] = v
+	}
+	if res != nil && res.AddressedBy() != "" && len(in.Identity) > 0 {
+		inputs[res.AddressedBy()] = string(in.Identity)
 	}
 	return inputs, nil
 }

@@ -378,7 +378,14 @@ its ledger lives, over whatever the spec says; a file holding only resources nee
 			}
 			a.Endpoint, a.Log, a.Tuning = endpoint, logw, t.facade()
 			a.InsecureSkipTLSVerify = insecureTLS
-			pl, err := omnisdk.Prepare(mustFlag(cmd, "registry"), omnisdk.Destroy(),
+			keys, err := cmd.Flags().GetStringArray("key")
+			if err != nil {
+				return err
+			}
+			if cmd.Flags().Changed("key") && len(keys) == 0 {
+				return fmt.Errorf("--key requires a nonempty resource key")
+			}
+			pl, err := omnisdk.Prepare(mustFlag(cmd, "registry"), omnisdk.Destroy(keys...),
 				omnisdk.NewLedger(mustFlag(cmd, "name"), mustFlag(cmd, "state"), runIDOr(mustFlag(cmd, "run-id"))), a)
 			if err != nil {
 				return err
@@ -386,6 +393,7 @@ its ledger lives, over whatever the spec says; a file holding only resources nee
 			return streamRows(pl, w)
 		}),
 	}
+	iacDestroy.Flags().StringArray("key", nil, "delete only this resource key; repeat for multiple keys; retained dependents block deletion")
 	iacDestroy.Flags().String("registry", "", "provider-document registry root (required)")
 	iacDestroy.Flags().String("name", "", "collection to destroy (required)")
 	iacDestroy.Flags().String("state", "", "directory holding the collection's ledger (required)")
