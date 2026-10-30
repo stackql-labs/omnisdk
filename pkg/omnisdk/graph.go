@@ -974,7 +974,7 @@ func NewGraphQuery(dir string, g Graph, args Args) (Plan, error) {
 		// Nothing wired in means the same inputs for every upstream row: run once, replay the rest.
 		switch consumer := requestWired(g, alias); {
 		case mutating:
-			eff := effect{ExchangeSpec: spec, alias: alias, verb: n.Verb(), exchange: exchangeOf(addr, n.Verb()), journal: wal}
+			eff := effect{ExchangeSpec: spec, alias: alias, verb: n.Verb(), exchange: exchangeOf(addr, n.Verb()), journal: wal, accessResource: "operation/" + c.Provider().Name() + "/" + ex.Name() + "/" + ex.OperationID(), accessProvider: c.Provider().Name()}
 			if run := args.managed; run != nil && run.ledger != nil {
 				if m, ok := run.nodes[alias]; ok {
 					eff.durable = &durable{run: run, resource: m, address: addr, provider: c.Provider().Name(),

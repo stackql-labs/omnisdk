@@ -124,7 +124,16 @@ func (o awaitedOp) await(ctx context.Context, row facade.Record) (facade.Record,
 			return nil, fmt.Errorf("docx: %s %w: %v", o.a.Name(), ErrAwaitFailed, e)
 		}
 	}
-	return last, nil
+	final, ok := bind.DocMap(last)
+	if !ok {
+		return nil, fmt.Errorf("docx: %s %w: final response is not an object", o.a.Name(), ErrAwaitUnknown)
+	}
+	merged := maps.Clone(doc)
+	if merged == nil {
+		merged = map[string]any{}
+	}
+	maps.Copy(merged, final)
+	return bind.NewDocRecord(merged), nil
 }
 
 // at walks a dotted path into a decoded document.

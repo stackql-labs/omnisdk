@@ -52,6 +52,8 @@ const (
 )
 
 type intrinsicNode struct {
+	// Update-only intent must never be silently dropped when an object is absent.
+	createUnsupported []string
 	node
 	key          string
 	live         string
@@ -69,7 +71,7 @@ type intrinsicNode struct {
 
 // driftRoute chooses the update for a drift: given the merged mutation and the live object, the
 // method to send and what to send it, or an error where no method converges it.
-type driftRoute func(mutation, live map[string]any) (method string, send map[string]any, err error)
+type driftRoute func(ctx context.Context, mutation, live map[string]any) (method string, send map[string]any, err error)
 
 // newFunctionNode is a table function in FROM: call, run once per row before it, joined as outer
 // says — kept unmatched under a left join — and matched by on.
@@ -215,18 +217,14 @@ func intrinsicSpec(name string, n intrinsicNode, run *managedRun, planned map[st
 			return nil, nil, fmt.Errorf("omnisdk: diff %q: %w", n.Alias(), err)
 		}
 		return plan.NewExchangeSpec(name, in, nil, func(bound map[string]any) facade.Operator {
-			row, err := diffRow(run, n, fields, desired, bound)
-			if err != nil {
-				return failedOp{err}
-			}
-			return staticOp{rows: []map[string]any{row}}
+			return diffOperator{run: run, node: n, fields: fields, desired: desired, bound: maps.Clone(bound)}
 		}, nil), betas, nil
 	}
 	return nil, nil, fmt.Errorf("omnisdk: %s: unknown intrinsic %q", n.Alias(), n.Verb())
 }
 
 // diffRow is one diff: the status and what to send, from the live values bound and the ledger's prior.
-func diffRow(run *managedRun, n intrinsicNode, fields []string, desired []byte, bound map[string]any) (map[string]any, error) {
+func diffRow(ctx context.Context, run *managedRun, n intrinsicNode, fields []string, desired []byte, bound map[string]any) (map[string]any, error) {
 	out := func(attr string) string { return hidden(n.Alias(), attr) }
 	id := fmt.Sprint(bound[hidden(n.live, n.liveIdentity)])
 	if bound[hidden(n.live, n.liveIdentity)] == nil {
@@ -240,7 +238,7 @@ func diffRow(run *managedRun, n intrinsicNode, fields []string, desired []byte, 
 	}
 	var prior []byte
 	if run.ledger != nil {
-		e, _, found, err := run.ledger.Get(context.Background(), run.keyOf(n.key))
+		e, _, found, err := run.ledger.Get(ctx, run.keyOf(n.key))
 		if err != nil {
 			return nil, err
 		}
@@ -254,6 +252,9 @@ func diffRow(run *managedRun, n intrinsicNode, fields []string, desired []byte, 
 	}
 	row := map[string]any{out("identity"): id}
 	if id == "" {
+		if len(n.createUnsupported) != 0 {
+			return nil, fmt.Errorf("%s is absent: fields %v require an existing object; create it first, then apply this update", n.key, n.createUnsupported)
+		}
 		row[out("status")] = DiffAbsent
 		var want map[string]any
 		_ = json.Unmarshal(desired, &want)
@@ -280,7 +281,7 @@ func diffRow(run *managedRun, n intrinsicNode, fields []string, desired []byte, 
 		return nil, fmt.Errorf("omnisdk: diff %q: %w", n.Alias(), err)
 	}
 	if !same && n.route != nil {
-		method, routed, err := n.route(send, actual)
+		method, routed, err := n.route(ctx, send, actual)
 		if err != nil {
 			return nil, fmt.Errorf("omnisdk: %s has drifted and no update path converges it: %w", n.key, err)
 		}
@@ -594,21 +595,30 @@ func ConvergeGraph(registry, name, state, runID string, g Graph, managed []Manag
 			nodes[a] = m
 		}
 	}
+
+	var blockers []error
 	for _, n := range g.Nodes() {
 		_, isManaged := nodes[n.Alias()]
 		mutating := n.Verb() != "select" && n.Verb() != verbRecall && n.Verb() != verbDiff && n.Verb() != verbShape && n.Verb() != verbFunction
-		switch {
-		case mutating && !isManaged:
-			return nil, fmt.Errorf("omnisdk: %s %s belongs to no managed resource; a converging run records every mutation", n.Verb(), n.Alias())
-		case isManaged && !mutating:
-			return nil, fmt.Errorf("omnisdk: %q is managed but does not mutate", n.Alias())
+		if mutating && !isManaged {
+			blockers = append(blockers, fmt.Errorf("%s %s (%s) belongs to no managed resource: declare whether to manage it or do not perform this update", n.Verb(), n.Alias(), n.Address()))
+		}
+		if isManaged && !mutating {
+			blockers = append(blockers, fmt.Errorf("%q is managed but does not mutate", n.Alias()))
+		}
+		if mutating && args.Relations[n.Address()] != nil {
+			blockers = append(blockers, fmt.Errorf("%s is a read-only relation and cannot be mutated", n.Address()))
 		}
 	}
-	for a := range nodes {
+	for _, a := range slices.Sorted(maps.Keys(nodes)) {
 		if !slices.ContainsFunc(g.Nodes(), func(n Node) bool { return n.Alias() == a }) {
-			return nil, fmt.Errorf("omnisdk: managed node %q is not in the graph", a)
+			blockers = append(blockers, fmt.Errorf("managed node %q is not in the graph", a))
 		}
 	}
+	if len(blockers) > 0 {
+		return nil, fmt.Errorf("omnisdk: invalid managed graph: %w", errors.Join(blockers...))
+	}
+
 	// Planned now, against no state, so a graph that cannot run is refused before anything is held.
 	probe := args
 	probe.managed = &managedRun{name: name, nodes: nodes}
@@ -664,6 +674,14 @@ func hold(ctx context.Context, state, name, runID string) (*held, error) {
 }
 
 func (p *convergeGraphPlan) Open(ctx context.Context) (Rows, error) {
+	var accessErr error
+	ctx, accessErr = executionContext(ctx, p.args)
+	if accessErr != nil {
+		return nil, accessErr
+	}
+	if err := facade.CheckAccess(ctx, "collection/"+p.name, "converge"); err != nil {
+		return nil, err
+	}
 	h, err := hold(ctx, p.state, p.name, p.runID)
 	if err != nil {
 		return nil, err
@@ -764,3 +782,21 @@ func retryNever(ctx context.Context) context.Context { return retry.WithPolicy(c
 type failedOp struct{ err error }
 
 func (f failedOp) Open(context.Context) facade.Records { return failed(f.err) }
+
+// A diff is evaluated when opened, not while binding its factory: the active caller and
+// cancellation context must reach route selection before a mutation arm can be enabled.
+type diffOperator struct {
+	run     *managedRun
+	node    intrinsicNode
+	fields  []string
+	desired []byte
+	bound   map[string]any
+}
+
+func (o diffOperator) Open(ctx context.Context) facade.Records {
+	row, err := diffRow(ctx, o.run, o.node, o.fields, o.desired, o.bound)
+	if err != nil {
+		return failed(err)
+	}
+	return staticOp{rows: []map[string]any{row}}.Open(ctx)
+}

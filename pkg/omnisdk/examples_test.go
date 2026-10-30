@@ -11,7 +11,7 @@ import (
 	"github.com/stackql-labs/omnisdk/pkg/omnisdk"
 )
 
-// tenancyEC2 is one VPC's worth of EC2: create, describe by id or by correlation tag, and change
+// tenancyEC2 is one VPC's worth of EC2: create, describe by id, and change
 // tenancy. drift changes the tenancy behind the tool's back, as a console edit would.
 type tenancyEC2 struct {
 	mu      sync.Mutex
@@ -54,7 +54,7 @@ func (e *tenancyEC2) serve(t *testing.T) *httptest.Server {
 			e.tenancy = param(r, "InstanceTenancy")
 			fmt.Fprintf(w, `<CreateVpcResponse><vpc><vpcId>%s</vpcId></vpc></CreateVpcResponse>`, e.id)
 		case "DescribeVpcs":
-			match := e.id != "" && (param(r, "VpcId.1") == e.id || param(r, "Filter.1.Value.1") == e.corr)
+			match := e.id != "" && param(r, "VpcId.1") == e.id
 			if !match {
 				fmt.Fprint(w, `<DescribeVpcsResponse><vpcSet></vpcSet></DescribeVpcsResponse>`)
 				return
@@ -87,8 +87,8 @@ func TestExampleVPCConvergesAndCorrectsDrift(t *testing.T) {
 	state := t.TempDir()
 	vpc := []omnisdk.ManagedResource{omnisdk.NewResource("aws/ec2/vpc", "aws", "ec2.vpcs",
 		[]byte(`{"CidrBlock":"10.42.0.0/16","InstanceTenancy":"default"}`),
-		map[string]string{"TagSpecification.1.ResourceType": "vpc", "TagSpecification.1.Tag.1.Key": "omnisdk:key"},
-		nil, "", "", "line_items.VpcId", "VpcId", "TagSpecification.1.Tag.1.Value")}
+		nil,
+		nil, "", "", "line_items.VpcId", "VpcId", "")}
 
 	converge := func(runID string) []omnisdk.Row {
 		t.Helper()

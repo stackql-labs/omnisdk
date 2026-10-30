@@ -112,6 +112,9 @@ func (e *sendExchange) send(ctx context.Context, rec facade.Record) (int, []byte
 			req.Header.Add(name, v)
 		}
 	}
+	if err := facade.CheckTransport(ctx, "transport/http/"+req.URL.Host, req.Method); err != nil {
+		return 0, nil, err
+	}
 	resp, err := client.Do(req)
 	if err != nil {
 		return 0, nil, err

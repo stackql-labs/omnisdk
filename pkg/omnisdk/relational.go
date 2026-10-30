@@ -680,8 +680,9 @@ func (o outputTransform) Apply(in facade.Page) (facade.Record, error) {
 // means the request is never made.
 type effect struct {
 	plan.ExchangeSpec
-	alias, verb, exchange string
-	journal               facade.Journal
+	alias, verb, exchange          string
+	accessResource, accessProvider string
+	journal                        facade.Journal
 	// durable, in a converging run, records the effect in the ledger as well.
 	durable *durable
 }
@@ -697,6 +698,11 @@ type effectOp struct {
 }
 
 func (o effectOp) Open(ctx context.Context) facade.Records {
+	for _, p := range [][2]string{{o.e.accessResource, "execute"}, {"credential/" + o.e.accessProvider, "use"}} {
+		if err := facade.CheckAccess(ctx, p[0], p[1]); err != nil {
+			return failed(&EffectError{Outcome: ErrNotAttempted, Verb: o.e.verb, Alias: o.e.alias, Cause: err})
+		}
+	}
 	if o.e.durable != nil {
 		return o.e.durable.open(ctx, o)
 	}

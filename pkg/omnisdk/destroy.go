@@ -12,11 +12,15 @@ import (
 )
 
 // destroyStatement removes everything a collection holds.
-type destroyStatement struct{}
+type destroyStatement struct{ keys []string }
 
 func (destroyStatement) statement() {}
 
-// Destroy is every object the collection's ledger holds, deleted. It needs NewLedger, whose
+// Destroy removes the supplied resource keys, or every object when no keys are supplied.
+// Selected deletion refuses resources with retained dependents before sending any delete.
+// It needs the same ledger and explicit scope as full deletion.
+//
+// Full destruction is every object the collection's ledger holds, deleted. It needs NewLedger, whose
 // collection it destroys: what each object is, how it is addressed and what depends on it come from
 // the ledger, as the runs that made them recorded it.
 //
@@ -25,14 +29,23 @@ func (destroyStatement) statement() {}
 // did not know of may have gone — and what still refuses when a pass deletes nothing is reported as
 // outstanding with the provider's reason, never forced. Each delete is written to the run's journal
 // before it is sent, and the key is forgotten once it lands.
-func Destroy() Statement { return destroyStatement{} }
+func Destroy(keys ...string) Statement { return destroyStatement{keys: slices.Clone(keys)} }
 
 type destroyPlan struct {
 	registry, name, state, runID string
 	args                         Args
+	keys                         []string
 }
 
 func (p *destroyPlan) Open(ctx context.Context) (Rows, error) {
+	var accessErr error
+	ctx, accessErr = executionContext(ctx, p.args)
+	if accessErr != nil {
+		return nil, accessErr
+	}
+	if err := facade.CheckAccess(ctx, "collection/"+p.name, "destroy"); err != nil {
+		return nil, err
+	}
 	h, err := hold(ctx, p.state, p.name, p.runID)
 	if err != nil {
 		return nil, err
@@ -41,6 +54,40 @@ func (p *destroyPlan) Open(ctx context.Context) (Rows, error) {
 	entries, err := h.log.List(ctx, p.name+"/")
 	if err != nil {
 		return nil, err
+	}
+
+	selected := map[facade.LedgerKey]bool{}
+	for _, key := range p.keys {
+		if key == "" || strings.HasPrefix(key, ".") || strings.Contains(key, "..") {
+			return nil, fmt.Errorf("omnisdk: invalid resource key %q", key)
+		}
+		selected[facade.LedgerKey(p.name+"/"+key)] = true
+	}
+	if len(selected) > 0 {
+		found := map[facade.LedgerKey]bool{}
+		for _, entry := range entries {
+			if strings.HasPrefix(strings.TrimPrefix(string(entry.Key()), p.name+"/"), ".") {
+				continue
+			}
+			found[entry.Key()] = true
+			var rec aboutRecord
+			if err := json.Unmarshal(entry.About(), &rec); err != nil || rec.Address == "" {
+				return nil, fmt.Errorf("omnisdk: cannot check dependencies of %s", entry.Key())
+			}
+			if selected[entry.Key()] {
+				continue
+			}
+			for _, dependency := range rec.DependsOn {
+				if selected[facade.LedgerKey(dependency)] {
+					return nil, fmt.Errorf("omnisdk: cannot delete %s: retained resource %s depends on it", dependency, entry.Key())
+				}
+			}
+		}
+		for _, key := range slices.Sorted(maps.Keys(selected)) {
+			if !found[key] {
+				return nil, fmt.Errorf("omnisdk: resource %s is not in the ledger", key)
+			}
+		}
 	}
 
 	type target struct {
@@ -54,6 +101,9 @@ func (p *destroyPlan) Open(ctx context.Context) (Rows, error) {
 	for _, e := range entries {
 		// The collection's own bookkeeping — its lease — lives beside its keys and is not one.
 		if strings.HasPrefix(strings.TrimPrefix(string(e.Key()), p.name+"/"), ".") {
+			continue
+		}
+		if len(selected) > 0 && !selected[e.Key()] {
 			continue
 		}
 		var rec aboutRecord

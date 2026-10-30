@@ -472,7 +472,11 @@ func Spec(ex aot.AOTExchange, inputs map[string]any, reg dsl.Registry, opts ...O
 // compile is Spec for one call, beta aside.
 func compile(ex aot.AOTExchange, inputs map[string]any, reg dsl.Registry, o options) (plan.ExchangeSpec, error) {
 	if local, ok := ex.(aot.InlineCommand); ok && len(local.InlineCommand()) > 0 {
-		return localSpec(ex, local.InlineCommand(), inputs, reg, o)
+		s, err := localSpec(ex, local.InlineCommand(), inputs, reg, o)
+		if err != nil {
+			return nil, err
+		}
+		return protectSpec(s, ex, o.provider), nil
 	}
 	req, resp := ex.Request(), ex.Response()
 	var retrySettings aot.HTTPRetry
@@ -932,6 +936,7 @@ func compile(ex aot.AOTExchange, inputs map[string]any, reg dsl.Registry, o opti
 		// INNER, not left-outer: this is a SELECT, and an empty result set is zero rows. A left-outer
 		// would emit one row of bare inputs, which reads as "one instance with no fields".
 	}, bind.NewInnerFlatten())
+	spec = protectSpec(spec, ex, o.provider)
 	if authSpec != nil {
 		if o.clientCreds != nil {
 			authSpec = authenticationSpec{ExchangeSpec: authSpec, method: hreq.Method, url: authenticationTarget(hreq.URL, inputs)}
@@ -1026,7 +1031,7 @@ type providerSpec struct {
 }
 
 func (s providerSpec) Make(bound map[string]any) facade.Operator {
-	return providerOp{op: s.ExchangeSpec.Make(bound), provider: s.provider}
+	return accessOp{op: providerOp{op: s.ExchangeSpec.Make(bound), provider: s.provider}, resource: "credential/" + s.provider, provider: s.provider}
 }
 
 type providerOp struct {

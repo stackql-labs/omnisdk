@@ -272,20 +272,8 @@ A converged run writes **no journal file** — that is what the no-op looks like
 ls "${_st}/journal"        # one file from the first run only
 ```
 
-**7. Rediscovery.** Throw the ledger away and re-run: the objects are found by their correlation tag
-and adopted, rather than created a second time.
-
-```bash
-rm -rf "${_st}"
-./build/omnicli iac --registry $R --handle aws-vpc-subnet \
-  --aws-region "${_AWS_REGION}" --state "${_st}" --name smoke \
-  --input '{"vpc_cidr":"10.99.0.0/16","subnet_cidr":"10.99.1.0/24"}' 
-
-aws ec2 describe-vpcs --region "${_AWS_REGION}" \
-  --filters Name=tag:omnisdk:key,Values=smoke/aws/ec2/vpc --query 'Vpcs[].VpcId'
-```
-
-One id, unchanged from the first run.
+**7. Keep the ledger.** Debug labels cannot restore state or authorize adoption. Do not delete
+an active deployment's ledger. Missing identity is reported as unknown, never inferred from tags.
 
 **8. Compensation.** A subnet CIDR outside the VPC range fails the second step, and the VPC it
 already created is removed.
@@ -1016,3 +1004,17 @@ its application context stops and joins that worker; closing a query does neithe
 hit readers retain their snapshots through eviction. The existing StackQL analytics SQL
 namespace cache requires a separate host adapter; enabling this API does not implicitly
 connect or change those tables.
+
+## Caller access management
+
+Caller authentication, principal directories and authorization are separate from provider
+credentials. For opt-in CLI configuration, library sessions, policy resource/action names and
+the current StackQL integration boundary, see [access management](access_management.md).
+
+## Resource bindings
+
+IaC self references, explicit user inputs and environment/context values are documented in
+[resource bindings](resource_bindings.md).
+
+For host integration, see the [StackQL IaC and opt-in access briefing](stackql_iac_access_integration.md),
+including the SQL principal directory, caller-context wiring and reader-policy Robot acceptance matrix.

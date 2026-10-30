@@ -4,10 +4,6 @@
 // Nothing here is per-provider. The hand-written action tables it replaces existed only because the
 // parser exposed SELECT operations and nothing else; with a verb-agnostic lookup, a create is
 // resolved exactly as a read always was, and adding a provider is adding a document.
-//
-// Two things a document does not state, and which therefore arrive as data rather than code: which
-// response field carries the object's identity, and which parameter takes the correlation stamp.
-// Those are the residue — per-resource, not per-resource-code.
 package docrun
 
 import (
@@ -37,21 +33,16 @@ type Residue interface {
 	// AddressedBy names the request parameter that carries an existing object's identity, so a
 	// delete or a read can be built from the ledger entry alone.
 	AddressedBy() string
-	// CorrelationParam names the parameter that takes the correlation stamp, empty where the
-	// provider offers no writable, searchable field — in which case the log is the sole link to
-	// reality and losing it orphans the resource.
-	CorrelationParam() string
 }
 
-type residue struct{ identity, addressedBy, correlation string }
+type residue struct{ identity, addressedBy string }
 
-func (r residue) Identity() string         { return r.identity }
-func (r residue) AddressedBy() string      { return r.addressedBy }
-func (r residue) CorrelationParam() string { return r.correlation }
+func (r residue) Identity() string    { return r.identity }
+func (r residue) AddressedBy() string { return r.addressedBy }
 
 // NewResidue declares what a document leaves unsaid about one resource.
-func NewResidue(identity, addressedBy, correlationParam string) Residue {
-	return residue{identity: identity, addressedBy: addressedBy, correlation: correlationParam}
+func NewResidue(identity, addressedBy string) Residue {
+	return residue{identity: identity, addressedBy: addressedBy}
 }
 
 type effector struct {
@@ -131,8 +122,7 @@ func (e *effector) Read(ctx context.Context, exchange string, k facade.LedgerKey
 		return nil, nil, false, nil
 	}
 	if len(in.Identity) == 0 {
-		// Identity unknown: without a correlation stamp there is no way to find the object again,
-		// so absence cannot be distinguished from ignorance.
+		// Unknown identity cannot be recovered from remote labels.
 		return nil, nil, false, nil
 	}
 	// A read takes the address and the operation's own declared inputs — a server variable such as
@@ -222,16 +212,13 @@ func (e *effector) inputs(addr string, k facade.LedgerKey, in facade.EffectInput
 		if res.AddressedBy() != "" && len(in.Identity) > 0 {
 			inputs[res.AddressedBy()] = string(in.Identity)
 		}
-		// The stamp goes on at create; an update addresses an object that already carries it.
-		if res.CorrelationParam() != "" && verb != "delete" && verb != "update" {
-			inputs[res.CorrelationParam()] = string(k)
-		}
+
 	}
 	// An update takes only the parameters an update operation declares. The rest are the create's
 	// arguments — a tag specification, say — and an operation that does not take one would be ruled
 	// out by being sent it, exactly as a read would.
 	var declared map[string]bool
-	if verb == "update" {
+	if verb == "update" || verb == "delete" {
 		var err error
 		if declared, err = e.declared(addr, verb); err != nil {
 			return nil, err
@@ -242,6 +229,9 @@ func (e *effector) inputs(addr string, k facade.LedgerKey, in facade.EffectInput
 			continue
 		}
 		inputs[name] = v
+	}
+	if res != nil && res.AddressedBy() != "" && len(in.Identity) > 0 {
+		inputs[res.AddressedBy()] = string(in.Identity)
 	}
 	return inputs, nil
 }

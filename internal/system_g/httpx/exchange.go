@@ -399,6 +399,9 @@ func (o *op) sendOnce(ctx context.Context, rec facade.Record) (int, []byte, http
 			req.Header.Add(k, v)
 		}
 	}
+	if err := facade.CheckTransport(ctx, "transport/http/"+req.URL.Host, req.Method); err != nil {
+		return 0, nil, nil, err
+	}
 	resp, err := client.Do(req)
 	if err != nil {
 		return 0, nil, nil, err
