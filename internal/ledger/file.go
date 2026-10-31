@@ -147,20 +147,6 @@ func (f *fileLedger) commit(k facade.LedgerKey, s state, ver uint64) error {
 	return syncDir(dir)
 }
 
-// syncDir makes the new link itself durable; without it the file survives a crash but the
-// directory entry naming it may not.
-func syncDir(dir string) error {
-	d, err := os.Open(dir)
-	if err != nil {
-		return fmt.Errorf("ledger opendir %s: %w", dir, err)
-	}
-	defer d.Close()
-	if err := d.Sync(); err != nil {
-		return fmt.Errorf("ledger syncdir %s: %w", dir, err)
-	}
-	return nil
-}
-
 func (f *fileLedger) Get(_ context.Context, k facade.LedgerKey) (facade.LedgerEntry, facade.LedgerVersion, bool, error) {
 	s, ver, found, err := f.current(k)
 	if err != nil || !found {
