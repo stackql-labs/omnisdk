@@ -110,6 +110,23 @@ func TestDesiredStateUsesDeclaredUpdateRoutes(t *testing.T) {
 	if got := store.took(); !slices.Equal(got, []string{"find"}) {
 		t.Fatalf("unchanged calls=%v", got)
 	}
+	// Reusing the create journal must fail before reading or changing the provider,
+	// even when the new intent would otherwise fail route selection and unwind.
+	store.mu.Lock()
+	store.items["w-1"]["size"] = "L"
+	store.mu.Unlock()
+	if rows, err := run("create", "blue"); err == nil || !strings.Contains(err.Error(), "already exists") {
+		t.Fatalf("reused create journal accepted: rows=%v err=%v", rows, err)
+	}
+	if got := store.took(); len(got) != 0 {
+		t.Fatalf("reused run reached provider: %v", got)
+	}
+	if len(store.items) != 1 {
+		t.Fatalf("reused run destroyed existing resource: %v", store.items)
+	}
+	store.mu.Lock()
+	store.items["w-1"]["size"] = "S"
+	store.mu.Unlock()
 	check("update", "blue")
 	if got := store.took(); !slices.Equal(got, []string{"find", "update"}) {
 		t.Fatalf("update calls=%v", got)

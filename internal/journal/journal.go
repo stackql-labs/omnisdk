@@ -56,6 +56,30 @@ func (f *files) For(_ context.Context, runID string) (facade.Journal, error) {
 	return &runJournal{path: filepath.Join(f.root, runID+".jsonl")}, nil
 }
 
+// Create atomically reserves the run ID, including runs that perform no mutations.
+// For remains the explicit reopen path for recovery and inspection.
+func (f *files) Create(ctx context.Context, runID string) (facade.Journal, error) {
+	j, err := f.For(ctx, runID)
+	if err != nil {
+		return nil, err
+	}
+	file, err := os.OpenFile(filepath.Join(f.root, runID+".jsonl"), os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0600)
+	if errors.Is(err, fs.ErrExist) {
+		return nil, fmt.Errorf("journal: run id %q already exists; use a fresh run id", runID)
+	}
+	if err != nil {
+		return nil, fmt.Errorf("journal: create: %w", err)
+	}
+	if err := file.Sync(); err != nil {
+		_ = file.Close()
+		return nil, err
+	}
+	if err := file.Close(); err != nil {
+		return nil, err
+	}
+	return j, nil
+}
+
 // runJournal appends under a mutex and O_APPEND, and fsyncs before returning: the record must be
 // on disk before the effect it describes is attempted, or a crash leaves an effect nothing knows
 // to compensate.
