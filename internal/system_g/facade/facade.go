@@ -462,6 +462,8 @@ type Journal interface {
 
 // Journals opens the journal for a run.
 type Journals interface {
+	// Create reserves a fresh journal exclusively; an existing run must never be replayed as a new run.
+	Create(ctx context.Context, runID string) (Journal, error)
 	For(ctx context.Context, runID string) (Journal, error)
 }
 

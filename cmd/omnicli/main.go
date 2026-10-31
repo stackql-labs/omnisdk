@@ -10,6 +10,7 @@ package main
 
 import (
 	"bytes"
+	"crypto/rand"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -1229,5 +1230,5 @@ func runIDOr(id string) string {
 	if id != "" {
 		return id
 	}
-	return time.Now().UTC().Format("20060102T150405Z")
+	return time.Now().UTC().Format("20060102T150405Z") + "-" + rand.Text()
 }

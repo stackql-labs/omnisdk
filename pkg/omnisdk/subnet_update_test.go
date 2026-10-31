@@ -155,6 +155,26 @@ func TestLiveSubnetExampleUpdatesThenConverges(t *testing.T) {
 	run("enable-again", "update-public-ip.json", omnisdk.Args{})
 	run("disable", "update-private-ip.json", omnisdk.Args{})
 	run("disable-again", "update-private-ip.json", omnisdk.Args{})
+	// A reused create ID must not replay the journal and delete this existing network.
+	resources, err := omnisdk.LoadResources("../../cicd/examples/aws-vpc-subnet/resources.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	replay, err := omnisdk.Prepare(registry, omnisdk.DesiredState(resources), omnisdk.NewLedger("demo", state, "create"), omnisdk.Args{Endpoint: server.URL, Params: map[string]string{"region": "us-east-1"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	before := len(seen)
+	if rows, err := replay.Open(context.Background()); err == nil || !strings.Contains(err.Error(), "already exists") {
+		if rows != nil {
+			rows.Close()
+		}
+		t.Fatalf("reused create journal accepted: %v", err)
+	}
+	if len(seen) != before {
+		t.Fatalf("reused run called the provider: %v", seen[before:])
+	}
+	run("still-converged", "update-private-ip.json", omnisdk.Args{})
 	raw, err := os.ReadFile("../../cicd/examples/aws-vpc-subnet/update-private-ip.json")
 	if err != nil {
 		t.Fatal(err)

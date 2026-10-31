@@ -127,13 +127,13 @@ func NewLocalOS(issuer string) (Authenticator, error) {
 		if e.Token != "" || e.TLS != nil {
 			return nil, errors.New("local OS authentication accepts no remote evidence")
 		}
-		var u *user.User
-		var err error
+		// The kernel's effective UID is the identity, including arbitrary container
+		// UIDs that have no passwd entry. Directory membership is resolved separately.
 		if uid := os.Geteuid(); uid >= 0 {
-			u, err = user.LookupId(fmt.Sprint(uid))
-		} else {
-			u, err = user.Current()
+			return principal.NewIdentity(issuer, fmt.Sprint(uid))
 		}
+		// Windows identities use the account SID returned by os/user.
+		u, err := user.Current()
 		if err != nil {
 			return nil, err
 		}

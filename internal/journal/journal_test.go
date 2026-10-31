@@ -144,3 +144,38 @@ func TestIllegalRunIDIsRejected(t *testing.T) {
 		}
 	}
 }
+
+func TestCreateReservesRunEvenWithoutEffects(t *testing.T) {
+	ctx := context.Background()
+	js, err := journal.NewFiles(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	var wg sync.WaitGroup
+	results := make(chan error, 12)
+	for range 12 {
+		wg.Go(func() { _, err := js.Create(ctx, "same-run"); results <- err })
+	}
+	wg.Wait()
+	close(results)
+	successes := 0
+	for err := range results {
+		if err == nil {
+			successes++
+		}
+	}
+	if successes != 1 {
+		t.Fatalf("%d runs claimed one journal, want 1", successes)
+	}
+	j, err := js.For(ctx, "same-run")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := j.Append(ctx, "one", "create", facade.FormCreate, nil); err != nil {
+		t.Fatal(err)
+	}
+	records, err := j.Records(ctx)
+	if err != nil || len(records) != 1 {
+		t.Fatalf("recovery cannot reopen journal: records=%v err=%v", records, err)
+	}
+}

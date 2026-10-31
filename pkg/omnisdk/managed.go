@@ -2,6 +2,7 @@ package omnisdk
 
 import (
 	"context"
+	"crypto/rand"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -626,7 +627,7 @@ func ConvergeGraph(registry, name, state, runID string, g Graph, managed []Manag
 		return nil, err
 	}
 	if runID == "" {
-		runID = time.Now().UTC().Format("20060102T150405Z")
+		runID = time.Now().UTC().Format("20060102T150405Z") + "-" + rand.Text()
 	}
 	return &convergeGraphPlan{registry: registry, name: name, state: state, runID: runID, g: g, nodes: nodes, args: args}, nil
 }
@@ -665,7 +666,7 @@ func hold(ctx context.Context, state, name, runID string) (*held, error) {
 	if err != nil {
 		return nil, err
 	}
-	j, err := journals.For(ctx, runID)
+	j, err := journals.Create(ctx, runID)
 	if err != nil {
 		_ = l.Release(ctx)
 		return nil, err
