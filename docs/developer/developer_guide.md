@@ -1018,3 +1018,6 @@ IaC self references, explicit user inputs and environment/context values are doc
 
 For host integration, see the [StackQL IaC and opt-in access briefing](stackql_iac_access_integration.md),
 including the SQL principal directory, caller-context wiring and reader-policy Robot acceptance matrix.
+
+[Provider sessions and secrets](provider_sessions_and_secrets.md) covers explicit multi-account
+bindings, shared tenancy concurrency, session auth mutation and injected secret storage.

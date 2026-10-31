@@ -2,6 +2,7 @@ package omnisdk
 
 import (
 	"context"
+	"maps"
 	"strings"
 	"sync"
 	"time"
@@ -23,6 +24,7 @@ const DefaultRequestTimeout = httpx.DefaultRequestTimeout
 // Zero fields inherit the global Tuning value, then library defaults. Whole-run
 // budgets (Timeout, Limit, Parallelism, buffering) stay global.
 type ProviderTuning struct {
+	MaxConcurrent int `json:"max_concurrent,omitempty"`
 	// PageLimit inherits when zero; negative explicitly removes a global cap.
 	PageLimit int
 	// RequestTimeout uses a negative duration to explicitly disable its deadline.
@@ -82,13 +84,22 @@ type providerPolicy struct {
 }
 
 type providerPolicies struct {
-	args     Args
-	mu       sync.Mutex
-	policies map[string]providerPolicy
+	tuning      Tuning
+	byProvider  map[string]ProviderTuning
+	scopeTuning map[string]ProviderTuning
+	mu          sync.Mutex
+	policies    map[string]providerPolicy
 }
 
 func newProviderPolicies(args Args) facade.RequestPolicy {
-	return &providerPolicies{args: args, policies: map[string]providerPolicy{}}
+	if args.sharedPolicies != nil {
+		return args.sharedPolicies
+	}
+	scopes := map[string]ProviderTuning{}
+	for _, binding := range args.ProviderAliases {
+		scopes[scopeName(binding.Provider, binding.Tenancy)] = binding.Tuning
+	}
+	return &providerPolicies{tuning: args.Tuning, byProvider: maps.Clone(args.TuningByProvider), scopeTuning: scopes, policies: map[string]providerPolicy{}}
 }
 
 func (p *providerPolicies) ForProvider(ctx context.Context, name string) context.Context {
@@ -96,10 +107,18 @@ func (p *providerPolicies) ForProvider(ctx context.Context, name string) context
 	p.mu.Lock()
 	policy, ok := p.policies[name]
 	if !ok {
-		t := p.args.Tuning
-		o, found := p.args.TuningByProvider[aot.DefaultProviderPrefix+name]
+		t := p.tuning
+		o, found := p.byProvider[aot.DefaultProviderPrefix+name]
 		if !found {
-			o = p.args.TuningByProvider[name]
+			o = p.byProvider[name]
+		}
+		provider, _, scoped := strings.Cut(name, "\x00")
+		if scoped {
+			o, found = p.byProvider[aot.DefaultProviderPrefix+provider]
+			if !found {
+				o = p.byProvider[provider]
+			}
+			o = mergeProviderTuning(o, p.scopeTuning[name])
 		}
 		if o.RequestTimeout != 0 {
 			t.RequestTimeout = o.RequestTimeout
@@ -124,6 +143,13 @@ func (p *providerPolicies) ForProvider(ctx context.Context, name string) context
 			}),
 			admissions: admit.PerScope(orInt(t.MaxPerHost, 8)),
 		}
+		maximum := o.MaxConcurrent
+		if maximum == 0 && scoped {
+			maximum = orInt(t.MaxPerHost, 8)
+		}
+		if maximum > 0 {
+			policy.admissions = scopedAdmissions{inner: policy.admissions, total: admit.NewSemaphore(maximum)}
+		}
 		p.policies[name] = policy
 	}
 	p.mu.Unlock()
@@ -132,3 +158,53 @@ func (p *providerPolicies) ForProvider(ctx context.Context, name string) context
 	ctx = retry.WithPolicy(ctx, policy.retry)
 	return admit.WithAdmissions(ctx, policy.admissions)
 }
+
+func mergeProviderTuning(base, override ProviderTuning) ProviderTuning {
+	if override.MaxConcurrent != 0 {
+		base.MaxConcurrent = override.MaxConcurrent
+	}
+	if override.RequestTimeout != 0 {
+		base.RequestTimeout = override.RequestTimeout
+	}
+	if override.PageLimit != 0 {
+		base.PageLimit = override.PageLimit
+	}
+	if override.RetryTries != 0 {
+		base.RetryTries = override.RetryTries
+	}
+	if override.RetryRate != 0 {
+		base.RetryRate = override.RetryRate
+	}
+	if override.MaxPerHost != 0 {
+		base.MaxPerHost = override.MaxPerHost
+	}
+	return base
+}
+
+type scopedAdmissions struct {
+	inner facade.Admissions
+	total facade.Limiter
+}
+
+func (a scopedAdmissions) For(key string) facade.Limiter {
+	return joinedLimiter{a.total, a.inner.For(key)}
+}
+
+type joinedLimiter struct{ total, host facade.Limiter }
+
+func (l joinedLimiter) Acquire(ctx context.Context) (facade.Token, error) {
+	first, err := l.total.Acquire(ctx)
+	if err != nil {
+		return nil, err
+	}
+	second, err := l.host.Acquire(ctx)
+	if err != nil {
+		first.Release()
+		return nil, err
+	}
+	return joinedToken{first, second}, nil
+}
+
+type joinedToken struct{ first, second facade.Token }
+
+func (t joinedToken) Release() { t.second.Release(); t.first.Release() }

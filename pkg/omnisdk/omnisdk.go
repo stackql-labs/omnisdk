@@ -345,7 +345,10 @@ type Args struct {
 	// ("stackql_unstable_github") or as its document declares it ("github"). A credential belongs to
 	// one provider: a provider absent here authenticates from its document's defaults and the
 	// environment, never with another provider's entry.
-	AuthByProvider map[string]*Auth `json:"auth_by_provider,omitempty"`
+	AuthByProvider  map[string]*Auth           `json:"auth_by_provider,omitempty"`
+	ProviderAliases map[string]ProviderBinding `json:"provider_aliases,omitempty"`
+	sharedPolicies  facade.RequestPolicy
+	bindingVersion  string
 	// TuningByProvider overrides request settings for providers,
 	// keyed like AuthByProvider. Unset fields inherit Tuning and library defaults.
 	TuningByProvider map[string]ProviderTuning `json:"tuning_by_provider,omitempty"`
@@ -1421,6 +1424,13 @@ func DocMethods(dir, provider, service, resource string, opts ...stackqldoc.Opti
 // NewSelectFromCatalog plans one addressed exchange out of a provider bundle. Same Plan a catalog method
 // returns, so a consumer runs it identically.
 func NewSelectFromCatalog(dir, address string, args Args) (Plan, error) {
+	if err := validateProviderBindings(args); err != nil {
+		return nil, err
+	}
+	address, args, binding, bindingErr := args.binding(address)
+	if bindingErr != nil {
+		return nil, bindingErr
+	}
 	if err := checkEndpoint(args); err != nil {
 		return nil, err
 	}
@@ -1445,7 +1455,7 @@ func NewSelectFromCatalog(dir, address string, args Args) (Plan, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &cannedPlan{plan: pl, args: args}, nil
+	return scopePlan(&cannedPlan{plan: pl, args: args}, args, binding), nil
 }
 
 // docInputs are the caller's params as κ inputs.

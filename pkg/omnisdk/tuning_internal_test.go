@@ -2,7 +2,10 @@ package omnisdk
 
 import (
 	"context"
+	"errors"
+	"github.com/stackql-labs/omnisdk/internal/system_g/admit"
 	"testing"
+	"time"
 
 	"github.com/stackql-labs/omnisdk/internal/system_g/httpx"
 )
@@ -25,4 +28,37 @@ func TestProviderPageLimitInheritanceAndIsolation(t *testing.T) {
 			}
 		}
 	}
+}
+
+func TestTenancyTotalAdmissionSpansHosts(t *testing.T) {
+	args := Args{ProviderAliases: map[string]ProviderBinding{"one": {Provider: "demo", Tenancy: "one", Tuning: ProviderTuning{MaxConcurrent: 1}}, "two": {Provider: "demo", Tenancy: "two", Tuning: ProviderTuning{MaxConcurrent: 1}}}}
+	policies := newProviderPolicies(args)
+	one := policies.ForProvider(context.Background(), scopeName("demo", "one"))
+	two := policies.ForProvider(context.Background(), scopeName("demo", "two"))
+	first, err := admit.From(one).For("host-a").Acquire(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	independent, err := admit.From(two).For("host-a").Acquire(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	independent.Release()
+	deadline, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
+	defer cancel()
+	if token, err := admit.From(one).For("host-b").Acquire(deadline); !errors.Is(err, context.DeadlineExceeded) {
+		if token != nil {
+			token.Release()
+		}
+		first.Release()
+		t.Fatalf("another host bypassed account cap: %v", err)
+	}
+	first.Release()
+	deadline2, cancel2 := context.WithTimeout(context.Background(), time.Second)
+	defer cancel2()
+	next, err := admit.From(one).For("host-b").Acquire(deadline2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	next.Release()
 }
