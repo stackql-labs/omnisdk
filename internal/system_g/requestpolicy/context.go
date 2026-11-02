@@ -36,7 +36,16 @@ func WithPolicy(ctx context.Context, p facade.RequestPolicy) context.Context {
 }
 
 // ForProvider applies the named provider's policy, retaining the parent deadline.
+type tenancyKey struct{}
+type tenancy struct{ provider, name string }
+
+func WithTenancy(ctx context.Context, provider, name string) context.Context {
+	return context.WithValue(ctx, tenancyKey{}, tenancy{provider, name})
+}
 func ForProvider(ctx context.Context, provider string) context.Context {
+	if scope, ok := ctx.Value(tenancyKey{}).(tenancy); ok && (provider == scope.provider || provider == "stackql_unstable_"+scope.provider) {
+		provider = scope.provider + "\x00" + scope.name
+	}
 	if p, ok := ctx.Value(key{}).(facade.RequestPolicy); ok && provider != "" {
 		return p.ForProvider(ctx, provider)
 	}

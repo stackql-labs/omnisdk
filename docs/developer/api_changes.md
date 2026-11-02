@@ -119,3 +119,26 @@ The [identity lifecycle walkthroughs](../../cicd/examples/identity-lifecycle/REA
 provider IDs, awaited early/late IDs, caller-named objects, repeated updates, partial deletion,
 local key generation and teardown. Robot checks are black-box CLI tests against local APIs;
 they do not establish that the live cloud walkthroughs have been executed.
+
+## Provider tenancy sessions and secret storage
+
+`Args.ProviderAliases` binds explicit aliases to canonical providers, tenancy identifiers, auth DTOs,
+parameter defaults and `ProviderTuning`. Document graphs and addressed SELECTs support these aliases.
+New `ProviderTuning.MaxConcurrent` limits total HTTP requests per provider/tenancy across hosts.
+It is separate from `MaxPerHost`. Protected alias execution requires `tenancy/<provider>/<tenancy>`
+`use` permission in addition to the existing provider and operation checks.
+
+`NewClientSession(baseArgs, store)` returns `ClientSession` with provider and auth SET/UNSET methods
+and detached `Snapshot(ctx, aliases...)` Args. Concurrent snapshots share account admission/retry
+state. Session credential edits affect future snapshots, retain existing governors and invalidate
+their read-cache generation. The SDK adds no SQL SET/UNSET grammar or persistent side effects to
+these in-memory setters.
+
+`public/secrets` supplies the `Store` interface, explicit file-default/OS-opt-in `Config`, `New`,
+`ErrNotFound` and `ErrUnavailable`. File values are not encrypted. OS storage uses Keychain,
+Secret Service or Windows Credential Manager without a silent fallback. Host RDBMS/vault adapters
+implement the same interface without adding database dependencies to Omni.
+
+See [provider sessions and secrets](provider_sessions_and_secrets.md) for precise lifecycle,
+permission, cache, platform and host-integration behavior. These additions extend `Args` and
+`ProviderTuning`; update any positional DTO literals.
