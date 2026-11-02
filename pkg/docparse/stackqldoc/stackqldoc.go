@@ -123,10 +123,7 @@ type server struct {
 	Variables map[string]serverVariable `yaml:"variables"`
 }
 
-type serverVariable struct {
-	Default     string `yaml:"default"`
-	Environment string `yaml:"x-stackQL-envVar"`
-}
+type serverVariable = aot.ServerVariableSpec
 
 type resource struct {
 	Name     string            `yaml:"name"`
@@ -600,6 +597,9 @@ func (d *document) Methods(name string) ([]aot.Method, error) {
 			if declared, ok := ex.Request().(aot.ServerTransportDefaults); ok {
 				info.transport = declared.ServerTransportDefaults()
 			}
+			if declared, ok := ex.Request().(aot.ServerVariableSpecs); ok {
+				info.specs = declared.ServerVariableSpecs()
+			}
 			if declared, ok := ex.Request().(aot.ServerEnvironmentBindings); ok {
 				info.environment = declared.ServerEnvironmentBindings()
 			}
@@ -661,7 +661,12 @@ type methodInfo struct {
 	name, verb, opID string
 	required         []string
 	environment      map[string]string
+	specs            map[string]aot.ServerVariableSpec
 	transport        map[string]string
+}
+
+func (m methodInfo) ServerVariableSpecs() map[string]aot.ServerVariableSpec {
+	return aot.CloneServerVariableSpecs(m.specs)
 }
 
 func (m methodInfo) RequiredParams() []string { return append([]string(nil), m.required...) }
@@ -705,8 +710,10 @@ func (d *document) build(name, verb, path string, op pathOp, m method) aot.AOTEx
 	// declared server variables. They remain accepted scope bindings even when
 	// the rewritten URL no longer needs them.
 	environment := map[string]string{}
+	specs := map[string]aot.ServerVariableSpec{}
 	variableNames := make([]string, 0, len(srv.Variables))
 	for name, variable := range srv.Variables {
+		specs[name] = variable
 		if variable.Environment != "" {
 			environment[name] = variable.Environment
 		}
@@ -797,6 +804,7 @@ func (d *document) build(name, verb, path string, op pathOp, m method) aot.AOTEx
 			snakeAliases:      d.snakeAliases,
 			serverVariables:   variableNames,
 			serverEnvironment: environment,
+			serverSpecs:       aot.CloneServerVariableSpecs(specs),
 			transportDefaults: serverTransportDefaults(srv),
 			bodySchema:        bodySchema,
 			bodyMediaType:     bodyMediaType(op),
@@ -1170,6 +1178,7 @@ type request struct {
 	defaultBody       string
 	serverVariables   []string
 	serverEnvironment map[string]string
+	serverSpecs       map[string]aot.ServerVariableSpec
 	transportDefaults map[string]string
 	baseBody          string
 	nativeCasing      string
@@ -1194,6 +1203,10 @@ func (r request) SigningService() string { return r.signingService }
 func (r request) BodyTranslation() string { return r.bodyTranslation }
 
 func (r request) DefaultBody() string { return r.defaultBody }
+
+func (r request) ServerVariableSpecs() map[string]aot.ServerVariableSpec {
+	return aot.CloneServerVariableSpecs(r.serverSpecs)
+}
 
 func (r request) ServerEnvironmentBindings() map[string]string {
 	return maps.Clone(r.serverEnvironment)

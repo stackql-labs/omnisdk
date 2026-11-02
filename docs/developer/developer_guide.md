@@ -942,6 +942,83 @@ constrain which rows match. The host selects declared document-view variants fro
 and explicitly supplied required inputs. Literal view inputs can be replaced by caller bindings;
 column-to-column dependencies and business predicates remain intact.
 
+## Opt-in endpoint selectors
+
+A server variable can declare an environment selector and its own applied fallback. This does not
+apply ordinary OpenAPI server defaults, change existing required inputs, or read scope from the
+process environment inside the document parser:
+
+```yaml
+servers:
+  - url: https://{account_host}
+    variables:
+      account_host:
+        default: accounts.cloud.example.com # documentation only
+        x-stackQL-envVar: EXAMPLE_ACCOUNT_HOST
+        x-stackQL-envVarSelector:
+          envVar: EXAMPLE_CLOUD
+          default: aws
+          values:
+            aws: accounts.cloud.example.com
+            azure: accounts.azure.example.com
+```
+
+The host leaves an explicit SQL input intact, then supplies an alias parameter default if available.
+For any remaining server variable it calls `NewServerVariableResolver(spec).Resolve(name, lookup)`.
+The resolver checks the declared direct environment override, then the selector environment value,
+then the selector's declared default key. Missing configuration remains unresolved. An unlisted
+selector value or an invalid default key is an error, with deterministic diagnostics listing the
+accepted keys. Keys are case-sensitive; environment values are whitespace-trimmed and resolved
+values lose trailing slashes. An empty direct override does not hide a selector fallback.
+
+`ServerVariableSpec` and `EnvVarSelector` are data-only DTOs. `NewServerVariableResolver` returns the
+`VariableResolver` interface with `Declared()` and `Resolve()` methods; DTOs do not carry behavior.
+`ServerVariableSpecs` is optional metadata on requests, described method signatures and method
+information. `DocMethod.ServerVariables` exposes it for discovery. Each accessor copies nested
+selector maps. `ServerEnvironmentBindings` and `ServerTransportDefaults` remain unchanged.
+
+```go
+specs := signature.(omnisdk.ServerVariableSpecs).ServerVariableSpecs()
+resolver := omnisdk.NewServerVariableResolver(specs["account_host"])
+value, resolved, err := resolver.Resolve("account_host", os.LookupEnv)
+// The host handles err, and supplies value as an ordinary input only when resolved.
+```
+
+A selector is resolved by the host for SELECT, mutations, EXEC and SHOW METHODS. The host must
+apply the same precedence on every path, including required-input reporting: SQL, alias params,
+direct environment override, selector environment choice, selector default, otherwise required.
+Resolved SQL-wide inputs and IN fan-out remain authoritative over alias defaults in the SDK graph.
+A provider document alone does not bind server inputs in `NewGraphQuery` or `NewSelectFromCatalog`.
+The StackQL companion must consume this SDK API and perform those host bindings before `ResolveIn`
+or graph compilation. Old hosts continue to see only the previous metadata.
+
+OAuth token endpoints can declare the same variables under `config.auth.variables`:
+
+```yaml
+config:
+  auth:
+    type: oauth2
+    grant_type: client_credentials
+    token_url: https://{account_host}/oidc/accounts/{{ .__env__EXAMPLE_ACCOUNT_ID }}/v1/token
+    variables:
+      account_host:
+        x-stackQL-envVar: EXAMPLE_ACCOUNT_HOST
+        x-stackQL-envVarSelector:
+          envVar: EXAMPLE_CLOUD
+          default: aws
+          values:
+            aws: accounts.cloud.example.com
+            azure: accounts.azure.example.com
+```
+
+Only annotated auth variables enter `AuthDefaults.TokenURLVariables`; an OpenAPI default alone does
+not opt in. For the document's client-credentials token URL, Omni resolves referenced declared
+variables through `os.LookupEnv`, then expands the existing `{{ .__env__NAME }}` references.
+Unresolved declared placeholders fail before any token request. A runtime `Auth.TokenURL` overrides
+the document endpoint and bypasses its variable declarations, so aliases can choose independent
+OAuth endpoints. Server alias params are not implicitly spliced into token URLs: supply the alias's
+explicit auth token URL when that endpoint differs per tenant.
+
 Optional `ServerTransportDefaults` metadata exposes only a declared HTTP or HTTPS URL-scheme
 default. The host can bind that value before resolution; an explicit SQL value wins. This does
 not apply host, cluster, account, region or other scope defaults, and the SDK itself never

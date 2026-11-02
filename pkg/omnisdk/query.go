@@ -2,6 +2,7 @@ package omnisdk
 
 import (
 	"fmt"
+	"maps"
 	"slices"
 	"strings"
 
@@ -110,6 +111,15 @@ func (t table) Methods() []MethodSignature { return t.methods }
 // as query inputs; Omni never reads scope values from the environment.
 type ServerEnvironmentBindings interface{ ServerEnvironmentBindings() map[string]string }
 
+type ServerVariableSpec = aot.ServerVariableSpec
+type EnvVarSelector = aot.EnvVarSelector
+type ServerVariableSpecs = aot.ServerVariableSpecs
+type VariableResolver = aot.VariableResolver
+
+func NewServerVariableResolver(spec ServerVariableSpec) VariableResolver {
+	return aot.NewServerVariableResolver(spec)
+}
+
 // ServerTransportDefaults exposes declared HTTP(S) URL-scheme defaults to hosts.
 // It never includes scope defaults, and Omni never substitutes these values.
 type ServerTransportDefaults interface{ ServerTransportDefaults() map[string]string }
@@ -133,6 +143,13 @@ type docSignature struct{ ex aot.AOTExchange }
 func (s docSignature) ServerVariables() []string {
 	if declared, ok := s.ex.Request().(aot.ServerBindings); ok {
 		return declared.ServerVariables()
+	}
+	return nil
+}
+
+func (s docSignature) ServerVariableSpecs() map[string]ServerVariableSpec {
+	if declared, ok := s.ex.Request().(aot.ServerVariableSpecs); ok {
+		return declared.ServerVariableSpecs()
 	}
 	return nil
 }
@@ -1437,11 +1454,10 @@ func (r *resolver) build(sel []query.Output) (Resolution, error) {
 	if err != nil {
 		return nil, err
 	}
-	if r.empty {
-		empty := g.(graph)
-		empty.empty = true
-		g = empty
-	}
+	resolved := g.(graph)
+	resolved.resolvedParams = maps.Clone(r.params)
+	resolved.empty = r.empty
+	g = resolved
 	return resolution{graph: g, params: r.params, selected: r.selected}, nil
 }
 

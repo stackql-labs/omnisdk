@@ -116,24 +116,25 @@ func (p *provider) Security() aot.Security {
 
 // authConfig is a provider's config.auth, as stackql documents write it.
 type authConfig struct {
-	TenancyOCIDEnvVar    string      `yaml:"tenancy_ocid_envvar"`
-	UserOCIDEnvVar       string      `yaml:"user_ocid_envvar"`
-	FingerprintEnvVar    string      `yaml:"oci_fingerprint_envvar"`
-	PrivateKeyPathEnvVar string      `yaml:"oci_private_key_path_envvar"`
-	Type                 string      `yaml:"type"`
-	CredentialsEnvVar    string      `yaml:"credentialsenvvar"`
-	KeyIDEnvVar          string      `yaml:"keyIDenvvar"`
-	Name                 string      `yaml:"name"`
-	Location             string      `yaml:"location"`
-	ValuePrefix          string      `yaml:"valuePrefix"`
-	UsernameVar          string      `yaml:"username_var"`
-	PasswordVar          string      `yaml:"password_var"`
-	ClientIDEnvVar       string      `yaml:"client_id_env_var"`
-	ClientSecretEnvVar   string      `yaml:"client_secret_env_var"`
-	TokenURL             string      `yaml:"token_url"`
-	Scopes               []string    `yaml:"scopes"`
-	GrantType            string      `yaml:"grant_type"`
-	Successor            *authConfig `yaml:"successor"`
+	TenancyOCIDEnvVar    string                            `yaml:"tenancy_ocid_envvar"`
+	UserOCIDEnvVar       string                            `yaml:"user_ocid_envvar"`
+	FingerprintEnvVar    string                            `yaml:"oci_fingerprint_envvar"`
+	PrivateKeyPathEnvVar string                            `yaml:"oci_private_key_path_envvar"`
+	Type                 string                            `yaml:"type"`
+	CredentialsEnvVar    string                            `yaml:"credentialsenvvar"`
+	KeyIDEnvVar          string                            `yaml:"keyIDenvvar"`
+	Name                 string                            `yaml:"name"`
+	Location             string                            `yaml:"location"`
+	ValuePrefix          string                            `yaml:"valuePrefix"`
+	UsernameVar          string                            `yaml:"username_var"`
+	PasswordVar          string                            `yaml:"password_var"`
+	ClientIDEnvVar       string                            `yaml:"client_id_env_var"`
+	ClientSecretEnvVar   string                            `yaml:"client_secret_env_var"`
+	TokenURL             string                            `yaml:"token_url"`
+	Variables            map[string]aot.ServerVariableSpec `yaml:"variables"`
+	Scopes               []string                          `yaml:"scopes"`
+	GrantType            string                            `yaml:"grant_type"`
+	Successor            *authConfig                       `yaml:"successor"`
 }
 
 func (a *authConfig) defaults() *aot.AuthDefaults {
@@ -143,7 +144,7 @@ func (a *authConfig) defaults() *aot.AuthDefaults {
 	return &aot.AuthDefaults{TenancyOCIDEnvVar: a.TenancyOCIDEnvVar, UserOCIDEnvVar: a.UserOCIDEnvVar, FingerprintEnvVar: a.FingerprintEnvVar, PrivateKeyPathEnvVar: a.PrivateKeyPathEnvVar, Type: a.Type, Name: a.Name, Location: a.Location, ValuePrefix: a.ValuePrefix,
 		CredentialsEnvVar: a.CredentialsEnvVar, UsernameEnvVar: a.UsernameVar, PasswordEnvVar: a.PasswordVar,
 		ClientIDEnvVar: a.ClientIDEnvVar, ClientSecretEnvVar: a.ClientSecretEnvVar,
-		TokenURL: strings.TrimSpace(a.TokenURL), Scopes: a.Scopes, GrantType: a.GrantType,
+		TokenURL: strings.TrimSpace(a.TokenURL), TokenURLVariables: declaredAuthVariables(a.Variables), Scopes: a.Scopes, GrantType: a.GrantType,
 		Successor: a.Successor.defaults()}
 }
 
@@ -169,3 +170,16 @@ type credentials struct{ keyID, secret string }
 
 func (c credentials) KeyIDEnvVar() string  { return c.keyID }
 func (c credentials) SecretEnvVar() string { return c.secret }
+
+func declaredAuthVariables(variables map[string]aot.ServerVariableSpec) map[string]aot.ServerVariableSpec {
+	var declared map[string]aot.ServerVariableSpec
+	for name, spec := range variables {
+		if aot.NewServerVariableResolver(spec).Declared() {
+			if declared == nil {
+				declared = map[string]aot.ServerVariableSpec{}
+			}
+			declared[name] = spec
+		}
+	}
+	return aot.CloneServerVariableSpecs(declared)
+}
