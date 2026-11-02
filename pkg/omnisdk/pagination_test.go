@@ -288,7 +288,12 @@ func TestResolvedQueryStreamsInBoundedMemory(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	pl, err := omnisdk.NewGraphQuery(corpus, res.Graph(), omnisdk.Args{Endpoint: srv.URL, Params: res.Params()})
+	// Pin read-ahead for this fixed heap budget; the separate read-ahead test
+	// covers the configured producer/consumer limits. Do not depend on defaults
+	// and scheduler timing while sampling process-wide heap use.
+	pl, err := omnisdk.NewGraphQuery(corpus, res.Graph(), omnisdk.Args{
+		Endpoint: srv.URL, Params: res.Params(), Tuning: omnisdk.Tuning{RowsAhead: 128, PagesAhead: 1},
+	})
 	if err != nil {
 		t.Fatal(err)
 	}

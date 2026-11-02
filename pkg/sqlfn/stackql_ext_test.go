@@ -80,3 +80,22 @@ func TestStackqlStringConstructor(t *testing.T) {
 		}
 	}
 }
+
+func TestStackqlMD5Extension(t *testing.T) {
+	fn, ok := sqliteCatalog(t).Get("md5")
+	if !ok {
+		t.Fatal("md5 missing")
+	}
+	for _, tc := range []struct {
+		input any
+		want  any
+	}{
+		{"42-east", "69dbfdc8fb30e0e779dfbe961105a516"},
+		{nil, nil},
+	} {
+		got, err := fn.Call([]any{tc.input})
+		if err != nil || got != tc.want {
+			t.Fatalf("md5(%v) = %v, %v; want %v", tc.input, got, err, tc.want)
+		}
+	}
+}
