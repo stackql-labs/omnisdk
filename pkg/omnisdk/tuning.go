@@ -26,14 +26,14 @@ const DefaultRequestTimeout = httpx.DefaultRequestTimeout
 type ProviderTuning struct {
 	MaxConcurrent int `json:"max_concurrent,omitempty"`
 	// PageLimit inherits when zero; negative explicitly removes a global cap.
-	PageLimit int
+	PageLimit int `json:"page_limit,omitempty"`
 	// RequestTimeout uses a negative duration to explicitly disable its deadline.
-	RequestTimeout time.Duration
+	RequestTimeout time.Duration `json:"request_timeout,omitempty"`
 	// RetryTries, RetryRate and MaxPerHost configure HTTP retries and admission,
 	// with the same meaning as their global Tuning counterparts.
-	RetryTries int
-	RetryRate  float64
-	MaxPerHost int
+	RetryTries int     `json:"retry_tries,omitempty"`
+	RetryRate  float64 `json:"retry_rate,omitempty"`
+	MaxPerHost int     `json:"max_per_host,omitempty"`
 }
 
 type providerPlan struct {

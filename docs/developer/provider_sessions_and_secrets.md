@@ -182,7 +182,7 @@ The session API is shared; SQL grammar belongs to the parser/host. This reposito
 `AuthConfig`/`AuthCtx`; translate that to the execution `Auth` DTO through the existing host adapter,
 rather than changing legacy field names silently.
 
-For the host pass:
+Host integration requirements:
 
 1. Own one ClientSession per authenticated client/connection, not a process-global mutable auth map.
 2. Parse structured provider-binding, auth-field and secret operations. Validate names/types and
@@ -201,7 +201,10 @@ For the host pass:
    Check actual signatures/scopes and observed concurrency; do not test only statement acceptance.
 
 See [the access integration briefing](stackql_iac_access_integration.md) for transport protection and
-RDBMS principal resolution. The sibling repositories have not been modified by this Omni pass.
+RDBMS principal resolution. The sibling StackQL and parser feature branches implement SQL configuration and UNSET normalization.
+See StackQL `docs/provider_sessions.md` and parser `SESSION_CONFIGURATION.md`. StackQL continues
+to consume tagged dependencies; the parser changes need their own release tag before a standard
+StackQL build accepts UNSET. SET ... = DEFAULT uses the existing AST and remains available.
 
 ## Verification
 

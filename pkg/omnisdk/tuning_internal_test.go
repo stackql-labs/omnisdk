@@ -2,8 +2,10 @@ package omnisdk
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"github.com/stackql-labs/omnisdk/internal/system_g/admit"
+	"strings"
 	"testing"
 	"time"
 
@@ -61,4 +63,27 @@ func TestTenancyTotalAdmissionSpansHosts(t *testing.T) {
 		t.Fatal(err)
 	}
 	next.Release()
+}
+
+func TestProviderTuningJSONBinding(t *testing.T) {
+	const input = `{"provider":"aws","tenancy":"stackql-account","tuning":{"max_concurrent":4,"max_per_host":4,"page_limit":2,"request_timeout":1000000000,"retry_tries":3,"retry_rate":2.5}}`
+	var binding ProviderBinding
+	decoder := json.NewDecoder(strings.NewReader(input))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&binding); err != nil {
+		t.Fatal(err)
+	}
+	want := ProviderTuning{MaxConcurrent: 4, MaxPerHost: 4, PageLimit: 2, RequestTimeout: time.Second, RetryTries: 3, RetryRate: 2.5}
+	if binding.Tuning != want {
+		t.Fatalf("got %+v, want %+v", binding.Tuning, want)
+	}
+	encoded, err := json.Marshal(binding)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, key := range []string{"max_concurrent", "max_per_host", "page_limit", "request_timeout", "retry_tries", "retry_rate"} {
+		if !strings.Contains(string(encoded), `"`+key+`":`) {
+			t.Errorf("missing JSON field %s in %s", key, encoded)
+		}
+	}
 }
