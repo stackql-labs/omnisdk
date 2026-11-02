@@ -200,6 +200,7 @@ type AuthDefaults struct {
 	ClientIDEnvVar     string
 	ClientSecretEnvVar string
 	TokenURL           string
+	TokenURLVariables  map[string]ServerVariableSpec
 	Scopes             []string
 	GrantType          string
 	// Successor is a further scheme applied after this one — a second header, for an API that
