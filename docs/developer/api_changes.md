@@ -142,3 +142,19 @@ implement the same interface without adding database dependencies to Omni.
 See [provider sessions and secrets](provider_sessions_and_secrets.md) for precise lifecycle,
 permission, cache, platform and host-integration behavior. These additions extend `Args` and
 `ProviderTuning`; update any positional DTO literals.
+
+## Opt-in server and OAuth endpoint selectors
+
+New data-only `ServerVariableSpec`/`EnvVarSelector` declarations and optional `ServerVariableSpecs`
+metadata retain `x-stackQL-envVarSelector`. `NewServerVariableResolver` returns the resolver
+interface; `DocMethod.ServerVariables` exposes copied metadata for host discovery. Existing
+`ServerEnvironmentBindings` and `ServerTransportDefaults` contracts are unchanged.
+
+`AuthDefaults.TokenURLVariables` retains annotated `config.auth.variables`. Document OAuth token
+URLs resolve these placeholders before existing environment-template expansion. Runtime token URLs
+remain authoritative. OpenAPI server defaults remain unapplied, and hosts must explicitly bind
+selector-resolved server inputs. See the developer guide's endpoint-selector section.
+
+SQL resolution now retains the origin of query-wide explicit inputs when binding provider aliases.
+Those inputs and SQL IN fan-out take precedence over alias defaults, as node-local inputs already
+do; ordinary Args.Params defaults retain their existing lower priority.

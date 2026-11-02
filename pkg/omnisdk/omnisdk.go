@@ -25,11 +25,13 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"maps"
 	"net/http"
 	"os"
 	"path/filepath"
 	"regexp"
 	"runtime"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -1387,12 +1389,13 @@ func DocResources(dir, provider, service string, opts ...stackqldoc.Option) ([]s
 // DocMethod is a method as a document declares it: its name, the SQL verb it is bound to (empty when
 // none), and the operation behind it.
 type DocMethod struct {
-	TransportDefaults map[string]string `json:"transport_defaults,omitempty"`
-	ServerEnvironment map[string]string `json:"server_environment,omitempty"`
-	RequiredParams    []string          `json:"required_params,omitempty"`
-	Name              string            `json:"name"`
-	SQLVerb           string            `json:"sql_verb,omitempty"`
-	OperationID       string            `json:"operation_id,omitempty"`
+	ServerVariables   map[string]ServerVariableSpec `json:"server_variables,omitempty"`
+	TransportDefaults map[string]string             `json:"transport_defaults,omitempty"`
+	ServerEnvironment map[string]string             `json:"server_environment,omitempty"`
+	RequiredParams    []string                      `json:"required_params,omitempty"`
+	Name              string                        `json:"name"`
+	SQLVerb           string                        `json:"sql_verb,omitempty"`
+	OperationID       string                        `json:"operation_id,omitempty"`
 }
 
 // DocMethods lists a resource's methods.
@@ -1410,6 +1413,9 @@ func DocMethods(dir, provider, service, resource string, opts ...stackqldoc.Opti
 		out[i] = DocMethod{Name: m.Name(), SQLVerb: m.SQLVerb(), OperationID: m.OperationID()}
 		if declared, ok := m.(aot.ServerTransportDefaults); ok {
 			out[i].TransportDefaults = declared.ServerTransportDefaults()
+		}
+		if declared, ok := m.(aot.ServerVariableSpecs); ok {
+			out[i].ServerVariables = declared.ServerVariableSpecs()
 		}
 		if declared, ok := m.(aot.ServerEnvironmentBindings); ok {
 			out[i].ServerEnvironment = declared.ServerEnvironmentBindings()
@@ -1596,7 +1602,13 @@ func providerOptions(args Args, p aot.Provider) ([]docx.Option, error) {
 	// service principal or launch the Azure CLI before applying that override.
 	oauth := m != nil && m.RequestTransform() != nil
 	if sec.Scheme() == aot.SchemeOAuthClientCredentials && cfg.TokenURL != "" && !oauth {
-		o, err := clientCredentials(p.Name(), cfg)
+		var variables map[string]aot.ServerVariableSpec
+		if authOf(args).TokenURL == "" {
+			if configured, ok := p.(aot.AuthConfigured); ok {
+				variables = configured.AuthDefaults().TokenURLVariables
+			}
+		}
+		o, err := clientCredentials(p.Name(), cfg, variables)
 		if err != nil {
 			return nil, err
 		}
@@ -1732,7 +1744,7 @@ func requestAuth(p aot.Provider, sec aot.Security, cfg auth.AuthStruct) (auth.Me
 // clientCredentials is the client-credentials grant a document states by token URL, with the id and
 // secret resolved inline, else from the variables named, and the token URL's {{ .__env__NAME }}
 // references filled from the environment.
-func clientCredentials(provider string, cfg auth.AuthStruct) (docx.Option, error) {
+func clientCredentials(provider string, cfg auth.AuthStruct, variables map[string]aot.ServerVariableSpec) (docx.Option, error) {
 	id, err := secret.Require(provider+" client id",
 		secret.Literal(cfg.ClientID), secret.Env(cfg.ClientIDEnvVar)).Resolve()
 	if err != nil {
@@ -1743,7 +1755,11 @@ func clientCredentials(provider string, cfg auth.AuthStruct) (docx.Option, error
 	if err != nil {
 		return nil, fmt.Errorf("omnisdk: %s oauth2 credentials cannot be used: %w", provider, err)
 	}
-	tokenURL, err := expandEnv(cfg.TokenURL)
+	tokenURL, err := expandTokenVariables(cfg.TokenURL, variables, os.LookupEnv)
+	if err != nil {
+		return nil, fmt.Errorf("omnisdk: %s token URL: %w", provider, err)
+	}
+	tokenURL, err = expandEnv(tokenURL)
 	if err != nil {
 		return nil, fmt.Errorf("omnisdk: %s token URL: %w", provider, err)
 	}
@@ -2156,4 +2172,37 @@ func DocResourceNames(dir, provider, service string, opts ...stackqldoc.Option) 
 		names[key] = key
 	}
 	return names, nil
+}
+
+func expandTokenVariables(tokenURL string, variables map[string]aot.ServerVariableSpec, lookup func(string) (string, bool)) (string, error) {
+	replacements := []string{}
+	for _, name := range slices.Sorted(maps.Keys(variables)) {
+		if !strings.Contains(tokenURL, "{"+name+"}") {
+			continue
+		}
+		spec := variables[name]
+		resolver := aot.NewServerVariableResolver(spec)
+		if !resolver.Declared() {
+			continue
+		}
+		value, resolved, err := resolver.Resolve(name, lookup)
+		if err != nil {
+			return "", err
+		}
+		if !resolved {
+			sources := []string{}
+			if spec.Environment != "" {
+				sources = append(sources, spec.Environment)
+			}
+			if spec.Selector != nil && spec.Selector.EnvVar != "" {
+				sources = append(sources, spec.Selector.EnvVar)
+			}
+			if len(sources) == 0 {
+				return "", fmt.Errorf("variable %q is unresolved; declare an environment source or selector default", name)
+			}
+			return "", fmt.Errorf("variable %q is unresolved; set one of %v", name, sources)
+		}
+		replacements = append(replacements, "{"+name+"}", value)
+	}
+	return strings.NewReplacer(replacements...).Replace(tokenURL), nil
 }

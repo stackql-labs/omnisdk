@@ -9,7 +9,7 @@ import (
 	"github.com/stackql-labs/omnisdk/pkg/docparse/stackqldoc"
 )
 
-func mb(b uint64) float64 { return float64(b) / 1024 / 1024 }
+func mb(b int64) float64 { return float64(b) / 1024 / 1024 }
 
 // A query spans several services and several providers. What must scale with it is the number of
 // EXCHANGES, not the documents they were resolved from.
@@ -39,7 +39,7 @@ func TestWorkingSetIsExchangesNotDocuments(t *testing.T) {
 	runtime.GC()
 	runtime.ReadMemStats(&m1)
 
-	retained := mb(m1.HeapAlloc - m0.HeapAlloc)
+	retained := mb(int64(m1.HeapAlloc) - int64(m0.HeapAlloc))
 	t.Logf("%d exchanges resolved across services: %.2f MB retained (%.0f KB each)",
 		len(held), retained, retained*1024/float64(len(held)))
 	if retained > 2 {

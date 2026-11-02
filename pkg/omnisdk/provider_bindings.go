@@ -142,6 +142,15 @@ func bindProviderNodes(g Graph, args Args) (Graph, error) {
 			continue
 		}
 		params := maps.Clone(resolved.Params)
+		for name := range g.Fanout() {
+			delete(params, name)
+		}
+		for name := range n.Fanout() {
+			delete(params, name)
+		}
+		if source, ok := g.(interface{ resolvedInputs() map[string]string }); ok {
+			maps.Copy(params, source.resolvedInputs())
+		}
 		maps.Copy(params, n.Params())
 		nodes[i] = boundProviderNode{Node: n, params: params}
 	}
