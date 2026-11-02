@@ -135,6 +135,9 @@ type node struct {
 
 // tuningOf is what n states beyond Node, if it states anything.
 func tuningOf(n Node) (pin string, whole bool, requires []string) {
+	if bound, ok := n.(boundProviderNode); ok {
+		return tuningOf(bound.Node)
+	}
 	if x, ok := n.(node); ok {
 		return x.pin, x.whole, x.requires
 	}
@@ -549,6 +552,11 @@ func (g graph) Projections() []Projection   { return g.projections }
 // response handling are unchanged. What the caller adds is the data flow between them — the part a
 // document cannot state, because it describes one provider and a relationship may span two.
 func NewGraphQuery(dir string, g Graph, args Args) (Plan, error) {
+	var bindingErr error
+	g, bindingErr = bindProviderNodes(g, args)
+	if bindingErr != nil {
+		return nil, bindingErr
+	}
 	if err := checkEndpoint(args); err != nil {
 		return nil, err
 	}
@@ -805,6 +813,15 @@ func NewGraphQuery(dir string, g Graph, args Args) (Plan, error) {
 		pin, whole, requires := tuningOf(n)
 		mutating := n.Verb() != "select"
 		var required []string
+		requestedAddress := addr
+		nodeArgs := args
+		var providerBinding *ProviderBinding
+		if _, relation := args.Relations[addr]; !relation {
+			addr, nodeArgs, providerBinding, err = args.binding(addr)
+			if err != nil {
+				return nil, err
+			}
+		}
 		if relation, supplied := args.Relations[addr]; supplied {
 			if relation == nil || relation.Address() != addr {
 				return nil, fmt.Errorf("omnisdk: invalid relation handle %q", addr)
@@ -829,7 +846,7 @@ func NewGraphQuery(dir string, g Graph, args Args) (Plan, error) {
 			if err != nil {
 				return nil, fmt.Errorf("omnisdk: %s (%s): %w", alias, addr, err)
 			}
-			opts, err := providerOptions(args, c.Provider())
+			opts, err := providerOptions(nodeArgs, c.Provider())
 			if err != nil {
 				return nil, err
 			}
@@ -842,7 +859,7 @@ func NewGraphQuery(dir string, g Graph, args Args) (Plan, error) {
 			}
 			// What the server can do instead of the rows: a projection, a filter, a cap. Each value is a
 			// constant of the run, bound through a slot of its own so its wire name is sent as written.
-			if n.Verb() == "select" && !canCacheRead(args, c.Provider().Name()) {
+			if n.Verb() == "select" && !canCacheRead(nodeArgs, c.Provider().Name()) {
 				needed := slices.Clone(emits[alias])
 				for _, p := range n.On() {
 					for _, c := range predicateColumns(p) {
@@ -891,7 +908,7 @@ func NewGraphQuery(dir string, g Graph, args Args) (Plan, error) {
 				opts = append(opts, docx.WithInbox(names...))
 			}
 			for _, o := range g.Overrides() {
-				if o.Address() != addr {
+				if o.Address() != addr && o.Address() != requestedAddress {
 					continue
 				}
 				if o.ObjectKey() != "" {
@@ -908,7 +925,7 @@ func NewGraphQuery(dir string, g Graph, args Args) (Plan, error) {
 				}
 			}
 			if !mutating && !whole {
-				opts = appendReadCache(opts, args, addr, c.Provider().Name())
+				opts = appendReadCache(opts, nodeArgs, addr, c.Provider().Name())
 			}
 			spec, err = docx.Spec(ex, local, reg, opts...)
 			if err != nil {
@@ -928,7 +945,7 @@ func NewGraphQuery(dir string, g Graph, args Args) (Plan, error) {
 				// The token, too, is read from the exchange that made it: two providers' tokens share a
 				// name on the row, and a call must carry its own.
 				authAlias := name + "_auth"
-				specs = append(specs, tagged{ExchangeSpec: auth, alias: authAlias, attrs: []string{docx.TokenAttr}, extracted: true})
+				specs = append(specs, tagged{ExchangeSpec: scopedExchange(auth, providerBinding), alias: authAlias, attrs: []string{docx.TokenAttr}, extracted: true})
 				betas = append(betas, plan.NewBetaEdge(auth.Name(), name, hidden(authAlias, docx.TokenAttr), docx.TokenAttr))
 				// A token exchange's inputs are this node's alone: two providers exchanging tokens in
 				// one query each bind their own client id and secret, never whichever merged last.
@@ -1003,7 +1020,7 @@ func NewGraphQuery(dir string, g Graph, args Args) (Plan, error) {
 		if attrs := emits[alias]; len(attrs) > 0 {
 			spec = tagged{ExchangeSpec: spec, alias: alias, attrs: attrs}
 		}
-		specs = append(specs, spec)
+		specs = append(specs, scopedExchange(spec, providerBinding))
 	}
 
 	for _, w := range g.Wirings() {

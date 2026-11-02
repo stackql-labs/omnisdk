@@ -1,6 +1,7 @@
 package sqlfn
 
 import (
+	"crypto/md5" // SQL digest compatibility; not a security primitive.
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -19,6 +20,13 @@ import (
 
 func stackqlExtensions() []Func {
 	return []Func{
+		NewScalar("md5", 1, 1, func(a []any) (any, error) {
+			text, valid := extText(a[0])
+			if !valid {
+				return nil, nil
+			}
+			return fmt.Sprintf("%x", md5.Sum([]byte(text))), nil
+		}),
 		NewScalar("string", 1, 1, func(a []any) (any, error) {
 			if text, ok := extText(a[0]); ok {
 				return text, nil

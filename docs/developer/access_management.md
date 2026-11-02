@@ -61,6 +61,7 @@ can span segments. Actions match exactly, or use `*`. Rules grant access; absent
 | `command/omnicli/<command>` | `execute` | CLI entry point, including discovery commands |
 | `operation/<provider>/<exchange name>/<operation ID>` | `execute` | Each compiled document operation, including generated dependencies and completion polls |
 | `credential/<provider>` | `use` | Use of that provider's configured credentials |
+| `tenancy/<provider>/<tenancy>` | `use` | Explicit provider-alias binding, in addition to provider and operation permissions |
 | `credentials` | `reveal` | CLI `--show-credentials`, separate from credential use |
 | `native/<provider>/<exchange name>` | `execute` | Hand-authored catalog exchange |
 | `transport/http/<host[:port]>` | HTTP method | Native/unclassified HTTP request |
@@ -264,3 +265,7 @@ checks through real CLI processes. It verifies allowed reads, denied INSERT/UPDA
 IaC, invalid JWTs, directory-owned groups and permission changes, observing provider calls externally.
 The test uses the SDK memory directory. The host RDBMS/transport acceptance matrix is in the
 [StackQL agent integration briefing](stackql_iac_access_integration.md).
+
+[Provider sessions and secrets](provider_sessions_and_secrets.md) describes mutable provider auth
+snapshots and per-tenancy request controls. Hosts must authorize binding/auth edits and secret-store
+operations explicitly; the low-level Store and ClientSession interfaces do not grant those privileges.
