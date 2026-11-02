@@ -106,9 +106,8 @@ type table struct {
 func (t table) Address() string            { return t.address }
 func (t table) Methods() []MethodSignature { return t.methods }
 
-// ServerEnvironmentBindings is optional document metadata for a host analyzer.
-// Hosts resolve only the explicitly named environment variables and supply values
-// as query inputs; Omni never reads scope values from the environment.
+// ServerEnvironmentBindings exposes explicitly declared environment sources.
+// ServerInputResolver evaluates them using the lookup supplied by the host.
 type ServerEnvironmentBindings interface{ ServerEnvironmentBindings() map[string]string }
 
 type ServerVariableSpec = aot.ServerVariableSpec
@@ -120,8 +119,9 @@ func NewServerVariableResolver(spec ServerVariableSpec) VariableResolver {
 	return aot.NewServerVariableResolver(spec)
 }
 
-// ServerTransportDefaults exposes declared HTTP(S) URL-scheme defaults to hosts.
-// It never includes scope defaults, and Omni never substitutes these values.
+// ServerTransportDefaults exposes declared HTTP(S) URL-scheme defaults.
+// ServerInputResolver applies them after explicit and declared environment inputs;
+// scope defaults are never inferred.
 type ServerTransportDefaults interface{ ServerTransportDefaults() map[string]string }
 
 // InlineCommand exposes the declared local argv template for host presentation.
