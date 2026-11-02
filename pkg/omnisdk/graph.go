@@ -495,18 +495,21 @@ func deliverOn(nodes []Node, wirings []Wiring, known map[string]bool) ([]Wiring,
 }
 
 type graph struct {
-	empty       bool
-	nodes       []Node
-	wirings     []Wiring
-	overrides   []Override
-	projections []Projection
-	filters     []query.Predicate
-	fanout      map[string][]string
-	outputs     []query.Output
-	terminate   map[string]Termination
-	branches    []Branch
-	gates       []Gate
+	resolvedParams map[string]string
+	empty          bool
+	nodes          []Node
+	wirings        []Wiring
+	overrides      []Override
+	projections    []Projection
+	filters        []query.Predicate
+	fanout         map[string][]string
+	outputs        []query.Output
+	terminate      map[string]Termination
+	branches       []Branch
+	gates          []Gate
 }
+
+func (g graph) resolvedInputs() map[string]string { return g.resolvedParams }
 
 func (g graph) Empty() bool { return g.empty }
 
