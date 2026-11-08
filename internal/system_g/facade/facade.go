@@ -456,6 +456,8 @@ type JournalRecord interface {
 type Journal interface {
 	// Append records intent ahead of the wire effect and returns the assigned sequence.
 	Append(ctx context.Context, k LedgerKey, exchange string, form FormClass, prior []byte) (int, error)
+	// AppendAbout also records resource addressing metadata before the effect.
+	AppendAbout(ctx context.Context, k LedgerKey, exchange string, form FormClass, prior, about []byte) (int, error)
 	// Records returns every entry in append order.
 	Records(ctx context.Context) ([]JournalRecord, error)
 }

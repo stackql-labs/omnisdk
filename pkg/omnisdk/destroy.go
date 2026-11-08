@@ -4,7 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/stackql-labs/omnisdk/internal/journal"
 	"maps"
+	"path/filepath"
 	"slices"
 	"strings"
 
@@ -56,6 +58,14 @@ func (p *destroyPlan) Open(ctx context.Context) (Rows, error) {
 		return nil, err
 	}
 
+	// Recover only metadata; the ledger must still confirm identity and live state.
+	aboutOf := func(entry facade.LedgerEntry) ([]byte, error) {
+		var rec aboutRecord
+		if json.Unmarshal(entry.About(), &rec) == nil && rec.Address != "" {
+			return entry.About(), nil
+		}
+		return journal.RecoveryAbout(ctx, filepath.Join(p.state, "journal"), entry.Key())
+	}
 	selected := map[facade.LedgerKey]bool{}
 	for _, key := range p.keys {
 		if key == "" || strings.HasPrefix(key, ".") || strings.Contains(key, "..") {
@@ -71,7 +81,11 @@ func (p *destroyPlan) Open(ctx context.Context) (Rows, error) {
 			}
 			found[entry.Key()] = true
 			var rec aboutRecord
-			if err := json.Unmarshal(entry.About(), &rec); err != nil || rec.Address == "" {
+			metadata, err := aboutOf(entry)
+			if err != nil {
+				return nil, err
+			}
+			if err := json.Unmarshal(metadata, &rec); err != nil || rec.Address == "" {
 				return nil, fmt.Errorf("omnisdk: cannot check dependencies of %s", entry.Key())
 			}
 			if selected[entry.Key()] {
@@ -107,7 +121,11 @@ func (p *destroyPlan) Open(ctx context.Context) (Rows, error) {
 			continue
 		}
 		var rec aboutRecord
-		if err := json.Unmarshal(e.About(), &rec); err != nil || rec.Address == "" {
+		metadata, err := aboutOf(e)
+		if err != nil {
+			return nil, err
+		}
+		if err := json.Unmarshal(metadata, &rec); err != nil || rec.Address == "" {
 			out = append(out, Row{"key": string(e.Key()), "status": "outstanding",
 				"reason": "the ledger does not record what this is, so it cannot be addressed"})
 			continue

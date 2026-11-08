@@ -426,7 +426,14 @@ func (d durable) open(ctx context.Context, o effectOp) facade.Records {
 	if m, ok := d.resource.(managed); ok && m.creates[o.e.alias] {
 		form = facade.FormCreate
 	}
-	if _, err := d.run.journal.Append(ctx, k, o.e.exchange, form, prior); err != nil {
+	var about []byte
+	if m, ok := d.resource.(managed); ok {
+		about = m.about
+	}
+	if about == nil && d.provider != "" {
+		about = d.aboutOf(o.bound)
+	}
+	if _, err := d.run.journal.AppendAbout(ctx, k, o.e.exchange, form, prior, about); err != nil {
 		return notAttempted(err)
 	}
 	// An object named by the caller is addressed by that name: it is its identity wherever the

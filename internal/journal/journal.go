@@ -10,6 +10,7 @@ package journal
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -30,6 +31,7 @@ type line struct {
 	KeyName   facade.LedgerKey `json:"key"`
 	XchgName  string           `json:"exchange"`
 	FormClass facade.FormClass `json:"form"`
+	AboutData []byte           `json:"about,omitempty"`
 	PriorPlan []byte           `json:"prior,omitempty"`
 }
 
@@ -89,7 +91,12 @@ type runJournal struct {
 	seq  int
 }
 
-func (r *runJournal) Append(_ context.Context, k facade.LedgerKey, exchange string, form facade.FormClass, prior []byte) (int, error) {
+func (r *runJournal) Append(ctx context.Context, k facade.LedgerKey, exchange string, form facade.FormClass, prior []byte) (int, error) {
+	return r.AppendAbout(ctx, k, exchange, form, prior, nil)
+}
+
+// AppendAbout durably records addressing metadata before the effect is sent.
+func (r *runJournal) AppendAbout(ctx context.Context, k facade.LedgerKey, exchange string, form facade.FormClass, prior, about []byte) (int, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if r.seq == 0 {
@@ -100,7 +107,7 @@ func (r *runJournal) Append(_ context.Context, k facade.LedgerKey, exchange stri
 		r.seq = len(existing)
 	}
 	r.seq++
-	b, err := json.Marshal(line{SeqNo: r.seq, KeyName: k, XchgName: exchange, FormClass: form, PriorPlan: prior})
+	b, err := json.Marshal(line{SeqNo: r.seq, KeyName: k, XchgName: exchange, FormClass: form, PriorPlan: prior, AboutData: about})
 	if err != nil {
 		return 0, fmt.Errorf("journal: encode: %w", err)
 	}
@@ -157,4 +164,39 @@ func (r *runJournal) Records(_ context.Context) ([]facade.JournalRecord, error) 
 		out[i] = l
 	}
 	return out, nil
+}
+
+// RecoveryAbout finds addressing metadata recorded before a mutation. Conflicting
+// records are refused: run filenames do not establish a chronological order.
+func RecoveryAbout(ctx context.Context, root string, key facade.LedgerKey) ([]byte, error) {
+	entries, err := os.ReadDir(root)
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	var about []byte
+	for _, entry := range entries {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".jsonl") {
+			continue
+		}
+		records, err := (&runJournal{path: filepath.Join(root, entry.Name())}).read()
+		if err != nil {
+			return nil, err
+		}
+		for _, record := range records {
+			if record.KeyName != key || len(record.AboutData) == 0 {
+				continue
+			}
+			if about != nil && !bytes.Equal(about, record.AboutData) {
+				return nil, fmt.Errorf("journal: conflicting addressing metadata for %s", key)
+			}
+			about = record.AboutData
+		}
+	}
+	return about, nil
 }

@@ -37,8 +37,10 @@ while other deletes make progress; what still refuses is reported outstanding wi
 reason.
 
 **Needs.**
-- A key resolved before the record existed has none, and a destroy reports it outstanding; a run
-  that touches it again writes it.
+- Legacy keys with neither ledger metadata nor a metadata-bearing mutation journal still require
+  explicit backfill. New mutations journal addressing metadata before sending; destroy recovers
+  missing ledger metadata from that journal, refusing conflicting records. Recovery does not
+  promote pending entries or infer an unconfirmed identity.
 - Protections that refuse a delete for a reason other than a dependent — see
   [known_issues.md](known_issues.md).
 
