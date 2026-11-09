@@ -103,7 +103,7 @@ func TestIaCAdmissionCoverage(t *testing.T) {
 				}
 			}
 			state := t.TempDir()
-			args := omnisdk.Args{Endpoint: srv.URL}
+			args := omnisdk.Args{Endpoint: srv.URL, IACRollback: true}
 			prepared, err := omnisdk.ConvergeGraph(registry, "coverage", state, "run", graph, []omnisdk.Managed{omnisdk.NewManaged("db", []string{"create", "update"}, "id", "id")}, args)
 			if err != nil {
 				t.Fatal(err)

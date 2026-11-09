@@ -1,14 +1,68 @@
 # Resource locking and ledger recovery
 
+> **AUTOMATIC ROLLBACK IS OFF BY DEFAULT.** Failures preserve partial progress, ownership,
+> identities, pending intent and the journal. Successful effects are not automatically undone.
+>
+> **ROLLBACK ENABLED: X-LOCK THE MUTATION FOOTPRINT BEFORE THE FIRST EFFECT AND RETAIN IT
+> THROUGH SUCCESS OR COMPENSATION.** Do not release locks and try to reacquire them after failure:
+> a new dependent could otherwise attach to a created or mutated resource before undo.
+>
+> **ROLLBACK DISABLED: RELEASE OR DOWNGRADE AT LAST-USE CHECKPOINTS FOR GREATER CONCURRENCY.**
+>
+> The mutation footprint is the set of resources this execution may change, **not the whole named
+> ledger collection**. Unrelated resources in that collection remain available in both modes.
+
+Both modes acquire the declared footprint atomically before execution: **conservative two-phase
+locking (2PL)**. Rollback-enabled execution retains its exclusive target locks and shared dependency
+guards through the entire forward and compensation phases. Rollback-disabled graph execution can
+shrink that footprint as operations and their consumers finish; it never adds locks after shrinking.
+
+Exclusive target protection blocks both competing writes and new dependents using that target.
+A shared dependency guard protects an upstream object from mutation/deletion without blocking other
+consumers. There is no unlock/relock gap on the path into compensation. Lost protection or an
+unresolved outcome leaves rollback outstanding; opting in does not make an unknowable effect safe
+to reverse.
+
+The execution/session inputs are explicit and stateless:
+
+- `Args.TxnRollback` (`"txn_rollback": true`) enables the retained-lock policy for ordinary scoped
+  query graphs and SQL. It can also enable it on managed IaC execution.
+- `Args.IACRollback` (`"iac_rollback": true`) is the IaC-specific opt-in for `ConvergeGraph` and
+  desired-state runs. It does not enable rollback for ordinary SQL.
+- Both default to false. Neither uses process-global state, environment-variable lookup, or sticky
+  session defaults inside the SDK.
+
+Ordinary SQL uses the same execution machinery. Supply `SQLStatement(query, tables, managed...)`
+with `NewLedger(collection, state, runID)` and `Args{TxnRollback: true}`. Managed declarations name
+mutation aliases, stable resource keys and response identities; the scope and footprint must be
+known before effects. An ordinary mutating graph can likewise use `GraphStatement` with managed
+targets. A rollback-enabled mutation without this contract is refused before dispatch. Arbitrary
+multi-object DML still needs its affected resource set and undo metadata resolved explicitly;
+rollback is not inferred from raw SQL text or arbitrary provider identifiers. Unclassified legacy
+catalog methods do not supply that contract and reject `TxnRollback` rather than silently ignore it.
+Read-only SQL has no effects to compensate and does not acquire exclusive targets merely because
+the rollback flag is set.
+
+Explicit `Destroy` remains an explicit action, independent of automatic rollback policy. Failure
+rows report `rollback: "disabled"`, `"completed"`, or `"outstanding"`; the original forward failure
+remains a failure even if compensation succeeds. Graph compensation currently reverses known
+creates and reports updates/deletes it cannot reverse. Desired-state compensation uses declared
+inverse and prior-intent restore paths. Unavailable or unsafe compensation remains outstanding.
+
+StackQL will ultimately need **`SET TXN_ROLLBACK=true`** and **`SET IAC_ROLLBACK=true`**, mapped into
+these per-execution inputs. **The SQL `SET` statements are not implemented here.** The locking policy
+applies to compensatable ordinary mutations as well as IaC; it does not make external cloud APIs
+ACID transactions.
+
 Managed graph runs atomically acquire their logical resource footprint in a shared ledger. Two
 writers cannot hold exclusive access to the same key. Shared dependency guards can overlap;
 disjoint writes and independent consumers can proceed. Mutations of one key within
-a run are also serialized, including sibling nodes and fanout invocations. This applies to managed
-IaC paths, not arbitrary unmanaged SDK queries or external cloud clients. All writers of an object
+a run are also serialized, including sibling nodes and fanout invocations. This applies to scoped managed
+queries and IaC, not uncoordinated SDK calls or external cloud clients. All writers of an object
 must use the same collection/resource key and the same state store; aliases in separate collections
 are not recognised as the same physical object.
 
-The concrete rules are:
+The more aggressive **rollback-disabled** rules are:
 
 - A mutation owns its `Managed` resource key exclusively until that operation and its declared
   readiness condition finish. Authors must assign the key of the object actually being mutated.
@@ -26,7 +80,7 @@ Current rules come from managed ownership and declared graph references, not a n
 DSL or inference from arbitrary API parameter names.
 
 Stage checkpoints exhaust all rows before releasing anything or passing rows downstream.
-Independent members within a stage still execute concurrently. Ordinary queries have no checkpoint
+Independent members within a stage still execute concurrently. Unmanaged ordinary queries have no checkpoint
 wrappers. Ownership, identity and dependency records remain in the ledger after release. A later
 writer must acquire the key again.
 
@@ -38,8 +92,10 @@ does not extend the completed apply run's write lock.
 
 Branch/global-filter/projection graphs conservatively retain their footprints to the run boundary.
 Unselected candidate nodes or collapsed admission stages may likewise retain locks until the run
-ends. Desired-state lowering and destruction currently retain collection-wide exclusivity because
-they scan existing state. These are conservative fallbacks, not early-release guarantees.
+ends. Desired-state execution currently retains its bounded resource footprint for the whole run
+because it lowers reconciliation branches and external bindings from state. Full collection
+`Destroy` still uses a collection-wide lease for its deletion scan. These are conservative
+fallbacks, not early-release guarantees.
 
 ## Durable transitions
 
@@ -58,11 +114,12 @@ performs its declared observation loop; that is separate from resending a mutati
 phase deliberately does not claim whether dispatch actually happened: a crash immediately before
 and immediately after dispatch can leave the same durable evidence.
 
-An unresolved entry blocks collection destruction and graph compensation conservatively. Otherwise
-a child that exists remotely but has no recorded identity could be omitted from the dependency DAG
-and its parents deleted. Compensation first reclaims exclusive access and compares the exact
-committed ledger version; it does not undo a resource changed by another run. Compensating deletes
-are themselves journalled managed mutations.
+An unresolved protected entry blocks automatic compensation. An unresolved entry anywhere in a
+collection blocks the current full-destruction path conservatively. Otherwise a child that exists
+remotely but has no recorded identity could be omitted from the delete DAG and its parents removed.
+Compensation uses the locks retained from before forward execution and compares committed ledger
+versions and current dependents before deleting a target. Compensating graph deletes are themselves
+journalled managed mutations.
 
 ## Lease lifetime and limits
 
@@ -85,7 +142,9 @@ backing remains local disk, not NFS or a distributed lock service.
 
 ## Verification
 
-Go tests cover concurrent attachments sharing a subnet, release before VM observation completes,
+Go tests cover default-off rollback for graphs and desired state, explicit opt-in compensation,
+ordinary SQL transaction scope, blocked adornments before and during undo, unrelated concurrent
+writers in the same ledger collection, concurrent attachments sharing a subnet, release before VM observation completes,
 disjoint/overlapping claims, atomic narrowing, persistent claims across reopen,
 expired holders, lease renewal/loss, serialized same-key invocations, last-consumer release,
 multi-row stage checkpoints, intent/journal/commit failures, missing identities, and uncertain

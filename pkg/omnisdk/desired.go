@@ -12,6 +12,7 @@ import (
 
 	"github.com/stackql-labs/omnisdk/internal/analyze"
 	"github.com/stackql-labs/omnisdk/internal/docsem"
+	"github.com/stackql-labs/omnisdk/internal/lease"
 	"github.com/stackql-labs/omnisdk/internal/system_g/bind"
 	"github.com/stackql-labs/omnisdk/internal/system_g/exchange/docx"
 	"github.com/stackql-labs/omnisdk/internal/system_g/facade"
@@ -276,7 +277,8 @@ func (p *desiredPlan) Open(ctx context.Context) (Rows, error) {
 	if err := facade.CheckAccess(ctx, "collection/"+p.name, "converge"); err != nil {
 		return nil, err
 	}
-	h, err := hold(ctx, p.state, p.name, p.runID)
+	recoveryCtx := ctx
+	h, err := hold(ctx, p.state, p.name, p.runID, desiredFootprint(p.name, p.resources))
 	if err != nil {
 		return nil, err
 	}
@@ -307,6 +309,7 @@ func (p *desiredPlan) Open(ctx context.Context) (Rows, error) {
 		return nil, err
 	}
 	run := &managedRun{name: p.name, ledger: h.log, journal: h.journal, nodes: nodes, held: h}
+
 	a := p.args
 	a.managed = run
 	pl, err := NewGraphQuery(p.registry, g, a)
@@ -340,14 +343,23 @@ func (p *desiredPlan) Open(ctx context.Context) (Rows, error) {
 		}
 		return reportRows(ctx, h.log, all, nil, "", nil), nil
 	}
-	// Forward recovery is preferred where it is reachable, because compensation is lossy — billing
-	// events, sent notifications, consumed ids and deleted data do not come back. Choosing between
-	// them is the caller's policy, so the outcome is reported rather than decided here.
-	out, unwindErr := unwind.New(h.log, h.journals, p.semantics, scoped{inner: p.effector, scope: p.args.Params, log: h.log}).Unwind(ctx, p.runID)
+	if !p.args.rollbackEnabled() {
+		return reportRows(ctx, h.log, landed, nil, failedKey(runErr, owners, p.name), runErr, "disabled"), nil
+	}
+	recovery, err := beginRollback(recoveryCtx, h, p.name, p.runID)
+	if err != nil {
+		return reportRows(recoveryCtx, h.log, landed, nil, failedKey(runErr, owners, p.name), errors.Join(runErr, err), "outstanding"), nil
+	}
+	defer recovery.release()
+	out, unwindErr := unwind.New(recovery.log, recovery.journals, p.semantics, scoped{inner: p.effector, scope: p.args.Params, log: recovery.log, held: recovery}).Unwind(recovery.ctx, p.runID)
 	if unwindErr != nil {
 		return nil, errors.Join(runErr, unwindErr)
 	}
-	return reportRows(ctx, h.log, landed, &out, failedKey(runErr, owners, p.name), runErr), nil
+	status := "completed"
+	if !out.Complete() {
+		status = "outstanding"
+	}
+	return reportRows(recovery.ctx, recovery.log, landed, &out, failedKey(runErr, owners, p.name), runErr, status), nil
 }
 
 // scoped gives an undo's calls what the run's own calls had: the run's scope — the region a call is
@@ -357,6 +369,7 @@ type scoped struct {
 	inner facade.Effector
 	scope map[string]string
 	log   facade.Ledger
+	held  *held
 }
 
 func (s scoped) with(ctx context.Context, k facade.LedgerKey, in facade.EffectInput) facade.EffectInput {
@@ -376,11 +389,32 @@ func (s scoped) with(ctx context.Context, k facade.LedgerKey, in facade.EffectIn
 }
 
 func (s scoped) Effect(ctx context.Context, exchange string, k facade.LedgerKey, in facade.EffectInput) ([]byte, error) {
-	return s.inner.Effect(ctx, exchange, k, s.with(ctx, k, in))
+	if s.held != nil {
+		if !lease.Exclusive(s.held.lease.Keys(), k) {
+			return nil, fmt.Errorf("rollback has no retained exclusive lock for %s", k)
+		}
+		if err := s.held.check(ctx); err != nil {
+			return nil, err
+		}
+	}
+	result, err := s.inner.Effect(ctx, exchange, k, s.with(ctx, k, in))
+	if err == nil && s.held != nil {
+		err = s.held.check(ctx)
+	}
+	return result, err
 }
 
 func (s scoped) Read(ctx context.Context, exchange string, k facade.LedgerKey, in facade.EffectInput) ([]byte, []byte, bool, error) {
-	return s.inner.Read(ctx, exchange, k, s.with(ctx, k, in))
+	if s.held != nil {
+		if err := s.held.check(ctx); err != nil {
+			return nil, nil, false, err
+		}
+	}
+	actual, identity, readable, err := s.inner.Read(ctx, exchange, k, s.with(ctx, k, in))
+	if err == nil && s.held != nil {
+		err = s.held.check(ctx)
+	}
+	return actual, identity, readable, err
 }
 
 // failedKey is the resource a run's failure belongs to: the node it names, through owners.
@@ -404,7 +438,7 @@ func failedKey(err error, owners map[string]string, collection string) facade.Le
 // "applied": the run left nothing behind, and reporting otherwise sends someone looking for a
 // resource that is gone.
 func reportRows(ctx context.Context, log facade.Ledger, keys []facade.LedgerKey, unwound *unwind.Outcome,
-	failed facade.LedgerKey, runErr error) Rows {
+	failed facade.LedgerKey, runErr error, rollback ...string) Rows {
 	undone := map[facade.LedgerKey]bool{}
 	if unwound != nil {
 		for _, k := range unwound.Compensated {
@@ -424,6 +458,9 @@ func reportRows(ctx context.Context, log facade.Ledger, keys []facade.LedgerKey,
 	}
 	if runErr != nil {
 		row := Row{"key": string(failed), "status": "failed", "error": runErr.Error()}
+		if len(rollback) > 0 {
+			row["rollback"] = rollback[0]
+		}
 		if unwound != nil {
 			row["compensated"] = keyStrings(unwound.Compensated)
 			row["outstanding"] = keyStrings(unwound.Outstanding)

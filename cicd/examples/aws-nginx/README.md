@@ -71,6 +71,10 @@ build/aws-nginx verify --case "$CASE"
 It waits for VPC/subnet `available` and instance `running` before releasing dependents. It saves
 `apply.jsonl`, `outputs.json`, the effective registry cache, ledger and write-ahead journals.
 
+Automatic rollback is **off by default**. A failed apply preserves partial progress and the
+ledger/journal for inspection or explicit teardown; this example does not opt into saga undo.
+See [rollback policy](../../../docs/developer/resource-locking.md).
+
 This is a **single-create graph**, not a general desired-state reconciliation example. A durable
 `apply.started` guard prevents replaying creates after success or an uncertain failure. Use the same
 case for inspection and destruction; do not remove the guard or replace the ledger to retry creation.

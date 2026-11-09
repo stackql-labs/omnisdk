@@ -135,13 +135,16 @@ func (h *held) maintain(parent context.Context, ttl time.Duration) {
 			}
 		}
 	}()
+	var released sync.Once
 	h.release = func() {
-		close(quit)
-		<-stopped
-		cleanup, stop := context.WithTimeout(context.Background(), 5*time.Second)
-		defer stop()
-		_ = h.lease.Release(cleanup)
-		cancel(nil)
+		released.Do(func() {
+			close(quit)
+			<-stopped
+			cleanup, stop := context.WithTimeout(context.Background(), 5*time.Second)
+			defer stop()
+			_ = h.lease.Release(cleanup)
+			cancel(nil)
+		})
 	}
 }
 

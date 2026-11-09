@@ -91,8 +91,10 @@ segments as needed. The same resolver handles all config members, not only lifec
 for referenced resources. Stage checkpoints release completed inputs after their last consumer;
 leases renew during execution, and ownership is checked before dispatch and commit. Independent
 VM attachments can share a subnet guard; subnet writes remain excluded until attachments finish.
-Same-key invocations within a run are serialized. Desired-state lowering and destruction still
-use collection-wide leases for their state scans.
+Same-key invocations within a run are serialized. Rollback-enabled runs retain exclusive mutation
+locks from before the first effect through completion/undo; non-rollback graphs release earlier.
+Desired-state lowering retains a bounded target/dependency footprint; full destruction still uses
+a collection-wide lease for its deletion scan.
 
 **Remaining.** Branch/global-expression/admission cases conservatively retain footprints. Automatic
 recovery of unresolved outcomes is still needed. Cloud APIs do not enforce these local fencing

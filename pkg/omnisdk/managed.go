@@ -33,7 +33,8 @@ import (
 // live, diff the two against what is wanted, branch on the difference, and run whichever mutation the
 // arm calls for. Any mutation a document declares can sit on an arm — create, update, delete, or a
 // sequence of them — and each runs with the guarantees a converging run gives: the collection is
-// held, intent is in the ledger before every request, and a failed run compensates what it did.
+// held and intent is in the ledger before every request. A failed run preserves
+// partial progress unless Args.IACRollback explicitly enables compensation.
 
 const (
 	verbRecall   = "recall"
@@ -706,8 +707,9 @@ func (r *durableRecords) Close() error {
 
 // ConvergeGraph runs g as an IaC run over collection name, its ledger and journals under state. Every
 // mutation node must belong to one of managed. Its resource footprint is held; intent is recorded
-// before every request; and a run that fails compensates what it did — a create is deleted by its
-// resource's AddressedBy — reporting what it could not reverse. Opening the plan performs the run;
+// before every request. A failed run preserves partial progress by default.
+// Args.IACRollback opts into compensation under retained mutation-target locks;
+// a create is deleted by its resource's AddressedBy, reporting what could not reverse. Opening the plan performs the run;
 // its rows are the graph's rows, and a failed run adds a final row saying what was compensated.
 func ConvergeGraph(registry, name, state, runID string, g Graph, managed []Managed, args Args) (Plan, error) {
 	switch {
@@ -823,6 +825,7 @@ func (p *convergeGraphPlan) Open(ctx context.Context) (Rows, error) {
 	if err := facade.CheckAccess(ctx, "collection/"+p.name, "converge"); err != nil {
 		return nil, err
 	}
+	recoveryCtx := ctx
 	locks := graphLocks(p.g, p.nodes, p.name)
 	h, err := hold(ctx, p.state, p.name, p.runID, locks.footprint())
 	if err != nil {
@@ -831,7 +834,10 @@ func (p *convergeGraphPlan) Open(ctx context.Context) (Rows, error) {
 	defer h.release()
 	ctx = h.ctx
 	locks.h = h
-	run := &managedRun{name: p.name, ledger: h.log, journal: h.journal, nodes: p.nodes, locks: locks, held: h}
+	run := &managedRun{name: p.name, ledger: h.log, journal: h.journal, nodes: p.nodes, held: h}
+	if !p.args.rollbackEnabled() {
+		run.locks = locks
+	}
 	a := p.args
 	a.managed = run
 	pl, err := NewGraphQuery(p.registry, p.g, a)
@@ -854,9 +860,35 @@ func (p *convergeGraphPlan) Open(ctx context.Context) (Rows, error) {
 	if runErr == nil {
 		return &sliceRows{rows: out, i: -1}, nil
 	}
-	compensated, completed := p.compensate(ctx, run)
-	out = append(out, Row{"status": "failed", "error": runErr.Error(),
-		"compensated": keyStrings(compensated), "completed": keyStrings(completed)})
+	var compensated, completed []facade.LedgerKey
+	run.mu.Lock()
+	for _, effect := range run.applied {
+		completed = append(completed, effect.key)
+	}
+	run.mu.Unlock()
+	status := "disabled"
+	var rollbackErr error
+	if p.args.rollbackEnabled() {
+		recovery, err := beginRollback(recoveryCtx, h, p.name, p.runID)
+		if err != nil {
+			rollbackErr = err
+			status = "outstanding"
+		} else {
+			defer recovery.release()
+			run.held = recovery
+			compensated, completed = p.compensate(recovery.ctx, run)
+			status = "completed"
+			if len(completed) > 0 {
+				status = "outstanding"
+			}
+		}
+	}
+	failure := Row{"status": "failed", "error": runErr.Error(), "rollback": status,
+		"compensated": keyStrings(compensated), "completed": keyStrings(completed)}
+	if rollbackErr != nil {
+		failure["rollback_error"] = rollbackErr.Error()
+	}
+	out = append(out, failure)
 	return &sliceRows{rows: out, i: -1}, nil
 }
 
@@ -865,16 +897,13 @@ func (p *convergeGraphPlan) Open(ctx context.Context) (Rows, error) {
 // there — is retried on the next pass, until a pass makes no progress. An update or delete is not
 // reversed: it completed, and is reported so.
 func (p *convergeGraphPlan) compensate(ctx context.Context, run *managedRun) (done, left []facade.LedgerKey) {
-	// Released resources may have acquired new writers. Reclaim exclusivity before
-	// compensating, then compare the exact committed ledger version below.
-	if run.held != nil {
-		if err := lease.Change(ctx, run.held.lease, lease.All()); err != nil {
-			run.mu.Lock()
-			defer run.mu.Unlock()
-			for _, e := range run.applied {
-				left = append(left, e.key)
-			}
-			return nil, left
+	// Caller retained exclusive mutation locks from before the forward run.
+	if run.held == nil {
+		return nil, appliedKeys(run)
+	}
+	for _, key := range appliedKeys(run) {
+		if !lease.Exclusive(run.held.lease.Keys(), key) {
+			return nil, appliedKeys(run)
 		}
 	}
 	run.mu.Lock()
@@ -888,7 +917,7 @@ func (p *convergeGraphPlan) compensate(ctx context.Context, run *managedRun) (do
 		return nil, left
 	}
 	for _, entry := range entries {
-		if entry.Phase() == facade.LedgerPending && !strings.HasPrefix(strings.TrimPrefix(string(entry.Key()), run.name+"/"), ".") {
+		if entry.Phase() == facade.LedgerPending && run.held.lease.Keys().Contains(entry.Key()) && !strings.HasPrefix(strings.TrimPrefix(string(entry.Key()), run.name+"/"), ".") {
 			for _, e := range pending {
 				left = append(left, e.key)
 			}
@@ -914,7 +943,18 @@ func (p *convergeGraphPlan) compensate(ctx context.Context, run *managedRun) (do
 			entries, listErr := run.ledger.List(ctx, run.name+"/")
 			uncertain := listErr != nil
 			for _, entry := range entries {
-				if entry.Phase() == facade.LedgerPending && !strings.HasPrefix(strings.TrimPrefix(string(entry.Key()), run.name+"/"), ".") {
+				if entry.Phase() == facade.LedgerPending && run.held.lease.Keys().Contains(entry.Key()) && !strings.HasPrefix(strings.TrimPrefix(string(entry.Key()), run.name+"/"), ".") {
+					uncertain = true
+				}
+			}
+			// Do not remove a parent while any retained resource still refers to it,
+			// including dependents created by another run before rollback began.
+			for _, entry := range entries {
+				if entry.Key() == e.key {
+					continue
+				}
+				var about aboutRecord
+				if json.Unmarshal(entry.About(), &about) == nil && slices.Contains(about.DependsOn, string(e.key)) {
 					uncertain = true
 				}
 			}

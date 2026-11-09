@@ -61,6 +61,12 @@ func sharedKeys(keys facade.KeySet) facade.KeySet {
 	}
 	return Of()
 }
+
+// Exclusive reports whether the footprint reserves write access to key.
+func Exclusive(keys facade.KeySet, key facade.LedgerKey) bool {
+	return keys.Contains(key) && !sharedKeys(keys).Contains(key)
+}
+
 func conflicts(a, b facade.KeySet) bool {
 	ak, ab := a.Keys()
 	bk, bb := b.Keys()

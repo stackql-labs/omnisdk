@@ -248,7 +248,16 @@ func TestCompensationDoesNotUndoLaterWriter(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { requests.Add(1); w.WriteHeader(204) }))
 	defer server.Close()
 	p := &convergeGraphPlan{registry: "testdata/authreg", args: Args{Endpoint: server.URL}}
-	done, left := p.compensate(ctx, run)
+	if err := lease.Change(ctx, h.lease, lease.Of("iac/vm")); err != nil {
+		t.Fatal(err)
+	}
+	recovery, err := beginRollback(ctx, h, "iac", "first")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer recovery.release()
+	run.held = recovery
+	done, left := p.compensate(recovery.ctx, run)
 	if len(done) != 0 || len(left) != 1 || requests.Load() != 0 {
 		t.Fatalf("compensation=%v left=%v requests=%d", done, left, requests.Load())
 	}

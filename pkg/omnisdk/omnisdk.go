@@ -11,7 +11,8 @@
 //   - New runs a hand-authored catalog method by path.
 //
 // IaC: Converge applies a flat set of resources; ConvergeGraph runs a graph whose mutations are
-// recorded in a ledger, held per collection and compensated on failure.
+// recorded in a ledger and protected by leases. Failure preserves partial progress;
+// Args.IACRollback explicitly opts into automatic saga compensation.
 //
 // Credentials are per provider (Args.AuthByProvider), falling back to each document's defaults and
 // the environment.
@@ -290,6 +291,15 @@ type HTTPReadErrorObserver interface {
 // Args are the inputs to run a resource: explicit scope Params, optional Auth (config-driven-auth
 // resources), an endpoint override, run Tuning, and an optional traffic log.
 type Args struct {
+	// IACRollback opts into automatic saga compensation after a failed managed
+	// IaC run. False preserves partial progress and durable recovery evidence.
+	// Passed per execution; never read from process environment or global state.
+	// Exclusive mutation-target locks are held from before execution through commit or undo.
+	IACRollback bool `json:"iac_rollback,omitempty"`
+	// TxnRollback enables the same retained-lock compensation policy for ordinary
+	// query graphs/SQL prepared with NewLedger and explicit managed targets.
+	TxnRollback bool `json:"txn_rollback,omitempty"`
+
 	Inputs      map[string]any `json:"inputs,omitempty"`
 	Environment map[string]any `json:"environment,omitempty"`
 	// Caller is a verified directory/policy snapshot, independent of provider Auth.
@@ -1106,6 +1116,10 @@ func (builtin) GetMethod(path string) (Method, bool) {
 }
 
 func (builtin) New(method string, args Args) (Plan, error) {
+	if args.TxnRollback {
+		return nil, fmt.Errorf("omnisdk: TxnRollback requires a scoped prepared query with managed mutation targets; legacy catalog methods cannot supply that contract")
+	}
+
 	if err := checkEndpoint(args); err != nil {
 		return nil, err
 	}
@@ -1123,6 +1137,10 @@ func (builtin) New(method string, args Args) (Plan, error) {
 }
 
 func (builtin) NewMerged(methodPaths []string, args Args) (Plan, error) {
+	if args.TxnRollback {
+		return nil, fmt.Errorf("omnisdk: TxnRollback requires a scoped prepared query with managed mutation targets; legacy catalog methods cannot supply that contract")
+	}
+
 	if len(methodPaths) == 0 {
 		return nil, fmt.Errorf("omnisdk: NewMerged needs at least one method")
 	}

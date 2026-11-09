@@ -187,7 +187,7 @@ func TestFailedRunUndoesWhatItMade(t *testing.T) {
 	srv := s.serve(t)
 	defer srv.Close()
 	pl, err := omnisdk.Prepare(corpus, omnisdk.DesiredState(s3Resources()), omnisdk.NewLedger("demo", t.TempDir(), "r1"),
-		omnisdk.Args{Endpoint: srv.URL, Params: map[string]string{"region": "us-east-1"}})
+		omnisdk.Args{Endpoint: srv.URL, IACRollback: true, Params: map[string]string{"region": "us-east-1"}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -198,5 +198,27 @@ func TestFailedRunUndoesWhatItMade(t *testing.T) {
 	}
 	if got := s.c.took(); got != "create, put tagging refused, delete bucket" || s.bucket {
 		t.Errorf("calls = %s, bucket left = %v", got, s.bucket)
+	}
+}
+
+func TestFailedDesiredStatePreservesProgressByDefault(t *testing.T) {
+	requireCorpus(t)
+	t.Setenv("AWS_ACCESS_KEY_ID", "AKIATEST")
+	t.Setenv("AWS_SECRET_ACCESS_KEY", "secret")
+	store := &s3Store{refuseTags: true}
+	server := store.serve(t)
+	defer server.Close()
+	state := t.TempDir()
+	plan, err := omnisdk.Prepare(corpus, omnisdk.DesiredState(s3Resources()), omnisdk.NewLedger("demo", state, "default"), omnisdk.Args{Endpoint: server.URL, Params: map[string]string{"region": "us-east-1"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	rows := drain(t, plan)
+	last := rows[len(rows)-1]
+	if last["rollback"] != "disabled" || last["status"] != "failed" || !store.bucket {
+		t.Fatalf("default failure undid progress: %v bucket=%v", last, store.bucket)
+	}
+	if got := store.c.took(); got != "create, put tagging refused" {
+		t.Fatalf("unexpected undo calls: %s", got)
 	}
 }

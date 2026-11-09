@@ -568,6 +568,14 @@ func (g graph) Projections() []Projection   { return g.projections }
 // response handling are unchanged. What the caller adds is the data flow between them — the part a
 // document cannot state, because it describes one provider and a relationship may span two.
 func NewGraphQuery(dir string, g Graph, args Args) (Plan, error) {
+	if args.TxnRollback && args.managed == nil {
+		for _, node := range g.Nodes() {
+			if node.Verb() != "select" && node.Verb() != verbRecall && node.Verb() != verbDiff && node.Verb() != verbShape && node.Verb() != verbFunction {
+				return nil, fmt.Errorf("omnisdk: TxnRollback needs an explicit transaction scope and mutation targets: use Prepare with NewLedger and GraphStatement/SQLStatement managed declarations")
+			}
+		}
+	}
+
 	for alias := range args.ReadHintsByAlias {
 		if !slices.ContainsFunc(g.Nodes(), func(n Node) bool { return n.Alias() == alias }) {
 			return nil, fmt.Errorf("omnisdk: read hints name unknown alias %q", alias)
