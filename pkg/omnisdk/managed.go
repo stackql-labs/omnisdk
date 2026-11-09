@@ -442,6 +442,9 @@ func (d durable) open(ctx context.Context, o effectOp) facade.Records {
 	if a := d.resource.AddressedBy(); a != "" && o.bound[a] != nil {
 		named = fmt.Sprint(o.bound[a])
 	}
+	ctx = docx.WithAwaitCheckpoint(ctx, func(ctx context.Context, method string, inputs map[string]any) error {
+		return d.run.journal.AppendAwait(ctx, k, method, inputs)
+	})
 	return &durableRecords{inner: effectRecords{Records: o.inner.Open(retryNever(ctx)), op: o}, d: d, key: k, entry: e, found: found, named: named}
 }
 

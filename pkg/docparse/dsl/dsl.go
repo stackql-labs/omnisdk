@@ -11,6 +11,7 @@
 package dsl
 
 import (
+	"context"
 	"fmt"
 	"sort"
 )
@@ -24,6 +25,10 @@ import (
 //
 // Every field is optional: a template evaluator ignores all of them.
 type Context struct {
+	// Execution permits cancellation of evaluators that support it.
+	Execution context.Context
+	// Edges contains read-only snapshots keyed by consumer inbox name.
+	Edges map[string]map[string]any
 	// Schema is the document's declared shape for what the program is transforming, as the parsed
 	// document holds it. nil where the document states none, which a schema-driven evaluator must
 	// treat as a failure rather than an empty shape.
@@ -94,4 +99,33 @@ func (r registry) Eval(typ string, ctx Context, program string, in []byte) ([]by
 		return nil, fmt.Errorf("dsl: %s: %w", typ, err)
 	}
 	return out, nil
+}
+
+// Program declares a language and its source.
+type Program struct {
+	Type string `yaml:"type" json:"type"`
+	Body string `yaml:"body" json:"body"`
+}
+
+// Transform declares input shaping and an optional inbox admission predicate.
+// Nil admission retains the scheduler's ALL-dependencies behavior.
+type Transform struct {
+	Type      string   `yaml:"type" json:"type"`
+	Body      string   `yaml:"body" json:"body"`
+	Admission *Program `yaml:"admission,omitempty" json:"admission,omitempty"`
+	Required  []string `yaml:"required,omitempty" json:"required,omitempty"`
+}
+
+// Validator performs language-specific AOT checks without executing a program.
+type Validator interface{ Validate(program string) error }
+
+func Validate(reg Registry, typ, body string) error {
+	evaluator, ok := reg.Get(typ)
+	if !ok {
+		return fmt.Errorf("dsl: no evaluator for %q", typ)
+	}
+	if validator, ok := evaluator.(Validator); ok {
+		return validator.Validate(body)
+	}
+	return nil
 }

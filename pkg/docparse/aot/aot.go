@@ -514,3 +514,21 @@ type NamedSchema interface{ SchemaName() string }
 
 // ReadOnlySchema identifies response-only properties in a shared schema.
 type ReadOnlySchema interface{ ReadOnly() bool }
+
+// Lifecycle describes a post-create observation. V1 derives existence from a
+// nonempty detail read; later derivations can use the same configuration path.
+type Lifecycle struct {
+	Method          AOTExchange
+	StateDerivation string
+	Bind            map[string]string
+	Interval        time.Duration
+	MaxAttempts     int
+}
+
+type LifecycleConfigured interface{ Lifecycle() *Lifecycle }
+
+// AdmittedTransform optionally declares when an inbound/request transform may run.
+type AdmittedTransform interface{ Admission() Transform }
+
+// RequiredTransform names the raw inbox inputs needed before shaping.
+type RequiredTransform interface{ Required() []string }

@@ -70,6 +70,8 @@ func TestConvergeGraphNeverRecordsTheBearerToken(t *testing.T) {
 		switch {
 		case strings.Contains(r.URL.Path, "/token"):
 			fmt.Fprintf(w, `{"access_token":%q,"expires_in":3600}`, secret)
+		case r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/global/networks/net-1"):
+			fmt.Fprint(w, `{"name":"net-1"}`)
 		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/global/networks"):
 			fmt.Fprint(w, `{"name":"op-1","status":"RUNNING"}`)
 		default:

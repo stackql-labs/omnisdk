@@ -20,6 +20,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/stackql-labs/omnisdk/pkg/docparse/dsl"
 	"github.com/stackql-labs/omnisdk/pkg/encode"
 	"github.com/stackql-labs/omnisdk/pkg/omnisdk"
 	"github.com/stackql-labs/omnisdk/pkg/query"
@@ -635,9 +636,11 @@ its ledger lives, over whatever the spec says; a file holding only resources nee
 					Src  string `json:"src"`
 					As   string `json:"as,omitempty"`
 				} `json:"inbound"`
-				ViaType  string   `json:"via_type,omitempty"`
-				Via      string   `json:"via,omitempty"`
-				Provides []string `json:"provides,omitempty"`
+				Candidates []omnisdk.InboundCandidate `json:"candidates,omitempty"`
+				Transform  *dsl.Transform             `json:"transform,omitempty"`
+				ViaType    string                     `json:"via_type,omitempty"`
+				Via        string                     `json:"via,omitempty"`
+				Provides   []string                   `json:"provides,omitempty"`
 			} `json:"wirings"`
 			Overrides []struct {
 				Address     string `json:"address"`
@@ -715,7 +718,17 @@ its ledger lives, over whatever the spec says; a file holding only resources nee
 			for _, i := range wr.Inbound {
 				in = append(in, omnisdk.NewInbound(i.From, i.Src, i.As))
 			}
-			wirings = append(wirings, omnisdk.NewWiring(wr.To, in, wr.ViaType, wr.Via, wr.Provides...))
+			if wr.Transform != nil {
+				if wr.ViaType != "" || wr.Via != "" {
+					return nil, fmt.Errorf("wiring %s: use transform or via, not both", wr.To)
+				}
+				wirings = append(wirings, omnisdk.NewWiringWithTransform(wr.To, in, *wr.Transform, wr.Provides...))
+			} else {
+				wirings = append(wirings, omnisdk.NewWiring(wr.To, in, wr.ViaType, wr.Via, wr.Provides...))
+			}
+			if len(wr.Candidates) > 0 {
+				wirings[len(wirings)-1] = omnisdk.WithInboundCandidates(wirings[len(wirings)-1], wr.Candidates...)
+			}
 		}
 		overrides := make([]omnisdk.Override, 0, len(spec.Overrides))
 		for _, o := range spec.Overrides {

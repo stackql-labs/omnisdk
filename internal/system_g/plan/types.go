@@ -160,3 +160,39 @@ func (s projectSpec) Make(bound map[string]any) facade.Operator {
 	projected := exchange.NewTransformExchange(0, s.ExchangeSpec.Make(bound), s.project, 1)
 	return exchange.NewExplodeRows(projected, 1)
 }
+
+// WithReadOnly marks a spec safe to run and cancel as an alternative observation.
+// Unmarked specs (including mutations and authentication) are never raced.
+func WithReadOnly(spec ExchangeSpec) ExchangeSpec { return readOnlySpec{spec} }
+
+type readOnlySpec struct{ ExchangeSpec }
+
+func (readOnlySpec) ReadOnly() bool { return true }
+
+// WithInputs retains raw transform requirements even when the wire method does
+// not itself declare them.
+func WithInputs(spec ExchangeSpec, names ...string) ExchangeSpec {
+	return extraInputsSpec{ExchangeSpec: spec, names: names}
+}
+
+type extraInputsSpec struct {
+	ExchangeSpec
+	names []string
+}
+
+func (s extraInputsSpec) In() []string {
+	names := append([]string(nil), s.ExchangeSpec.In()...)
+	for _, name := range s.names {
+		found := false
+		for _, existing := range names {
+			if name == existing {
+				found = true
+				break
+			}
+		}
+		if !found {
+			names = append(names, name)
+		}
+	}
+	return names
+}

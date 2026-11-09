@@ -44,17 +44,46 @@ reason.
 - Protections that refuse a delete for a reason other than a dependent — see
   [known_issues.md](known_issues.md).
 
-## 3. A create is awaited only where its document says so
+## 3. Create observation has a v1 default; richer state derivation remains open
 
-**Now.** A method declaring `x-stackQL-beta` is followed by the call it names, polled until that
-call reports done ([beta.go](../../internal/system_g/exchange/docx/beta.go)); a dependent runs only
-then. Done with an error fails; never done, or the followed call itself failing, is reported as
-unknown. The base Google documents declare none, so a caller supplies it as a document patch.
+**Now.** Hierarchical config is resolved per member, broad to fine: provider, service, resource,
+method. Embedded YAML defaults apply at matching exact path prefixes; document config wins at equal
+depth. Unmatched paths, including renamed resources, are ignored. Nested objects inherit omitted
+members; explicit null clears an inherited object.
+
+Google defaults `lifecycle.state_derivation` to `self_read_returns_data`: after create, poll the
+resource's get/select detail method until it returns nonempty data. The default is 150 attempts at
+2-second intervals. A declared `x-stackQL-beta` takes precedence and awaits its operation instead.
+Both paths persist observation handles in the IaC journal before polling; checkpoints are separate
+from compensation steps and do not record authentication inputs. This records handles for recovery;
+automatically resuming an interrupted wait is not yet implemented.
+
+A 404 or empty read is retried. Other read errors, exhausted waits, or missing addressing inputs
+report the effect as unknown, without repeating create. A caller-chosen request `name` can supply the
+last detail-path parameter; otherwise matching response fields, existing scope inputs, or explicit
+`lifecycle.bind` mappings supply the read inputs. An operation response's name is not assumed to be
+its resource's identity.
+
+For example, at any config level (`config`, or service `x-stackQL-config`):
+
+```yaml
+lifecycle:
+  state_derivation: self_read_returns_data
+  interval: 2s
+  max_attempts: 150
+  bind: {id: id} # optional: read input -> dotted create-response field
+```
+
+Use `lifecycle: null` or `state_derivation: none` to disable an inherited default. Embedded defaults
+live in `pkg/docparse/stackqldoc/defaults`; their `path` lists provider, service, resource, and method
+segments as needed. The same resolver handles all config members, not only lifecycle.
 
 **Needs.**
-- The declaration in the registry's own documents, rather than in every caller's patch.
-- A test of the IaC path: the effector compiles through the same `Spec`, so it awaits too, but only
-  the query path is exercised.
+- Richer semantic predicates over transformed observations, including provider-specific maturity
+  and failure conditions. V1 derives only observable existence.
+- Registry-owned operation declarations where a self read cannot be addressed or operation completion
+  is the stronger contract. Google operation polling still requires `x-stackQL-beta`.
+- Automatic recovery that resumes a persisted observation handle after interruption.
 
 ## 4. The lock covers the whole collection and is never renewed
 

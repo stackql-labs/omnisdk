@@ -35,7 +35,11 @@ func (c *catalog) View(service, name string) (aot.View, bool, error) {
 	if !ok {
 		return nil, false, fmt.Errorf("stackqldoc: no resource %q", name)
 	}
-	view := resource.Config.Views["select"]
+	effective, err := resolveConfig([]string{parsed.providerName, parsed.serviceName, name}, parsed.providerConfig, parsed.Config, resource.Config)
+	if err != nil {
+		return nil, false, err
+	}
+	view := effective.Views["select"]
 	if view == nil {
 		return nil, false, nil
 	}

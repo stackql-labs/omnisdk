@@ -204,3 +204,24 @@ func TestRecoveryAboutSurvivesReopenAndRefusesConflicts(t *testing.T) {
 		t.Fatal("conflicting metadata accepted")
 	}
 }
+
+func TestAwaitCheckpointsPersistWithoutBecomingCompensationSteps(t *testing.T) {
+	ctx := context.Background()
+	root := t.TempDir()
+	j := open(t, root, "run")
+	if _, err := j.Append(ctx, "demo/db", "create", facade.FormCreate, nil); err != nil {
+		t.Fatal(err)
+	}
+	if err := j.AppendAwait(ctx, "demo/db", "get_operation", map[string]any{"operation": "op-1", "project": "demo"}); err != nil {
+		t.Fatal(err)
+	}
+	reopened := open(t, root, "run")
+	records, err := reopened.Records(ctx)
+	if err != nil || len(records) != 1 || records[0].Exchange() != "create" {
+		t.Fatalf("compensation records=%v err=%v", records, err)
+	}
+	handles, err := journal.AwaitHandles(ctx, root, "run")
+	if err != nil || handles["demo/db"].Inputs["operation"] != "op-1" {
+		t.Fatalf("handles=%v err=%v", handles, err)
+	}
+}

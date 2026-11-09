@@ -53,7 +53,11 @@ func controlled(p Plan) Plan {
 	exchanges := make([]ExchangeSpec, 0, len(p.Exchanges()))
 	for _, x := range p.Exchanges() {
 		if gs, ok := gates[x.Name()]; ok {
+			original := x
 			x = gatedSpec{ExchangeSpec: x, gates: gs}
+			if marker, ok := original.(interface{ ReadOnly() bool }); ok && marker.ReadOnly() {
+				x = WithReadOnly(x)
+			}
 		}
 		exchanges = append(exchanges, x)
 	}

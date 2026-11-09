@@ -458,6 +458,8 @@ type Journal interface {
 	Append(ctx context.Context, k LedgerKey, exchange string, form FormClass, prior []byte) (int, error)
 	// AppendAbout also records resource addressing metadata before the effect.
 	AppendAbout(ctx context.Context, k LedgerKey, exchange string, form FormClass, prior, about []byte) (int, error)
+	// AppendAwait persists observation handles before polling, separately from mutations.
+	AppendAwait(ctx context.Context, key LedgerKey, method string, inputs map[string]any) error
 	// Records returns every entry in append order.
 	Records(ctx context.Context) ([]JournalRecord, error)
 }
@@ -623,4 +625,25 @@ type Typed interface {
 	// Lexeme is the value exactly as written. Valid only where the kind is Comparable — an
 	// unbounded value has no lexeme to hand back, and asking for one returns nil.
 	Lexeme() []byte
+}
+
+// EdgeState is a read-only snapshot for a named incoming contribution. Present
+// distinguishes an arrived null value from absence. Done means the producer
+// ended; Error is empty unless that producer failed.
+type EdgeState struct {
+	Present bool
+	Value   any
+	Done    bool
+	Error   string
+}
+
+type InboxAdmission interface {
+	Admit(context.Context, map[string]any, map[string]EdgeState) (bool, error)
+}
+
+// InboxTransform optionally evaluates admission before shaping an inbox.
+type InboxTransform interface {
+	Transform
+	Admission() InboxAdmission
+	ApplyInbox(context.Context, map[string]any, map[string]EdgeState) (Record, error)
 }

@@ -20,6 +20,7 @@ import (
 	"github.com/stackql-labs/omnisdk/pkg/docparse/dsl"
 	"github.com/stackql-labs/omnisdk/pkg/docparse/dsl/gotemplate"
 	"github.com/stackql-labs/omnisdk/pkg/docparse/dsl/schemaxml"
+	starlarkdsl "github.com/stackql-labs/omnisdk/pkg/docparse/dsl/starlark"
 	"github.com/stackql-labs/omnisdk/pkg/query"
 )
 
@@ -216,7 +217,20 @@ type wiring struct {
 	in                  []Inbound
 	viaType, viaProgram string
 	provides            []string
+	admission           *dsl.Program
+	required            []string
+	candidates          []InboundCandidate
 }
+
+// NewWiringWithTransform declares shaping and admission together. Admission nil
+// preserves the existing requirement for all incoming producers to finish.
+func NewWiringWithTransform(to string, in []Inbound, transform dsl.Transform, provides ...string) Wiring {
+	return wiring{to: to, in: in, viaType: transform.Type, viaProgram: transform.Body, provides: provides, admission: transform.Admission, required: slices.Clone(transform.Required)}
+}
+
+func (w wiring) Admission() *dsl.Program        { return w.admission }
+func (w wiring) Required() []string             { return slices.Clone(w.required) }
+func (w wiring) Candidates() []InboundCandidate { return slices.Clone(w.candidates) }
 
 func (w wiring) To() string            { return w.to }
 func (w wiring) Inbound() []Inbound    { return w.in }
@@ -392,7 +406,7 @@ func NewGraphWithFilters(nodes []Node, wirings []Wiring, projections []Projectio
 			return nil, fmt.Errorf("omnisdk: %q has two wirings; state every arrival in one", w.To())
 		}
 		wired[w.To()] = true
-		if len(w.Inbound()) == 0 {
+		if len(w.Inbound()) == 0 && len(wiringCandidates(w)) == 0 && len(wiringRequired(w)) == 0 {
 			return nil, fmt.Errorf("omnisdk: wiring for %q declares nothing arriving", w.To())
 		}
 		if t, _ := w.Via(); t != "" && len(w.Provides()) == 0 {
@@ -488,8 +502,7 @@ func deliverOn(nodes []Node, wirings []Wiring, known map[string]bool) ([]Wiring,
 				in = append(in, a)
 			}
 		}
-		typ, prog := w.Via()
-		out[i] = NewWiring(w.To(), in, typ, prog, w.Provides()...)
+		out[i] = copyWiring(w, in)
 	}
 	return out, nil
 }
@@ -555,15 +568,24 @@ func (g graph) Projections() []Projection   { return g.projections }
 // response handling are unchanged. What the caller adds is the data flow between them — the part a
 // document cannot state, because it describes one provider and a relationship may span two.
 func NewGraphQuery(dir string, g Graph, args Args) (Plan, error) {
+	for alias := range args.ReadHintsByAlias {
+		if !slices.ContainsFunc(g.Nodes(), func(n Node) bool { return n.Alias() == alias }) {
+			return nil, fmt.Errorf("omnisdk: read hints name unknown alias %q", alias)
+		}
+	}
 	var bindingErr error
 	g, bindingErr = bindProviderNodes(g, args)
+	if bindingErr != nil {
+		return nil, bindingErr
+	}
+	g, bindingErr = selectCanonicalInputs(g, args)
 	if bindingErr != nil {
 		return nil, bindingErr
 	}
 	if err := checkEndpoint(args); err != nil {
 		return nil, err
 	}
-	reg, err := dsl.NewRegistry(append(gotemplate.Evaluators(), schemaxml.New())...)
+	reg, err := dsl.NewRegistry(append(gotemplate.Evaluators(), schemaxml.New(), starlarkdsl.New())...)
 	if err != nil {
 		return nil, err
 	}
@@ -571,11 +593,7 @@ func NewGraphQuery(dir string, g Graph, args Args) (Plan, error) {
 	if err != nil {
 		return nil, err
 	}
-	for alias := range args.ReadHintsByAlias {
-		if !slices.ContainsFunc(g.Nodes(), func(n Node) bool { return n.Alias() == alias }) {
-			return nil, fmt.Errorf("omnisdk: read hints name unknown alias %q", alias)
-		}
-	}
+
 	if empty, ok := g.(facade.EmptyRelation); ok && empty.Empty() {
 		return emptyPlan{}, nil
 	}
@@ -593,6 +611,7 @@ func NewGraphQuery(dir string, g Graph, args Args) (Plan, error) {
 	// reshaping one relies on the consumer's required parameters.
 	bound, provided, inbox := map[string][]string{}, map[string][]string{}, map[string][]string{}
 	for _, w := range g.Wirings() {
+		inbox[w.To()] = append(inbox[w.To()], wiringRequired(w)...)
 		if t, _ := w.Via(); t != "" {
 			// T_in reshapes the inbox, so it is the program's OUTPUT names that reach the wire. They
 			// are placed but not bound: nothing emits them, they are made from the inbox.
@@ -767,7 +786,11 @@ func NewGraphQuery(dir string, g Graph, args Args) (Plan, error) {
 		for k, v := range n.Params() {
 			// In a cycle, a param and an arrival from the cycle are one input over time: the param is
 			// its first value, and each round supplies the next.
-			if (contains(bound[alias], k) && !cyclicArrival(g, alias, k)) || contains(provided[alias], k) {
+			rawRequired := false
+			if wiring, ok := wiringFor(g, alias); ok {
+				rawRequired = slices.Contains(wiringRequired(wiring), k)
+			}
+			if (contains(bound[alias], k) && !cyclicArrival(g, alias, k)) || (contains(provided[alias], k) && !rawRequired) {
 				return nil, fmt.Errorf("omnisdk: %s: %q is both a param and a wired input", alias, k)
 			}
 			if _, multi := n.Fanout()[k]; multi {
@@ -962,14 +985,35 @@ func NewGraphQuery(dir string, g Graph, args Args) (Plan, error) {
 			// T_in is attached LAST. Wrapping the spec hides the compiled form Expand reads, so a
 			// consumer with an inbound transform would silently lose its auth exchange — and the plan
 			// would refuse to build for want of a token.
-			if w, ok := wiringFor(g, alias); ok {
-				if typ, body := w.Via(); typ != "" {
-					spec = plan.WithInbound(spec, docx.InboundProgram(reg, typ, body))
-				}
-			}
+
 			required = requiredOf(ex, wiredInputs(g, alias))
 		}
 
+		if w, ok := wiringFor(g, alias); ok {
+			typ, body := w.Via()
+			var admission *dsl.Program
+			if declared, ok := w.(interface{ Admission() *dsl.Program }); ok {
+				admission = declared.Admission()
+			}
+			if typ != "" || admission != nil || len(wiringRequired(w)) > 0 {
+				hardRequired := wiringRequired(w)
+				if previous, ok := spec.Inbound().(interface{ Required() []string }); ok {
+					for _, name := range previous.Required() {
+						if !slices.Contains(hardRequired, name) {
+							hardRequired = append(hardRequired, name)
+						}
+					}
+				}
+				transform, err := docx.InboundTransform(reg, dsl.Transform{Type: typ, Body: body, Admission: admission, Required: hardRequired})
+				if err != nil {
+					return nil, fmt.Errorf("omnisdk: %s transform: %w", alias, err)
+				}
+				if previous, ok := spec.Inbound().(facade.InboxTransform); ok {
+					transform = docx.RequireAdmission(transform, previous.Admission())
+				}
+				spec = plan.WithInbound(spec, transform)
+			}
+		}
 		if mutating && args.MutationCompletion != nil {
 			spec = plan.WithMutationCompletion(spec, completionBridge{completion: args.MutationCompletion}, addr, n.Verb())
 		}
@@ -1023,7 +1067,11 @@ func NewGraphQuery(dir string, g Graph, args Args) (Plan, error) {
 		if attrs := emits[alias]; len(attrs) > 0 {
 			spec = tagged{ExchangeSpec: spec, alias: alias, attrs: attrs}
 		}
-		specs = append(specs, scopedExchange(spec, providerBinding))
+		spec = scopedExchange(spec, providerBinding)
+		if !mutating {
+			spec = plan.WithReadOnly(spec)
+		}
+		specs = append(specs, spec)
 	}
 
 	for _, w := range g.Wirings() {

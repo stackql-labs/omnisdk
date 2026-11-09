@@ -25,6 +25,7 @@ import (
 	"gopkg.in/yaml.v3"
 
 	"github.com/stackql-labs/omnisdk/pkg/docparse/aot"
+	"github.com/stackql-labs/omnisdk/pkg/docparse/dsl"
 	"github.com/stackql-labs/omnisdk/pkg/namespace"
 )
 
@@ -80,18 +81,14 @@ type document struct {
 	ServiceDoc    ref                 `yaml:"serviceDoc"`
 	// providerName is the provider the document belongs to, set by the catalog that read it. It
 	// matters only where the document says nothing: see pagination.
-	providerName string
-	snakeAliases bool
-	Servers      []server `yaml:"servers"`
+	providerName   string
+	providerConfig config
+	serviceName    string
+	snakeAliases   bool
+	Servers        []server `yaml:"servers"`
 	// Config is the document-wide stackql configuration; its pagination applies to every method
 	// that states none of its own.
-	Config struct {
-		Retry               *retrySpec     `yaml:"retry"`
-		RequestTranslate    algorithmSpec  `yaml:"requestTranslate"`
-		QueryParamTranspose algorithmSpec  `yaml:"queryParamTranspose"`
-		Pagination          paginationSpec `yaml:"pagination"`
-		QueryParamPushdown  *pushdownSpec  `yaml:"queryParamPushdown"`
-	} `yaml:"x-stackQL-config"`
+	Config config `yaml:"x-stackQL-config"`
 	// A path item holds verbs alongside non-operation keys (an OpenAPI path-level `parameters`
 	// list, vendor extensions), so verbs are decoded on demand rather than assumed.
 	Paths      map[string]map[string]yaml.Node `yaml:"paths"`
@@ -131,14 +128,7 @@ type resource struct {
 	Title    string            `yaml:"title"`
 	Methods  map[string]method `yaml:"methods"`
 	SQLVerbs map[string][]ref  `yaml:"sqlVerbs"`
-	Config   struct {
-		Retry               *retrySpec           `yaml:"retry"`
-		Views               map[string]*viewSpec `yaml:"views"`
-		RequestTranslate    algorithmSpec        `yaml:"requestTranslate"`
-		QueryParamTranspose algorithmSpec        `yaml:"queryParamTranspose"`
-		Pagination          paginationSpec       `yaml:"pagination"`
-		QueryParamPushdown  *pushdownSpec        `yaml:"queryParamPushdown"`
-	} `yaml:"config"`
+	Config   config            `yaml:"config"`
 }
 
 type ref struct {
@@ -163,15 +153,8 @@ type method struct {
 	ServiceName string               `yaml:"serviceName"`
 	Operation   ref                  `yaml:"operation"`
 	Path        ref                  `yaml:"path"`
-	Config      struct {
-		RequestBodyTranslate algorithmSpec  `yaml:"requestBodyTranslate"`
-		Retry                *retrySpec     `yaml:"retry"`
-		RequestTranslate     algorithmSpec  `yaml:"requestTranslate"`
-		QueryParamTranspose  algorithmSpec  `yaml:"queryParamTranspose"`
-		QueryParamPushdown   *pushdownSpec  `yaml:"queryParamPushdown"`
-		Pagination           paginationSpec `yaml:"pagination"`
-	} `yaml:"config"`
-	Request struct {
+	Config      config               `yaml:"config"`
+	Request     struct {
 		Required          []string      `yaml:"required"`
 		Transform         transformSpec `yaml:"transform"`
 		XMLDeclaration    string        `yaml:"xmlDeclaration"`
@@ -208,10 +191,7 @@ type betaSpec struct {
 	} `yaml:"await"`
 }
 
-type transformSpec struct {
-	Type string `yaml:"type"`
-	Body string `yaml:"body"`
-}
+type transformSpec = dsl.Transform
 
 type tokenSpec struct {
 	Key      string `yaml:"key"`
@@ -359,7 +339,12 @@ func (d *document) resolve(name, mName string, withBeta bool) (aot.AOTExchange, 
 	if !ok {
 		return nil, fmt.Errorf("stackqldoc: resource %q references unknown method %q", name, mName)
 	}
+	effective, err := resolveConfig([]string{d.providerName, d.serviceName, name, mName}, d.providerConfig, d.Config, res.Config, m.Config)
+	if err != nil {
+		return nil, err
+	}
 	if len(m.Inline) > 0 {
+		m.Config = effective
 		op := pathOp{Servers: []server{{URL: "local://command"}}}
 		for name, param := range m.Parameters {
 			param.Name = name
@@ -383,6 +368,7 @@ func (d *document) resolve(name, mName string, withBeta bool) (aot.AOTExchange, 
 		return target.resolve(name, mName, withBeta)
 	}
 	m = resolved
+	m.Config = effective
 	path, httpVerb, err := splitOperationRef(m.Operation.Ref)
 	if err != nil {
 		return nil, fmt.Errorf("stackqldoc: resource %q method %q: %w", name, mName, err)
@@ -413,35 +399,20 @@ func (d *document) resolve(name, mName string, withBeta bool) (aot.AOTExchange, 
 		return nil, fmt.Errorf("stackqldoc: resource %q method %q: %w", name, mName, err)
 	}
 	op.Parameters = params
-	if m.Config.RequestTranslate.Algorithm == "" {
-		m.Config.RequestTranslate = res.Config.RequestTranslate
-		if m.Config.RequestTranslate.Algorithm == "" {
-			m.Config.RequestTranslate = d.Config.RequestTranslate
-		}
-	}
-	if m.Config.QueryParamTranspose.Algorithm == "" {
-		m.Config.QueryParamTranspose = res.Config.QueryParamTranspose
-		if m.Config.QueryParamTranspose.Algorithm == "" {
-			m.Config.QueryParamTranspose = d.Config.QueryParamTranspose
-		}
-	}
-	if p := m.Config.Pagination; p.Algorithm == "" && p.RequestToken.Key == "" && p.ResponseToken.Key == "" {
-		m.Config.Pagination = res.Config.Pagination
-	}
+
 	ex := d.build(mName, httpVerb, path, op, m)
-	for _, retry := range []*retrySpec{m.Config.Retry, res.Config.Retry, d.Config.Retry} {
-		if retry != nil {
-			ex.(*aotExchange).retry = retry
-			break
-		}
+	if effective.Retry != nil {
+		ex.(*aotExchange).retry = effective.Retry
 	}
-	// The nearest declaration wins: the method's, else its resource's, else the document's.
-	for _, spec := range []*pushdownSpec{m.Config.QueryParamPushdown, res.Config.QueryParamPushdown, d.Config.QueryParamPushdown} {
-		if spec != nil {
-			ex.(*aotExchange).pushdown = spec
-			break
+	ex.(*aotExchange).pushdown = effective.QueryParamPushdown
+	if withBeta && m.Beta == nil && effective.Lifecycle != nil && d.isCreate(name, mName) {
+		lifecycle, err := d.lifecycle(name, effective.Lifecycle)
+		if err != nil {
+			return nil, fmt.Errorf("stackqldoc: %s.%s lifecycle: %w", name, mName, err)
 		}
+		ex.(*aotExchange).lifecycle = lifecycle
 	}
+
 	if !withBeta || m.Beta == nil {
 		return ex, nil
 	}
@@ -632,7 +603,11 @@ func (d *document) Methods(name string) ([]aot.Method, error) {
 		}
 		out = append(out, info)
 	}
-	if view := res.Config.Views["select"]; view != nil {
+	effective, err := resolveConfig([]string{d.providerName, d.serviceName, name}, d.providerConfig, d.Config, res.Config)
+	if err != nil {
+		return nil, err
+	}
+	if view := effective.Views["select"]; view != nil {
 		out = append(out, methodInfo{name: "__view__", verb: "select", required: view.requiredParams()})
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Name() < out[j].Name() })
@@ -834,9 +809,6 @@ func (d *document) build(name, verb, path string, op pathOp, m method) aot.AOTEx
 // last page, so a method that does not page costs nothing.
 func (d *document) pagination(m method, op pathOp, schema aot.Schema, verb string) pagination {
 	if p := (pagination{req: m.Config.Pagination.RequestToken, resp: m.Config.Pagination.ResponseToken, algorithm: m.Config.Pagination.Algorithm, terminator: m.Config.Pagination.ResponseTerminator}); p.Declared() {
-		return p
-	}
-	if p := (pagination{req: d.Config.Pagination.RequestToken, resp: d.Config.Pagination.ResponseToken, algorithm: d.Config.Pagination.Algorithm, terminator: d.Config.Pagination.ResponseTerminator}); p.Declared() {
 		return p
 	}
 	if op.MsPageable != nil && op.MsPageable.NextLinkName != nil && *op.MsPageable.NextLinkName != "" {
@@ -1092,6 +1064,7 @@ type aotExchange struct {
 	req           request
 	resp          response
 	beta          aot.Beta
+	lifecycle     *aot.Lifecycle
 	pushdown      *pushdownSpec
 }
 
@@ -1256,10 +1229,14 @@ func (r response) Transform() aot.Transform   { return r.transform }
 func (r response) Pagination() aot.Pagination { return r.pagination }
 func (r response) Schema() aot.Schema         { return r.schema }
 
-type transformDeclType struct{ typ, body string }
+type transformDeclType struct {
+	typ, body string
+	admission *dsl.Program
+	required  []string
+}
 
 func transformDecl(t transformSpec) transformDeclType {
-	return transformDeclType{typ: t.Type, body: t.Body}
+	return transformDeclType{typ: t.Type, body: t.Body, admission: t.Admission, required: slices.Clone(t.Required)}
 }
 
 func (t transformDeclType) Type() string { return t.typ }
@@ -1388,3 +1365,14 @@ func (d *document) ResourceNames() map[string]string {
 }
 
 func (p parameter) Type() string { return p.p.Schema.Type }
+
+func (e *aotExchange) Lifecycle() *aot.Lifecycle { return e.lifecycle }
+
+func (t transformDeclType) Admission() aot.Transform {
+	if t.admission == nil {
+		return nil
+	}
+	return transformDeclType{typ: t.admission.Type, body: t.admission.Body}
+}
+
+func (t transformDeclType) Required() []string { return slices.Clone(t.required) }

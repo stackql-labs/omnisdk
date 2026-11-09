@@ -61,6 +61,14 @@ func composePipeline(id int64, p Plan) (facade.Operator, error) {
 	if err := Validate(p); err != nil {
 		return nil, err
 	}
+	var admissionErr error
+	p, admissionErr = collapseAdmissions(p)
+	if admissionErr != nil {
+		return nil, admissionErr
+	}
+	if err := Validate(p); err != nil {
+		return nil, err
+	}
 	byName := make(map[string]ExchangeSpec, len(p.Exchanges()))
 	for _, x := range p.Exchanges() {
 		byName[x.Name()] = x
@@ -156,7 +164,11 @@ func stage(p Plan, byName map[string]ExchangeSpec, comps []component, specs []fa
 		}
 	}
 	*nid++
-	op = bind.NewBindJoinIn(*nid, op, bindings, bind.InnerFactory(node.Make), alphaInto(p.Alphas(), name), 1, node.Inbound())
+	if coordinator, ok := node.(interface{ Coordinator() bool }); ok && coordinator.Coordinator() {
+		op = bind.NewCoordinatorBindJoinIn(*nid, op, bindings, bind.InnerFactory(node.Make), alphaInto(p.Alphas(), name), 1, node.Inbound())
+	} else {
+		op = bind.NewBindJoinIn(*nid, op, bindings, bind.InnerFactory(node.Make), alphaInto(p.Alphas(), name), 1, node.Inbound())
+	}
 
 	flat := node.Flatten()
 	if flat == nil {
@@ -229,6 +241,11 @@ func Order(exchanges []ExchangeSpec, betas []BetaEdge) []string {
 func Validate(p Plan) error {
 	var missing []string
 	for _, x := range p.Exchanges() {
+		if validator, ok := x.Inbound().(interface{ Validate() error }); ok {
+			if err := validator.Validate(); err != nil {
+				return fmt.Errorf("%s inbound transform: %w", x.Name(), err)
+			}
+		}
 		for _, attr := range x.In() {
 			if _, ok := betaSrc(p.Betas(), x.Name(), attr); ok {
 				continue // produced by an upstream exchange at runtime

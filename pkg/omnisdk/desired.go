@@ -20,6 +20,7 @@ import (
 	"github.com/stackql-labs/omnisdk/pkg/docparse/dsl"
 	"github.com/stackql-labs/omnisdk/pkg/docparse/dsl/gotemplate"
 	"github.com/stackql-labs/omnisdk/pkg/docparse/dsl/schemaxml"
+	starlarkdsl "github.com/stackql-labs/omnisdk/pkg/docparse/dsl/starlark"
 	"github.com/stackql-labs/omnisdk/pkg/query"
 )
 
@@ -87,7 +88,7 @@ func incomingOf(r ManagedResource) ([]string, error) {
 	if typ == "" {
 		return inbox, nil
 	}
-	reg, err := dsl.NewRegistry(append(gotemplate.Evaluators(), schemaxml.New())...)
+	reg, err := dsl.NewRegistry(append(gotemplate.Evaluators(), schemaxml.New(), starlarkdsl.New())...)
 	if err != nil {
 		return nil, err
 	}

@@ -68,6 +68,8 @@ func (g *gcpNetworks) serve(t *testing.T) *httptest.Server {
 				errField = fmt.Sprintf(`,"error":{"errors":[{"code":%q}]}`, g.finalErr)
 			}
 			fmt.Fprintf(w, `{"name":"op-1","status":"DONE","targetLink":"projects/demo/global/networks/net-1"%s}`, errField)
+		case r.Method == http.MethodGet && strings.HasSuffix(p, "/subnetworks/sub-1"):
+			fmt.Fprint(w, `{"name":"sub-1","ipCidrRange":"10.0.0.0/24"}`)
 		case r.Method == http.MethodPost && strings.HasSuffix(p, "/subnetworks"):
 			b, _ := io.ReadAll(r.Body)
 			_ = json.Unmarshal(b, &g.subnetBody)

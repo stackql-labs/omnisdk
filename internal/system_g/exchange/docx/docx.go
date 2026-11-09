@@ -48,6 +48,7 @@ type Option func(*options)
 type options struct {
 	rowCache                      facade.RowCache
 	snapshotCache                 bool
+	observationOnly               bool
 	httpObserver                  facade.HTTPObserver
 	cachePartition, cacheResource string
 	legacyPagination              bool
@@ -454,23 +455,70 @@ func Spec(ex aot.AOTExchange, inputs map[string]any, reg dsl.Registry, opts ...O
 	for _, opt := range opts {
 		opt(&o)
 	}
+	var admission *dsl.Program
+	var hardRequired []string
+	if transform := ex.Response().Transform(); transform != nil && transform.Type() != "" {
+		if err := validateSource(reg, transform); err != nil {
+			return nil, err
+		}
+		if declared, ok := transform.(aot.AdmittedTransform); ok && declared.Admission() != nil {
+			return nil, fmt.Errorf("response admission is not an inbound dependency; declare it on the consumer transform")
+		}
+	}
+	if request, ok := ex.Request().(aot.RequestTransform); ok {
+		transform := request.RequestTransform()
+		if declared, ok := transform.(aot.RequiredTransform); ok {
+			hardRequired = declared.Required()
+		}
+		if transform != nil && transform.Type() != "" {
+			if err := validateSource(reg, transform); err != nil {
+				return nil, err
+			}
+		}
+		if declared, ok := transform.(aot.AdmittedTransform); ok && declared.Admission() != nil {
+			predicate := declared.Admission()
+			admission = &dsl.Program{Type: predicate.Type(), Body: predicate.Body()}
+			if err := dsl.Validate(reg, admission.Type, admission.Body); err != nil {
+				return nil, err
+			}
+		}
+	}
 	c, err := compile(ex, inputs, reg, o)
 	if err != nil {
 		return nil, err
 	}
-	b, ok := ex.Beta()
-	if !ok {
-		return c, nil
+	if b, ok := ex.Beta(); ok {
+		cc := c.(compiled)
+		cc.spec, err = awaited(cc.spec, b, inputs, reg, o)
+		c = cc
+	} else if configured, ok := ex.(aot.LifecycleConfigured); ok && configured.Lifecycle() != nil {
+		cc := c.(compiled)
+		cc.spec, err = lifecycleAwaited(cc.spec, configured.Lifecycle(), inputs, reg, o)
+		c = cc
 	}
-	cc := c.(compiled)
-	if cc.spec, err = awaited(cc.spec, b, inputs, reg, o); err != nil {
+	if err != nil {
 		return nil, err
 	}
-	return cc, nil
+	if admission != nil || len(hardRequired) > 0 {
+		transform, err := InboundTransform(reg, dsl.Transform{Admission: admission, Required: hardRequired})
+		if err != nil {
+			return nil, err
+		}
+		if cc, ok := c.(compiled); ok {
+			cc.spec = plan.WithInbound(plan.WithInputs(cc.spec, hardRequired...), transform)
+			c = cc
+		} else {
+			c = plan.WithInbound(plan.WithInputs(c, hardRequired...), transform)
+		}
+	}
+	return c, nil
 }
 
 // compile is Spec for one call, beta aside.
 func compile(ex aot.AOTExchange, inputs map[string]any, reg dsl.Registry, o options) (plan.ExchangeSpec, error) {
+	if err := validateExchangePrograms(ex, reg, o); err != nil {
+		return nil, err
+	}
 	if local, ok := ex.(aot.InlineCommand); ok && len(local.InlineCommand()) > 0 {
 		s, err := localSpec(ex, local.InlineCommand(), inputs, reg, o)
 		if err != nil {
@@ -906,7 +954,7 @@ func compile(ex aot.AOTExchange, inputs map[string]any, reg dsl.Registry, o opti
 				if o.httpObserver != nil {
 					selected = exchange.NewTransformExchange(0, selected, rowsObservation{o.httpObserver}, 1)
 				}
-				return withClient(withRetrySettings(namedRows(cachePlan.wrap(selectionRead(exchange.NewExplodeRows(selected, 1), o.selectionErrors), rowBound), req, rowBound), retrySettings, req.Method()), o.client)
+				return withClient(withRetrySettings(namedRows(cachePlan.wrap(selectionRead(exchange.NewExplodeRows(selected, 1), o.selectionErrors), rowBound), req, observationScope(o, rowBound)), retrySettings, req.Method()), o.client)
 			}
 		}
 		tokens := tokenDecoder(resp)
@@ -929,14 +977,14 @@ func compile(ex aot.AOTExchange, inputs map[string]any, reg dsl.Registry, o opti
 			// A mutating call answers about ONE object, not a list. The document's objectKey
 			// describes where a SELECT finds its items, and applying it here explodes a reply that
 			// has no list — yielding zero rows for a call that plainly succeeded.
-			return withClient(withRetrySettings(namedRows(decoded, req, rowBound), retrySettings, req.Method()), o.client)
+			return withClient(withRetrySettings(namedRows(decoded, req, observationScope(o, rowBound)), retrySettings, req.Method()), o.client)
 		}
 		listed := exchange.NewTransformExchange(0, decoded, rowSelection, 1)
 		if o.httpObserver != nil {
 			listed = exchange.NewTransformExchange(0, listed, rowsObservation{o.httpObserver}, 1)
 		}
 		rows := declaredXMLRows(exchange.NewExplodeRows(listed, 1), resp, hasProgram)
-		return withClient(withRetrySettings(namedRows(cachePlan.wrap(selectionRead(rows, o.selectionErrors), rowBound), req, rowBound), retrySettings, req.Method()), o.client)
+		return withClient(withRetrySettings(namedRows(cachePlan.wrap(selectionRead(rows, o.selectionErrors), rowBound), req, observationScope(o, rowBound)), retrySettings, req.Method()), o.client)
 		// INNER, not left-outer: this is a SELECT, and an empty result set is zero rows. A left-outer
 		// would emit one row of bare inputs, which reads as "one instance with no fields".
 	}, bind.NewInnerFlatten())
@@ -1406,9 +1454,11 @@ func InboundProgram(reg dsl.Registry, typ, body string) facade.Transform {
 }
 
 type inboundProgram struct {
-	reg  dsl.Registry
-	typ  string
-	body string
+	reg       dsl.Registry
+	typ       string
+	body      string
+	admission *dsl.Program
+	required  []string
 }
 
 func (p inboundProgram) Apply(in facade.Page) (facade.Record, error) {
@@ -1416,11 +1466,21 @@ func (p inboundProgram) Apply(in facade.Page) (facade.Record, error) {
 	if !ok {
 		return nil, fmt.Errorf("docx: inbound transform received no inbox")
 	}
+	return p.ApplyInbox(context.Background(), inbox, nil)
+}
+
+func (p inboundProgram) ApplyInbox(ctx context.Context, inbox map[string]any, edges map[string]facade.EdgeState) (facade.Record, error) {
+	if !requiredPresent(inbox, p.required) {
+		return nil, fmt.Errorf("required transform inbox inputs are absent: %v", p.required)
+	}
+	if p.typ == "" {
+		return bind.NewDocRecord(inbox), nil
+	}
 	raw, err := json.Marshal(inbox)
 	if err != nil {
 		return nil, fmt.Errorf("docx: encode inbox: %w", err)
 	}
-	out, err := p.reg.Eval(p.typ, dsl.Context{}, p.body, raw)
+	out, err := p.reg.Eval(p.typ, dsl.Context{Execution: ctx, Edges: edgeDocuments(edges)}, p.body, raw)
 	if err != nil {
 		return nil, fmt.Errorf("docx: inbound program: %w", err)
 	}

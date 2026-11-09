@@ -67,6 +67,7 @@ import (
 	"github.com/stackql-labs/omnisdk/pkg/docparse/dsl"
 	"github.com/stackql-labs/omnisdk/pkg/docparse/dsl/gotemplate"
 	"github.com/stackql-labs/omnisdk/pkg/docparse/dsl/schemaxml"
+	starlarkdsl "github.com/stackql-labs/omnisdk/pkg/docparse/dsl/starlark"
 	"github.com/stackql-labs/omnisdk/pkg/docparse/stackqldoc"
 	"github.com/stackql-labs/omnisdk/public/authorization"
 	"github.com/stackql/stackql-provider-registry/signing/pqsig"
@@ -1232,7 +1233,7 @@ func NewFromDoc(doc []byte, provider, resource string, args Args) (Plan, error) 
 	if err := checkEndpoint(args); err != nil {
 		return nil, err
 	}
-	reg, err := dsl.NewRegistry(append(gotemplate.Evaluators(), schemaxml.New())...)
+	reg, err := dsl.NewRegistry(append(gotemplate.Evaluators(), schemaxml.New(), starlarkdsl.New())...)
 	if err != nil {
 		return nil, err
 	}
@@ -1448,7 +1449,7 @@ func NewSelectFromCatalog(dir, address string, args Args) (Plan, error) {
 	if err != nil {
 		return nil, fmt.Errorf("omnisdk: %s: %w", address, err)
 	}
-	reg, err := dsl.NewRegistry(append(gotemplate.Evaluators(), schemaxml.New())...)
+	reg, err := dsl.NewRegistry(append(gotemplate.Evaluators(), schemaxml.New(), starlarkdsl.New())...)
 	if err != nil {
 		return nil, err
 	}
