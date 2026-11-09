@@ -59,7 +59,11 @@ def main():
     (out / "manifest.json").write_text(json.dumps(manifest, indent=2) + "\n")
     (out / "candidate.patch").write_bytes(run(["git", "diff", "HEAD", "--binary"], capture_output=True).stdout)
     for path in WORKLOADS:
-        shutil.copyfile(ROOT / path, out / Path(path).name.replace("ordinary_", Path(path).parts[0] + "_ordinary_"))
+        name = Path(path).name.replace("ordinary_", Path(path).parts[0] + "_ordinary_")
+        # These are evidence snapshots, not a Go package. Keep them out of
+        # `go test ./...` even when --out is inside the repository.
+        shutil.copyfile(ROOT / path, out / (name + ".txt"))
+        (out / name).unlink(missing_ok=True)  # Remove artifacts from older runs.
     env = dict(os.environ, GOCACHE=os.environ.get("GOCACHE", "/tmp/omnisdk-go-cache"))
     command = ["go", "test", "./internal/system_g/plan", "./pkg/omnisdk", "-run", "^$",
                "-bench", "^BenchmarkOrdinary", "-benchmem", "-cpu=2", f"-count={args.count}", f"-benchtime={args.benchtime}"]

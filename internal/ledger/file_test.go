@@ -136,3 +136,23 @@ func TestFileSurvivesReopen(t *testing.T) {
 		t.Errorf("plan=%q identity=%q, want n / id-1 after reopen", e.Plan(), e.Identity())
 	}
 }
+
+func TestFileAcceptsNginxAndZeroInKeys(t *testing.T) {
+	log, err := ledger.NewFile(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	key := facade.LedgerKey("nginx-01/instance-0")
+	if err := log.Begin(ctx, key, []byte(`{}`), facade.LedgerVersionNone); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, found, err := log.Get(ctx, key); err != nil || !found {
+		t.Fatalf("found=%v err=%v", found, err)
+	}
+	for _, invalid := range []facade.LedgerKey{"nginx/\x00instance", "nginx/instance\\escape"} {
+		if err := log.Begin(ctx, invalid, []byte(`{}`), facade.LedgerVersionNone); err == nil {
+			t.Fatalf("accepted invalid key %q", invalid)
+		}
+	}
+}

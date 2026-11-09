@@ -317,7 +317,8 @@ func (d durable) aboutOf(bound map[string]any) []byte {
 	}
 	rec := aboutRecord{Provider: d.provider, Address: rel, AddressedBy: d.resource.AddressedBy()}
 	for k, v := range bound {
-		if d.deletes[k] && k != rec.AddressedBy && !strings.HasPrefix(k, "\x00") && v != nil {
+		base, _, _ := strings.Cut(k, ".")
+		if (d.deletes[k] || d.deletes[base]) && k != rec.AddressedBy && !strings.HasPrefix(k, "\x00") && !docx.IsCredential(k) && v != nil {
 			if rec.Params == nil {
 				rec.Params = map[string]string{}
 			}

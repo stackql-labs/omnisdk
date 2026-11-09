@@ -55,7 +55,7 @@ func NewFile(root string) (facade.Ledger, error) {
 func (f *fileLedger) paths(k facade.LedgerKey) (dir, stem string, err error) {
 	segs := strings.Split(string(k), "/")
 	for _, s := range segs {
-		if s == "" || s == "." || s == ".." || strings.ContainsAny(s, `\x00/\`) {
+		if s == "" || s == "." || s == ".." || strings.ContainsAny(s, "\x00/\\") {
 			return "", "", fmt.Errorf("ledger: illegal key segment %q in %q", s, k)
 		}
 	}

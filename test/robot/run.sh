@@ -10,6 +10,7 @@ VENV="test/mock/.venv"
 PY="${PYTHON:-python3}"
 
 go build -o build/omnicli ./cmd/omnicli
+go build -o build/aws-nginx ./cicd/examples/aws-nginx
 
 [ -d "$VENV" ] || "$PY" -m venv "$VENV"
 "$VENV/bin/pip" install -q --upgrade pip

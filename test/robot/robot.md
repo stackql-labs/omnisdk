@@ -55,3 +55,10 @@ test/mock/.venv/bin/robot --outputdir test/robot/out/alternative-inputs test/rob
 ```
 
 See the [canonical example](../../cicd/examples/alternative-input-requirements/README.md).
+
+## AWS nginx lifecycle
+
+`aws_nginx.robot` applies an EC2 document merge, provisions a VPC/two subnets/routing/SSH key/security
+group/nginx VM against a strict local API, then verifies stop, termination and ledger-ordered cleanup.
+It needs the AWS corpus and `build/aws-nginx`, built automatically by `run.sh`.
+See the [live-run and mock instructions](../../cicd/examples/aws-nginx/README.md).
