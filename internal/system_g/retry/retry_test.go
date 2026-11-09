@@ -178,3 +178,15 @@ func TestExchangeOverridesShareTheParentRetryBudget(t *testing.T) {
 		t.Fatal("exchange override created a new retry budget")
 	}
 }
+
+func TestDisabledMutationCannotBeOverriddenByDocumentPolicy(t *testing.T) {
+	ctx := Disable(WithPolicy(context.Background(), New(Config{Tries: 5})))
+	ctx = WithPolicy(ctx, Override(From(ctx), Config{Tries: 10}))
+	if _, again := From(ctx).Recover(ctx, facade.Attempt{Status: 503}); again {
+		t.Fatal("nested policy re-enabled mutation retries")
+	}
+	read := WithPolicy(context.Background(), New(Config{Tries: 5}))
+	if _, again := From(read).Recover(read, facade.Attempt{Status: 503}); !again {
+		t.Fatal("ordinary read retries disabled")
+	}
+}

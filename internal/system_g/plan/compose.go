@@ -57,6 +57,29 @@ func ComposeRows(id int64, p Plan) facade.Operator {
 // composePipeline builds the staged bind-join pipeline (root → stages, egress-unshaped), shared by
 // Compose (byte terminal) and ComposeRows (row terminal). It stops before the terminal.
 func composePipeline(id int64, p Plan) (facade.Operator, error) {
+	var callbacks map[string]func(context.Context) error
+	for _, spec := range p.Exchanges() {
+		if c, ok := spec.(interface{ checkpoint(context.Context) error }); ok {
+			if callbacks == nil {
+				callbacks = map[string]func(context.Context) error{}
+			}
+			callbacks[spec.Name()] = c.checkpoint
+		}
+	}
+	checkpoint := func(op facade.Operator, components []component) facade.Operator {
+		var done []func(context.Context) error
+		for _, c := range components {
+			for _, name := range c.members {
+				if f := callbacks[name]; f != nil {
+					done = append(done, f)
+				}
+			}
+		}
+		if len(done) == 0 {
+			return op
+		}
+		return checkpointOp{Operator: op, callbacks: done}
+	}
 	p = controlled(p)
 	hasAdmission, err := validateWithAdmission(p)
 	if err != nil {
@@ -109,7 +132,7 @@ func composePipeline(id int64, p Plan) (facade.Operator, error) {
 		op = tap(&nid, seedOp{rec: bind.NewDocRecord(map[string]any{})}, "inputs")
 	} else {
 		name := comps[0].members[0]
-		op = tap(&nid, byName[name].Make(nil), name)
+		op = checkpoint(tap(&nid, byName[name].Make(nil), name), comps[:1])
 		stages = comps[1:]
 	}
 
@@ -120,6 +143,7 @@ func composePipeline(id int64, p Plan) (facade.Operator, error) {
 			if op, err = stage(p, byName, comps, specs, level[0], op, &nid); err != nil {
 				return nil, err
 			}
+			op = checkpoint(op, level)
 			continue
 		}
 		sec := &section{up: op}
@@ -131,7 +155,7 @@ func composePipeline(id int64, p Plan) (facade.Operator, error) {
 			}
 			sec.slots, sec.members = append(sec.slots, slot), append(sec.members, member)
 		}
-		op = sec
+		op = checkpoint(sec, level)
 	}
 	return op, nil
 }

@@ -18,6 +18,12 @@ class AwsNginxLibrary:
         self.repo = Path(__file__).resolve().parents[2]
         self.root = Path(tempfile.mkdtemp(prefix="omni-aws-nginx-"))
         self.events, self.lock = [], threading.Lock()
+        self.checkpoints = []
+        self.lose_create_response = False
+        self.lose_delete_response = False
+        self.pause_poll = False
+        self.poll_started = threading.Event()
+        self.allow_poll = threading.Event()
         self.subnets, self.associations = set(), set()
         self.vpc = self.gateway = self.attached = self.routes = self.route = self.group = self.ingress = self.key = False
         self.instance = None
@@ -34,10 +40,19 @@ class AwsNginxLibrary:
                 form.update(parse_qs(urlparse(self.path).query))
                 values = {key: value[0] for key, value in form.items()}
                 action = values.get("Action", "")
+                if action == "DescribeInstances" and owner.pause_poll:
+                    owner.poll_started.set()
+                    owner.allow_poll.wait(30)
+                    self.close_connection = True
+                    return
                 try:
                     with owner.lock:
                         owner.events.append({"action": action, "params": values})
+                        owner.check_checkpoint(action)
                         fields = owner.dispatch(action, values)
+                    if (action == "RunInstances" and owner.lose_create_response) or (action == "TerminateInstances" and owner.lose_delete_response):
+                        self.close_connection = True
+                        return  # Remote mutation succeeded; the caller receives no response.
                     body = f'<{action}Response xmlns="http://ec2.amazonaws.com/doc/2016-11-15/">{fields}</{action}Response>'.encode()
                     self.send_response(200)
                 except (AssertionError, KeyError) as error:
@@ -59,7 +74,7 @@ class AwsNginxLibrary:
         assert not self.events, "preparation contacted AWS"
         assert (self.root / "ec2.merge.json").exists(), result.stdout
 
-    def cli(self, command, *arguments):
+    def cli(self, command, *arguments, expect_success=True):
         result = subprocess.run([self.binary, command, "--case", str(self.root), *arguments,
                                  *([] if command == "prepare" else ["--endpoint", self.endpoint])],
                                 capture_output=True, text=True, timeout=60,
@@ -68,8 +83,57 @@ class AwsNginxLibrary:
         (self.root / f"{command}.stderr.txt").write_text(result.stderr)
         with self.lock:
             (self.root / "api-transcript.json").write_text(json.dumps(self.events, indent=2))
-        assert result.returncode == 0, f"{command}: {result.stdout}\n{result.stderr}\ncase: {self.root}"
+        assert (result.returncode == 0) == expect_success, f"{command}: {result.stdout}\n{result.stderr}\ncase: {self.root}"
         return result
+
+    def ledger_snapshot(self):
+        collection = json.loads((self.root / "config.json").read_text())["collection"]
+        directory = self.root / "state" / "ledger" / collection
+        latest = {}
+        for file in directory.glob("*.v*.json"):
+            stem, version = file.name.rsplit(".v", 1)
+            number = int(version.removesuffix(".json"))
+            if stem not in latest or number > latest[stem][0]:
+                latest[stem] = (number, json.loads(file.read_text()))
+        return {key: data for key, (_, data) in latest.items() if not data.get("tombstone")}
+
+    def check_checkpoint(self, action):
+        if action not in {"CreateVpc", "ImportKeyPair", "RunInstances", "DescribeInstances", "StopInstances", "TerminateInstances", "DeleteVpc"}:
+            return
+        snapshot = self.ledger_snapshot()
+        claims = json.loads(base64.b64decode(snapshot[".lease"]["proposed"]))["claims"] or []
+        owned = set()
+        for claim in claims:
+            keys = set(claim.get("keys", []))
+            assert not owned.intersection(keys), "overlapping write leases"
+            owned.update(keys)
+        target = {"CreateVpc": "vpc", "ImportKeyPair": "key", "RunInstances": "instance", "StopInstances": "instance", "TerminateInstances": "instance", "DeleteVpc": "vpc"}.get(action)
+        if target:
+            assert snapshot[target]["phase"] == 0, (action, snapshot[target])
+            assert any(c.get("all") or any(k.endswith("/" + target) for k in c.get("keys", [])) for c in claims), (action, "missing write lock")
+        if action == "RunInstances":
+            assert not any(k.endswith("/vpc") or k.endswith("/security_group") or k.endswith("/association_b") for k in owned), "terminal resources stayed locked into VM provisioning"
+            assert len([k for k in snapshot if not k.startswith(".")]) == 13
+            assert all(v["phase"] == 1 for k, v in snapshot.items() if k not in {".lease", "instance"})
+        if action == "DescribeInstances" and self.instance == "pending":
+            assert snapshot["instance"]["phase"] == 0, "readiness published early"
+            journal = [json.loads(line) for line in (self.root / "state/journal/create.jsonl").read_text().splitlines()]
+            assert any(r.get("await_inputs", {}).get("InstanceId.1") == "i-web" for r in journal), "poll handle not durable"
+        if action == "StopInstances":
+            about = json.loads(base64.b64decode(snapshot["instance"]["about"]))
+            assert about.get("depends_on"), "stop lost dependency metadata"
+        if action == "DeleteVpc":
+            assert [k for k in snapshot if not k.startswith(".")] == ["vpc"], "VPC deleted before dependents"
+        self.checkpoints.append({"action": action, "ledger": snapshot, "claims": claims})
+        (self.root / "checkpoints.json").write_text(json.dumps(self.checkpoints, indent=2))
+
+    def assert_ledger_settled(self, expected):
+        snapshot = self.ledger_snapshot()
+        resources = {k: v for k, v in snapshot.items() if not k.startswith(".")}
+        assert len(resources) == expected, resources
+        assert all(v["phase"] == 1 and v.get("identity") for v in resources.values()), resources
+        claims = json.loads(base64.b64decode(snapshot[".lease"]["proposed"]))["claims"]
+        assert not claims, "write locks leaked after phase completion"
 
     def dispatch(self, action, p):
         if action == "CreateVpc":
@@ -187,6 +251,7 @@ class AwsNginxLibrary:
 
     def create_aws_nginx(self):
         self.cli("apply")
+        self.assert_ledger_settled(13)
         outputs = json.loads((self.root / "outputs.json").read_text())
         assert outputs["instance_id"] == "i-web", outputs
         assert self.instance == "running"
@@ -199,12 +264,66 @@ class AwsNginxLibrary:
 
     def destroy_aws_nginx(self):
         self.cli("destroy")
+        self.assert_ledger_settled(0)
         assert self.instance in {None, "terminated"}
         assert not any([self.vpc, self.gateway, self.attached, self.routes, self.route, self.group, self.ingress, self.key, self.subnets, self.associations])
         actions = [event["action"] for event in self.events]
         assert actions.count("RunInstances") == 1
         assert actions.index("StopInstances") < actions.index("TerminateInstances") < actions.index("DeleteVpc")
         (self.root / "api-transcript.json").write_text(json.dumps(self.events, indent=2))
+
+    def lose_create_response_and_verify_ledger(self):
+        self.lose_create_response = True
+        self.cli("apply", expect_success=False)
+        snapshot = self.ledger_snapshot()
+        assert snapshot["instance"]["phase"] == 0 and not snapshot["instance"].get("identity"), snapshot
+        assert self.instance == "pending", "mock must have created the remote VM"
+        assert len([k for k in snapshot if not k.startswith(".")]) == 13, "compensation discarded dependencies of an uncertain create"
+        actions = [event["action"] for event in self.events]
+        assert actions.count("RunInstances") == 1, "transport retries duplicated an uncertain create"
+        self.cli("apply", expect_success=False)
+        assert [event["action"] for event in self.events] == actions, "recovery replayed a mutation"
+        self.cli("destroy", "--skip-stop", expect_success=False)
+        assert [event["action"] for event in self.events] == actions, "teardown deleted dependencies of an uncertain VM"
+        retained = self.ledger_snapshot()
+        assert retained["instance"]["phase"] == 0
+        assert len([k for k in retained if not k.startswith(".")]) == 13
+
+    def lose_delete_response_and_verify_ledger(self):
+        self.cli("apply")
+        self.lose_delete_response = True
+        self.cli("destroy", expect_success=False)
+        snapshot = self.ledger_snapshot()
+        assert snapshot["instance"]["phase"] == 0
+        assert base64.b64decode(snapshot["instance"]["identity"]).decode() == "i-web", "uncertain deletion lost prior identity"
+        assert snapshot["instance"].get("about"), "uncertain deletion lost dependency metadata"
+        assert self.vpc and self.group and "subnet-a" in self.subnets, "teardown deleted an uncertain VM's dependencies"
+        actions = [event["action"] for event in self.events]
+        assert actions.count("TerminateInstances") == 1, "transport retries duplicated an uncertain delete"
+        self.cli("destroy", "--skip-stop", expect_success=False)
+        assert [event["action"] for event in self.events] == actions, "restart blindly repeated delete"
+
+    def interrupt_readiness_and_verify_recovery(self):
+        self.pause_poll = True
+        environment = {**__import__("os").environ, "AWS_ACCESS_KEY_ID": "MOCKACCESS", "AWS_SECRET_ACCESS_KEY": "mock-secret"}
+        with (self.root / "interrupted.stdout.txt").open("w") as stdout, (self.root / "interrupted.stderr.txt").open("w") as stderr:
+            process = subprocess.Popen([self.binary, "apply", "--case", str(self.root), "--endpoint", self.endpoint], env=environment, stdout=stdout, stderr=stderr)
+            try:
+                assert self.poll_started.wait(20), f"readiness poll never started: {self.root}"
+            finally:
+                process.kill()
+                process.wait(timeout=5)
+                self.allow_poll.set()
+        snapshot = self.ledger_snapshot()
+        assert snapshot["instance"]["phase"] == 0 and not snapshot["instance"].get("identity")
+        journal = [json.loads(line) for line in (self.root / "state/journal/create.jsonl").read_text().splitlines()]
+        assert any(r.get("await_inputs", {}).get("InstanceId.1") == "i-web" for r in journal), "interruption lost polling handle"
+        claims = json.loads(base64.b64decode(snapshot[".lease"]["proposed"]))["claims"]
+        assert any("robot-nginx/instance" in c.get("keys", []) for c in claims), "interruption lost in-flight write lock"
+        before = len(self.events)
+        self.cli("destroy", "--skip-stop", expect_success=False)
+        self.cli("apply", expect_success=False)
+        assert len(self.events) == before, "restart wrote through an active lease or replayed create"
 
     def stop_aws_nginx_mock(self):
         if hasattr(self, "server"):

@@ -281,6 +281,7 @@ func (p *desiredPlan) Open(ctx context.Context) (Rows, error) {
 		return nil, err
 	}
 	defer h.release()
+	ctx = h.ctx
 	key := func(k string) facade.LedgerKey { return facade.LedgerKey(p.name + "/" + k) }
 	prior := func(k string) map[string]any {
 		e, _, found, err := h.log.Get(ctx, key(k))
@@ -305,7 +306,7 @@ func (p *desiredPlan) Open(ctx context.Context) (Rows, error) {
 	if err != nil {
 		return nil, err
 	}
-	run := &managedRun{name: p.name, ledger: h.log, journal: h.journal, nodes: nodes}
+	run := &managedRun{name: p.name, ledger: h.log, journal: h.journal, nodes: nodes, held: h}
 	a := p.args
 	a.managed = run
 	pl, err := NewGraphQuery(p.registry, g, a)

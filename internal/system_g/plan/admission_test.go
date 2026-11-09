@@ -54,6 +54,8 @@ func TestAdmissionRacesSufficientObservations(t *testing.T) {
 				t.Fatal(err)
 			}
 			var updates, cancelled atomic.Int32
+			var started atomic.Int32
+			bothStarted := make(chan struct{})
 			create := plan.NewExchangeSpec("create", nil, []string{"id"}, func(map[string]any) facade.Operator {
 				return mockObservation(func(context.Context) (map[string]any, error) { return map[string]any{"id": "db-1"}, nil })
 			}, nil)
@@ -62,6 +64,16 @@ func TestAdmissionRacesSufficientObservations(t *testing.T) {
 					return mockObservation(func(ctx context.Context) (map[string]any, error) {
 						if inputs["id"] != "db-1" {
 							return nil, fmt.Errorf("lost create handle")
+						}
+						if winner != "either" {
+							if started.Add(1) == 2 {
+								close(bothStarted)
+							}
+							select {
+							case <-bothStarted:
+							case <-ctx.Done():
+								return nil, ctx.Err()
+							}
 						}
 						if name != winner && winner != "either" {
 							<-ctx.Done()

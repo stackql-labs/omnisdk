@@ -758,6 +758,9 @@ func NewGraphQuery(dir string, g Graph, args Args) (Plan, error) {
 			if err != nil {
 				return nil, err
 			}
+			if run := args.managed; run != nil && run.locks != nil {
+				spec = plan.WithCheckpoint(spec, func(ctx context.Context) error { return run.locks.complete(ctx, alias) })
+			}
 			specs = append(specs, spec)
 			betas = append(betas, b...)
 			continue
@@ -1068,6 +1071,9 @@ func NewGraphQuery(dir string, g Graph, args Args) (Plan, error) {
 			spec = tagged{ExchangeSpec: spec, alias: alias, attrs: attrs}
 		}
 		spec = scopedExchange(spec, providerBinding)
+		if run := args.managed; run != nil && run.locks != nil {
+			spec = plan.WithCheckpoint(spec, func(ctx context.Context) error { return run.locks.complete(ctx, alias) })
+		}
 		specs = append(specs, spec)
 	}
 

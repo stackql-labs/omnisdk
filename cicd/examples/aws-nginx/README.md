@@ -54,8 +54,9 @@ AWS credentials through the SDK's normal AWS authentication configuration. No IA
 to the VM, and the bootstrap needs no AWS credentials.
 
 Applying this example creates billable EC2, EBS and public IPv4 resources. Keep the case directory
-and its ledger until teardown succeeds. Run one phase per case at a time; the current collection
-lease is fixed at five minutes and is not renewed.
+and its ledger until teardown succeeds. Run one phase per case at a time. Managed graphs renew
+resource leases during execution and release resources after their last consumer finishes.
+Collection-wide destruction retains an exclusive lease while scanning and removing dependencies.
 
 ## Create, inspect and verify
 
@@ -107,7 +108,8 @@ build/aws-nginx status --case "$CASE"
 build/aws-nginx destroy --case "$CASE"
 ```
 
-Stop runs as a journalled query without replacing the instance's ownership/dependency record.
+Stop runs as a managed mutation under the instance's resource lock, preserving its resolved
+intent and ownership/dependency record. The lock remains held through the stopped-state poll.
 Destroy uses the collection ledger, not tags or a fresh list of matching AWS resources. The instance
 must finish termination before its key is forgotten and its dependents can be removed. The ledger
 then orders rule revocation/group deletion, route and association removal, gateway detachment,
@@ -158,7 +160,16 @@ corpus plus merge, the actual SDK and ledger, and a strict local EC2 Query API. 
 - custom nginx bootstrap and health marker in the encoded user data;
 - running → stopping → stopped → shutting-down → terminated observations;
 - original ingress rules available for revocation from ledger metadata;
-- one instance launch, dependency-valid deletion, and no remaining mock cloud resources.
+- one instance launch, dependency-valid deletion, and no remaining mock cloud resources;
+- durable pending intent and write locks at mutation/readiness checkpoints;
+- early release of the VPC, security group and unused subnet association before VM provisioning;
+- lost create responses: exactly one launch request, retained intent and dependencies, no blind replay;
+- process termination during readiness: retained polling handle and refusal of competing writes;
+- lost delete responses: retained identity/dependencies and no blind repeated termination.
 
 Robot reports are under `test/robot/out/aws-nginx`. The temporary case path is included on failure;
 its `api-transcript.json` and per-command stdout/stderr are retained for diagnosis.
+
+See [resource locking and ledger recovery](../../../docs/developer/resource-locking.md) for the
+lock scope, conservative recovery rules, and current limitations. Interrupted or uncertain runs
+retain evidence; automatic reconciliation of those pending outcomes is not implemented here.

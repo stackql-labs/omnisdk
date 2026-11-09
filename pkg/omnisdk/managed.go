@@ -147,9 +147,13 @@ type managedRun struct {
 	ledger  facade.Ledger
 	journal facade.Journal
 	nodes   map[string]Managed // alias → resource
+	locks   *resourceLocks
+	held    *held
 
-	mu      sync.Mutex
-	applied []appliedEffect // in the order they landed
+	mu            sync.Mutex
+	applied       []appliedEffect // in the order they landed
+	access        map[facade.LedgerKey]localAccess
+	accessChanged chan struct{}
 }
 
 type appliedEffect struct {
@@ -158,6 +162,7 @@ type appliedEffect struct {
 	address  string
 	verb     string
 	identity string
+	version  facade.LedgerVersion
 }
 
 func (r *managedRun) keyOf(k string) facade.LedgerKey { return facade.LedgerKey(r.name + "/" + k) }
@@ -388,9 +393,43 @@ func dependsOn(g Graph, owners map[string]Managed, m Managed) []string {
 
 func (d durable) open(ctx context.Context, o effectOp) facade.Records {
 	k := d.run.keyOf(d.resource.Key())
+	dependencies := make([]facade.LedgerKey, 0, len(d.dependsOn))
+	for _, dependency := range d.dependsOn {
+		dependencies = append(dependencies, d.run.keyOf(dependency))
+	}
+	unlock, err := d.run.lockMutation(ctx, k, dependencies)
+	if err != nil {
+		return failed(err)
+	}
+	transferred := false
+	defer func() {
+		if !transferred {
+			unlock()
+		}
+	}()
+	if d.run.held != nil {
+		if err := d.run.held.check(ctx); err != nil {
+			return failed(err)
+		}
+	}
+	for _, dependency := range d.dependsOn {
+		entry, _, found, err := d.run.ledger.Get(ctx, d.run.keyOf(dependency))
+		if err != nil {
+			return failed(err)
+		}
+		if found && entry.Phase() == facade.LedgerPending {
+			return failed(fmt.Errorf("omnisdk: dependency %s has unresolved intent; recover it before mutation", dependency))
+		}
+	}
 	e, v, found, err := d.run.ledger.Get(ctx, k)
 	if err != nil {
 		return failed(err)
+	}
+	if found && e.Phase() == facade.LedgerPending {
+		return failed(fmt.Errorf("omnisdk: %s has unresolved intent; recover its outcome before another mutation", k))
+	}
+	if found && o.e.verb == "insert" {
+		return failed(fmt.Errorf("omnisdk: %s already exists in the ledger; use reconciliation instead of replaying create", k))
 	}
 	if !found {
 		v = facade.LedgerVersionNone
@@ -418,10 +457,13 @@ func (d durable) open(ctx context.Context, o effectOp) facade.Records {
 	if found {
 		prior = e.Plan()
 	}
-	if o.e.verb != "delete" {
-		if err := d.run.ledger.Begin(ctx, k, proposed, v); err != nil {
-			return notAttempted(err)
-		}
+	// Even deletion has an uncertain interval after dispatch. Preserve the
+	// resolved intent while marking that interval pending.
+	if found && (o.e.verb == "delete" || o.e.verb == "exec") {
+		proposed = e.Plan()
+	}
+	if err := d.run.ledger.Begin(ctx, k, proposed, v); err != nil {
+		return notAttempted(err)
 	}
 	form := semantics.FormOf(o.e.verb)
 	if m, ok := d.resource.(managed); ok && m.creates[o.e.alias] {
@@ -430,6 +472,9 @@ func (d durable) open(ctx context.Context, o effectOp) facade.Records {
 	var about []byte
 	if m, ok := d.resource.(managed); ok {
 		about = m.about
+	}
+	if about == nil && found && o.e.verb == "exec" {
+		about = e.About()
 	}
 	if about == nil && d.provider != "" {
 		about = d.aboutOf(o.bound)
@@ -446,10 +491,17 @@ func (d durable) open(ctx context.Context, o effectOp) facade.Records {
 	ctx = docx.WithAwaitCheckpoint(ctx, func(ctx context.Context, method string, inputs map[string]any) error {
 		return d.run.journal.AppendAwait(ctx, k, method, inputs)
 	})
-	return &durableRecords{inner: effectRecords{Records: o.inner.Open(retryNever(ctx)), op: o}, d: d, key: k, entry: e, found: found, named: named}
+	if d.run.held != nil {
+		if err := d.run.held.check(ctx); err != nil {
+			return failed(err)
+		}
+	}
+	transferred = true
+	return &durableRecords{unlock: unlock, inner: effectRecords{Records: o.inner.Open(retryNever(ctx)), op: o}, d: d, key: k, entry: e, found: found, named: named}
 }
 
 type durableRecords struct {
+	unlock   func()
 	inner    effectRecords
 	d        durable
 	key      facade.LedgerKey
@@ -470,6 +522,9 @@ type durableRecords struct {
 // can race the pending ledger entry or failures can miss compensating the create.
 func (r *durableRecords) Next(ctx context.Context) bool {
 	if !r.loaded {
+		if r.unlock != nil {
+			defer r.unlock()
+		}
 		r.loaded = true
 		for r.inner.Next(ctx) {
 			record := r.inner.Record()
@@ -484,9 +539,9 @@ func (r *durableRecords) Next(ctx context.Context) bool {
 			r.err = &EffectError{Outcome: ErrOutcomeUnknown, Verb: r.inner.op.e.verb, Alias: r.inner.op.e.alias, Cause: ctx.Err()}
 		}
 		if r.err != nil {
-			if errors.Is(r.err, ErrRejected) && !r.found {
-				if _, version, found, err := r.d.run.ledger.Get(ctx, r.key); err == nil && found {
-					_ = r.d.run.ledger.Forget(ctx, r.key, version)
+			if errors.Is(r.err, ErrRejected) {
+				if err := r.restoreRejected(ctx); err != nil {
+					r.err = errors.Join(r.err, err)
 				}
 			}
 			return false
@@ -500,8 +555,48 @@ func (r *durableRecords) Next(ctx context.Context) bool {
 	return true
 }
 
+// A definite rejection did not change the remote resource. Restore the prior
+// resolved state; an unknown response must never take this path.
+func (r *durableRecords) restoreRejected(ctx context.Context) error {
+	_, v, found, err := r.d.run.ledger.Get(ctx, r.key)
+	if err != nil || !found {
+		return err
+	}
+	if !r.found {
+		return r.d.run.ledger.Forget(ctx, r.key, v)
+	}
+	if err := r.d.run.ledger.Begin(ctx, r.key, r.entry.Plan(), v); err != nil {
+		return err
+	}
+	_, v, _, err = r.d.run.ledger.Get(ctx, r.key)
+	if err != nil {
+		return err
+	}
+	if err := r.d.run.ledger.Resolve(ctx, r.key, r.entry.Identity(), r.entry.About(), v); err != nil {
+		return err
+	}
+	_, v, _, err = r.d.run.ledger.Get(ctx, r.key)
+	if err != nil {
+		return err
+	}
+	r.d.run.mu.Lock()
+	defer r.d.run.mu.Unlock()
+	for i := range r.d.run.applied {
+		if r.d.run.applied[i].key == r.key {
+			r.d.run.applied[i].version = v
+		}
+	}
+	return nil
+}
+
 // commit records what landed: a create's identity, an update's new intent, a delete's absence.
 func (r *durableRecords) commit(ctx context.Context) error {
+	if r.d.run.held != nil {
+		if err := r.d.run.held.check(ctx); err != nil {
+			return err
+		}
+	}
+
 	identity := r.identity
 	if r.first == nil {
 		identity = r.identityOf()
@@ -511,6 +606,9 @@ func (r *durableRecords) commit(ctx context.Context) error {
 		return err
 	}
 	op := r.inner.op
+	if op.e.verb == "insert" && identity == "" {
+		return &EffectError{Outcome: ErrOutcomeUnknown, Verb: op.e.verb, Alias: op.e.alias, Cause: fmt.Errorf("accepted create returned no resource identity; intent remains pending")}
+	}
 	switch op.e.verb {
 	case "delete":
 		if found {
@@ -526,6 +624,9 @@ func (r *durableRecords) commit(ctx context.Context) error {
 		if m, ok := r.d.resource.(managed); ok {
 			about = m.about
 		}
+		if about == nil && r.found && op.e.verb == "exec" {
+			about = r.entry.About()
+		}
 		if about == nil && r.d.provider != "" {
 			about = r.d.aboutOf(r.inner.op.bound)
 		}
@@ -533,9 +634,13 @@ func (r *durableRecords) commit(ctx context.Context) error {
 			return err
 		}
 	}
+	_, committedVersion, _, err := r.d.run.ledger.Get(ctx, r.key)
+	if err != nil {
+		return err
+	}
 	r.d.run.mu.Lock()
 	r.d.run.applied = append(r.d.run.applied, appliedEffect{key: r.key, resource: r.d.resource, address: r.d.address,
-		verb: op.e.verb, identity: identity})
+		verb: op.e.verb, identity: identity, version: committedVersion})
 	r.d.run.mu.Unlock()
 	return nil
 }
@@ -590,11 +695,17 @@ func atPath(doc map[string]any, path string) (any, bool) {
 	}
 	return cur, true
 }
-func (r *durableRecords) Err() error   { return r.err }
-func (r *durableRecords) Close() error { return r.inner.Close() }
+func (r *durableRecords) Err() error { return r.err }
+func (r *durableRecords) Close() error {
+	err := r.inner.Close()
+	if r.unlock != nil {
+		r.unlock()
+	}
+	return err
+}
 
 // ConvergeGraph runs g as an IaC run over collection name, its ledger and journals under state. Every
-// mutation node must belong to one of managed. The collection is held for the run; intent is recorded
+// mutation node must belong to one of managed. Its resource footprint is held; intent is recorded
 // before every request; and a run that fails compensates what it did — a create is deleted by its
 // resource's AddressedBy — reporting what it could not reverse. Opening the plan performs the run;
 // its rows are the graph's rows, and a failed run adds a final row saying what was compensated.
@@ -607,8 +718,8 @@ func ConvergeGraph(registry, name, state, runID string, g Graph, managed []Manag
 	}
 	nodes := map[string]Managed{}
 	for _, m := range managed {
-		if m.Key() == "" {
-			return nil, fmt.Errorf("omnisdk: a managed resource has no key")
+		if m.Key() == "" || strings.ContainsAny(m.Key(), "\\\x00") || slices.ContainsFunc(strings.Split(m.Key(), "/"), func(segment string) bool { return segment == "" || strings.HasPrefix(segment, ".") }) {
+			return nil, fmt.Errorf("omnisdk: invalid managed resource key %q", m.Key())
 		}
 		for _, a := range m.Aliases() {
 			if other, twice := nodes[a]; twice {
@@ -661,16 +772,18 @@ type convergeGraphPlan struct {
 }
 
 // held is a converging run's durable state, open and leased: the ledger, the run's journal, and the
-// collection held until release.
+// resource footprint held until release.
 type held struct {
 	log      facade.Ledger
 	journals facade.Journals
 	journal  facade.Journal
 	release  func()
+	lease    facade.Lease
+	ctx      context.Context
 }
 
 // hold opens collection name's ledger and journals under state, and holds the collection for runID.
-func hold(ctx context.Context, state, name, runID string) (*held, error) {
+func hold(ctx context.Context, state, name, runID string, footprint ...facade.KeySet) (*held, error) {
 	log, err := ledger.NewFile(filepath.Join(state, "ledger"))
 	if err != nil {
 		return nil, err
@@ -679,7 +792,11 @@ func hold(ctx context.Context, state, name, runID string) (*held, error) {
 	if err != nil {
 		return nil, err
 	}
-	l, err := lease.NewLeaser(log, time.Now).Acquire(ctx, name, lease.All(), runID, leaseTTL)
+	keys := lease.All()
+	if len(footprint) > 0 {
+		keys = footprint[0]
+	}
+	l, err := lease.NewLeaser(log, time.Now).Acquire(ctx, name, keys, runID, leaseTTL)
 	if errors.Is(err, facade.ErrLeaseHeld) {
 		// How runs are kept apart is not the caller's business; that another is running is.
 		return nil, fmt.Errorf("omnisdk: collection %q is busy with another run", name)
@@ -692,7 +809,9 @@ func hold(ctx context.Context, state, name, runID string) (*held, error) {
 		_ = l.Release(ctx)
 		return nil, err
 	}
-	return &held{log: log, journals: journals, journal: j, release: func() { _ = l.Release(ctx) }}, nil
+	h := &held{log: log, journals: journals, journal: j, lease: l}
+	h.maintain(ctx, leaseTTL)
+	return h, nil
 }
 
 func (p *convergeGraphPlan) Open(ctx context.Context) (Rows, error) {
@@ -704,12 +823,15 @@ func (p *convergeGraphPlan) Open(ctx context.Context) (Rows, error) {
 	if err := facade.CheckAccess(ctx, "collection/"+p.name, "converge"); err != nil {
 		return nil, err
 	}
-	h, err := hold(ctx, p.state, p.name, p.runID)
+	locks := graphLocks(p.g, p.nodes, p.name)
+	h, err := hold(ctx, p.state, p.name, p.runID, locks.footprint())
 	if err != nil {
 		return nil, err
 	}
 	defer h.release()
-	run := &managedRun{name: p.name, ledger: h.log, journal: h.journal, nodes: p.nodes}
+	ctx = h.ctx
+	locks.h = h
+	run := &managedRun{name: p.name, ledger: h.log, journal: h.journal, nodes: p.nodes, locks: locks, held: h}
 	a := p.args
 	a.managed = run
 	pl, err := NewGraphQuery(p.registry, p.g, a)
@@ -743,9 +865,37 @@ func (p *convergeGraphPlan) Open(ctx context.Context) (Rows, error) {
 // there — is retried on the next pass, until a pass makes no progress. An update or delete is not
 // reversed: it completed, and is reported so.
 func (p *convergeGraphPlan) compensate(ctx context.Context, run *managedRun) (done, left []facade.LedgerKey) {
+	// Released resources may have acquired new writers. Reclaim exclusivity before
+	// compensating, then compare the exact committed ledger version below.
+	if run.held != nil {
+		if err := lease.Change(ctx, run.held.lease, lease.All()); err != nil {
+			run.mu.Lock()
+			defer run.mu.Unlock()
+			for _, e := range run.applied {
+				left = append(left, e.key)
+			}
+			return nil, left
+		}
+	}
 	run.mu.Lock()
 	pending := slices.Clone(run.applied)
 	run.mu.Unlock()
+	entries, err := run.ledger.List(ctx, run.name+"/")
+	if err != nil {
+		for _, e := range pending {
+			left = append(left, e.key)
+		}
+		return nil, left
+	}
+	for _, entry := range entries {
+		if entry.Phase() == facade.LedgerPending && !strings.HasPrefix(strings.TrimPrefix(string(entry.Key()), run.name+"/"), ".") {
+			for _, e := range pending {
+				left = append(left, e.key)
+			}
+			left = append(left, entry.Key())
+			return nil, left
+		}
+	}
 	slices.Reverse(pending)
 	var todo []appliedEffect
 	for _, e := range pending {
@@ -761,6 +911,29 @@ func (p *convergeGraphPlan) compensate(ctx context.Context, run *managedRun) (do
 		progress = false
 		var next []appliedEffect
 		for _, e := range todo {
+			entries, listErr := run.ledger.List(ctx, run.name+"/")
+			uncertain := listErr != nil
+			for _, entry := range entries {
+				if entry.Phase() == facade.LedgerPending && !strings.HasPrefix(strings.TrimPrefix(string(entry.Key()), run.name+"/"), ".") {
+					uncertain = true
+				}
+			}
+			if uncertain {
+				next = append(next, e)
+				continue
+			}
+			_, v, found, err := run.ledger.Get(ctx, e.key)
+			if err != nil || !found || v != e.version {
+				next = append(next, e)
+				continue
+			}
+			if run.held != nil {
+				if err := run.held.check(ctx); err != nil {
+					next = append(next, e)
+					continue
+				}
+			}
+			undo.managed = &managedRun{name: run.name, ledger: run.ledger, journal: run.journal, held: run.held, nodes: map[string]Managed{"undo": e.resource}}
 			if err := deleteOne(ctx, p.registry, e, undo); err != nil {
 				next = append(next, e)
 				continue
@@ -807,7 +980,9 @@ func deleteOne(ctx context.Context, registry string, e appliedEffect, args Args)
 
 // retryNever is ctx with retries off: a mutation's request repeated after it reached the provider
 // repeats the effect.
-func retryNever(ctx context.Context) context.Context { return retry.WithPolicy(ctx, never{}) }
+func retryNever(ctx context.Context) context.Context {
+	return retry.Disable(retry.WithPolicy(ctx, never{}))
+}
 
 // failedOp is an operator whose run fails with err.
 type failedOp struct{ err error }

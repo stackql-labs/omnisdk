@@ -228,7 +228,7 @@ func (f *fileLedger) Begin(_ context.Context, k facade.LedgerKey, proposed []byt
 	}
 	// Plan carries through untouched: a call that has not returned may still fail, and n-1 is the
 	// one thing that cannot be reconstructed.
-	return f.commit(k, state{Phase: facade.LedgerPending, Plan: s.Plan, Proposed: clone(proposed), About: s.About}, ver)
+	return f.commit(k, state{Phase: facade.LedgerPending, Plan: s.Plan, Proposed: clone(proposed), Identity: s.Identity, About: s.About}, ver)
 }
 
 func (f *fileLedger) Resolve(_ context.Context, k facade.LedgerKey, identity, about []byte, v facade.LedgerVersion) error {

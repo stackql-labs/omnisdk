@@ -309,3 +309,24 @@ func TestConcurrentUpdateAdmitsExactlyOne(t *testing.T) {
 		}
 	})
 }
+
+func TestPendingMutationRetainsPriorAddressAndMetadata(t *testing.T) {
+	each(t, func(t *testing.T, l facade.Ledger) {
+		ctx := context.Background()
+		if err := l.Begin(ctx, "s/vm", []byte("old"), facade.LedgerVersionNone); err != nil {
+			t.Fatal(err)
+		}
+		_, v := get(t, l, "s/vm")
+		if err := l.Resolve(ctx, "s/vm", []byte("vm-1"), []byte("dependencies"), v); err != nil {
+			t.Fatal(err)
+		}
+		_, v = get(t, l, "s/vm")
+		if err := l.Begin(ctx, "s/vm", []byte("new"), v); err != nil {
+			t.Fatal(err)
+		}
+		e, _ := get(t, l, "s/vm")
+		if e.Phase() != facade.LedgerPending || string(e.Plan()) != "old" || string(e.Identity()) != "vm-1" || string(e.About()) != "dependencies" {
+			t.Fatal("pending mutation lost prior recovery evidence")
+		}
+	})
+}

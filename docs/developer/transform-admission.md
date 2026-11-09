@@ -170,3 +170,7 @@ the opaque admission program.
 The [canonical example](../../cicd/examples/alternative-input-requirements/README.md) includes the
 mock-only Google-shaped registry and a Robot suite exercising all three accepted combinations,
 neither alternative, and missing common requirements. Rejected inputs must cause zero mutations.
+
+Resource access and release rules are documented in [resource locking and ledger recovery](resource-locking.md).
+Admission determines when an operation may run; managed ownership and graph references determine
+its exclusive target locks and shared dependency guards.

@@ -531,16 +531,17 @@ func stopInstance(ctx context.Context, view, dir, id string, conf config, args o
 	if status["state"] == "terminated" || status["state"] == "stopped" {
 		return nil
 	}
-	args.Journal = &omnisdk.Journal{State: filepath.Join(dir, "state"), RunID: fmt.Sprintf("stop-%d", time.Now().UnixNano())}
+	runID := fmt.Sprintf("stop-%d", time.Now().UnixNano())
 	graph, err := omnisdk.NewGraph([]omnisdk.Node{omnisdk.NewExecNode("stop", "stackql_unstable_aws.ec2.web_instance", "stop", map[string]string{"InstanceId.1": id}, nil)}, nil)
 	if err != nil {
 		return err
 	}
-	prepared, err := omnisdk.NewGraphQuery(view, graph, args)
+	prepared, err := omnisdk.ConvergeGraph(view, conf.Collection, filepath.Join(dir, "state"), runID, graph,
+		[]omnisdk.Managed{omnisdk.NewManaged("instance", []string{"stop"}, "id", "InstanceId.1")}, args)
 	if err != nil {
 		return err
 	}
-	return drain(ctx, prepared, filepath.Join(dir, args.Journal.RunID+".jsonl"))
+	return drain(ctx, prepared, filepath.Join(dir, runID+".jsonl"))
 }
 func verifyHTTP(ctx context.Context, ip, prefix string) error {
 	client := &http.Client{Timeout: 5 * time.Second}

@@ -22,7 +22,6 @@ import (
 	"github.com/stackql-labs/omnisdk/internal/system_g/fn"
 	"github.com/stackql-labs/omnisdk/internal/system_g/httpx"
 	"github.com/stackql-labs/omnisdk/internal/system_g/plan"
-	"github.com/stackql-labs/omnisdk/internal/system_g/retry"
 	"github.com/stackql-labs/omnisdk/pkg/query"
 )
 
@@ -716,7 +715,7 @@ func (o effectOp) Open(ctx context.Context) facade.Records {
 				Cause: fmt.Errorf("recording its intent failed: %w", err)})
 		}
 	}
-	return effectRecords{Records: o.inner.Open(retry.WithPolicy(ctx, never{})), op: o}
+	return effectRecords{Records: o.inner.Open(retryNever(ctx)), op: o}
 }
 
 type effectRecords struct {

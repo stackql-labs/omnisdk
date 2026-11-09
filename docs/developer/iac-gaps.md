@@ -85,18 +85,19 @@ segments as needed. The same resolver handles all config members, not only lifec
   is the stronger contract. Google operation polling still requires `x-stackQL-beta`.
 - Automatic recovery that resumes a persisted observation handle after interruption.
 
-## 4. The lock covers the whole collection and is never renewed
+## 4. Resource lock scope and renewal
 
-**Now.** A run locks its entire collection (`lease.All()`) for a fixed five minutes, and nothing
-renews it. Two runs touching disjoint resources in one collection exclude each other, and a run that
-outlasts five minutes can have its lock taken by another while it is still sending.
+**Now.** Managed graphs acquire an atomic footprint: exclusive mutation targets and shared guards
+for referenced resources. Stage checkpoints release completed inputs after their last consumer;
+leases renew during execution, and ownership is checked before dispatch and commit. Independent
+VM attachments can share a subnet guard; subnet writes remain excluded until attachments finish.
+Same-key invocations within a run are serialized. Desired-state lowering and destruction still
+use collection-wide leases for their state scans.
 
-**Needs.**
-- Renewal while the run is alive, at a fraction of the expiry, and a run that cannot renew stops
-  starting new keys.
-- A fencing check: a run whose lock was taken must not write the ledger afterwards.
-- Narrowing to the keys a run touches. The lock already takes a key set and conflicts by
-  intersection; what is missing is computing each run's footprint before it starts.
+**Remaining.** Branch/global-expression/admission cases conservatively retain footprints. Automatic
+recovery of unresolved outcomes is still needed. Cloud APIs do not enforce these local fencing
+claims. Attachment and later VM readiness must be separate stages to have separate release points.
+See [resource locking and ledger recovery](resource-locking.md) for concrete rules and test coverage.
 
 ## 5. Dependencies carry only an identity
 
