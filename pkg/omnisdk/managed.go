@@ -458,35 +458,45 @@ type durableRecords struct {
 	identity string
 	named    string
 	done     bool
+	loaded   bool
+	records  []facade.Record
+	position int
 	err      error
 }
 
+// A managed effect publishes no row until its complete response has been
+// validated and its identity/intent committed. Otherwise downstream mutations
+// can race the pending ledger entry or failures can miss compensating the create.
 func (r *durableRecords) Next(ctx context.Context) bool {
-	if r.done {
-		return false
-	}
-	if r.inner.Next(ctx) {
-		if r.first == nil {
-			r.first, _ = bind.DocMap(r.inner.Record())
-			r.identity = r.identityOf()
-		}
-		return true
-	}
-	r.done = true
-	if err := r.inner.Err(); err != nil {
-		r.err = err
-		// The provider refused the create, so nothing was made: the intent recorded for it is
-		// withdrawn rather than left pending, where it would read as possibly applied. An update
-		// or a delete keeps its entry — the object it addresses still exists.
-		if errors.Is(err, ErrRejected) && !r.found {
-			if _, v, found, gerr := r.d.run.ledger.Get(ctx, r.key); gerr == nil && found {
-				_ = r.d.run.ledger.Forget(ctx, r.key, v)
+	if !r.loaded {
+		r.loaded = true
+		for r.inner.Next(ctx) {
+			record := r.inner.Record()
+			r.records = append(r.records, record)
+			if r.first == nil {
+				r.first, _ = bind.DocMap(record)
+				r.identity = r.identityOf()
 			}
 		}
+		r.err = r.inner.Err()
+		if r.err == nil && ctx.Err() != nil {
+			r.err = &EffectError{Outcome: ErrOutcomeUnknown, Verb: r.inner.op.e.verb, Alias: r.inner.op.e.alias, Cause: ctx.Err()}
+		}
+		if r.err != nil {
+			if errors.Is(r.err, ErrRejected) && !r.found {
+				if _, version, found, err := r.d.run.ledger.Get(ctx, r.key); err == nil && found {
+					_ = r.d.run.ledger.Forget(ctx, r.key, version)
+				}
+			}
+			return false
+		}
+		r.err = r.commit(ctx)
+	}
+	if r.err != nil || r.position >= len(r.records) {
 		return false
 	}
-	r.err = r.commit(ctx)
-	return false
+	r.position++
+	return true
 }
 
 // commit records what landed: a create's identity, an update's new intent, a delete's absence.
@@ -548,7 +558,7 @@ func (r *durableRecords) identityOf() string {
 
 // Record is the mutation's row with the resource's identity beside it.
 func (r *durableRecords) Record() facade.Record {
-	rec := r.inner.Record()
+	rec := r.records[r.position-1]
 	m, ok := bind.DocMap(rec)
 	if !ok {
 		return rec
@@ -714,6 +724,9 @@ func (p *convergeGraphPlan) Open(ctx context.Context) (Rows, error) {
 		out = append(out, rows.Row())
 	}
 	runErr := rows.Err()
+	if runErr == nil {
+		runErr = ctx.Err()
+	}
 	rows.Close()
 	if runErr == nil {
 		return &sliceRows{rows: out, i: -1}, nil
@@ -766,6 +779,9 @@ func (p *convergeGraphPlan) compensate(ctx context.Context, run *managedRun) (do
 }
 
 func deleteOne(ctx context.Context, registry string, e appliedEffect, args Args) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	g, err := NewGraph([]Node{NewMutationNode("undo", e.address, "delete",
 		map[string]string{e.resource.AddressedBy(): e.identity}, nil, nil)}, nil)
 	if err != nil {
@@ -782,7 +798,10 @@ func deleteOne(ctx context.Context, registry string, e appliedEffect, args Args)
 	defer rows.Close()
 	for rows.Next() {
 	}
-	return rows.Err()
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	return ctx.Err()
 }
 
 // retryNever is ctx with retries off: a mutation's request repeated after it reached the provider

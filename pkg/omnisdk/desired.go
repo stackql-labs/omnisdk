@@ -319,6 +319,9 @@ func (p *desiredPlan) Open(ctx context.Context) (Rows, error) {
 	for rows.Next() {
 	}
 	runErr := rows.Err()
+	if runErr == nil {
+		runErr = ctx.Err()
+	}
 	rows.Close()
 
 	run.mu.Lock()

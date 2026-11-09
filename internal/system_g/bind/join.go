@@ -214,24 +214,26 @@ func (e *bindJoinExchange) Open(ctx context.Context) facade.Records {
 			// An input with several sources is satisfied by any one of them: the first carrying a
 			// value wins, and a later source never blanks it.
 			bound := make(map[string]any, len(e.bindings))
-			var edgeStates map[string]facade.EdgeState
-			if e.inbound != nil {
-				edgeStates = map[string]facade.EdgeState{}
-			}
 			for _, b := range e.bindings {
 				if cur, set := bound[b.Tgt()]; set && !emptyValue(cur) {
 					continue
 				}
 				bound[b.Tgt()] = row[b.Src()]
-				if edgeStates != nil {
-					_, present := row[b.Src()]
-					edgeStates[b.Tgt()] = facade.EdgeState{Present: present, Value: row[b.Src()], Done: true}
-				}
 			}
 			// T_in (§T): the assembled inbox becomes the consumer's inputs. It runs once every
 			// binding has landed, because an input may be built from values several producers
 			// supplied — which is why it belongs to the consumer rather than to any one edge.
 			if e.inbound != nil {
+				var edgeStates map[string]facade.EdgeState
+				if needs, ok := e.inbound.(interface{ UsesEdgeSnapshots() bool }); ok && needs.UsesEdgeSnapshots() {
+					edgeStates = map[string]facade.EdgeState{}
+					for _, binding := range e.bindings {
+						if _, exists := edgeStates[binding.Tgt()]; !exists {
+							_, present := row[binding.Src()]
+							edgeStates[binding.Tgt()] = facade.EdgeState{Present: present, Value: bound[binding.Tgt()], Done: true}
+						}
+					}
+				}
 				shaped, err := ApplyInboundContext(ctx, e.inbound, bound, edgeStates)
 				if err != nil {
 					fail(err)

@@ -29,6 +29,10 @@ func ParseProvider(b []byte) (aot.Provider, error) {
 		return nil, err
 	}
 	raw.Config = resolved
+	raw.Config.providerDefaultsResolved = true
+	if raw.Config.Auth == nil {
+		raw.Config.Auth = &authConfig{}
+	}
 	return &provider{doc: raw, updates: updates}, nil
 }
 

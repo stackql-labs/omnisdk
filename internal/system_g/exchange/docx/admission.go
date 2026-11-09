@@ -177,3 +177,6 @@ func requiredPresent(inbox map[string]any, names []string) bool {
 	}
 	return true
 }
+
+func (p inboundProgram) UsesEdgeSnapshots() bool     { return p.typ == "starlark" || p.admission != nil }
+func (p inheritedAdmission) UsesEdgeSnapshots() bool { return true }

@@ -1068,9 +1068,6 @@ func NewGraphQuery(dir string, g Graph, args Args) (Plan, error) {
 			spec = tagged{ExchangeSpec: spec, alias: alias, attrs: attrs}
 		}
 		spec = scopedExchange(spec, providerBinding)
-		if !mutating {
-			spec = plan.WithReadOnly(spec)
-		}
 		specs = append(specs, spec)
 	}
 
@@ -1119,6 +1116,26 @@ func NewGraphQuery(dir string, g Graph, args Args) (Plan, error) {
 	}
 	for _, x := range g.Gates() {
 		alphas = append(alphas, plan.NewAlphaEdge(planned[x.Branch()], planned[x.To()], bind.NewGateEdge(x.Arm())))
+	}
+	// Read-only markers are needed only when an admitting consumer can race
+	// observations. Ordinary graphs retain their original, unwrapped specs.
+	hasAdmission := slices.ContainsFunc(specs, func(spec plan.ExchangeSpec) bool {
+		inbound, ok := spec.Inbound().(facade.InboxTransform)
+		return ok && inbound.Admission() != nil
+	})
+	if hasAdmission {
+		for _, node := range g.Nodes() {
+			if node.Verb() != "select" {
+				continue
+			}
+			name := planned[node.Alias()]
+			for index, spec := range specs {
+				if spec.Name() == name {
+					specs[index] = plan.WithReadOnly(spec)
+					break
+				}
+			}
+		}
 	}
 	pl := plan.NewPlan(specs, betas, alphas, inputs, egress(g, fns, redactor{policy: args.Redaction, credentials: plumbing}), nil)
 	if ts := g.Terminations(); len(ts) > 0 {

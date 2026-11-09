@@ -58,17 +58,20 @@ func ComposeRows(id int64, p Plan) facade.Operator {
 // Compose (byte terminal) and ComposeRows (row terminal). It stops before the terminal.
 func composePipeline(id int64, p Plan) (facade.Operator, error) {
 	p = controlled(p)
-	if err := Validate(p); err != nil {
+	hasAdmission, err := validateWithAdmission(p)
+	if err != nil {
 		return nil, err
 	}
-	var admissionErr error
-	p, admissionErr = collapseAdmissions(p)
-	if admissionErr != nil {
-		return nil, admissionErr
+	if hasAdmission {
+		p, err = collapseAdmissions(p)
+		if err != nil {
+			return nil, err
+		}
+		if err := Validate(p); err != nil {
+			return nil, err
+		}
 	}
-	if err := Validate(p); err != nil {
-		return nil, err
-	}
+
 	byName := make(map[string]ExchangeSpec, len(p.Exchanges()))
 	for _, x := range p.Exchanges() {
 		byName[x.Name()] = x
@@ -112,7 +115,6 @@ func composePipeline(id int64, p Plan) (facade.Operator, error) {
 
 	// Components with no path between them are independent: each level of the condensation — every
 	// component whose sources all ran in an earlier level — runs its members side by side.
-	var err error
 	for _, level := range levels(p, comps, stages) {
 		if len(level) == 1 {
 			if op, err = stage(p, byName, comps, specs, level[0], op, &nid); err != nil {
@@ -238,12 +240,18 @@ func Order(exchanges []ExchangeSpec, betas []BetaEdge) []string {
 // Validate is the AOT correctness check: every declared input (In) of every exchange must be
 // satisfiable — by a β edge that feeds it, or by a κ input present (and non-empty) in Inputs.
 // An input with neither is unsatisfiable and the plan is rejected before execution.
-func Validate(p Plan) error {
+func Validate(p Plan) error { _, err := validateWithAdmission(p); return err }
+func validateWithAdmission(p Plan) (bool, error) {
+	hasAdmission := false
 	var missing []string
 	for _, x := range p.Exchanges() {
-		if validator, ok := x.Inbound().(interface{ Validate() error }); ok {
+		inbound := x.Inbound()
+		if contextual, ok := inbound.(facade.InboxTransform); ok && contextual.Admission() != nil {
+			hasAdmission = true
+		}
+		if validator, ok := inbound.(interface{ Validate() error }); ok {
 			if err := validator.Validate(); err != nil {
-				return fmt.Errorf("%s inbound transform: %w", x.Name(), err)
+				return false, fmt.Errorf("%s inbound transform: %w", x.Name(), err)
 			}
 		}
 		for _, attr := range x.In() {
@@ -257,9 +265,9 @@ func Validate(p Plan) error {
 		}
 	}
 	if len(missing) > 0 {
-		return fmt.Errorf("plan: unsatisfied required inputs (no β source or κ input): %s", strings.Join(missing, ", "))
+		return false, fmt.Errorf("plan: unsatisfied required inputs (no β source or κ input): %s", strings.Join(missing, ", "))
 	}
-	return nil
+	return hasAdmission, nil
 }
 
 func emptyValue(v any) bool {
