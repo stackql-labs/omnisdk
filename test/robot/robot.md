@@ -42,3 +42,16 @@ variables and are not printed. This tests an in-memory directory; the RDBMS adap
 go build -o build/omnicli ./cmd/omnicli
 test/mock/.venv/bin/robot --outputdir test/robot/out/jwt test/robot/jwt_access.robot
 ```
+
+## Alternative input requirements
+
+`alternative_inputs.robot` exercises Google-shaped `instances.bulkInsert` through the real CLI and
+an isolated loopback API. Template only, properties only, and both succeed; neither alternative or
+missing common inputs must fail before a mutation is sent. It requires no cloud credentials.
+
+```sh
+go build -o build/omnicli ./cmd/omnicli
+test/mock/.venv/bin/robot --outputdir test/robot/out/alternative-inputs test/robot/alternative_inputs.robot
+```
+
+See the [canonical example](../../cicd/examples/alternative-input-requirements/README.md).

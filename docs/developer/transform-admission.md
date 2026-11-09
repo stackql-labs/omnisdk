@@ -139,3 +139,34 @@ searching all edge subsets or backtracking over earlier choices. Costs are local
 is no global/shared-work cost optimisation. Structural applicability does not prove a remote read
 will succeed. A selected candidate whose own required inputs cannot be planned produces an error,
 rather than initiating an exhaustive search for a different overall plan.
+
+## Canonical example: alternative input requirements
+
+Google Compute `instances.bulkInsert` illustrates **alternative input requirements** (a disjunction,
+or inclusive OR):
+
+```text
+project AND zone AND count AND (sourceInstanceTemplate OR instanceProperties)
+```
+
+A template alone, explicit properties alone, or both together can satisfy the method. Both means
+template plus overrides; neither is insufficient. Put the common inputs in `transform.required` and
+the alternative condition in `transform.admission`:
+
+```json
+{
+  "required": ["project", "zone", "count"],
+  "admission": {
+    "type": "starlark",
+    "body": "inbox.get(\"sourceInstanceTemplate\") != None or inbox.get(\"instanceProperties\") != None"
+  }
+}
+```
+
+This is different from canonical candidate edges: those select an **alternative supplier of the same
+input**. Here, **different input sets** satisfy the method. No upstream-query search is inferred from
+the opaque admission program.
+
+The [canonical example](../../cicd/examples/alternative-input-requirements/README.md) includes the
+mock-only Google-shaped registry and a Robot suite exercising all three accepted combinations,
+neither alternative, and missing common requirements. Rejected inputs must cause zero mutations.

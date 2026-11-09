@@ -1,0 +1,27 @@
+{
+  "nodes": [
+    {
+      "alias": "bulk",
+      "address": "stackql_unstable_google.compute.instances",
+      "verb": "insert",
+      "params": {"project": "mock-project", "zone": "us-central1-a"},
+      "body": {
+        "count": "2",
+        "sourceInstanceTemplate": "projects/mock-project/global/instanceTemplates/base",
+        "instanceProperties": {"machineType": "zones/us-central1-a/machineTypes/e2-small"}
+      }
+    }
+  ],
+  "wirings": [
+    {
+      "to": "bulk",
+      "transform": {
+        "required": ["project", "zone", "count"],
+        "admission": {
+          "type": "starlark",
+          "body": "inbox.get(\"sourceInstanceTemplate\") != None or inbox.get(\"instanceProperties\") != None"
+        }
+      }
+    }
+  ]
+}
