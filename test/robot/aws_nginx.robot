@@ -5,7 +5,7 @@ Test Setup       Prepare AWS Nginx    ${BINARY}
 Test Teardown    Stop AWS Nginx Mock
 
 *** Variables ***
-${BINARY}    ${EXECDIR}/build/aws-nginx
+${BINARY}    ${EXECDIR}/build/omnicli
 
 *** Test Cases ***
 Create And Teardown The Patched AWS Nginx Stack

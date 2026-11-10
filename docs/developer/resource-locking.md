@@ -84,11 +84,10 @@ Independent members within a stage still execute concurrently. Unmanaged ordinar
 wrappers. Ownership, identity and dependency records remain in the ledger after release. A later
 writer must acquire the key again.
 
-The AWS example therefore releases completed VPC/security-group operations and the unused subnet
-association before VM provisioning finishes. Inputs still consumed by the VM mutation remain
-locked through its readiness poll. A subsequent graph observation wired from the VM retains its
-lock until that observation completes. The example's separate HTTP `verify` command is a read and
-does not extend the completed apply run's write lock.
+The AWS example uses declarative desired-state specs and therefore currently retains its bounded
+footprint through each apply. Its separate stopped-state apply retains the instance and dependency
+guards through the stop waiter. Go graph tests separately verify early release after the last
+consumer. HTTP/SSH verification happens after the apply and does not extend its write lock.
 
 Branch/global-filter/projection graphs conservatively retain their footprints to the run boundary.
 Unselected candidate nodes or collapsed admission stages may likewise retain locks until the run

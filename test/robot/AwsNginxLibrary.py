@@ -67,17 +67,28 @@ class AwsNginxLibrary:
         self.worker = threading.Thread(target=self.server.serve_forever, daemon=True)
         self.worker.start()
         self.endpoint = f"http://127.0.0.1:{self.server.server_port}"
-        result = self.cli("prepare", "--registry", str(self.repo / "test/corpus/registry"),
-                          "--image-id", "ami-00000000000000001", "--zone-a", "ap-southeast-2a",
-                          "--zone-b", "ap-southeast-2b", "--ssh-cidr", "203.0.113.7/32",
-                          "--prefix", "robot-nginx", "--poll-interval", "5ms", "--poll-attempts", "10")
+        self.example = self.repo / "cicd/examples/aws-nginx"
+        subprocess.run(["python3", str(self.example / "prepare.py"), "--case", str(self.root),
+                        "--image-id", "ami-00000000000000001", "--zone-a", "ap-southeast-2a", "--zone-b", "ap-southeast-2b",
+                        "--ssh-cidr", "203.0.113.7/32", "--prefix", "robot-nginx", "--poll-interval", "5ms", "--poll-attempts", "10"], check=True)
+        result = subprocess.run([self.binary, "doc-merge", str(self.repo / "test/corpus/registry"), "@"+str(self.root / "merge.json")], capture_output=True, text=True)
+        assert result.returncode == 0, result.stderr
+        self.registry = result.stdout.strip()
         assert not self.events, "preparation contacted AWS"
-        assert (self.root / "ec2.merge.json").exists(), result.stdout
+
+    def command(self, command):
+        scope = ["--name", "robot-nginx", "--state", str(self.root / "state"), "--aws-region", "ap-southeast-2", "--endpoint", self.endpoint]
+        if command in {"apply", "reapply", "stop"}:
+            return [self.binary, "iac-apply", self.registry, "@"+str(self.example / ("stopped.json" if command == "stop" else "resources.json")),
+                    "--input", "@"+str(self.root / "inputs.json"), "--run-id", "create" if command == "apply" else command+"-"+str(__import__("time").time_ns()), *scope]
+        if command == "destroy":
+            return [self.binary, "iac-destroy", "--registry", self.registry, "--run-id", "destroy-"+str(__import__("time").time_ns()), *scope]
+        if command == "status":
+            return [self.binary, "doc-run", self.registry, "stackql_unstable_aws.ec2.web_instance", json.dumps({"params":{"InstanceId.1":"i-web"}}), "--aws-region", "ap-southeast-2", "--endpoint", self.endpoint]
+        raise AssertionError(command)
 
     def cli(self, command, *arguments, expect_success=True):
-        result = subprocess.run([self.binary, command, "--case", str(self.root), *arguments,
-                                 *([] if command == "prepare" else ["--endpoint", self.endpoint])],
-                                capture_output=True, text=True, timeout=60,
+        result = subprocess.run(self.command(command), capture_output=True, text=True, timeout=60,
                                 env={**__import__("os").environ, "AWS_ACCESS_KEY_ID": "MOCKACCESS", "AWS_SECRET_ACCESS_KEY": "mock-secret"})
         (self.root / f"{command}.stdout.txt").write_text(result.stdout)
         (self.root / f"{command}.stderr.txt").write_text(result.stderr)
@@ -87,7 +98,7 @@ class AwsNginxLibrary:
         return result
 
     def ledger_snapshot(self):
-        collection = json.loads((self.root / "config.json").read_text())["collection"]
+        collection = "robot-nginx"
         directory = self.root / "state" / "ledger" / collection
         latest = {}
         for file in directory.glob("*.v*.json"):
@@ -112,7 +123,7 @@ class AwsNginxLibrary:
             assert snapshot[target]["phase"] == 0, (action, snapshot[target])
             assert any(c.get("all") or any(k.endswith("/" + target) for k in c.get("keys", [])) for c in claims), (action, "missing write lock")
         if action == "RunInstances":
-            assert not any(k.endswith("/vpc") or k.endswith("/security_group") or k.endswith("/association_b") for k in owned), "terminal resources stayed locked into VM provisioning"
+            # Reconciliation currently retains its bounded footprint through the run.
             assert len([k for k in snapshot if not k.startswith(".")]) == 13
             assert all(v["phase"] == 1 for k, v in snapshot.items() if k not in {".lease", "instance"})
         if action == "DescribeInstances" and self.instance == "pending":
@@ -136,6 +147,19 @@ class AwsNginxLibrary:
         assert not claims, "write locks leaked after phase completion"
 
     def dispatch(self, action, p):
+        if action == "DescribeInternetGateways":
+            attachment = '<attachmentSet><item><vpcId>vpc-web</vpcId><state>available</state></item></attachmentSet>' if self.attached else ''
+            return f'<internetGatewaySet><item><internetGatewayId>igw-web</internetGatewayId>{attachment}</item></internetGatewaySet>'
+        if action == "DescribeRouteTables":
+            assert p["RouteTableId.1"] == "rtb-web"
+            associations = ''.join(f'<item><routeTableAssociationId>{a}</routeTableAssociationId></item>' for a in sorted(self.associations))
+            routes = '<routeSet><item><destinationCidrBlock>0.0.0.0/0</destinationCidrBlock><gatewayId>igw-web</gatewayId></item></routeSet>' if self.route else ''
+            return f'<routeTableSet><item><routeTableId>rtb-web</routeTableId><associationSet>{associations}</associationSet>{routes}</item></routeTableSet>'
+        if action == "DescribeSecurityGroups":
+            rules = '<ipPermissions><item><fromPort>22</fromPort><toPort>22</toPort><ipProtocol>tcp</ipProtocol></item><item><fromPort>80</fromPort><toPort>80</toPort><ipProtocol>tcp</ipProtocol></item></ipPermissions>' if self.ingress else ''
+            return f'<securityGroupInfo><item><groupId>sg-web</groupId>{rules}</item></securityGroupInfo>'
+        if action == "DescribeKeyPairs":
+            return '<keySet><item><keyName>robot-nginx-ssh</keyName></item></keySet>'
         if action == "CreateVpc":
             self.vpc = True
             return '<vpc><vpcId>vpc-web</vpcId><state>available</state></vpc>'
@@ -204,6 +228,7 @@ class AwsNginxLibrary:
             return f'<reservationSet><item><instancesSet><item><instanceId>i-web</instanceId><instanceState><name>{self.instance}</name></instanceState><ipAddress>203.0.113.42</ipAddress></item></instancesSet></item></reservationSet>'
         elif action == "StopInstances":
             assert self.instance == "running"
+            assert "State" not in p, "semantic stopped-state input leaked into the AWS request"
             self.instance, self.polls = "stopping", 0
             return '<instancesSet><item><instanceId>i-web</instanceId><currentState><name>stopping</name></currentState></item></instancesSet>'
         elif action == "TerminateInstances":
@@ -252,17 +277,24 @@ class AwsNginxLibrary:
     def create_aws_nginx(self):
         self.cli("apply")
         self.assert_ledger_settled(13)
-        outputs = json.loads((self.root / "outputs.json").read_text())
-        assert outputs["instance_id"] == "i-web", outputs
+        identity = self.ledger_snapshot()["instance"]["identity"]
+        assert base64.b64decode(identity).decode() == "i-web"
         assert self.instance == "running"
         assert len(self.subnets) == 2 and len(self.associations) == 2
+        before = len(self.events)
+        self.cli("reapply")
+        assert all(e["action"].startswith("Describe") for e in self.events[before:]), "unchanged spec replayed a mutation"
 
     def inspect_aws_nginx(self):
         result = self.cli("status")
         row = json.loads(result.stdout)
-        assert row["id"] == "i-web" and row["state"] == "running", row
+        assert row["id"] == "i-web" and row["State"] == "running", row
 
     def destroy_aws_nginx(self):
+        self.cli("stop")
+        before = len(self.events)
+        self.cli("stop")
+        assert all(e["action"].startswith("Describe") for e in self.events[before:]), "unchanged stopped state replayed a mutation"
         self.cli("destroy")
         self.assert_ledger_settled(0)
         assert self.instance in {None, "terminated"}
@@ -291,6 +323,7 @@ class AwsNginxLibrary:
 
     def lose_delete_response_and_verify_ledger(self):
         self.cli("apply")
+        self.cli("stop")
         self.lose_delete_response = True
         self.cli("destroy", expect_success=False)
         snapshot = self.ledger_snapshot()
@@ -307,7 +340,7 @@ class AwsNginxLibrary:
         self.pause_poll = True
         environment = {**__import__("os").environ, "AWS_ACCESS_KEY_ID": "MOCKACCESS", "AWS_SECRET_ACCESS_KEY": "mock-secret"}
         with (self.root / "interrupted.stdout.txt").open("w") as stdout, (self.root / "interrupted.stderr.txt").open("w") as stderr:
-            process = subprocess.Popen([self.binary, "apply", "--case", str(self.root), "--endpoint", self.endpoint], env=environment, stdout=stdout, stderr=stderr)
+            process = subprocess.Popen(self.command("apply"), env=environment, stdout=stdout, stderr=stderr)
             try:
                 assert self.poll_started.wait(20), f"readiness poll never started: {self.root}"
             finally:

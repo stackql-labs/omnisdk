@@ -60,5 +60,6 @@ See the [canonical example](../../cicd/examples/alternative-input-requirements/R
 
 `aws_nginx.robot` applies an EC2 document merge, provisions a VPC/two subnets/routing/SSH key/security
 group/nginx VM against a strict local API, then verifies stop, termination and ledger-ordered cleanup.
-It needs the AWS corpus and `build/aws-nginx`, built automatically by `run.sh`.
+It runs the static `resources.json`/`stopped.json` specs and EC2 merge through generic `omnicli` commands.
+It needs the AWS corpus and `build/omnicli`, built automatically by `run.sh`.
 See the [live-run and mock instructions](../../cicd/examples/aws-nginx/README.md).

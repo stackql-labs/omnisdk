@@ -91,6 +91,31 @@ func main() {
 		}
 		return rows.Err()
 	}
+	streamIACRows := func(pl omnisdk.Plan, w io.Writer) error {
+		rows, err := pl.Open(root.Context())
+		if err != nil {
+			return err
+		}
+		defer rows.Close()
+		failed := false
+		for rows.Next() {
+			row := rows.Row()
+			if err := writeLine(w, row); err != nil {
+				return err
+			}
+			status, _ := row["status"].(string)
+			if strings.HasPrefix(status, "failed") || status == "outstanding" {
+				failed = true
+			}
+		}
+		if err := rows.Err(); err != nil {
+			return err
+		}
+		if failed {
+			return fmt.Errorf("IaC run incomplete; retain the ledger and inspect result rows")
+		}
+		return nil
+	}
 	// withSinks opens the out + log writers, runs fn, and closes them (surfacing close errors only if
 	// fn itself succeeded). Both are plain writers — the facade wraps the log in its own async sink.
 	withSinks := func(fn func(cmd *cobra.Command, w, logw io.Writer) error) func(*cobra.Command, []string) error {
@@ -239,6 +264,7 @@ func main() {
 	// Declared IaC: a resource states its provider, its document address and the residue its document
 	// leaves unsaid. No Go entry is added for a new service — the same relationship doc-graph has to
 	// a query.
+	root.AddCommand(docMergeCommand())
 	iacApply := &cobra.Command{
 		Use:   "iac-apply <registry> <spec-json | @file>",
 		Short: "Converge resources declared inline or in a file against provider documents; CREATES REAL RESOURCES",
@@ -310,7 +336,7 @@ its ledger lives, over whatever the spec says; a file holding only resources nee
 			if err != nil {
 				return err
 			}
-			return streamRows(pl, w)
+			return streamIACRows(pl, w)
 		}),
 	}
 	iacApply.Flags().String("input", "", "explicit binding inputs as a JSON object or @file; overrides matching file inputs")
@@ -349,7 +375,7 @@ its ledger lives, over whatever the spec says; a file holding only resources nee
 			if err != nil {
 				return err
 			}
-			return streamRows(pl, w)
+			return streamIACRows(pl, w)
 		}),
 	}
 	iacCmd.Flags().String("registry", "", "provider-document registry root; every effect is compiled from the document that declares it (required)")
@@ -392,7 +418,7 @@ its ledger lives, over whatever the spec says; a file holding only resources nee
 			if err != nil {
 				return err
 			}
-			return streamRows(pl, w)
+			return streamIACRows(pl, w)
 		}),
 	}
 	iacDestroy.Flags().StringArray("key", nil, "delete only this resource key; repeat for multiple keys; retained dependents block deletion")

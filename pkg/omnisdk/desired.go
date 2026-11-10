@@ -557,7 +557,33 @@ func (p *desiredPlan) lower(prior func(string) map[string]any, outside func(stri
 
 		// An inbound transform reshapes what arrives into the parameters the calls take: it is a
 		// node of its own between the arrivals and every call, as T_in is on any wiring.
-		if typ, body := r.Via(); typ != "" {
+		typ, body := r.Via()
+		if typ != "" && len(consts) > 0 && len(arrivals) == 0 {
+			registry, err := dsl.NewRegistry(append(gotemplate.Evaluators(), schemaxml.New(), starlarkdsl.New())...)
+			if err != nil {
+				return nil, nil, nil, err
+			}
+			inbox := map[string]any{}
+			for name, value := range consts {
+				inbox[name] = value
+			}
+			shaped, err := docx.InboundProgram(registry, typ, body).Apply(bind.NewDocRecord(inbox))
+			if err != nil {
+				return nil, nil, nil, err
+			}
+			values, ok := bind.DocMap(shaped)
+			if !ok {
+				return nil, nil, nil, fmt.Errorf("%s: transform did not return an object", r.Key())
+			}
+			consts = map[string]string{}
+			for name, value := range values {
+				if value != nil {
+					consts[name] = fmt.Sprint(value)
+				}
+			}
+			typ = ""
+		}
+		if typ != "" {
 			if len(consts) > 0 {
 				return nil, nil, nil, fmt.Errorf("omnisdk: %s: an inbound transform over a resource outside the run is not supported", r.Key())
 			}
