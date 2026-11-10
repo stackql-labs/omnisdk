@@ -893,9 +893,13 @@ func compile(ex aot.AOTExchange, inputs map[string]any, reg dsl.Registry, o opti
 		}
 		if gx, ok := ex.(aot.GraphQLExchange); ok {
 			if graph, ok := gx.GraphQL(); ok {
-				var send facade.Operator = newGraphQLOperator(graph, resp.ObjectKey(), rowReq, rowBound, reqT, o.queryLimit, o.baseURL)
+				send := newGraphQLOperator(graph, resp.ObjectKey(), rowReq, rowBound, reqT, o.queryLimit, o.baseURL)
+				send.strict = o.strictSelection
+				if hasProgram {
+					send.responseProgram = program(reg, tr.Type(), tr.Body(), dslContext(resp, rowPath))
+				}
 				if o.httpObserver != nil {
-					send = exchange.NewTransformExchange(0, send, responseObservation{o.httpObserver}, 1)
+					send.responseObserver = responseObservation{o.httpObserver}
 				}
 				decoded := exchange.NewTransformExchange(0, send, decode, 1)
 				selected := exchange.NewTransformExchange(0, decoded, rowSelection, 1)
