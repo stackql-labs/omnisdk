@@ -10,7 +10,8 @@ import subprocess
 
 p=argparse.ArgumentParser(description=__doc__)
 p.add_argument('--case',type=Path,required=True)
-p.add_argument('--image-id',required=True)
+p.add_argument('--image-id', default='resolve:ssm:/aws/service/ami-amazon-linux-latest/al2023-ami-kernel-default-x86_64',
+               help='AMI ID override; default lets EC2 resolve the latest regional AL2023 x86_64 image')
 p.add_argument('--zone-a',required=True)
 p.add_argument('--zone-b',required=True)
 p.add_argument('--ssh-cidr',required=True)
@@ -22,6 +23,8 @@ p.add_argument('--poll-interval',default='2s')
 p.add_argument('--poll-attempts',type=int,default=120)
 a=p.parse_args()
 if not re.fullmatch(r'[A-Za-z0-9-]{1,40}',a.prefix):p.error('invalid prefix')
+if not re.fullmatch(r'ami-(?:[0-9a-f]{8}|[0-9a-f]{17})|resolve:ssm:/[A-Za-z0-9_./-]+(?::[0-9]+)?', a.image_id):
+    p.error('--image-id must be an AMI ID or resolve:ssm:/parameter reference')
 for cidr in (a.ssh_cidr,a.http_cidr):
     if ipaddress.ip_network(cidr).version!=4:p.error('IPv4 CIDRs required')
 if a.poll_attempts<1:p.error('poll attempts must be positive')

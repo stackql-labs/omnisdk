@@ -90,6 +90,19 @@ jobs:
         with:
           python-version: "3.11"
 
+      # The declarative AWS suite merges the real EC2 document from this corpus.
+      # Jobs have separate workspaces; the Go job's fetch does not populate Robot's.
+      - name: Cache provider-document corpus
+        id: corpus
+        uses: actions/cache@v4
+        with:
+          path: test/corpus/registry
+          key: corpus-${{ hashFiles('test/corpus/fetch.sh') }}
+
+      - name: Fetch provider-document corpus
+        if: steps.corpus.outputs.cache-hit != 'true'
+        run: ./test/corpus/fetch.sh
+
       - name: Robot (build + venv + run, same script as local)
         run: ./test/robot/run.sh
 

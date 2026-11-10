@@ -17,23 +17,36 @@ cannot prove that Linux boots or nginx installs successfully.
 
 ## Prepare local inputs and merge the provider document
 
-Run from the repository root. Choose an Amazon Linux 2023 **x86_64** AMI in your selected region,
-availability zones available to your account, and your public IPv4 address for SSH.
+Run from the repository root. The image defaults to Amazon Linux 2023 **x86_64**, resolved by EC2
+from AWS's regional public SSM parameter at launch. No AMI lookup or manual image ID is required.
+Choose availability zones available to your account. The commands determine your public IPv4 for SSH.
 
 ```sh
 go build -o build/omnicli ./cmd/omnicli
 export CASE="$PWD/cicd/out/nginx-live"
 export REGION=ap-southeast-2
 export COLLECTION=my-nginx-demo
+export SSH_CIDR="$(curl --fail --silent --show-error https://checkip.amazonaws.com)/32"
 
 python3 cicd/examples/aws-nginx/prepare.py \
   --case "$CASE" --prefix "$COLLECTION" \
-  --image-id YOUR_AL2023_X86_64_AMI \
   --zone-a ap-southeast-2a --zone-b ap-southeast-2b \
-  --ssh-cidr YOUR_PUBLIC_IPV4/32
+  --ssh-cidr "$SSH_CIDR"
 
 export REGISTRY="$(build/omnicli doc-merge test/corpus/registry "@$CASE/merge.json")"
 ```
+
+The default `ImageId` is:
+
+```text
+resolve:ssm:/aws/service/ami-amazon-linux-latest/al2023-ami-kernel-default-x86_64
+```
+
+This is an executable [AWS-supported image reference](https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/finding-an-ami-parameter-store.html),
+not a placeholder. EC2 resolves it in `--aws-region` when launching. The caller needs
+`ssm:GetParameters` for that public parameter in addition to the EC2 permissions. To pin a particular
+image, pass `--image-id` with its actual regional AMI ID to preparation. Reapplying an unchanged
+spec does not relaunch the VM or adopt a newer image.
 
 Preparation generates a local SSH key pair, encodes the public key and [user-data.sh](user-data.sh),
 and writes binding values to `$CASE/inputs.json`. Supply `--public-key /path/key.pub` to import an

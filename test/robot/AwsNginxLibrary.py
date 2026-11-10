@@ -69,7 +69,7 @@ class AwsNginxLibrary:
         self.endpoint = f"http://127.0.0.1:{self.server.server_port}"
         self.example = self.repo / "cicd/examples/aws-nginx"
         subprocess.run(["python3", str(self.example / "prepare.py"), "--case", str(self.root),
-                        "--image-id", "ami-00000000000000001", "--zone-a", "ap-southeast-2a", "--zone-b", "ap-southeast-2b",
+                        "--zone-a", "ap-southeast-2a", "--zone-b", "ap-southeast-2b",
                         "--ssh-cidr", "203.0.113.7/32", "--prefix", "robot-nginx", "--poll-interval", "5ms", "--poll-attempts", "10"], check=True)
         result = subprocess.run([self.binary, "doc-merge", str(self.repo / "test/corpus/registry"), "@"+str(self.root / "merge.json")], capture_output=True, text=True)
         assert result.returncode == 0, result.stderr
@@ -209,6 +209,7 @@ class AwsNginxLibrary:
             self.key = True
             return f'<keyName>{p["KeyName"]}</keyName><keyPairId>key-web</keyPairId>'
         elif action == "RunInstances":
+            assert p["ImageId"] == "resolve:ssm:/aws/service/ami-amazon-linux-latest/al2023-ami-kernel-default-x86_64", "AMI default did not reach EC2"
             assert self.route and self.attached and self.key and self.ingress and self.associations
             assert self.network_polls.get("subnet-a", 0) >= 2
             assert p["NetworkInterface.1.SubnetId"] == "subnet-a"
