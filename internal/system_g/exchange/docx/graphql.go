@@ -17,17 +17,19 @@ import (
 )
 
 type graphQLOperator struct {
-	spec                           aot.GraphQL
-	req                            httpx.Request
-	bound                          map[string]any
-	transforms                     []facade.Transform
-	query, format                  *template.Template
-	selection, cursor, termination jsonpath.Selection
-	limit                          int
-	err                            error
+	spec                              aot.GraphQL
+	req                               httpx.Request
+	bound                             map[string]any
+	transforms                        []facade.Transform
+	responseProgram, responseObserver facade.Transform
+	strict                            bool
+	query, format                     *template.Template
+	selection, cursor, termination    jsonpath.Selection
+	limit                             int
+	err                               error
 }
 
-func newGraphQLOperator(spec aot.GraphQL, fallback string, req httpx.Request, bound map[string]any, transforms []facade.Transform, limit int, base string) facade.Operator {
+func newGraphQLOperator(spec aot.GraphQL, fallback string, req httpx.Request, bound map[string]any, transforms []facade.Transform, limit int, base string) *graphQLOperator {
 	g := &graphQLOperator{spec: spec, req: req, bound: bound, transforms: transforms, limit: limit}
 	if limit <= 0 {
 		g.limit = 100
@@ -111,7 +113,10 @@ func (g *graphQLOperator) run(ctx context.Context, buf facade.Buffer) error {
 		if err != nil {
 			return err
 		}
-		selected := flattenSelection(g.selection.Values(doc))
+		selected, err := (selectionRows{selection: g.selection, strict: g.strict}).values(doc)
+		if err != nil {
+			return err
+		}
 		if len(selected) == 0 {
 			return nil
 		}
@@ -187,7 +192,7 @@ func (g *graphQLOperator) run(ctx context.Context, buf facade.Buffer) error {
 	return nil
 }
 
-func (g *graphQLOperator) page(ctx context.Context, bound map[string]any) (facade.Record, map[string]any, error) {
+func (g *graphQLOperator) page(ctx context.Context, bound map[string]any) (facade.Record, any, error) {
 	rows := httpx.Make(g.req, nil, g.transforms...)(bound).Open(ctx)
 	defer rows.Close()
 	if !rows.Next(ctx) {
@@ -197,6 +202,11 @@ func (g *graphQLOperator) page(ctx context.Context, bound map[string]any) (facad
 		return nil, nil, rows.Err()
 	}
 	rec := rows.Record()
+	if g.responseObserver != nil {
+		if _, err := g.responseObserver.Apply(rec); err != nil {
+			return nil, nil, err
+		}
+	}
 	if _, err := httpx.NewRequireOK().Apply(rec); err != nil {
 		return nil, nil, err
 	}
@@ -214,6 +224,24 @@ func (g *graphQLOperator) page(ctx context.Context, bound map[string]any) (facad
 	}
 	if err := rows.Err(); err != nil {
 		return nil, nil, err
+	}
+	// Validate the raw GraphQL envelope before a program can reshape or discard
+	// its errors. All row and continuation paths then address the program output.
+	if g.responseProgram != nil {
+		rec, err := g.responseProgram.Apply(rec)
+		if err != nil {
+			return nil, nil, fmt.Errorf("graphql response transform: %w", err)
+		}
+		if rec == nil {
+			return nil, nil, fmt.Errorf("graphql response transform returned no document")
+		}
+		decoder := json.NewDecoder(bytes.NewReader(rec.Bytes(facade.AnonymousPayload)))
+		decoder.UseNumber()
+		var transformed any
+		if err := decoder.Decode(&transformed); err != nil {
+			return nil, nil, fmt.Errorf("graphql response transform output: %w", err)
+		}
+		return rec, transformed, nil
 	}
 	return rec, doc, nil
 }
@@ -240,6 +268,14 @@ func (s selectionRows) Apply(in facade.Page) (facade.Record, error) {
 	if !ok {
 		return nil, fmt.Errorf("response selection requires a decoded document")
 	}
+	values, err := s.values(doc)
+	if err != nil {
+		return nil, err
+	}
+	return docRecord(values), nil
+}
+
+func (s selectionRows) values(doc any) ([]any, error) {
 	if s.strict {
 		current := doc
 		for _, segment := range s.selection.Segments() {
@@ -257,5 +293,5 @@ func (s selectionRows) Apply(in facade.Page) (facade.Record, error) {
 			current = value
 		}
 	}
-	return docRecord(flattenSelection(s.selection.Values(doc))), nil
+	return flattenSelection(s.selection.Values(doc)), nil
 }
