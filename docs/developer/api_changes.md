@@ -174,3 +174,13 @@ outcome, timestamp and error; common provider error codes/request IDs are extrac
 No HTTP logging flag is needed. Request/response dumps are not written. These files are separate
 from forward journals and never become compensation steps. A killed process can leave dispatch/await
 evidence without a terminal outcome; the ledger remains authoritative for uncertainty.
+
+## Explicit pending-outcome recovery
+
+`Prepare(registry, Recover(resourceKey, outcome, identity, version), NewLedger(...), args)` records
+an operator-verified `absent` or `applied` outcome without provider calls. Recovery requires the
+observed pending version, locks the resource, journals the assertion before the CAS update, and
+refuses stale decisions. `absent` cannot discard prior committed state or retained dependents.
+`applied` requires a verified completed effect and identity; it never replaces a prior identity.
+The ledger configuration also exposes an optional `Recover(ctx, resource, outcome, identity,
+version, args)` capability for consumers. This addition requires a new release after `v0.1.11-alpha03`.

@@ -211,6 +211,27 @@ Reopening a session requires repeating SET before continuing. Paths refer to the
 existing ledger throughout. A different ledger can create duplicates. Inspect failed/outstanding
 results before any further mutation.
 
+## Recover a verified pending outcome
+
+After independently verifying that a failed create did not happen **and is no longer in flight**,
+read its `phase` and `version` from `stackql_preview.iac.ledger`. Then, using the returned version:
+
+```sql
+SELECT * FROM stackql_preview.iac.recover
+WHERE collection = 'my-nginx-demo'
+  AND resource_key = 'subnet_a'
+  AND outcome = 'absent'
+  AND version = '1';
+```
+
+`1` is the example's first pending version; use the actual observed value. Recovery makes no cloud
+calls. It records your assertion, checks the version under an exclusive resource lock and clears
+only an unresolved first create with no retained dependents. Reapply the same spec afterwards;
+completed resources remain managed. For a verified completed create whose response was lost,
+use `outcome = 'applied'` with its independently verified `identity` instead. Existence alone does
+not establish readiness or successful completion. Never infer either outcome from tags.
+Requires the new Omni recovery release and corresponding stackql integration.
+
 ## Mock verification
 
 ```sh

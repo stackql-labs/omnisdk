@@ -431,6 +431,13 @@ its ledger lives, over whatever the spec says; a file holding only resources nee
 		_ = iacDestroy.MarkFlagRequired(f)
 	}
 	root.AddCommand(iacDestroy)
+	root.AddCommand(iacRecoverCommand(withSinks(func(cmd *cobra.Command, w, logw io.Writer) error {
+		plan, err := omnisdk.Prepare("", omnisdk.Recover(mustFlag(cmd, "key"), mustFlag(cmd, "outcome"), mustFlag(cmd, "identity"), mustFlag(cmd, "version")), omnisdk.NewLedger(mustFlag(cmd, "name"), mustFlag(cmd, "state"), runIDOr(mustFlag(cmd, "run-id"))), omnisdk.Args{})
+		if err != nil {
+			return err
+		}
+		return streamIACRows(plan, w)
+	})))
 
 	// ---- GCP ------------------------------------------------------------------
 	gcpCmd := &cobra.Command{

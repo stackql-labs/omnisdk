@@ -106,6 +106,12 @@ func Prepare(registry string, s Statement, w WALConfig, args Args) (Plan, error)
 		maps.Copy(params, res.Params())
 		args.Params = params
 		return prepareGraph(registry, graphStatement{g: res.Graph(), managed: st.managed}, w, args)
+	case recoveryStatement:
+		l, ok := w.(ledgerWAL)
+		if !ok {
+			return nil, fmt.Errorf("recovery needs NewLedger")
+		}
+		return recoveryPlan{config: l, decision: st, args: args}, nil
 	case destroyStatement:
 		l, ok := w.(ledgerWAL)
 		if !ok {
