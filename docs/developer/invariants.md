@@ -79,7 +79,7 @@ never held across a wire call; cross-run exclusion is a durable, expiring lease.
   `omnisdk` processing a query is
   upper bounded in the product of
   the resouce projection sizes in the working set.
-  That is $O(\text{relation memory}) = \prod_{i=1}^{n} |R_i|$.
-  Where the working set is global, such as aggregation and ordering, then the working set can be very large indeed.
+  That is $M_{\mathrm{relations}} \in O\left(\prod_{i=1}^{n}\mathrm{size}(R_i)\right)$.
+  In cases where the working set is global, such as aggregation and ordering, then the memory footprint can be very large indeed.
 2. IAC logs are never accessed once a run has completed.
 
