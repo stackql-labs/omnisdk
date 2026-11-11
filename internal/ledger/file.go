@@ -50,6 +50,18 @@ func NewFile(root string) (facade.Ledger, error) {
 	return &fileLedger{root: root}, nil
 }
 
+// OpenFile opens an existing ledger without creating directories or changing files.
+func OpenFile(root string) (facade.Ledger, error) {
+	info, err := os.Stat(root)
+	if err != nil {
+		return nil, err
+	}
+	if !info.IsDir() {
+		return nil, fmt.Errorf("ledger root is not a directory")
+	}
+	return &fileLedger{root: root}, nil
+}
+
 // paths resolves a key to the directory holding its versions and the filename stem within it.
 // Keys are scope-prefixed with "/" and must not escape the root.
 func (f *fileLedger) paths(k facade.LedgerKey) (dir, stem string, err error) {

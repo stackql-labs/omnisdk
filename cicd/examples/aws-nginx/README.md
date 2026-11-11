@@ -93,6 +93,20 @@ changes to AMI, subnet CIDRs, SSH rules or instance size. Changing those inputs 
 update plan. The separately declared `State: stopped` update is supported. Keep the same collection,
 state directory, effective registry and inputs for the entire deployment.
 
+## Read the ledger in stackql
+
+With Omni's read-only ledger API available in the consumed release:
+
+```sql
+SELECT resource_key, identity, phase
+FROM stackql_preview.iac.ledger
+WHERE collection = 'my-nginx-demo' AND resource_key = 'instance';
+```
+
+This reads the same ledger root used by apply. `pending` means uncertain; any identity there is
+from the previous committed state. No leases, journal entries or cloud requests are made.
+`Name` tags in this example are explicit display labels, not ownership markers or WAL.
+
 ## Inspect and verify the VM
 
 The following extraction uses `jq`; alternatively read the instance's identity from `create.jsonl`.
@@ -137,6 +151,65 @@ ordering. Local keys, inputs and logs are retained after cloud cleanup.
 Use a fresh run ID for every execution, including retries. Pending/unknown outcomes must be
 investigated before further mutation; do not remove ledger entries or replay uncertain creates.
 Inspect every outstanding result and retain the state directory until teardown is confirmed.
+
+## How to run this in stackql
+
+Start with **your existing pinned canonical AWS registry** in stackql. The session merge augments
+that registry; do not point stackql at Omni's test corpus or its generated effective registry.
+Requires stackql's `document_merge` and `inputs_file` support, consuming Omni `v0.1.11-alpha01`.
+These stackql steps have not been verified against live AWS.
+
+Prepare the local key and bootstrap inputs as above; skip `omnicli doc-merge`. Keep the prepared
+files in `cicd/out/nginx-live`. From this repository root, open stackql using your usual pinned
+registry configuration, adding the preview flag:
+
+```sh
+./build/stackql shell --preview '{"unstable":true}'
+```
+
+Inside that session, merge the overlay and create the deployment:
+
+```sql
+SET "$.document_merge" = '@cicd/out/nginx-live/merge.json';
+
+SELECT * FROM stackql_preview.iac.run
+WHERE collection = 'my-nginx-demo'
+  AND region = 'ap-southeast-2'
+  AND resources_file = 'cicd/examples/aws-nginx/resources.json'
+  AND inputs_file = 'cicd/out/nginx-live/inputs.json';
+```
+
+Use the collection and region chosen during preparation. AWS credentials use the normal environment.
+Run the same SELECT again to verify unchanged reapply. Each execution gets a fresh run ID automatically.
+Inspect its results and verify nginx/SSH before proceeding.
+
+Declare the VM stopped, then destroy the collection in dependency order:
+
+```sql
+SELECT * FROM stackql_preview.iac.run
+WHERE collection = 'my-nginx-demo'
+  AND region = 'ap-southeast-2'
+  AND resources_file = 'cicd/examples/aws-nginx/stopped.json'
+  AND inputs_file = 'cicd/out/nginx-live/inputs.json';
+
+-- Execute only after the stopped-state result succeeds.
+SELECT * FROM stackql_preview.iac.destroy
+WHERE collection = 'my-nginx-demo'
+  AND region = 'ap-southeast-2';
+
+-- After teardown, restore the session's canonical document view.
+UNSET "$.document_merge";
+```
+
+Ledger and journals default to `.stackql/iac` under the working directory (or `--approot`). Merge cache
+normally defaults to `.stackql/cache/document-views`; preparation's `merge.json` explicitly selects
+its case-local `registry-cache`. Keep the same app root, collection and overlay for every run.
+Reopening a session requires repeating SET before continuing. Paths refer to the stackql process.
+
+**If continuing an existing omnicli deployment**, start the shell with
+`--preview '{"unstable":true,"iacStateRoot":"cicd/out/nginx-live/state"}'` instead, using that
+existing ledger throughout. A different ledger can create duplicates. Inspect failed/outstanding
+results before any further mutation.
 
 ## Mock verification
 

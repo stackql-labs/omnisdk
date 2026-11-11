@@ -5,6 +5,13 @@ features already present there are not listed as additions.
 
 ## Required migration
 
+Read-only ledger inspection: `ReadLedger(ctx, collection, stateDir)` returns resource keys,
+identities, phases, versions and addressing metadata without cloud calls or filesystem writes.
+`NewLedger(...)` also exposes this through an optional `Read(context.Context) ([]Row, error)`
+capability. Pending identities are prior committed identities. Intent bodies and provider parameters
+are omitted; reads are per-entry consistent, not a collection-wide snapshot. This addition is not
+in `v0.1.11-alpha01`.
+
 | Surface | Change | Caller action |
 | --- | --- | --- |
 | IaC resource JSON | `params` becomes `write_once`; `params` is rejected, without an alias | Rename the resource-level object. Execution-scope `Args.Params` / `args.params` and graph-node `params` are unchanged |
