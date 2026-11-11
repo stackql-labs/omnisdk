@@ -10,6 +10,10 @@ from urllib.parse import parse_qs, urlparse
 from xml.sax.saxutils import escape
 
 
+class IdempotencyMismatch(Exception):
+    pass
+
+
 class AwsNginxLibrary:
     ROBOT_LIBRARY_SCOPE = "SUITE"
 
@@ -29,6 +33,7 @@ class AwsNginxLibrary:
         self.instance = None
         self.polls = 0
         self.network_polls = {}
+        self.client_tokens = {}
         owner = self
 
         class API(BaseHTTPRequestHandler):
@@ -55,6 +60,9 @@ class AwsNginxLibrary:
                         return  # Remote mutation succeeded; the caller receives no response.
                     body = f'<{action}Response xmlns="http://ec2.amazonaws.com/doc/2016-11-15/">{fields}</{action}Response>'.encode()
                     self.send_response(200)
+                except IdempotencyMismatch:
+                    body = b'<Response><Errors><Error><Code>IdempotentParameterMismatch</Code><Message>Client token reused with changed parameters</Message></Error></Errors></Response>'
+                    self.send_response(400)
                 except (AssertionError, KeyError) as error:
                     body = f'<Response><Errors><Error><Code>DependencyViolation</Code><Message>{escape(str(error))}</Message></Error></Errors></Response>'.encode()
                     self.send_response(400)
@@ -69,6 +77,7 @@ class AwsNginxLibrary:
         self.endpoint = f"http://127.0.0.1:{self.server.server_port}"
         self.example = self.repo / "cicd/examples/aws-nginx"
         subprocess.run(["python3", str(self.example / "prepare.py"), "--case", str(self.root),
+                        "--region", "ap-southeast-2", "--image-id", "ami-00000000000000001",
                         "--zone-a", "ap-southeast-2a", "--zone-b", "ap-southeast-2b",
                         "--ssh-cidr", "203.0.113.7/32", "--prefix", "robot-nginx", "--poll-interval", "5ms", "--poll-attempts", "10"], check=True)
         result = subprocess.run([self.binary, "doc-merge", str(self.repo / "test/corpus/registry"), "@"+str(self.root / "merge.json")], capture_output=True, text=True)
@@ -209,7 +218,14 @@ class AwsNginxLibrary:
             self.key = True
             return f'<keyName>{p["KeyName"]}</keyName><keyPairId>key-web</keyPairId>'
         elif action == "RunInstances":
-            assert p["ImageId"] == "resolve:ssm:/aws/service/ami-amazon-linux-latest/al2023-ami-kernel-default-x86_64", "AMI default did not reach EC2"
+            token = p["ClientToken"]
+            assert token and len(token) <= 64
+            previous = self.client_tokens.get(token)
+            if previous is not None:
+                if previous != p:
+                    raise IdempotencyMismatch()
+                return '<instancesSet><item><instanceId>i-web</instanceId><instanceState><name>pending</name></instanceState></item></instancesSet>'
+            assert p["ImageId"] == "ami-00000000000000001", "concrete pinned AMI did not reach EC2"
             assert self.route and self.attached and self.key and self.ingress and self.associations
             assert self.network_polls.get("subnet-a", 0) >= 2
             assert p["NetworkInterface.1.SubnetId"] == "subnet-a"
@@ -219,6 +235,7 @@ class AwsNginxLibrary:
             script = base64.b64decode(p["UserData"]).decode()
             assert "dnf install -y nginx" in script and "robot-nginx" in script and "/healthz" in script
             assert p["MetadataOptions.HttpTokens"] == "required"
+            self.client_tokens[token] = dict(p)
             self.instance, self.polls = "pending", 0
             return '<instancesSet><item><instanceId>i-web</instanceId><instanceState><name>pending</name></instanceState></item></instancesSet>'
         elif action == "DescribeInstances":
@@ -368,3 +385,25 @@ class AwsNginxLibrary:
             self.server.shutdown()
             self.server.server_close()
             self.worker.join(timeout=5)
+
+    def client_token_contract_survives_teardown(self):
+        import uuid
+        self.cli("apply")
+        self.cli("stop")
+        self.cli("destroy")
+        inputs_path = self.root / "inputs.json"
+        inputs = json.loads(inputs_path.read_text())
+        original_token = inputs["client_token"]
+        inputs["instance_type"] = "t3.small"
+        inputs_path.write_text(json.dumps(inputs))
+        failed = self.cli("reapply", expect_success=False)
+        assert "IdempotentParameterMismatch" in failed.stdout + failed.stderr, failed.stdout + failed.stderr
+        assert len(self.client_tokens) == 1 and original_token in self.client_tokens
+        # The previous instance was torn down and this launch was definitely rejected.
+        # A new deployment generation gets a new persisted token, not a retry rotation.
+        inputs["client_token"] = uuid.uuid4().hex
+        inputs_path.write_text(json.dumps(inputs))
+        self.cli("reapply")
+        assert len(self.client_tokens) == 2 and self.instance == "running"
+        self.cli("stop")
+        self.cli("destroy")

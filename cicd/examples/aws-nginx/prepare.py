@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Prepare local inputs and a document merge request. Never calls a cloud API."""
+"""Prepare local inputs and a document merge request. Resolves an AMI read-only; never provisions cloud resources."""
 import argparse
 import base64
 import json
@@ -7,11 +7,13 @@ import ipaddress
 from pathlib import Path
 import re
 import subprocess
+import uuid
+from image_inputs import resolve_image
 
 p=argparse.ArgumentParser(description=__doc__)
 p.add_argument('--case',type=Path,required=True)
-p.add_argument('--image-id', default='resolve:ssm:/aws/service/ami-amazon-linux-latest/al2023-ami-kernel-default-x86_64',
-               help='AMI ID override; default lets EC2 resolve the latest regional AL2023 x86_64 image')
+p.add_argument('--region', required=True)
+p.add_argument('--image-id', help='Concrete AMI ID; otherwise resolve AL2023 through AWS SSM once and persist it')
 p.add_argument('--zone-a',required=True)
 p.add_argument('--zone-b',required=True)
 p.add_argument('--ssh-cidr',required=True)
@@ -23,13 +25,16 @@ p.add_argument('--poll-interval',default='2s')
 p.add_argument('--poll-attempts',type=int,default=120)
 a=p.parse_args()
 if not re.fullmatch(r'[A-Za-z0-9-]{1,40}',a.prefix):p.error('invalid prefix')
-if not re.fullmatch(r'ami-(?:[0-9a-f]{8}|[0-9a-f]{17})|resolve:ssm:/[A-Za-z0-9_./-]+(?::[0-9]+)?', a.image_id):
-    p.error('--image-id must be an AMI ID or resolve:ssm:/parameter reference')
 for cidr in (a.ssh_cidr,a.http_cidr):
     if ipaddress.ip_network(cidr).version!=4:p.error('IPv4 CIDRs required')
 if a.poll_attempts<1:p.error('poll attempts must be positive')
 a.case=a.case.resolve();a.case.mkdir(mode=0o700,parents=True,exist_ok=True)
 if (a.case/'inputs.json').exists():p.error('case already prepared; use its inputs and ledger, or a new directory')
+try:
+    a.image_id = resolve_image(a.image_id, a.region)
+except (ValueError, OSError, subprocess.SubprocessError) as error:
+    p.error('cannot pin AMI: ' + str(error))
+
 key=a.public_key
 if key is None:
     private=a.case/'id_ed25519'
@@ -40,7 +45,7 @@ public=key.read_text().strip()
 if not public.startswith('ssh-'):p.error('OpenSSH public key required')
 base=Path(__file__).resolve().parent
 script=(base/'user-data.sh').read_text().replace('__DEPLOYMENT__',a.prefix)
-inputs={'image_id':a.image_id,'instance_type':a.instance_type,'zone_a':a.zone_a,'zone_b':a.zone_b,'ssh_cidr':a.ssh_cidr,'http_cidr':a.http_cidr,'key_name':a.prefix+'-ssh','group_name':a.prefix+'-web','client_token':a.prefix+'-instance','public_key_material':base64.b64encode(public.encode()).decode(),'user_data':base64.b64encode(script.encode()).decode()}
+inputs={'image_id':a.image_id,'instance_type':a.instance_type,'zone_a':a.zone_a,'zone_b':a.zone_b,'ssh_cidr':a.ssh_cidr,'http_cidr':a.http_cidr,'key_name':a.prefix+'-ssh','group_name':a.prefix+'-web','client_token':uuid.uuid4().hex,'public_key_material':base64.b64encode(public.encode()).decode(),'user_data':base64.b64encode(script.encode()).decode()}
 # Tags are user inputs to the static deployment specification.
 for resource in json.loads((base/'resources.json').read_text())['resources']:
     inputs['tag_'+resource['key']]=a.prefix+'-'+resource['key']

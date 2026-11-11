@@ -21,3 +21,6 @@ Interrupted Readiness Retains Poll Handle And Write Lock
 
 Lost Delete Response Retains Identity And Blocks Blind Retry
     Lose Delete Response And Verify Ledger
+
+EC2 Client Token Contract Survives Teardown
+    Client Token Contract Survives Teardown

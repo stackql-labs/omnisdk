@@ -17,9 +17,10 @@ cannot prove that Linux boots or nginx installs successfully.
 
 ## Prepare local inputs and merge the provider document
 
-Run from the repository root. The image defaults to Amazon Linux 2023 **x86_64**, resolved by EC2
-from AWS's regional public SSM parameter at launch. No AMI lookup or manual image ID is required.
-Choose availability zones available to your account. The commands determine your public IPv4 for SSH.
+Run from the repository root. Preparation resolves Amazon Linux 2023 **x86_64** once through
+AWS SSM, then writes the concrete regional AMI ID into `inputs.json`. This read requires the AWS
+CLI and credentials; `--image-id` with a concrete AMI ID skips the lookup. Choose availability zones
+available to your account. The commands determine your public IPv4 for SSH.
 
 ```sh
 go build -o build/omnicli ./cmd/omnicli
@@ -29,28 +30,25 @@ export COLLECTION=my-nginx-demo
 export SSH_CIDR="$(curl --fail --silent --show-error https://checkip.amazonaws.com)/32"
 
 python3 cicd/examples/aws-nginx/prepare.py \
-  --case "$CASE" --prefix "$COLLECTION" \
+  --case "$CASE" --prefix "$COLLECTION" --region "$REGION" \
   --zone-a ap-southeast-2a --zone-b ap-southeast-2b \
   --ssh-cidr "$SSH_CIDR"
 
 export REGISTRY="$(build/omnicli doc-merge test/corpus/registry "@$CASE/merge.json")"
 ```
 
-The default `ImageId` is:
+The SSM parameter is `/aws/service/ami-amazon-linux-latest/al2023-ami-kernel-default-x86_64`.
+The caller needs `ssm:GetParameter` for this preparation lookup, in addition to the EC2 permissions
+for deployment. Launches receive the persisted `ami-...` value, never a moving `resolve:ssm` reference.
 
-```text
-resolve:ssm:/aws/service/ami-amazon-linux-latest/al2023-ami-kernel-default-x86_64
-```
-
-This is an executable [AWS-supported image reference](https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/finding-an-ami-parameter-store.html),
-not a placeholder. EC2 resolves it in `--aws-region` when launching. The caller needs
-`ssm:GetParameters` for that public parameter in addition to the EC2 permissions. To pin a particular
-image, pass `--image-id` with its actual regional AMI ID to preparation. Reapplying an unchanged
-spec does not relaunch the VM or adopt a newer image.
+Each prepared deployment gets a unique client token, persisted in `inputs.json`. Reapply and retries
+reuse that token and the pinned image. Preparation refuses to overwrite existing inputs. A new
+case is a new deployment generation; reusing a display prefix does not reuse its client token.
+Do not rotate a token to bypass an unresolved launch: first establish the old launch's outcome.
 
 Preparation generates a local SSH key pair, encodes the public key and [user-data.sh](user-data.sh),
 and writes binding values to `$CASE/inputs.json`. Supply `--public-key /path/key.pub` to import an
-existing key instead. The private key remains local. This script makes no cloud calls and neither
+existing key instead. The private key remains local. This script performs only the optional read-only SSM lookup; it neither
 constructs nor executes a deployment graph.
 
 `doc-merge` applies the RFC 7386 overlay through `omnisdk.EffectiveRegistry`, caches the effective

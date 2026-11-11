@@ -8,3 +8,6 @@ __debug_*
 # — a module zip includes testdata, and Go caps one at 500MB. The fetch script itself IS tracked:
 # it carries the pinned registry commit.
 test/corpus/registry/
+
+__pycache__/
+*.py[cod]
