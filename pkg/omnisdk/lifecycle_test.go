@@ -121,3 +121,48 @@ func TestBetaIaCPersistsOperationHandle(t *testing.T) {
 		t.Fatalf("handles=%v err=%v", handles, err)
 	}
 }
+
+// Hosts with their own mutation completion must see the accepted create response,
+// not an implicit self-read that can fail before the operation is polled.
+func TestHostCompletionOwnsLifecycleWait(t *testing.T) {
+	for _, hostCompletion := range []bool{false, true} {
+		t.Run(fmt.Sprint(hostCompletion), func(t *testing.T) {
+			registry := updateWidgetBundle(t, "      config:\n        lifecycle:\n          state_derivation: self_read_returns_data\n          interval: 1ms\n          max_attempts: 2\n")
+			creates, reads, completions := 0, 0, 0
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				if r.Method != http.MethodPost {
+					reads++
+					http.Error(w, "unexpected self read", http.StatusForbidden)
+					return
+				}
+				creates++
+				fmt.Fprint(w, `{"operation":"op-1"}`)
+			}))
+			defer srv.Close()
+			graph, err := omnisdk.NewGraph([]omnisdk.Node{omnisdk.NewMutationNode("create", widgets, "insert", nil, nil, map[string]any{"size": "S"})}, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			args := omnisdk.Args{Endpoint: srv.URL}
+			args.MutationCompletion = completionFunc(func(_ context.Context, _, _ string, _ map[string]any, row omnisdk.Row) (omnisdk.Row, error) {
+				completions++
+				if row["operation"] != "op-1" {
+					t.Errorf("completion lost operation response: %v", row)
+				}
+				if hostCompletion {
+					return omnisdk.Row{"id": "w-1"}, nil
+				}
+				return row, nil
+			})
+			pl, err := omnisdk.NewGraphQuery(registry, graph, args)
+			if err != nil {
+				t.Fatal(err)
+			}
+			drain(t, pl)
+			if creates != 1 || reads != 0 || completions != 1 {
+				t.Fatalf("creates=%d reads=%d completions=%d", creates, reads, completions)
+			}
+		})
+	}
+}

@@ -49,6 +49,7 @@ type options struct {
 	rowCache                      facade.RowCache
 	snapshotCache                 bool
 	observationOnly               bool
+	skipLifecycleWait             bool
 	httpObserver                  facade.HTTPObserver
 	cachePartition, cacheResource string
 	legacyPagination              bool
@@ -358,6 +359,9 @@ func WithHTTPObserver(observer facade.HTTPObserver) Option {
 
 func WithSnapshotCache() Option { return func(o *options) { o.snapshotCache = true } }
 
+// WithoutLifecycleWait leaves config-based readiness to the caller. Explicit beta edges remain authoritative.
+func WithoutLifecycleWait() Option { return func(o *options) { o.skipLifecycleWait = true } }
+
 func WithLegacyResponseTransforms() Option {
 	return func(o *options) { o.legacyResponseTransforms = true }
 }
@@ -491,7 +495,7 @@ func Spec(ex aot.AOTExchange, inputs map[string]any, reg dsl.Registry, opts ...O
 		cc := c.(compiled)
 		cc.spec, err = awaited(cc.spec, b, inputs, reg, o)
 		c = cc
-	} else if configured, ok := ex.(aot.LifecycleConfigured); ok && configured.Lifecycle() != nil {
+	} else if configured, ok := ex.(aot.LifecycleConfigured); ok && configured.Lifecycle() != nil && !o.skipLifecycleWait {
 		cc := c.(compiled)
 		cc.spec, err = lifecycleAwaited(cc.spec, configured.Lifecycle(), inputs, reg, o)
 		c = cc

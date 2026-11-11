@@ -5,6 +5,11 @@ features already present there are not listed as additions.
 
 ## Required migration
 
+Supplying `Args.MutationCompletion` suppresses config-based self-read waits, giving the host
+ownership of completion. Explicit document beta
+edges are unchanged; managed IaC keeps its readiness waits. This requires a release after
+`v0.1.11-alpha06`.
+
 Read-only ledger inspection: `ReadLedger(ctx, collection, stateDir)` returns resource keys,
 identities, phases, versions and addressing metadata without cloud calls or filesystem writes.
 `NewLedger(...)` also exposes this through an optional `Read(context.Context) ([]Row, error)`

@@ -321,7 +321,8 @@ type Args struct {
 	// ReadCachePartition is an explicit authorization/cache namespace. Required
 	// with ReadCache; it must differ between principals/tenants that cannot share rows.
 	ReadCachePartition string `json:"read_cache_partition,omitempty"`
-	// MutationCompletion optionally follows accepted graph mutations before projection.
+	// MutationCompletion owns completion of accepted graph mutations before projection,
+	// replacing config-based lifecycle waits. Explicit document beta edges still apply.
 	MutationCompletion MutationCompletion `json:"-"`
 	// LegacyXMLValues preserves legacy XML table text.
 	LegacyXMLValues bool `json:"legacy_xml_values,omitempty"`
@@ -1505,6 +1506,9 @@ func docInputs(args Args) map[string]any {
 // Azure's is not wanted.
 func docOptions(args Args, sec aot.Security, oauth bool) ([]docx.Option, error) {
 	opts := []docx.Option{docx.WithQueryLimit(args.Tuning.Limit), docx.WithSelectionErrors(args.ResponseSelectionErrors), docx.WithHTTPObserver(args.HTTPObserver)}
+	if args.MutationCompletion != nil {
+		opts = append(opts, docx.WithoutLifecycleWait())
+	}
 	if args.LegacyResponseTransforms {
 		opts = append(opts, docx.WithLegacyResponseTransforms())
 	}

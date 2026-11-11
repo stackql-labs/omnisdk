@@ -58,6 +58,10 @@ Both paths persist observation handles in the IaC journal before polling; checkp
 from compensation steps and do not record authentication inputs. This records handles for recovery;
 automatically resuming an interrupted wait is not yet implemented.
 
+Supplying `Args.MutationCompletion` gives the host ownership of completion and suppresses the
+config-based wait. This prevents a self-read before the host polls an operation. Explicit document
+beta edges still apply; managed IaC leaves lifecycle waits enabled.
+
 A 404 or empty read is retried. Other read errors, exhausted waits, or missing addressing inputs
 report the effect as unknown, without repeating create. A caller-chosen request `name` can supply the
 last detail-path parameter; otherwise matching response fields, existing scope inputs, or explicit
