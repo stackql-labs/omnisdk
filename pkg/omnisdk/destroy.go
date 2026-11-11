@@ -219,7 +219,15 @@ func (p *destroyPlan) Open(ctx context.Context) (Rows, error) {
 
 // delete removes one object: its intent to go into the journal first, the call, then the key.
 func (p *destroyPlan) delete(ctx context.Context, h *held, k facade.LedgerKey, exchange string, rec aboutRecord,
-	identity []byte, effector facade.Effector) error {
+	identity []byte, effector facade.Effector) (result error) {
+	stage := "validation"
+	defer func() {
+		diagnostic := journal.Diagnostic{Event: "success", Stage: "commit", Outcome: "committed"}
+		if result != nil {
+			diagnostic = failureDiagnostic(stage, result)
+		}
+		result = errors.Join(result, journal.RecordDiagnostic(ctx, h.journal, k, exchange, diagnostic))
+	}()
 	if err := h.check(ctx); err != nil {
 		return err
 	}
@@ -233,6 +241,7 @@ func (p *destroyPlan) delete(ctx context.Context, h *held, k facade.LedgerKey, e
 	if entry.Phase() != facade.LedgerLive {
 		return fmt.Errorf("%s has an unresolved mutation; recover its outcome before another delete", k)
 	}
+	stage = "intent"
 	if _, err := h.journal.Append(ctx, k, exchange, facade.FormDelete, nil); err != nil {
 		return fmt.Errorf("recording the delete failed, so it was not sent: %w", err)
 	}
@@ -249,6 +258,10 @@ func (p *destroyPlan) delete(ctx context.Context, h *held, k facade.LedgerKey, e
 	if err := h.check(ctx); err != nil {
 		return err
 	}
+	stage = "effect"
+	if err := journal.RecordDiagnostic(ctx, h.journal, k, exchange, journal.Diagnostic{Event: "dispatch", Stage: stage, Outcome: "attempting"}); err != nil {
+		return err
+	}
 	if _, err := effector.Effect(retryNever(ctx), exchange, k, facade.EffectInput{Params: params, Identity: identity}); err != nil {
 		var status *httpx.StatusError
 		if errors.As(err, &status) && status.Status >= 400 && status.Status < 500 {
@@ -260,5 +273,6 @@ func (p *destroyPlan) delete(ctx context.Context, h *held, k facade.LedgerKey, e
 	if err := h.check(ctx); err != nil {
 		return err
 	}
+	stage = "commit"
 	return h.log.Forget(ctx, k, pendingVersion)
 }

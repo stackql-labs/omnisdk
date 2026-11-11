@@ -165,3 +165,12 @@ selector-resolved server inputs. See the developer guide's endpoint-selector sec
 SQL resolution now retains the origin of query-wide explicit inputs when binding provider aliases.
 Those inputs and SQL IN fan-out take precedence over alias defaults, as node-local inputs already
 do; ordinary Args.Params defaults retain their existing lower priority.
+
+## Automatic IaC diagnostics
+
+Managed executions now fsync dispatch and success/failure evidence to
+`<state>/journal/<run-id>.diagnostics.jsonl`. Records identify the resource, exchange, stage,
+outcome, timestamp and error; common provider error codes/request IDs are extracted when available.
+No HTTP logging flag is needed. Request/response dumps are not written. These files are separate
+from forward journals and never become compensation steps. A killed process can leave dispatch/await
+evidence without a terminal outcome; the ledger remains authoritative for uncertainty.

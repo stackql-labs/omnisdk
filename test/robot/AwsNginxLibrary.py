@@ -311,6 +311,8 @@ class AwsNginxLibrary:
         snapshot = self.ledger_snapshot()
         assert snapshot["instance"]["phase"] == 0 and not snapshot["instance"].get("identity"), snapshot
         assert self.instance == "pending", "mock must have created the remote VM"
+        evidence = [json.loads(line) for line in (self.root / "state/journal/create.diagnostics.jsonl").read_text().splitlines()]
+        assert any(r["key"] == "robot-nginx/instance" and r["diagnostic"]["event"] == "failure" and r["diagnostic"]["outcome"] == "unknown" for r in evidence), "lost create has no durable failure evidence"
         assert len([k for k in snapshot if not k.startswith(".")]) == 13, "compensation discarded dependencies of an uncertain create"
         actions = [event["action"] for event in self.events]
         assert actions.count("RunInstances") == 1, "transport retries duplicated an uncertain create"
@@ -331,6 +333,8 @@ class AwsNginxLibrary:
         assert snapshot["instance"]["phase"] == 0
         assert base64.b64decode(snapshot["instance"]["identity"]).decode() == "i-web", "uncertain deletion lost prior identity"
         assert snapshot["instance"].get("about"), "uncertain deletion lost dependency metadata"
+        evidence = [json.loads(line) for path in (self.root / "state/journal").glob("destroy-*.diagnostics.jsonl") for line in path.read_text().splitlines()]
+        assert any(r["key"] == "robot-nginx/instance" and r["diagnostic"]["event"] == "failure" for r in evidence), "lost delete has no durable failure evidence"
         assert self.vpc and self.group and "subnet-a" in self.subnets, "teardown deleted an uncertain VM's dependencies"
         actions = [event["action"] for event in self.events]
         assert actions.count("TerminateInstances") == 1, "transport retries duplicated an uncertain delete"

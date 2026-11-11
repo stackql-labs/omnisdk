@@ -27,6 +27,7 @@ import (
 // line is one journal record. Fields carry storage names so the accessors can carry the contract
 // names; the JSON tags are the durable form and must not drift.
 type line struct {
+	Diagnostic  *Diagnostic      `json:"diagnostic,omitempty"`
 	AwaitMethod string           `json:"await_method,omitempty"`
 	AwaitInputs map[string]any   `json:"await_inputs,omitempty"`
 	SeqNo       int              `json:"seq"`
@@ -88,9 +89,10 @@ func (f *files) Create(ctx context.Context, runID string) (facade.Journal, error
 // on disk before the effect it describes is attempted, or a crash leaves an effect nothing knows
 // to compensate.
 type runJournal struct {
-	mu   sync.Mutex
-	path string
-	seq  int
+	diagnostics *runJournal
+	mu          sync.Mutex
+	path        string
+	seq         int
 }
 
 func (r *runJournal) Append(ctx context.Context, k facade.LedgerKey, exchange string, form facade.FormClass, prior []byte) (int, error) {
@@ -123,7 +125,9 @@ func (r *runJournal) appendLine(record line) (int, error) {
 	if err != nil {
 		return 0, fmt.Errorf("journal: encode: %w", err)
 	}
-	fh, err := os.OpenFile(r.path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
+	_, statErr := os.Stat(r.path)
+	newFile := errors.Is(statErr, fs.ErrNotExist)
+	fh, err := os.OpenFile(r.path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
 	if err != nil {
 		return 0, fmt.Errorf("journal: open %s: %w", r.path, err)
 	}
@@ -133,6 +137,11 @@ func (r *runJournal) appendLine(record line) (int, error) {
 	}
 	if err := fh.Sync(); err != nil {
 		return 0, fmt.Errorf("journal: sync %s: %w", r.path, err)
+	}
+	if newFile {
+		if err := syncDir(filepath.Dir(r.path)); err != nil {
+			return 0, err
+		}
 	}
 	return r.seq, nil
 }
@@ -173,7 +182,7 @@ func (r *runJournal) Records(_ context.Context) ([]facade.JournalRecord, error) 
 	}
 	out := make([]facade.JournalRecord, 0, len(ls))
 	for _, l := range ls {
-		if l.AwaitMethod == "" {
+		if l.AwaitMethod == "" && l.Diagnostic == nil {
 			out = append(out, l)
 		}
 	}

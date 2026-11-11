@@ -155,3 +155,8 @@ create, readiness, stop and teardown checkpoints. Additional cases drop accepted
 responses and kill the runner during readiness. They assert retained recovery evidence and no repeated or
 competing mutations. These are mock/API-boundary tests, not proof of all filesystem power-loss
 behaviour or real-cloud service semantics.
+
+Execution diagnostics are automatic under `<state>/journal/<run-id>.diagnostics.jsonl`.
+They record dispatch and terminal outcomes independently of forward compensation steps;
+request/response dumps are not required. Missing terminal evidence after a crash is not proof that
+an effect failed. Pending ledger entries still require outcome recovery before another mutation.

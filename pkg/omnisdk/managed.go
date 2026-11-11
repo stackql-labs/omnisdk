@@ -497,6 +497,9 @@ func (d durable) open(ctx context.Context, o effectOp) facade.Records {
 			return failed(err)
 		}
 	}
+	if err := journal.RecordDiagnostic(ctx, d.run.journal, k, o.e.exchange, journal.Diagnostic{Event: "dispatch", Stage: "effect", Outcome: "attempting"}); err != nil {
+		return notAttempted(err)
+	}
 	transferred = true
 	return &durableRecords{unlock: unlock, inner: effectRecords{Records: o.inner.Open(retryNever(ctx)), op: o}, d: d, key: k, entry: e, found: found, named: named}
 }
@@ -545,9 +548,11 @@ func (r *durableRecords) Next(ctx context.Context) bool {
 					r.err = errors.Join(r.err, err)
 				}
 			}
+			r.recordOutcome(ctx)
 			return false
 		}
 		r.err = r.commit(ctx)
+		r.recordOutcome(ctx)
 	}
 	if r.err != nil || r.position >= len(r.records) {
 		return false
@@ -857,6 +862,9 @@ func (p *convergeGraphPlan) Open(ctx context.Context) (Rows, error) {
 		runErr = ctx.Err()
 	}
 	rows.Close()
+	if runErr != nil {
+		runErr = recordRunFailure(ctx, h, "", runErr)
+	}
 	if runErr == nil {
 		return &sliceRows{rows: out, i: -1}, nil
 	}

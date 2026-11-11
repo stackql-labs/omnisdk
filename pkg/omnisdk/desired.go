@@ -327,6 +327,9 @@ func (p *desiredPlan) Open(ctx context.Context) (Rows, error) {
 		runErr = ctx.Err()
 	}
 	rows.Close()
+	if runErr != nil {
+		runErr = recordRunFailure(ctx, h, failedKey(runErr, owners, p.name), runErr)
+	}
 
 	run.mu.Lock()
 	var landed []facade.LedgerKey
