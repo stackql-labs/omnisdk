@@ -84,5 +84,6 @@ never held across a wire call; cross-run exclusion is a durable, expiring lease.
 \left|\mathrm{LEFTJOIN}(R_1,\ldots,R_n)\right|
 \le \prod_{i=1}^{n}|R_i|$, where $R_i$ is the data returned from the $i$-th exchange.
   In cases where the working set is global, such as aggregation and ordering, then the memory footprint can be very large indeed.
-2. IAC system journal entries are accessible only until a run is successful.
+2. After a successful IaC run, the ledger alone must suffice for subsequent operations.
+   Journals since the last successful run may be consulted to recover interrupted or failed work.
 
