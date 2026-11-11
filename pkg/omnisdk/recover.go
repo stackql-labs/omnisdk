@@ -30,12 +30,9 @@ func (w ledgerWAL) Recover(ctx context.Context, resource, outcome, identity, ver
 	if outcome == "absent" && identity != "" || outcome == "applied" && identity == "" {
 		return nil, fmt.Errorf("only applied recovery requires an identity")
 	}
-	ctx, resultErr = executionContext(ctx, args)
+	ctx, resultErr = authorizeExecution(ctx, args, facade.Permission{Resource: "collection/" + w.collection, Action: "recover"})
 	if resultErr != nil {
 		return nil, resultErr
-	}
-	if err := facade.CheckAccess(ctx, "collection/"+w.collection, "recover"); err != nil {
-		return nil, err
 	}
 	key := facade.LedgerKey(w.collection + "/" + resource)
 	h, err := hold(ctx, w.state, w.collection, w.runID, lease.Of(key))

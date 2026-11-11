@@ -1068,9 +1068,10 @@ type compiled struct {
 	authInputs map[string]any
 }
 
-func (c compiled) Name() string  { return c.spec.Name() }
-func (c compiled) In() []string  { return c.spec.In() }
-func (c compiled) Out() []string { return c.spec.Out() }
+func (c compiled) Access() plan.AccessPolicy { return c.spec.Access() }
+func (c compiled) Name() string              { return c.spec.Name() }
+func (c compiled) In() []string              { return c.spec.In() }
+func (c compiled) Out() []string             { return c.spec.Out() }
 func (c compiled) Make(bound map[string]any) facade.Operator {
 	return providerOp{op: c.spec.Make(bound), provider: c.provider}
 }
@@ -1082,8 +1083,16 @@ type providerSpec struct {
 	provider string
 }
 
+func (s providerSpec) protected() plan.ExchangeSpec {
+	var permissions []facade.Permission
+	if s.provider != "" {
+		permissions = []facade.Permission{{Resource: "credential/" + s.provider, Action: "use"}}
+	}
+	return plan.WithAccess(s.ExchangeSpec, true, permissions...)
+}
+func (s providerSpec) Access() plan.AccessPolicy { return s.protected().Access() }
 func (s providerSpec) Make(bound map[string]any) facade.Operator {
-	return accessOp{op: providerOp{op: s.ExchangeSpec.Make(bound), provider: s.provider}, resource: "credential/" + s.provider, provider: s.provider}
+	return providerOp{op: s.protected().Make(bound), provider: s.provider}
 }
 
 type providerOp struct {

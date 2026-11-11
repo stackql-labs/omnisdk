@@ -71,3 +71,15 @@ external service.
 
 **12. Concurrency is built in from day one**, not retrofitted. In-process latches are ordered and
 never held across a wire call; cross-run exclusion is a durable, expiring lease.
+
+
+# Measurable quantities
+
+1. The memory consumption of
+  `omnisdk` processing a query is
+  upper bounded in the product of
+  the resouce sizes in the wprking set.
+  That is $O(relation memory) = \pi(\text(resource)) = 2$.
+2. We are
+  free.
+

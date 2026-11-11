@@ -47,11 +47,7 @@ func (p *desiredPlan) routeDeclared(ctx context.Context, r ManagedResource, t *t
 			continue
 		}
 		method := t.updates[index]
-		if err := facade.CheckAccess(ctx, "operation/"+t.cat.Provider().Name()+"/"+route.Exchange().Name()+"/"+route.Exchange().OperationID(), "execute"); err != nil {
-			reasons = append(reasons, route.Target()+": "+err.Error())
-			continue
-		}
-		if err := facade.CheckAccess(ctx, "credential/"+t.cat.Provider().Name(), "use"); err != nil {
+		if _, err := facade.Authorize(ctx, facade.DocumentPermissions(t.cat.Provider().Name(), route.Exchange().Name(), route.Exchange().OperationID())...); err != nil {
 			reasons = append(reasons, route.Target()+": "+err.Error())
 			continue
 		}

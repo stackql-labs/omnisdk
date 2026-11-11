@@ -20,6 +20,11 @@ func (w ledgerWAL) Read(ctx context.Context) ([]Row, error) {
 	if w.collection == "" || strings.ContainsAny(w.collection, "/\\\x00") || w.collection == "." || w.collection == ".." || w.state == "" {
 		return nil, fmt.Errorf("ledger read requires a collection name and state directory")
 	}
+	authorized, err := facade.Authorize(ctx, facade.Permission{Resource: "collection/" + w.collection, Action: "read"})
+	if err != nil {
+		return nil, err
+	}
+	ctx = authorized
 	root := filepath.Join(w.state, "ledger")
 	if _, err := os.Stat(root); os.IsNotExist(err) {
 		return []Row{}, nil

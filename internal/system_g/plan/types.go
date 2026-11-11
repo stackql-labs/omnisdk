@@ -10,6 +10,8 @@ import (
 // ExchangeSpec declares one exchange: name, β inbox attrs (In), β outputs (Out), a factory, and
 // an optional Flatten (how its join tuple merges into the row; nil = generic).
 type ExchangeSpec interface {
+	// Access is inherited through embedded exchange wrappers. Nil means unclassified.
+	Access() AccessPolicy
 	Name() string
 	In() []string
 	Out() []string
@@ -76,6 +78,7 @@ type inboundSpec struct {
 
 func (s inboundSpec) Inbound() facade.Transform { return s.inbound }
 
+func (e exchangeSpec) Access() AccessPolicy                      { return nil }
 func (e exchangeSpec) Name() string                              { return e.name }
 func (e exchangeSpec) In() []string                              { return e.in }
 func (e exchangeSpec) Out() []string                             { return e.out }

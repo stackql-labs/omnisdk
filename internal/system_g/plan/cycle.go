@@ -405,7 +405,7 @@ func (s *cycleStage) invoke(ctx context.Context, m string, base map[string]any, 
 			return nil, ctx.Err()
 		}
 	}
-	in := x.Make(bound).Open(ctx)
+	in := Make(x, bound).Open(ctx)
 	defer in.Close()
 	flat := flattenOf(x)
 	var out []facade.Record

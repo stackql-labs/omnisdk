@@ -8,7 +8,6 @@ import (
 	"time"
 
 	"github.com/stackql-labs/omnisdk/internal/system_g/admit"
-	"github.com/stackql-labs/omnisdk/internal/system_g/buffer"
 	"github.com/stackql-labs/omnisdk/internal/system_g/facade"
 	"github.com/stackql-labs/omnisdk/internal/system_g/httpx"
 	"github.com/stackql-labs/omnisdk/internal/system_g/plan"
@@ -45,7 +44,11 @@ func (p providerPlan) Exchanges() []plan.ExchangeSpec {
 	specs := p.Plan.Exchanges()
 	out := make([]plan.ExchangeSpec, len(specs))
 	for i, spec := range specs {
-		out[i] = providerExchange{ExchangeSpec: spec, provider: p.provider}
+		var permissions []facade.Permission
+		if p.provider != "" && spec.Name() != "" {
+			permissions = []facade.Permission{{Resource: "native/" + p.provider + "/" + spec.Name(), Action: "execute"}, {Resource: "credential/" + p.provider, Action: "use"}}
+		}
+		out[i] = plan.WithAccess(providerExchange{ExchangeSpec: spec, provider: p.provider}, false, permissions...)
 	}
 	return out
 }
@@ -56,23 +59,15 @@ type providerExchange struct {
 }
 
 func (s providerExchange) Make(bound map[string]any) facade.Operator {
-	return providerOperator{Operator: s.ExchangeSpec.Make(bound), provider: s.provider, operation: s.Name()}
+	return providerOperator{Operator: s.ExchangeSpec.Make(bound), provider: s.provider}
 }
 
 type providerOperator struct {
 	facade.Operator
-	operation string
-	provider  string
+	provider string
 }
 
 func (o providerOperator) Open(ctx context.Context) facade.Records {
-	for _, permission := range [][2]string{{"native/" + o.provider + "/" + o.operation, "execute"}, {"credential/" + o.provider, "use"}} {
-		if err := facade.CheckAccess(ctx, permission[0], permission[1]); err != nil {
-			b := buffer.NewBuffer(1, 1, 0)
-			b.Complete(err)
-			return b.Reader()
-		}
-	}
 	return o.Operator.Open(requestpolicy.ForProvider(ctx, o.provider))
 }
 

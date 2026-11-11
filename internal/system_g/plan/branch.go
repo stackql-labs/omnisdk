@@ -19,13 +19,13 @@ const skippedKey = "\x00skipped"
 // — and records the choice under ControlKey(name). choose returns "" where no arm holds, and then no
 // gate fires.
 func NewBranchSpec(name string, in []string, choose func(bound map[string]any) (string, error)) ExchangeSpec {
-	return NewExchangeSpec(name, in, []string{ControlKey(name)}, func(bound map[string]any) facade.Operator {
+	return WithInternal(NewExchangeSpec(name, in, []string{ControlKey(name)}, func(bound map[string]any) facade.Operator {
 		arm, err := choose(bound)
 		if err != nil {
 			return errorOp{err: err}
 		}
 		return staticRecords{bind.NewDocRecord(map[string]any{ControlKey(name): arm})}
-	}, nil)
+	}, nil))
 }
 
 // gate is one arm of one branch a node runs on.
@@ -81,6 +81,9 @@ type gatedSpec struct {
 	gates []gate
 }
 
+// Branch selection is internal control flow; authorize the child only when its arm fires.
+func (g gatedSpec) Access() AccessPolicy { return accessPolicy{internal: true} }
+
 func (g gatedSpec) In() []string {
 	in := slices.Clone(g.ExchangeSpec.In())
 	for _, x := range g.gates {
@@ -108,7 +111,7 @@ func (g gatedSpec) Make(bound map[string]any) facade.Operator {
 			inputs[k] = v
 		}
 	}
-	return g.ExchangeSpec.Make(inputs)
+	return Make(g.ExchangeSpec, inputs)
 }
 
 func (g gatedSpec) Flatten() facade.Transform { return gatedFlatten{inner: flattenOf(g.ExchangeSpec)} }

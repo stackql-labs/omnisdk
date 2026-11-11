@@ -437,6 +437,15 @@ type replayOp struct {
 }
 
 func (o replayOp) Open(ctx context.Context) facade.Records {
+	// Cached rows must pass the same inherited gate as a fresh provider request.
+	if facade.AccessEnabled(ctx) || ctx.Err() != nil {
+		authorized, err := plan.Authorize(ctx, o.spec.Access())
+		if err != nil {
+			return failed(err)
+		}
+		ctx = authorized
+	}
+
 	store, _ := ctx.Value(replayKey{}).(*replayStore)
 	// Values under private keys are for match conditions, not the request, so they do not make
 	// the request different.
@@ -679,11 +688,16 @@ func (o outputTransform) Apply(in facade.Page) (facade.Record, error) {
 // means the request is never made.
 type effect struct {
 	plan.ExchangeSpec
-	alias, verb, exchange          string
-	accessResource, accessProvider string
-	journal                        facade.Journal
+	alias, verb, exchange string
+	journal               facade.Journal
 	// durable, in a converging run, records the effect in the ledger as well.
 	durable *durable
+}
+
+func (e effect) Access() plan.AccessPolicy {
+	return plan.WithDenial(e.ExchangeSpec.Access(), func(err error) error {
+		return &EffectError{Outcome: ErrNotAttempted, Verb: e.verb, Alias: e.alias, Cause: err}
+	})
 }
 
 func (e effect) Make(bound map[string]any) facade.Operator {
@@ -697,11 +711,6 @@ type effectOp struct {
 }
 
 func (o effectOp) Open(ctx context.Context) facade.Records {
-	for _, p := range [][2]string{{o.e.accessResource, "execute"}, {"credential/" + o.e.accessProvider, "use"}} {
-		if err := facade.CheckAccess(ctx, p[0], p[1]); err != nil {
-			return failed(&EffectError{Outcome: ErrNotAttempted, Verb: o.e.verb, Alias: o.e.alias, Cause: err})
-		}
-	}
 	if o.e.durable != nil {
 		return o.e.durable.open(ctx, o)
 	}
@@ -902,11 +911,14 @@ type guarded struct {
 	names []string
 }
 
+// Missing inputs are internal control flow. A runnable child passes through the common gate.
+func (g guarded) Access() plan.AccessPolicy { return plan.WithInternal(g.ExchangeSpec).Access() }
+
 func (g guarded) Make(bound map[string]any) facade.Operator {
 	for _, n := range g.names {
 		if v, ok := bound[n]; !ok || v == nil || v == "" {
 			return staticOp{}
 		}
 	}
-	return g.ExchangeSpec.Make(bound)
+	return plan.Make(g.ExchangeSpec, bound)
 }

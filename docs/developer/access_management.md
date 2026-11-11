@@ -67,23 +67,53 @@ can span segments. Actions match exactly, or use `*`. Rules grant access; absent
 | `transport/http/<host[:port]>` | HTTP method | Native/unclassified HTTP request |
 | `transport/grpc/<target>` | RPC method | Native/unclassified gRPC request |
 | `relation/<address>` | `read` | Application-supplied relation handle |
-| `collection/<name>` | `converge` or `destroy` | Durable collection execution |
+| `collection/<name>` | `read`, `converge`, `destroy`, `recover` | Ledger inspection and durable collection operations |
+| `function/<name>` | `execute` | Application-supplied table-function execution |
+| `intrinsic/sleep` | `execute` | Published cancellable delay |
 
 Exchange names and operation IDs are the document's identifiers, not necessarily SQL resource names.
-Direct document queries supply their explicit provider to compilation. Internal bare document
-compilation without a provider uses the literal `unscoped` permission namespace; no provider is
-inferred. A document operation's authorization covers its own transport requests; its separately
+Direct document queries supply their explicit provider to compilation. Protected document compilation without an explicit provider or operation identifier is
+unclassified and fails closed; no `unscoped` permission is inferred. A document operation's authorization covers its own transport requests; its separately
 compiled dependencies require their own authorization. Native transports also require explicit
 transport permissions. Provider token exchanges require provider credential permission.
 
-Mutation permission is checked before writing its intent to a journal, and again at the document
-exchange boundary. A denied mutation is classified as not attempted. Policy errors fail closed.
+The shared executor checks permission before invoking an operation factory or writing mutation
+intent. A denied mutation remains classified as not attempted. Nested execution inherits only exact
+successful resource/action grants, avoiding repeated policy evaluation; different dependencies still
+require their own grants. Changing the caller clears inherited grants and transport approval.
+Policy errors and missing/incomplete declarations fail closed, even under a wildcard policy.
 Read caches do not bypass document authorization. A host must separately authorize operations that
 it performs itself, including database administration and SQL inside opaque relation handles.
 
 Provider documents, endpoint overrides, and custom relation implementations are trusted application
 configuration. Do not let an untrusted caller replace an allowed document with arbitrary executable
 content or redirect an allowed operation to an arbitrary endpoint.
+
+## Shared execution gate
+
+All exchange wrappers inherit `Access()` from `plan.ExchangeSpec`; the executor applies it to roots,
+bound stages, cycles and admission alternatives. An undeclared exchange cannot run in a protected
+context. Only explicitly marked internal planner scaffolding is exempt from separate permissions;
+its published children remain independently protected. New commands declare permissions rather
+than implementing authorization loops.
+
+Direct SDK ledger and relation reads use the same gate. A host-provided queryable plan can inherit
+it too:
+
+```go
+protected := omnisdk.WithPermissions(plan, args, authorization.Permission{
+    Resource: "relation/local.inventory", Action: "read",
+})
+rows, err := protected.Open(ctx)
+```
+
+`authorization.Authorize(ctx, permissions...)` exposes the same gate for host execution boundaries
+and returns the inherited context. It requires an established caller session. `authorization.Check`
+is its single-permission convenience form. Constructors and document/schema inspection helpers are
+not execution endpoints; applications publishing them as queries must apply their host query gate.
+
+Without a controller, SDK execution stays permissive for legacy callers. Set `RequireCaller` at
+protected application entry points; never fall back to unprotected execution after an error.
 
 ## Omni CLI
 

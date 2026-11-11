@@ -18,6 +18,7 @@ func NewSleep(duration time.Duration) (Plan, error) {
 	spec := plan.NewExchangeSpec("sleep", nil, nil, func(map[string]any) facade.Operator {
 		return sleepOperator{duration: duration}
 	}, nil)
+	spec = plan.WithAccess(spec, false, facade.Permission{Resource: "intrinsic/sleep", Action: "execute"})
 	return &cannedPlan{plan: plan.NewPlan([]plan.ExchangeSpec{spec}, nil, nil, nil, nil, nil)}, nil
 }
 

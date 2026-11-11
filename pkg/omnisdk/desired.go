@@ -270,12 +270,9 @@ func takesBody(cat aot.Catalog, addr, verb string) bool {
 
 func (p *desiredPlan) Open(ctx context.Context) (Rows, error) {
 	var accessErr error
-	ctx, accessErr = executionContext(ctx, p.args)
+	ctx, accessErr = authorizeExecution(ctx, p.args, facade.Permission{Resource: "collection/" + p.name, Action: "converge"})
 	if accessErr != nil {
 		return nil, accessErr
-	}
-	if err := facade.CheckAccess(ctx, "collection/"+p.name, "converge"); err != nil {
-		return nil, err
 	}
 	recoveryCtx := ctx
 	h, err := hold(ctx, p.state, p.name, p.runID, desiredFootprint(p.name, p.resources))

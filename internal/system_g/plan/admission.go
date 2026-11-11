@@ -103,13 +103,13 @@ func collapseAdmissions(p Plan) (Plan, error) {
 			out = append(out, byName[name].Out()...)
 		}
 		original := p
-		group := NewExchangeSpec(groupName, in, out, func(bound map[string]any) facade.Operator {
+		group := WithInternal(NewExchangeSpec(groupName, in, out, func(bound map[string]any) facade.Operator {
 			base := map[string]any{}
 			for _, binding := range external {
 				base[binding.source] = bound[binding.slot]
 			}
 			return &admissionGroup{plan: original, sources: sources, target: target, base: base}
-		}, bind.NewTupleFlatten())
+		}, bind.NewTupleFlatten()))
 		var exchanges []ExchangeSpec
 		for _, spec := range p.Exchanges() {
 			if !members[spec.Name()] {

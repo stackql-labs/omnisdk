@@ -132,7 +132,7 @@ func composePipeline(id int64, p Plan) (facade.Operator, error) {
 		op = tap(&nid, seedOp{rec: bind.NewDocRecord(map[string]any{})}, "inputs")
 	} else {
 		name := comps[0].members[0]
-		op = checkpoint(tap(&nid, byName[name].Make(nil), name), comps[:1])
+		op = checkpoint(tap(&nid, Make(byName[name], nil), name), comps[:1])
 		stages = comps[1:]
 	}
 
@@ -191,9 +191,9 @@ func stage(p Plan, byName map[string]ExchangeSpec, comps []component, specs []fa
 	}
 	*nid++
 	if coordinator, ok := node.(interface{ Coordinator() bool }); ok && coordinator.Coordinator() {
-		op = bind.NewCoordinatorBindJoinIn(*nid, op, bindings, bind.InnerFactory(node.Make), alphaInto(p.Alphas(), name), 1, node.Inbound())
+		op = bind.NewCoordinatorBindJoinIn(*nid, op, bindings, bind.InnerFactory(func(bound map[string]any) facade.Operator { return Make(node, bound) }), alphaInto(p.Alphas(), name), 1, node.Inbound())
 	} else {
-		op = bind.NewBindJoinIn(*nid, op, bindings, bind.InnerFactory(node.Make), alphaInto(p.Alphas(), name), 1, node.Inbound())
+		op = bind.NewBindJoinIn(*nid, op, bindings, bind.InnerFactory(func(bound map[string]any) facade.Operator { return Make(node, bound) }), alphaInto(p.Alphas(), name), 1, node.Inbound())
 	}
 
 	flat := node.Flatten()

@@ -823,12 +823,9 @@ func hold(ctx context.Context, state, name, runID string, footprint ...facade.Ke
 
 func (p *convergeGraphPlan) Open(ctx context.Context) (Rows, error) {
 	var accessErr error
-	ctx, accessErr = executionContext(ctx, p.args)
+	ctx, accessErr = authorizeExecution(ctx, p.args, facade.Permission{Resource: "collection/" + p.name, Action: "converge"})
 	if accessErr != nil {
 		return nil, accessErr
-	}
-	if err := facade.CheckAccess(ctx, "collection/"+p.name, "converge"); err != nil {
-		return nil, err
 	}
 	recoveryCtx := ctx
 	locks := graphLocks(p.g, p.nodes, p.name)

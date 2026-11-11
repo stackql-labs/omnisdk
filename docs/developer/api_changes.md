@@ -184,3 +184,14 @@ refuses stale decisions. `absent` cannot discard prior committed state or retain
 `applied` requires a verified completed effect and identity; it never replaces a prior identity.
 The ledger configuration also exposes an optional `Recover(ctx, resource, outcome, identity,
 version, args)` capability for consumers. This addition requires a new release after `v0.1.11-alpha03`.
+
+## Inherited execution authorization
+
+`authorization.Permission`, `authorization.Authorize`, and `omnisdk.WithPermissions` provide a
+shared execution gate. Protected undeclared/incomplete operations fail closed before factories or
+mutation intent. Exact grants flow down the invocation context and are reset when the caller changes.
+Internal exchange wrappers now inherit an `Access()` declaration; the common executor enforces it
+for roots, stages, cycles and admission alternatives. Bespoke document/native/mutation check loops
+are removed. Direct ledger reads now require `collection/<name>:read`; sleep and application table
+functions require `intrinsic/sleep:execute` and `function/<name>:execute`. Legacy unprotected callers
+are unchanged. A new SDK release is required before consumers receive this behavior.

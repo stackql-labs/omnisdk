@@ -763,6 +763,9 @@ func NewGraphQuery(dir string, g Graph, args Args) (Plan, error) {
 				}
 			}
 			spec, b, err := intrinsicSpec(name, in, args.managed, planned, reg)
+			if err == nil {
+				spec = plan.WithInternal(spec)
+			}
 			if err != nil {
 				return nil, err
 			}
@@ -1049,7 +1052,7 @@ func NewGraphQuery(dir string, g Graph, args Args) (Plan, error) {
 		// Nothing wired in means the same inputs for every upstream row: run once, replay the rest.
 		switch consumer := requestWired(g, alias); {
 		case mutating:
-			eff := effect{ExchangeSpec: spec, alias: alias, verb: n.Verb(), exchange: exchangeOf(addr, n.Verb()), journal: wal, accessResource: "operation/" + c.Provider().Name() + "/" + ex.Name() + "/" + ex.OperationID(), accessProvider: c.Provider().Name()}
+			eff := effect{ExchangeSpec: spec, alias: alias, verb: n.Verb(), exchange: exchangeOf(addr, n.Verb()), journal: wal}
 			if run := args.managed; run != nil && run.ledger != nil {
 				if m, ok := run.nodes[alias]; ok {
 					eff.durable = &durable{run: run, resource: m, address: addr, provider: c.Provider().Name(),
@@ -1593,7 +1596,7 @@ func functionSpec(name string, call query.Call, in []string, fns facade.FnRegist
 	if _, ok := fns.Fn(call.Func()); !ok {
 		return nil, fmt.Errorf("no function %q", call.Func())
 	}
-	return plan.NewExchangeSpec(name, in, nil, func(bound map[string]any) facade.Operator {
+	return plan.WithAccess(plan.NewExchangeSpec(name, in, nil, func(bound map[string]any) facade.Operator {
 		v, err := expr.Eval(bound, fns)
 		if err != nil {
 			return failedOp{err}
@@ -1615,5 +1618,5 @@ func functionSpec(name string, call query.Call, in []string, fns facade.FnRegist
 			return staticOp{rows: out}
 		}
 		return failedOp{fmt.Errorf("%s returned %T, not rows", call.Func(), v)}
-	}, bind.NewInnerFlatten()), nil
+	}, bind.NewInnerFlatten()), false, facade.Permission{Resource: "function/" + call.Func(), Action: "execute"}), nil
 }
