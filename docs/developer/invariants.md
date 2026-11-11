@@ -75,11 +75,14 @@ never held across a wire call; cross-run exclusion is a durable, expiring lease.
 
 # Measurable quantities
 
-1. The consumption of memory supporting relation staging in
+1. For a query consisting purely of `full outer join` operators, consumption of memory supporting relation staging in
   `omnisdk` query processing is
   upper bounded in the product of
   the exchange response sizes in the working set.
-  That is $|A_i|,|B_i|\ge 2 \implies |A_i \mathbin{\mathrm{FULL\ JOIN}} B_i| \le |A_i|\,|B_i|$, where $R_i$ is the data returned from the $i$-th exchange.
+  That is $\left(\forall i,\ |R_i|\ge 2\right)
+\implies
+\left|\mathrm{FULLJOIN}(R_1,\ldots,R_n)\right|
+\le \prod_{i=1}^{n}|R_i|$, where $R_i$ is the data returned from the $i$-th exchange.
   In cases where the working set is global, such as aggregation and ordering, then the memory footprint can be very large indeed.
 2. IAC system journal entries are accessible only until a run is successful.
 
