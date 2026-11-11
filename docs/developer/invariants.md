@@ -75,15 +75,20 @@ never held across a wire call; cross-run exclusion is a durable, expiring lease.
 
 # Measurable quantities
 
-1. For a query consisting purely of `left outer join` operators, consumption of memory supporting relation staging in
+1. For a query consisting purely of `left outer join` operators, size of the working set of memory supporting relation staging in
   `omnisdk` query processing is
   upper bounded in the product of
-  the exchange response sizes in the working set.
-  That is $\left(\forall i,\ |R_i|\ge 2\right)
-\implies
-\left|\mathrm{LEFTJOIN}(R_1,\ldots,R_n)\right|
-\le \prod_{i=1}^{n}|R_i|$, where $R_i$ is the data returned from the $i$-th exchange.
-  In cases where the working set is global, such as aggregation and ordering, then the memory footprint can be very large indeed.
+  the exchange response sizes in the working set.  
+  And in the left outer join operator, the working can be deagerly disposed.
+  That is 
+    $$
+    R_1 = \biguplus_k P_k
+    \quad\implies\quad
+    J(R_1,\ldots,R_n) = \biguplus_k J(P_k,R_2,\ldots,R_n)
+    $$
+    where $R_i$ is the data returned by the $i$-th exchange.
+    In cases where the working set is global, such as aggregation and ordering, then the memory footprint can be very large indeed.
+
 2. After a successful IaC run, the ledger alone must suffice for subsequent operations.
    Journals since the last successful run may be consulted to recover interrupted or failed work.
 

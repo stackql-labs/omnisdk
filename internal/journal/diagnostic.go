@@ -17,8 +17,7 @@ type Diagnostic struct {
 	Message      string `json:"message,omitempty"`
 	ProviderCode string `json:"provider_code,omitempty"`
 	RequestID    string `json:"request_id,omitempty"`
-	Time         string `json:"time"
-"strings"`
+	Time         string `json:"time"`
 }
 
 // AppendDiagnostic fsyncs execution evidence separately from the forward mutation steps.
