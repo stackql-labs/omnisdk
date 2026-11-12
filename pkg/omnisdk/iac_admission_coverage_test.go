@@ -108,12 +108,22 @@ func TestIaCAdmissionCoverage(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			timeout := 3 * time.Second
-			if mode == "cancel" {
-				timeout = 150 * time.Millisecond
-			}
-			ctx, cancel := context.WithTimeout(context.Background(), timeout)
+			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 			defer cancel()
+			if mode == "cancel" {
+				// Cancel the observations, not setup: CI race/coverage instrumentation
+				// can exhaust a short wall-clock deadline before dispatch starts.
+				go func() {
+					for _, started := range []<-chan struct{}{opStarted, detailStarted} {
+						select {
+						case <-started:
+						case <-ctx.Done():
+							return
+						}
+					}
+					cancel()
+				}()
+			}
 			rows, err := prepared.Open(ctx)
 			if err != nil {
 				t.Fatal(err)
