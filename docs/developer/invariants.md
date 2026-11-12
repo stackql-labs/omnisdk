@@ -84,7 +84,9 @@ never held across a wire call; cross-run exclusion is a durable, expiring lease.
     $$
     R_1 = \biguplus_k P_{1,k}
     \quad\implies\quad
-    J(R_1,\ldots,R_n) = \biguplus_k J(P_k,R_2,\ldots,R_n)
+    J(R_1,\ldots,R_n)
+    =
+    \biguplus_k J(P_{1,k},R_2(P_{1,k}),\ldots,R_n(P_{1,k}))
     $$
     where $R_i$ is the data returned by the $i$-th exchange.
     In cases where the working set is global, such as aggregation and ordering, then the memory footprint can be very large indeed.
