@@ -75,23 +75,32 @@ never held across a wire call; cross-run exclusion is a durable, expiring lease.
 
 # Measurable quantities
 
-1. For a query fragment consisting purely of `left outer join` operators, size of the working set of memory supporting relation staging in
-  `omnisdk` query processing is
-  upper bounded in the product of
-  the exchange response sizes in the working set.  
-  And in the left outer join operator, the working can be eagerly disposed.
-  That is 
-    $$
-    R_1 = \biguplus_k P_{1,k}
-    \quad\implies\quad
-    J(R_1,\ldots,R_n)
-    =
-    \biguplus_k J(P_{1,k},R_2(P_{1,k}),\ldots,R_n(P_{1,k}))
-    $$
-    where $R_i$ is the data returned by the $i$-th exchange.
-    In cases where the working set is global, such as aggregation and ordering, then the memory footprint can be very large indeed.
-    However, where the working set is not global, then one can simply return data to the caller eagerly and discard working set records as soon as they are matured.
-    Thus, the working set is bounded in the size of the fragments $\sum_k{\sum_i{size(R_i(P_{i,k})})}$ and never need outgrow this.
+1. A chain of keyed `left outer join` operators can be evaluated one partition of its
+   leftmost exchange at a time. Let $R_i$ be exchange $i$'s response data, $P_{1,k}$ be
+   partition $k$ of $R_1$, and $J$ be the left-join chain with its original predicates.
+   Let $R_i(P_{1,k})$ contain the complete matching right-hand data needed at exchange $i$
+   for that partition, including matches reached through preceding joins, with
+   $R_1(P_{1,k}) = P_{1,k}$. For the same underlying data:
+
+   $$
+   R_1 = \biguplus_k P_{1,k}
+   \quad\implies\quad
+   J(R_1,\ldots,R_n)
+   = \biguplus_k J(P_{1,k},R_2(P_{1,k}),\ldots,R_n(P_{1,k}))
+   $$
+
+   Here $\biguplus$ means `UNION ALL`: partitions preserve every row occurrence exactly once.
+   The response-data working set for partition $k$, measured in bytes, is:
+
+   $$
+   W_k = \sum_{i=1}^{n}\operatorname{size}(R_i(P_{1,k}))
+   $$
+
+   With one partition active at a time, the largest such working set is $\max_k W_k$.
+   Results can be emitted eagerly, and partition data discarded once no remaining work
+   references it. This bounds retained response data; execution buffers and materialized
+   join results must be accounted for separately. Global operations such as sorting or
+   aggregation may require retaining data across partitions.
 
 2. After a successful IaC run, the ledger alone must suffice for subsequent operations.
    Journals since the last successful run may be consulted to recover interrupted or failed work.
