@@ -2,6 +2,7 @@ package ledger_test
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -91,6 +92,9 @@ func TestFileRecreateAfterForget(t *testing.T) {
 	if err := l.Begin(ctx, "s/a", []byte("again"), facade.LedgerVersionNone); err != nil {
 		t.Fatalf("recreate: %v", err)
 	}
+	if err := l.Resolve(ctx, "s/a", []byte("stale-owner"), nil, v); !errors.Is(err, facade.ErrLedgerConflict) {
+		t.Fatalf("recreated key accepted a pre-deletion version: %v", err)
+	}
 	e, _ := get(t, l, "s/a")
 	if string(e.Proposed()) != "again" {
 		t.Errorf("proposed = %q, want again", e.Proposed())
@@ -134,5 +138,25 @@ func TestFileSurvivesReopen(t *testing.T) {
 	e, _ := get(t, second, "s/a")
 	if string(e.Plan()) != "n" || string(e.Identity()) != "id-1" {
 		t.Errorf("plan=%q identity=%q, want n / id-1 after reopen", e.Plan(), e.Identity())
+	}
+}
+
+func TestFileAcceptsNginxAndZeroInKeys(t *testing.T) {
+	log, err := ledger.NewFile(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	key := facade.LedgerKey("nginx-01/instance-0")
+	if err := log.Begin(ctx, key, []byte(`{}`), facade.LedgerVersionNone); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, found, err := log.Get(ctx, key); err != nil || !found {
+		t.Fatalf("found=%v err=%v", found, err)
+	}
+	for _, invalid := range []facade.LedgerKey{"nginx/\x00instance", "nginx/instance\\escape"} {
+		if err := log.Begin(ctx, invalid, []byte(`{}`), facade.LedgerVersionNone); err == nil {
+			t.Fatalf("accepted invalid key %q", invalid)
+		}
 	}
 }

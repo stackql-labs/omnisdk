@@ -50,12 +50,24 @@ func NewFile(root string) (facade.Ledger, error) {
 	return &fileLedger{root: root}, nil
 }
 
+// OpenFile opens an existing ledger without creating directories or changing files.
+func OpenFile(root string) (facade.Ledger, error) {
+	info, err := os.Stat(root)
+	if err != nil {
+		return nil, err
+	}
+	if !info.IsDir() {
+		return nil, fmt.Errorf("ledger root is not a directory")
+	}
+	return &fileLedger{root: root}, nil
+}
+
 // paths resolves a key to the directory holding its versions and the filename stem within it.
 // Keys are scope-prefixed with "/" and must not escape the root.
 func (f *fileLedger) paths(k facade.LedgerKey) (dir, stem string, err error) {
 	segs := strings.Split(string(k), "/")
 	for _, s := range segs {
-		if s == "" || s == "." || s == ".." || strings.ContainsAny(s, `\x00/\`) {
+		if s == "" || s == "." || s == ".." || strings.ContainsAny(s, "\x00/\\") {
 			return "", "", fmt.Errorf("ledger: illegal key segment %q in %q", s, k)
 		}
 	}
@@ -228,7 +240,7 @@ func (f *fileLedger) Begin(_ context.Context, k facade.LedgerKey, proposed []byt
 	}
 	// Plan carries through untouched: a call that has not returned may still fail, and n-1 is the
 	// one thing that cannot be reconstructed.
-	return f.commit(k, state{Phase: facade.LedgerPending, Plan: s.Plan, Proposed: clone(proposed), About: s.About}, ver)
+	return f.commit(k, state{Phase: facade.LedgerPending, Plan: s.Plan, Proposed: clone(proposed), Identity: s.Identity, About: s.About}, ver)
 }
 
 func (f *fileLedger) Resolve(_ context.Context, k facade.LedgerKey, identity, about []byte, v facade.LedgerVersion) error {

@@ -5,6 +5,18 @@ features already present there are not listed as additions.
 
 ## Required migration
 
+Supplying `Args.MutationCompletion` suppresses config-based self-read waits, giving the host
+ownership of completion. Explicit document beta
+edges are unchanged; managed IaC keeps its readiness waits. This requires a release after
+`v0.1.11-alpha06`.
+
+Read-only ledger inspection: `ReadLedger(ctx, collection, stateDir)` returns resource keys,
+identities, phases, versions and addressing metadata without cloud calls or filesystem writes.
+`NewLedger(...)` also exposes this through an optional `Read(context.Context) ([]Row, error)`
+capability. Pending identities are prior committed identities. Intent bodies and provider parameters
+are omitted; reads are per-entry consistent, not a collection-wide snapshot. This addition is not
+in `v0.1.11-alpha01`.
+
 | Surface | Change | Caller action |
 | --- | --- | --- |
 | IaC resource JSON | `params` becomes `write_once`; `params` is rejected, without an alias | Rename the resource-level object. Execution-scope `Args.Params` / `args.params` and graph-node `params` are unchanged |
@@ -158,3 +170,33 @@ selector-resolved server inputs. See the developer guide's endpoint-selector sec
 SQL resolution now retains the origin of query-wide explicit inputs when binding provider aliases.
 Those inputs and SQL IN fan-out take precedence over alias defaults, as node-local inputs already
 do; ordinary Args.Params defaults retain their existing lower priority.
+
+## Automatic IaC diagnostics
+
+Managed executions now fsync dispatch and success/failure evidence to
+`<state>/journal/<run-id>.diagnostics.jsonl`. Records identify the resource, exchange, stage,
+outcome, timestamp and error; common provider error codes/request IDs are extracted when available.
+No HTTP logging flag is needed. Request/response dumps are not written. These files are separate
+from forward journals and never become compensation steps. A killed process can leave dispatch/await
+evidence without a terminal outcome; the ledger remains authoritative for uncertainty.
+
+## Explicit pending-outcome recovery
+
+`Prepare(registry, Recover(resourceKey, outcome, identity, version), NewLedger(...), args)` records
+an operator-verified `absent` or `applied` outcome without provider calls. Recovery requires the
+observed pending version, locks the resource, journals the assertion before the CAS update, and
+refuses stale decisions. `absent` cannot discard prior committed state or retained dependents.
+`applied` requires a verified completed effect and identity; it never replaces a prior identity.
+The ledger configuration also exposes an optional `Recover(ctx, resource, outcome, identity,
+version, args)` capability for consumers. This addition requires a new release after `v0.1.11-alpha03`.
+
+## Inherited execution authorization
+
+`authorization.Permission`, `authorization.Authorize`, and `omnisdk.WithPermissions` provide a
+shared execution gate. Protected undeclared/incomplete operations fail closed before factories or
+mutation intent. Exact grants flow down the invocation context and are reset when the caller changes.
+Internal exchange wrappers now inherit an `Access()` declaration; the common executor enforces it
+for roots, stages, cycles and admission alternatives. Bespoke document/native/mutation check loops
+are removed. Direct ledger reads now require `collection/<name>:read`; sleep and application table
+functions require `intrinsic/sleep:execute` and `function/<name>:execute`. Legacy unprotected callers
+are unchanged. A new SDK release is required before consumers receive this behavior.

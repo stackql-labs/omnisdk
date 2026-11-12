@@ -184,3 +184,124 @@ func TestKeySetIntersection(t *testing.T) {
 		t.Error("Contains disagrees with membership")
 	}
 }
+
+func TestDisjointWritersAndAtomicRelease(t *testing.T) {
+	ctx := context.Background()
+	l, _ := newLeaser(t)
+	a, err := l.Acquire(ctx, "iac", lease.Of("iac/key", "iac/vm"), "a", time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, err := l.Acquire(ctx, "iac", lease.Of("iac/subnet"), "b", time.Minute)
+	if err != nil {
+		t.Fatal("independent writer blocked:", err)
+	}
+	if _, err := l.Acquire(ctx, "iac", lease.Of("iac/vm", "iac/other"), "c", time.Minute); !errors.Is(err, facade.ErrLeaseHeld) {
+		t.Fatalf("overlap: %v", err)
+	}
+	// A failed multi-key claim must not reserve its nonconflicting part.
+	c, err := l.Acquire(ctx, "iac", lease.Of("iac/other"), "c", time.Minute)
+	if err != nil {
+		t.Fatal("partial claim leaked:", err)
+	}
+	if err := lease.Change(ctx, a, lease.Of("iac/vm")); err != nil {
+		t.Fatal(err)
+	}
+	key, err := l.Acquire(ctx, "iac", lease.Of("iac/key"), "next", time.Minute)
+	if err != nil {
+		t.Fatal("terminal key not released:", err)
+	}
+	if _, err := l.Acquire(ctx, "iac", lease.Of("iac/vm"), "next", time.Minute); !errors.Is(err, facade.ErrLeaseHeld) {
+		t.Fatal("vm released prematurely:", err)
+	}
+	if err := lease.Change(ctx, a, lease.All()); !errors.Is(err, facade.ErrLeaseHeld) {
+		t.Fatal("compensation overlapped another writer:", err)
+	}
+	for _, h := range []facade.Lease{a, b, c, key} {
+		if err := h.Release(ctx); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := l.Acquire(ctx, "iac", lease.All(), "destroy", time.Minute); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestExpiredHandleCannotReviveWithoutTakeover(t *testing.T) {
+	l, c := newLeaser(t)
+	h, err := l.Acquire(context.Background(), "iac", lease.Of("vm"), "a", time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	c.advance(time.Minute)
+	if err := h.Renew(context.Background(), time.Minute); !errors.Is(err, facade.ErrLeaseHeld) {
+		t.Fatalf("expired holder revived: %v", err)
+	}
+}
+
+func TestResourceClaimsSurviveReopen(t *testing.T) {
+	ctx := context.Background()
+	root := t.TempDir()
+	log, err := ledger.NewFile(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	l := lease.NewLeaser(log, nil)
+	h, err := l.Acquire(ctx, "iac", lease.Of("vm"), "first", time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	reopened, err := ledger.NewFile(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	next := lease.NewLeaser(reopened, nil)
+	if _, err := next.Acquire(ctx, "iac", lease.Of("vm"), "restart", time.Minute); !errors.Is(err, facade.ErrLeaseHeld) {
+		t.Fatal(err)
+	}
+	if _, err := next.Acquire(ctx, "iac", lease.Of("key"), "independent", time.Minute); err != nil {
+		t.Fatal(err)
+	}
+	if err := h.Release(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := next.Acquire(ctx, "iac", lease.Of("vm"), "restart", time.Minute); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestSharedSubnetGuardsAllowIndependentAttachments(t *testing.T) {
+	ctx := context.Background()
+	l, _ := newLeaser(t)
+	first, err := l.Acquire(ctx, "iac", lease.Using([]facade.LedgerKey{"vm-a"}, []facade.LedgerKey{"subnet"}), "a", time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := l.Acquire(ctx, "iac", lease.Using([]facade.LedgerKey{"vm-b"}, []facade.LedgerKey{"subnet"}), "b", time.Minute)
+	if err != nil {
+		t.Fatal("independent attachment blocked:", err)
+	}
+	if _, err := l.Acquire(ctx, "iac", lease.Of("subnet"), "delete", time.Minute); !errors.Is(err, facade.ErrLeaseHeld) {
+		t.Fatal("subnet deletion admitted during use:", err)
+	}
+	if _, err := l.Acquire(ctx, "iac", lease.Using([]facade.LedgerKey{"vm-a"}, []facade.LedgerKey{"subnet"}), "duplicate", time.Minute); !errors.Is(err, facade.ErrLeaseHeld) {
+		t.Fatal("same VM has two writers:", err)
+	}
+	if err := first.Release(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := l.Acquire(ctx, "iac", lease.Of("subnet"), "delete", time.Minute); !errors.Is(err, facade.ErrLeaseHeld) {
+		t.Fatal("remaining attachment guard lost:", err)
+	}
+	if err := second.Release(ctx); err != nil {
+		t.Fatal(err)
+	}
+	deletion, err := l.Acquire(ctx, "iac", lease.Of("subnet"), "delete", time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer deletion.Release(ctx)
+	if _, err := l.Acquire(ctx, "iac", lease.Using([]facade.LedgerKey{"vm-c"}, []facade.LedgerKey{"subnet"}), "c", time.Minute); !errors.Is(err, facade.ErrLeaseHeld) {
+		t.Fatal("attachment admitted during subnet write:", err)
+	}
+}

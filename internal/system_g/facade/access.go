@@ -3,6 +3,7 @@ package facade
 import (
 	"context"
 	"crypto/tls"
+	"fmt"
 )
 
 // Identity is verified authentication evidence, namespaced by its issuer.
@@ -35,6 +36,12 @@ type AccessController interface {
 type accessKey struct{}
 
 func WithAccessController(ctx context.Context, controller AccessController) context.Context {
+	if controller == nil {
+		controller = missingAccessController{}
+	}
+	// A different caller must never inherit a previous caller's successful grants.
+	ctx = context.WithValue(ctx, grantedKey{}, (*grantedPermission)(nil))
+	ctx = context.WithValue(ctx, authorizedKey{}, false)
 	return context.WithValue(ctx, accessKey{}, controller)
 }
 func CheckAccess(ctx context.Context, resource, action string) error {
@@ -42,6 +49,9 @@ func CheckAccess(ctx context.Context, resource, action string) error {
 		return err
 	}
 	if controller, ok := ctx.Value(accessKey{}).(AccessController); ok {
+		if controller == nil || resource == "" || action == "" {
+			return fmt.Errorf("%w: incomplete permission metadata", ErrAccessDenied)
+		}
 		return controller.Authorize(ctx, resource, action)
 	}
 	return nil
@@ -79,4 +89,10 @@ type AccessSession interface {
 func AccessEnabled(ctx context.Context) bool {
 	_, ok := ctx.Value(accessKey{}).(AccessController)
 	return ok
+}
+
+type missingAccessController struct{}
+
+func (missingAccessController) Authorize(context.Context, string, string) error {
+	return ErrAccessDenied
 }

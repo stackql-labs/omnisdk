@@ -172,12 +172,13 @@ type tenancyOperator struct {
 }
 
 func (o tenancyOperator) Open(ctx context.Context) facade.Records {
-	if err := facade.CheckAccess(ctx, "tenancy/"+o.provider+"/"+o.tenancy, "use"); err != nil {
+	authorized, err := facade.Authorize(ctx, facade.Permission{Resource: "tenancy/" + o.provider + "/" + o.tenancy, Action: "use"})
+	if err != nil {
 		b := buffer.NewBuffer(1, 1, 0)
 		b.Complete(err)
 		return b.Reader()
 	}
-	return o.inner.Open(requestpolicy.WithTenancy(ctx, o.provider, o.tenancy))
+	return o.inner.Open(requestpolicy.WithTenancy(authorized, o.provider, o.tenancy))
 }
 func scopedExchange(spec plan.ExchangeSpec, binding *ProviderBinding) plan.ExchangeSpec {
 	if binding == nil {
@@ -204,7 +205,8 @@ func (p tenancyPlan) Open(ctx context.Context) (Rows, error) {
 		return nil, err
 	}
 	provider := strings.TrimPrefix(p.binding.Provider, aot.DefaultProviderPrefix)
-	if err := facade.CheckAccess(ctx, "tenancy/"+provider+"/"+p.binding.Tenancy, "use"); err != nil {
+	ctx, err = facade.Authorize(ctx, facade.Permission{Resource: "tenancy/" + provider + "/" + p.binding.Tenancy, Action: "use"})
+	if err != nil {
 		return nil, err
 	}
 	return p.Plan.Open(requestpolicy.WithTenancy(ctx, provider, p.binding.Tenancy))

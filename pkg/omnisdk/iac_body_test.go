@@ -28,7 +28,9 @@ func TestGoogleCreateSendsTheIntentAsABody(t *testing.T) {
 			return
 		}
 		b, _ := io.ReadAll(r.Body)
-		body, path = string(b), r.URL.Path
+		if r.Method == http.MethodPost {
+			body, path = string(b), r.URL.Path
+		}
 		fmt.Fprint(w, `{"name":"op-1","targetId":"net-1"}`)
 	}))
 	defer srv.Close()

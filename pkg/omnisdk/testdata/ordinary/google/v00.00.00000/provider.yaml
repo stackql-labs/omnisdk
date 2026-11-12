@@ -1,0 +1,8 @@
+name: google
+version: v00.00.00000
+providerServices:
+  things:
+    id: google:things
+    name: things
+    preferred: true
+    service: {$ref: google/v00.00.00000/services/things.yaml}

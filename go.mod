@@ -12,6 +12,7 @@ require (
 	github.com/jhump/protoreflect v1.18.0
 	github.com/spf13/cobra v1.10.2
 	github.com/stackql/stackql-provider-registry/signing v0.1.0-alpha01
+	go.starlark.net v0.0.0-20261021141710-4f4267fb140d
 	google.golang.org/grpc v1.83.0
 	google.golang.org/protobuf v1.36.11
 	gopkg.in/yaml.v3 v3.0.1

@@ -37,35 +37,73 @@ while other deletes make progress; what still refuses is reported outstanding wi
 reason.
 
 **Needs.**
-- A key resolved before the record existed has none, and a destroy reports it outstanding; a run
-  that touches it again writes it.
+- Legacy keys with neither ledger metadata nor a metadata-bearing mutation journal still require
+  explicit backfill. New mutations journal addressing metadata before sending; destroy recovers
+  missing ledger metadata from that journal, refusing conflicting records. Recovery does not
+  promote pending entries or infer an unconfirmed identity.
 - Protections that refuse a delete for a reason other than a dependent — see
   [known_issues.md](known_issues.md).
 
-## 3. A create is awaited only where its document says so
+## 3. Create observation has a v1 default; richer state derivation remains open
 
-**Now.** A method declaring `x-stackQL-beta` is followed by the call it names, polled until that
-call reports done ([beta.go](../../internal/system_g/exchange/docx/beta.go)); a dependent runs only
-then. Done with an error fails; never done, or the followed call itself failing, is reported as
-unknown. The base Google documents declare none, so a caller supplies it as a document patch.
+**Now.** Hierarchical config is resolved per member, broad to fine: provider, service, resource,
+method. Embedded YAML defaults apply at matching exact path prefixes; document config wins at equal
+depth. Unmatched paths, including renamed resources, are ignored. Nested objects inherit omitted
+members; explicit null clears an inherited object.
+
+Google defaults `lifecycle.state_derivation` to `self_read_returns_data`: after create, poll the
+resource's get/select detail method until it returns nonempty data. The default is 150 attempts at
+2-second intervals. A declared `x-stackQL-beta` takes precedence and awaits its operation instead.
+Both paths persist observation handles in the IaC journal before polling; checkpoints are separate
+from compensation steps and do not record authentication inputs. This records handles for recovery;
+automatically resuming an interrupted wait is not yet implemented.
+
+Supplying `Args.MutationCompletion` gives the host ownership of completion and suppresses the
+config-based wait. This prevents a self-read before the host polls an operation. Explicit document
+beta edges still apply; managed IaC leaves lifecycle waits enabled.
+
+A 404 or empty read is retried. Other read errors, exhausted waits, or missing addressing inputs
+report the effect as unknown, without repeating create. A caller-chosen request `name` can supply the
+last detail-path parameter; otherwise matching response fields, existing scope inputs, or explicit
+`lifecycle.bind` mappings supply the read inputs. An operation response's name is not assumed to be
+its resource's identity.
+
+For example, at any config level (`config`, or service `x-stackQL-config`):
+
+```yaml
+lifecycle:
+  state_derivation: self_read_returns_data
+  interval: 2s
+  max_attempts: 150
+  bind: {id: id} # optional: read input -> dotted create-response field
+```
+
+Use `lifecycle: null` or `state_derivation: none` to disable an inherited default. Embedded defaults
+live in `pkg/docparse/stackqldoc/defaults`; their `path` lists provider, service, resource, and method
+segments as needed. The same resolver handles all config members, not only lifecycle.
 
 **Needs.**
-- The declaration in the registry's own documents, rather than in every caller's patch.
-- A test of the IaC path: the effector compiles through the same `Spec`, so it awaits too, but only
-  the query path is exercised.
+- Richer semantic predicates over transformed observations, including provider-specific maturity
+  and failure conditions. V1 derives only observable existence.
+- Registry-owned operation declarations where a self read cannot be addressed or operation completion
+  is the stronger contract. Google operation polling still requires `x-stackQL-beta`.
+- Automatic recovery that resumes a persisted observation handle after interruption.
 
-## 4. The lock covers the whole collection and is never renewed
+## 4. Resource lock scope and renewal
 
-**Now.** A run locks its entire collection (`lease.All()`) for a fixed five minutes, and nothing
-renews it. Two runs touching disjoint resources in one collection exclude each other, and a run that
-outlasts five minutes can have its lock taken by another while it is still sending.
+**Now.** Managed graphs acquire an atomic footprint: exclusive mutation targets and shared guards
+for referenced resources. Stage checkpoints release completed inputs after their last consumer;
+leases renew during execution, and ownership is checked before dispatch and commit. Independent
+VM attachments can share a subnet guard; subnet writes remain excluded until attachments finish.
+Same-key invocations within a run are serialized. Rollback-enabled runs retain exclusive mutation
+locks from before the first effect through completion/undo; non-rollback graphs release earlier.
+Desired-state lowering retains a bounded target/dependency footprint; full destruction still uses
+a collection-wide lease for its deletion scan.
 
-**Needs.**
-- Renewal while the run is alive, at a fraction of the expiry, and a run that cannot renew stops
-  starting new keys.
-- A fencing check: a run whose lock was taken must not write the ledger afterwards.
-- Narrowing to the keys a run touches. The lock already takes a key set and conflicts by
-  intersection; what is missing is computing each run's footprint before it starts.
+**Remaining.** Branch/global-expression/admission cases conservatively retain footprints. Automatic
+recovery of unresolved outcomes is still needed. Cloud APIs do not enforce these local fencing
+claims. Attachment and later VM readiness must be separate stages to have separate release points.
+See [resource locking and ledger recovery](resource-locking.md) for concrete rules and test coverage.
 
 ## 5. Dependencies carry only an identity
 

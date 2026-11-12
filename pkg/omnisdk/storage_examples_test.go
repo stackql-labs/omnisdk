@@ -101,8 +101,8 @@ func TestExampleGCSBucket(t *testing.T) {
 	state := t.TempDir()
 
 	converge(t, corpus, state, "r1", args, b)
-	if got := c.took(); got != "insert" {
-		t.Errorf("first run: %s, want an insert", got)
+	if got := c.took(); got != "insert, get" {
+		t.Errorf("first run: %s, want insert then await its detail read", got)
 	}
 	converge(t, corpus, state, "r2", args, b)
 	if got := c.took(); got != "get" {

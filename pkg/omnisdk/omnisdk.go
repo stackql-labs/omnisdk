@@ -11,7 +11,8 @@
 //   - New runs a hand-authored catalog method by path.
 //
 // IaC: Converge applies a flat set of resources; ConvergeGraph runs a graph whose mutations are
-// recorded in a ledger, held per collection and compensated on failure.
+// recorded in a ledger and protected by leases. Failure preserves partial progress;
+// Args.IACRollback explicitly opts into automatic saga compensation.
 //
 // Credentials are per provider (Args.AuthByProvider), falling back to each document's defaults and
 // the environment.
@@ -67,6 +68,7 @@ import (
 	"github.com/stackql-labs/omnisdk/pkg/docparse/dsl"
 	"github.com/stackql-labs/omnisdk/pkg/docparse/dsl/gotemplate"
 	"github.com/stackql-labs/omnisdk/pkg/docparse/dsl/schemaxml"
+	starlarkdsl "github.com/stackql-labs/omnisdk/pkg/docparse/dsl/starlark"
 	"github.com/stackql-labs/omnisdk/pkg/docparse/stackqldoc"
 	"github.com/stackql-labs/omnisdk/public/authorization"
 	"github.com/stackql/stackql-provider-registry/signing/pqsig"
@@ -289,6 +291,15 @@ type HTTPReadErrorObserver interface {
 // Args are the inputs to run a resource: explicit scope Params, optional Auth (config-driven-auth
 // resources), an endpoint override, run Tuning, and an optional traffic log.
 type Args struct {
+	// IACRollback opts into automatic saga compensation after a failed managed
+	// IaC run. False preserves partial progress and durable recovery evidence.
+	// Passed per execution; never read from process environment or global state.
+	// Exclusive mutation-target locks are held from before execution through commit or undo.
+	IACRollback bool `json:"iac_rollback,omitempty"`
+	// TxnRollback enables the same retained-lock compensation policy for ordinary
+	// query graphs/SQL prepared with NewLedger and explicit managed targets.
+	TxnRollback bool `json:"txn_rollback,omitempty"`
+
 	Inputs      map[string]any `json:"inputs,omitempty"`
 	Environment map[string]any `json:"environment,omitempty"`
 	// Caller is a verified directory/policy snapshot, independent of provider Auth.
@@ -310,7 +321,8 @@ type Args struct {
 	// ReadCachePartition is an explicit authorization/cache namespace. Required
 	// with ReadCache; it must differ between principals/tenants that cannot share rows.
 	ReadCachePartition string `json:"read_cache_partition,omitempty"`
-	// MutationCompletion optionally follows accepted graph mutations before projection.
+	// MutationCompletion owns completion of accepted graph mutations before projection,
+	// replacing config-based lifecycle waits. Explicit document beta edges still apply.
 	MutationCompletion MutationCompletion `json:"-"`
 	// LegacyXMLValues preserves legacy XML table text.
 	LegacyXMLValues bool `json:"legacy_xml_values,omitempty"`
@@ -1105,6 +1117,10 @@ func (builtin) GetMethod(path string) (Method, bool) {
 }
 
 func (builtin) New(method string, args Args) (Plan, error) {
+	if args.TxnRollback {
+		return nil, fmt.Errorf("omnisdk: TxnRollback requires a scoped prepared query with managed mutation targets; legacy catalog methods cannot supply that contract")
+	}
+
 	if err := checkEndpoint(args); err != nil {
 		return nil, err
 	}
@@ -1122,6 +1138,10 @@ func (builtin) New(method string, args Args) (Plan, error) {
 }
 
 func (builtin) NewMerged(methodPaths []string, args Args) (Plan, error) {
+	if args.TxnRollback {
+		return nil, fmt.Errorf("omnisdk: TxnRollback requires a scoped prepared query with managed mutation targets; legacy catalog methods cannot supply that contract")
+	}
+
 	if len(methodPaths) == 0 {
 		return nil, fmt.Errorf("omnisdk: NewMerged needs at least one method")
 	}
@@ -1232,7 +1252,7 @@ func NewFromDoc(doc []byte, provider, resource string, args Args) (Plan, error) 
 	if err := checkEndpoint(args); err != nil {
 		return nil, err
 	}
-	reg, err := dsl.NewRegistry(append(gotemplate.Evaluators(), schemaxml.New())...)
+	reg, err := dsl.NewRegistry(append(gotemplate.Evaluators(), schemaxml.New(), starlarkdsl.New())...)
 	if err != nil {
 		return nil, err
 	}
@@ -1448,7 +1468,7 @@ func NewSelectFromCatalog(dir, address string, args Args) (Plan, error) {
 	if err != nil {
 		return nil, fmt.Errorf("omnisdk: %s: %w", address, err)
 	}
-	reg, err := dsl.NewRegistry(append(gotemplate.Evaluators(), schemaxml.New())...)
+	reg, err := dsl.NewRegistry(append(gotemplate.Evaluators(), schemaxml.New(), starlarkdsl.New())...)
 	if err != nil {
 		return nil, err
 	}
@@ -1486,6 +1506,9 @@ func docInputs(args Args) map[string]any {
 // Azure's is not wanted.
 func docOptions(args Args, sec aot.Security, oauth bool) ([]docx.Option, error) {
 	opts := []docx.Option{docx.WithQueryLimit(args.Tuning.Limit), docx.WithSelectionErrors(args.ResponseSelectionErrors), docx.WithHTTPObserver(args.HTTPObserver)}
+	if args.MutationCompletion != nil {
+		opts = append(opts, docx.WithoutLifecycleWait())
+	}
 	if args.LegacyResponseTransforms {
 		opts = append(opts, docx.WithLegacyResponseTransforms())
 	}

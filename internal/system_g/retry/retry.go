@@ -239,6 +239,11 @@ func (p *policy) Recover(_ context.Context, a facade.Attempt) (time.Duration, bo
 // ---- per-run context carrier ------------------------------------------------
 
 type ctxKey struct{}
+type disabledKey struct{}
+
+// Disable forbids transport retries even when nested document/provider settings
+// install a more specific policy. An uncertain mutation must not be replayed.
+func Disable(ctx context.Context) context.Context { return context.WithValue(ctx, disabledKey{}, true) }
 
 // noop is the RetryPolicy in force when none is set: never retries (first failure is terminal).
 type noop struct{}
@@ -255,6 +260,9 @@ func WithPolicy(ctx context.Context, p facade.RetryPolicy) context.Context {
 
 // From returns the retry policy on ctx, or a never-retry policy if none is set.
 func From(ctx context.Context) facade.RetryPolicy {
+	if disabled, _ := ctx.Value(disabledKey{}).(bool); disabled {
+		return noop{}
+	}
 	if p, ok := ctx.Value(ctxKey{}).(facade.RetryPolicy); ok && p != nil {
 		return p
 	}
