@@ -210,3 +210,84 @@ func TestConditionalAuthorizationRequiresOnlyExecutedArms(t *testing.T) {
 		t.Fatal("denied update changed ledger", entries, err)
 	}
 }
+
+func TestConcurrentSessionsKeepPrincipalPermissionsAndRowsIsolated(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	directory, err := principal.NewMemoryDirectoryFromBytes([]byte(`{"principals":[{"id":"alice","identities":[{"issuer":"test","subject":"alice"}]},{"id":"bob","identities":[{"issuer":"test","subject":"bob"}]},{"id":"carol","identities":[{"issuer":"test","subject":"carol"}]}]}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	names := []string{"alice", "bob", "carol"}
+	var rules []authorization.Rule
+	var relations []omnisdk.Relation
+	var arrived atomic.Int32
+	ready := make(chan struct{})
+	for _, name := range names {
+		rules = append(rules, authorization.Rule{Subject: "user:" + name, Resource: "relation/local." + name, Action: "read"})
+		relation, err := omnisdk.NewRelation("local."+name, nil, map[string]omnisdk.ColumnType{"owner": {Type: "string"}}, func(ctx context.Context, _ map[string]any) (omnisdk.Rows, error) {
+			if arrived.Add(1) == 12 {
+				close(ready)
+			}
+			select {
+			case <-ready:
+				return &handleRows{rows: []omnisdk.Row{{"owner": name}}}, nil
+			case <-ctx.Done():
+				return nil, ctx.Err()
+			}
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		relations = append(relations, relation)
+	}
+	policy, err := authorization.NewCasbin(rules)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var workers sync.WaitGroup
+	for i := range 12 {
+		owner := i % len(names)
+		identity, err := principal.NewIdentity("test", names[owner])
+		if err != nil {
+			t.Fatal(err)
+		}
+		caller, err := authorization.NewSession(ctx, identity, directory, policy)
+		if err != nil {
+			t.Fatal(err)
+		}
+		graph, err := omnisdk.NewGraph([]omnisdk.Node{omnisdk.NewNode("private", relations[owner].Address(), nil)}, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		planned, err := omnisdk.NewGraphQuery("not-a-registry", graph, omnisdk.Args{Caller: caller, RequireCaller: true, Relations: map[string]omnisdk.Relation{relations[owner].Address(): relations[owner]}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		workers.Add(1)
+		go func() {
+			defer workers.Done()
+			denied, err := relations[(owner+1)%3].Open(caller.Context(ctx), nil)
+			if denied != nil {
+				defer denied.Close()
+			}
+			if !errors.Is(err, authorization.ErrDenied) {
+				t.Errorf("%s read another principal's relation: %v", names[owner], err)
+				return
+			}
+			rows, err := planned.Open(ctx)
+			if err != nil {
+				t.Error(err)
+				return
+			}
+			defer rows.Close()
+			if !rows.Next() || rows.Row()["owner"] != names[owner] || rows.Next() || rows.Err() != nil {
+				t.Errorf("%s received incorrect private rows: %v", names[owner], rows.Err())
+			}
+		}()
+	}
+	workers.Wait()
+	if arrived.Load() != 12 {
+		t.Fatalf("expected 12 overlapping authorized queries, got %d", arrived.Load())
+	}
+}
