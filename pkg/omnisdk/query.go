@@ -30,8 +30,8 @@ type MethodSignature interface {
 	Columns() []string
 	// ColumnTypes are the declared type of each column that declares one.
 	ColumnTypes() map[string]ColumnType
-	// TakesBody reports whether the method sends a request body. Its fields are the caller's to
-	// name: a document states a body's encoding, not its fields.
+	// TakesBody reports whether the method sends a request body. SchemaMethodSignature
+	// additionally exposes its declared fields.
 	TakesBody() bool
 }
 
@@ -174,11 +174,16 @@ func (s docSignature) TakesBody() bool { return s.ex.Request().BodyMediaType() !
 func (s docSignature) Params() []ParamSignature {
 	var out []ParamSignature
 	seen := map[string]bool{}
+	requiredInputs := append(slices.Clone(s.ServerVariables()), s.ex.Inputs()...)
 	for _, p := range s.ex.Request().Parameters() {
-		out = append(out, p)
+		if !p.Required() && slices.Contains(requiredInputs, p.Name()) {
+			out = append(out, requiredParam{Parameter: p})
+		} else {
+			out = append(out, p)
+		}
 		seen[p.Name()] = true
 	}
-	for _, name := range s.ex.Inputs() {
+	for _, name := range requiredInputs {
 		if !seen[name] {
 			out = append(out, serverInput{name})
 		}
@@ -1691,3 +1696,33 @@ func (s docSignature) RequestBodySchema() aot.Schema {
 
 func (s docSignature) InputName(name string) string { return s.surface(name) }
 func (p serverInput) Type() string                  { return "string" }
+
+// requiredParam reconciles URL/server scope requirements with declared parameters.
+type requiredParam struct{ aot.Parameter }
+
+func (p requiredParam) Required() bool { return true }
+func (p requiredParam) Type() string {
+	if v, ok := p.Parameter.(interface{ Type() string }); ok {
+		return v.Type()
+	}
+	return ""
+}
+func (p requiredParam) Format() string {
+	if v, ok := p.Parameter.(interface{ Format() string }); ok {
+		return v.Format()
+	}
+	return ""
+}
+func (p requiredParam) Description() string {
+	if v, ok := p.Parameter.(aot.DescribedSchema); ok {
+		return v.Description()
+	}
+	return ""
+}
+func (p requiredParam) Enum() []string {
+	if v, ok := p.Parameter.(aot.DescribedSchema); ok {
+		return v.Enum()
+	}
+	return nil
+}
+func (p requiredParam) Global() bool { return false }
