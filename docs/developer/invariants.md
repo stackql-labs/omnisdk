@@ -46,9 +46,9 @@ Enforced: `TestLibraryHasNoRDBMSDependencies`.
 ## Durability and effects
 
 **7. Intent is recorded before the effect, never after.** Both the per-key ledger entry and the run
-journal are written and fsynced before a wire call. A record that describes an effect that was never
-attempted is worse than useless — it makes a later run compensate something it did not cause — so
-the record goes in only once the call is certain to be made.
+journal must receive durable acknowledgement before a mutating wire call. A crash between recording
+intent and dispatch can leave the outcome unknown; intent alone never proves an effect occurred
+or authorizes compensation. Recovery must establish the outcome before proceeding.
 
 **8. Never guess about a destructive action.** If the target cannot be read, "did this land?" is
 unknown and must be reported, not assumed. If a step updated an object rather than creating it, its
@@ -105,3 +105,32 @@ never held across a wire call; cross-run exclusion is a durable, expiring lease.
 2. After a successful IaC run, the ledger alone must suffice for subsequent operations.
    Journals since the last successful run may be consulted to recover interrupted or failed work.
 
+3. Runs sharing a coordination store and lock scope must acquire compatible, durably
+   acknowledged lease claims atomically before dispatching protected mutations. Exclusive
+   claims exclude conflicting access; shared guards permit compatible operations. Claims
+   expire unless renewed; loss of a claim must stop further protected dispatch. An already
+   dispatched provider request may still complete. Independent coordination stores provide
+   no mutual exclusion. Durability is a backend contract: file sync, database commit, or
+   an equivalent durable remote acknowledgement, not a requirement to use `fsync`.
+
+4. **Ledger:** retain authoritative intent, identities, dependencies and unresolved state.
+   GC may remove obsolete records only when unreferenced, preserving version fencing.
+
+5. **Journal:** retain effect ordering, compensation data and observation checkpoints.
+   GC requires durable completion, ledger sufficiency and no execution/recovery references;
+   claiming deletion must atomically prevent new references. Age alone is insufficient.
+
+6. **Diagnostics/logs:** explanatory only; deletion must not affect execution or recovery.
+   GC follows configured age/size limits after rotation closes active writers.
+
+   These GC conditions are requirements, not claims of implemented collection.
+
+7. **Access control:** when enabled, authorization must precede protected reads, mutations
+   and control actions. Policy-required result masking must occur before results leave Omni.
+
+8. **Concurrent access:** sessions must not leak credentials, private data or permissions
+   across principals, regardless of concurrency. Test with at least ten concurrent sessions
+   across three principals, including permitted and denied operations.
+
+9. **Rollback:** opt-in saga compensation must support declared compensatable mutations
+   in both IaC and ordinary queries. Compensation failure must remain explicit and recoverable.
