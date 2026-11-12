@@ -1,6 +1,7 @@
 """Real merged AWS documents and SDK ledger, with a strict EC2 Query mock."""
 import base64
 import json
+import shutil
 from pathlib import Path
 import subprocess
 import tempfile
@@ -302,6 +303,10 @@ class AwsNginxLibrary:
         before = len(self.events)
         self.cli("reapply")
         assert all(e["action"].startswith("Describe") for e in self.events[before:]), "unchanged spec replayed a mutation"
+
+    def discard_completed_run_history(self):
+        # Simulate GC only after the create command has reported success.
+        shutil.rmtree(self.root / "state" / "journal")
 
     def inspect_aws_nginx(self):
         result = self.cli("status")

@@ -291,3 +291,28 @@ func TestConcurrentSessionsKeepPrincipalPermissionsAndRowsIsolated(t *testing.T)
 		t.Fatalf("expected 12 overlapping authorized queries, got %d", arrived.Load())
 	}
 }
+
+func TestResultRedactionPrecedesPublicRows(t *testing.T) {
+	relation, err := omnisdk.NewRelation("local.private", nil, map[string]omnisdk.ColumnType{"id": {Type: "string"}, "secret": {Type: "string"}},
+		func(context.Context, map[string]any) (omnisdk.Rows, error) {
+			return &handleRows{rows: []omnisdk.Row{{"id": "visible", "secret": "must-not-escape"}}}, nil
+		})
+	if err != nil {
+		t.Fatal(err)
+	}
+	graph, err := omnisdk.NewGraph([]omnisdk.Node{omnisdk.NewNode("private", relation.Address(), nil)}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	planned, err := omnisdk.NewGraphQuery("unused", graph, omnisdk.Args{Relations: map[string]omnisdk.Relation{relation.Address(): relation}, Redaction: omnisdk.RedactAlso(omnisdk.DefaultRedaction(), "secret")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	rows := drain(t, planned)
+	if len(rows) != 1 || rows[0]["id"] != "visible" {
+		t.Fatalf("redaction lost public data: %v", rows)
+	}
+	if _, leaked := rows[0]["secret"]; leaked {
+		t.Fatal("restricted field escaped through public Rows")
+	}
+}

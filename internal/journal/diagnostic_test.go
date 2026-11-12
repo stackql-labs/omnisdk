@@ -56,3 +56,29 @@ func TestDiagnosticsNeverBecomeRecoverySteps(t *testing.T) {
 		t.Fatal("diagnostics file is not private")
 	}
 }
+
+func TestDeletingDiagnosticsPreservesRecoveryCheckpoints(t *testing.T) {
+	ctx := context.Background()
+	root := t.TempDir()
+	files, err := NewFiles(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	log, err := files.Create(ctx, "interrupted")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := log.(*runJournal).AppendAwait(ctx, "demo/vm", "GET /operations/{id}", map[string]any{"id": "op-1"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := RecordDiagnostic(ctx, log, "demo/vm", "create", Diagnostic{Event: "interrupted"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(filepath.Join(root, "interrupted.diagnostics.jsonl")); err != nil {
+		t.Fatal(err)
+	}
+	handles, err := AwaitHandles(ctx, root, "interrupted")
+	if err != nil || handles["demo/vm"].Inputs["id"] != "op-1" {
+		t.Fatalf("diagnostic deletion lost recovery state: %v %v", handles, err)
+	}
+}

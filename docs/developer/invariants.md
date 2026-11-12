@@ -134,3 +134,19 @@ never held across a wire call; cross-run exclusion is a durable, expiring lease.
 
 9. **Rollback:** opt-in saga compensation must support declared compensatable mutations
    in both IaC and ordinary queries. Compensation failure must remain explicit and recoverable.
+
+## Verification of measurable quantities
+
+Tests cover specific guarantees, not blanket proof of each point.
+
+| Point | Evidence / remaining gap |
+| --- | --- |
+| 1 | `TestKeyedLeftJoinPartitionsPreserveDuplicatesAndUnmatchedRows` checks partition equivalence. Existing `TestResolvedQueryStreamsInBoundedMemory` currently exceeds its heap limit; full join-memory scaling remains unproved. |
+| 2 | `TestCompletedLedgerSurvivesJournalAndDiagnosticsRemoval`; Robot `Completed Run History Is Not Required For Teardown`. |
+| 3 | Lease contention, shared guards, expiry and renewal-loss tests in `internal/lease` and `resource_locks_test.go`. |
+| 4 | Ledger conformance tests and `TestFileRecreateAfterForget` check retained state and stale-version rejection. Compaction is not implemented. |
+| 5 | `TestManagedLedgerCrashBoundaries` injects intent/journal/commit failures; `TestAwaitCheckpointsPersistWithoutBecomingCompensationSteps` checks recovery evidence. GC eligibility/reference coordination is not implemented. |
+| 6 | `TestDeletingDiagnosticsPreservesRecoveryCheckpoints` and point 2 check deletion independence. Rotation/retention GC is not implemented. |
+| 7 | Common-gate access tests check denials before effects; `TestResultRedactionPrecedesPublicRows` checks the redaction hook. Automatic policy-to-mask binding is not established. |
+| 8 | `TestConcurrentSessionsKeepPrincipalPermissionsAndRowsIsolated`: 12 overlapping sessions, three principals; run under `-race`. |
+| 9 | `TestRollbackPreventsAdornmentThroughUndo` checks both rollback options; `TestSQLTxnRollbackLocksOnlyMutationScope` checks SQL integration; `TestFailedCompensationRemainsVisibleAndCanBeRecovered` checks failed undo and later cleanup. |

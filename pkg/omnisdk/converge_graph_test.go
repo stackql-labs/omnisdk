@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 
 	"github.com/stackql-labs/omnisdk/pkg/omnisdk"
@@ -207,5 +208,38 @@ func TestConvergeGraphFailurePreservesProgressByDefault(t *testing.T) {
 	drain(t, cleanup)
 	if len(store.items) != 0 {
 		t.Fatal("retained ownership could not be destroyed")
+	}
+}
+
+func TestFailedCompensationRemainsVisibleAndCanBeRecovered(t *testing.T) {
+	store := &widgetStore{items: map[string]map[string]any{}}
+	backend := store.serve(t)
+	defer backend.Close()
+	var rejectDelete atomic.Bool
+	rejectDelete.Store(true)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodDelete && rejectDelete.Load() {
+			http.Error(w, "compensation rejected", http.StatusForbidden)
+			return
+		}
+		backend.Config.Handler.ServeHTTP(w, r)
+	}))
+	defer srv.Close()
+	state := t.TempDir()
+	rows := convergeWidgets(t, srv, state, map[string]map[string]any{
+		"w1": {"size": "L", "color": "red"}, "w2": {"size": "bad", "color": "red"},
+	}, []string{"w1", "w2"}, true)
+	last := rows[len(rows)-1]
+	if last["status"] != "failed" || last["rollback"] != "outstanding" || fmt.Sprint(last["completed"]) != "[demo/w1]" || len(store.items) != 1 {
+		t.Fatalf("compensation failure hidden: rows=%v objects=%v", rows, store.items)
+	}
+	rejectDelete.Store(false)
+	pl, err := omnisdk.Prepare(authRegistry, omnisdk.Destroy("w1"), omnisdk.NewLedger("demo", state, "recover-compensation"), omnisdk.Args{Endpoint: srv.URL})
+	if err != nil {
+		t.Fatal(err)
+	}
+	recovered := drain(t, pl)
+	if len(recovered) != 1 || recovered[0]["status"] != "destroyed" || len(store.items) != 0 {
+		t.Fatalf("failed compensation lost ownership: %v objects=%v", recovered, store.items)
 	}
 }

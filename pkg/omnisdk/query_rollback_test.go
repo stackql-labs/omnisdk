@@ -75,8 +75,9 @@ func TestSQLTxnRollbackLocksOnlyMutationScope(t *testing.T) {
 }
 
 func TestRollbackPreventsAdornmentThroughUndo(t *testing.T) {
-	for _, rollback := range []bool{false, true} {
-		t.Run(fmt.Sprintf("rollback=%t", rollback), func(t *testing.T) {
+	for _, mode := range []string{"disabled", "iac", "query"} {
+		t.Run(mode, func(t *testing.T) {
+			rollback := mode != "disabled"
 			ctx := context.Background()
 			state := t.TempDir()
 			log, err := ledger.NewFile(filepath.Join(state, "ledger"))
@@ -134,7 +135,7 @@ func TestRollbackPreventsAdornmentThroughUndo(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			plan, err := omnisdk.ConvergeGraph(authRegistry, "demo", state, "run", graph, []omnisdk.Managed{omnisdk.NewManaged("first", []string{"first"}, "id", "id"), omnisdk.NewManaged("failed", []string{"fail"}, "id", "id")}, omnisdk.Args{Endpoint: server.URL, IACRollback: rollback})
+			plan, err := omnisdk.ConvergeGraph(authRegistry, "demo", state, "run", graph, []omnisdk.Managed{omnisdk.NewManaged("first", []string{"first"}, "id", "id"), omnisdk.NewManaged("failed", []string{"fail"}, "id", "id")}, omnisdk.Args{Endpoint: server.URL, IACRollback: mode == "iac", TxnRollback: mode == "query"})
 			if err != nil {
 				t.Fatal(err)
 			}

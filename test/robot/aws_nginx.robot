@@ -24,3 +24,8 @@ Lost Delete Response Retains Identity And Blocks Blind Retry
 
 EC2 Client Token Contract Survives Teardown
     Client Token Contract Survives Teardown
+
+Completed Run History Is Not Required For Teardown
+    Create AWS Nginx
+    Discard Completed Run History
+    Destroy AWS Nginx

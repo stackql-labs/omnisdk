@@ -2,6 +2,7 @@ package ledger_test
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -90,6 +91,9 @@ func TestFileRecreateAfterForget(t *testing.T) {
 
 	if err := l.Begin(ctx, "s/a", []byte("again"), facade.LedgerVersionNone); err != nil {
 		t.Fatalf("recreate: %v", err)
+	}
+	if err := l.Resolve(ctx, "s/a", []byte("stale-owner"), nil, v); !errors.Is(err, facade.ErrLedgerConflict) {
+		t.Fatalf("recreated key accepted a pre-deletion version: %v", err)
 	}
 	e, _ := get(t, l, "s/a")
 	if string(e.Proposed()) != "again" {
