@@ -141,7 +141,7 @@ Tests cover specific guarantees, not blanket proof of each point.
 
 | Point | Evidence / remaining gap |
 | --- | --- |
-| 1 | `TestKeyedLeftJoinPartitionsPreserveDuplicatesAndUnmatchedRows` checks partition equivalence. Existing `TestResolvedQueryStreamsInBoundedMemory` currently exceeds its heap limit; full join-memory scaling remains unproved. |
+| 1 | `TestKeyedLeftJoinPartitionsPreserveDuplicatesAndUnmatchedRows` checks partition equivalence. `TestResolvedQueryStreamsInBoundedMemory` verifies ~100 MiB of distinct output under a 35 MiB sampled post-GC heap-growth limit, with a full-retention negative control. It requires at least 8 MiB of further output with no net live-heap growth in each half, plus shrinking heap while output advances: evidence of streaming and reclamation without full-output retention for this workload. Full join-memory scaling remains unproved. |
 | 2 | `TestCompletedLedgerSurvivesJournalAndDiagnosticsRemoval`; Robot `Completed Run History Is Not Required For Teardown`. |
 | 3 | Lease contention, shared guards, expiry and renewal-loss tests in `internal/lease` and `resource_locks_test.go`. |
 | 4 | Ledger conformance tests and `TestFileRecreateAfterForget` check retained state and stale-version rejection. Compaction is not implemented. |

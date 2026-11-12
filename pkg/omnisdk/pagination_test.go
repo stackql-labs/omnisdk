@@ -2,6 +2,9 @@ package omnisdk_test
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/base64"
+	"encoding/binary"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -226,8 +229,9 @@ func TestPaginationByAWSMarker(t *testing.T) {
 // It measures in a fresh process: in a shared one, what earlier tests left behind is collected
 // during the stream and swamps what the stream itself holds.
 func TestResolvedQueryStreamsInBoundedMemory(t *testing.T) {
+	const pages, perPage, bound = 200, 500, 35 << 20
 	if testing.Short() {
-		t.Skip("streams ~50MB")
+		t.Skip("streams ~100 MiB")
 	}
 	requireCorpus(t)
 	if os.Getenv("OMNISDK_MEMTEST") == "" {
@@ -238,11 +242,29 @@ func TestResolvedQueryStreamsInBoundedMemory(t *testing.T) {
 		if err != nil {
 			t.Fatalf("measuring process: %v", err)
 		}
+		// Negative control: deliberately retaining every output row must breach the limit.
+		retaining := exec.Command(os.Args[0], "-test.run=^TestResolvedQueryStreamsInBoundedMemory$", "-test.v")
+		retaining.Env = append(os.Environ(), "OMNISDK_MEMTEST=1", "OMNISDK_MEMTEST_RETAIN=1")
+		control, err := retaining.CombinedOutput()
+		if err == nil || !strings.Contains(string(control), fmt.Sprintf("exceeds %d bytes", bound)) {
+			t.Fatalf("full-retention control did not trigger the memory limit: %v\n%s", err, control)
+		}
+		t.Logf("full-retention control correctly failed:\n%s", control)
 		return
 	}
 	t.Setenv("GOOGLE_CREDENTIALS", serviceAccountKey(t))
-	const pages, perPage, bound = 100, 500, 16 << 20
-	pad := strings.Repeat("x", 1024)
+	// Distinct deterministic pseudorandom payloads; no shared filler or stored dataset.
+	payload := func(row int) string {
+		var raw [768]byte
+		var seed [16]byte
+		binary.LittleEndian.PutUint64(seed[:8], uint64(row))
+		for block := range len(raw) / sha256.Size {
+			binary.LittleEndian.PutUint64(seed[8:], uint64(block))
+			sum := sha256.Sum256(seed[:])
+			copy(raw[block*sha256.Size:], sum[:])
+		}
+		return base64.StdEncoding.EncodeToString(raw[:])
+	}
 	var served atomic.Int64
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
@@ -257,7 +279,7 @@ func TestResolvedQueryStreamsInBoundedMemory(t *testing.T) {
 			if i > 0 {
 				b.WriteByte(',')
 			}
-			fmt.Fprintf(&b, `{"name":"b-%d-%d","location":%q}`, page, i, pad)
+			fmt.Fprintf(&b, `{"name":"b-%d-%d","location":%q}`, page, i, payload(page*perPage+i))
 		}
 		b.WriteString(`]`)
 		if page+1 < pages {
@@ -311,13 +333,30 @@ func TestResolvedQueryStreamsInBoundedMemory(t *testing.T) {
 	}
 	defer rows.Close()
 	var n int
+	retainAll := os.Getenv("OMNISDK_MEMTEST_RETAIN") == "1"
+	var retained []omnisdk.Row
+	var outputBytes int64
 	var peak uint64
+	// Track live heap against cumulative verified output, without retaining output rows.
+	var samples []struct{ output, heap int64 }
 	for rows.Next() {
+		row := rows.Row()
+		name, nameOK := row["name"].(string)
+		location, locationOK := row["location"].(string)
+		if !nameOK || !locationOK || name != fmt.Sprintf("b-%d-%d", n/perPage, n%perPage) || location != payload(n) {
+			t.Fatalf("output row %d is missing, duplicated, reordered or corrupted", n)
+		}
+		if retainAll {
+			retained = append(retained, omnisdk.Row{"name": name, "location": location})
+		}
+		outputBytes += int64(len(name) + len(location))
 		n++
 		if n%perPage == 0 {
-			if h := heap(); h > peak {
+			h := heap()
+			if h > peak {
 				peak = h
 			}
+			samples = append(samples, struct{ output, heap int64 }{outputBytes, int64(h)})
 		}
 	}
 	if err := rows.Err(); err != nil {
@@ -326,13 +365,43 @@ func TestResolvedQueryStreamsInBoundedMemory(t *testing.T) {
 	if n != pages*perPage {
 		t.Fatalf("rows = %d, want %d", n, pages*perPage)
 	}
-	if served.Load() < 3*bound {
-		t.Fatalf("served %d bytes; too little to prove a %d-byte bound", served.Load(), bound)
+	if outputBytes < 2*bound {
+		t.Fatalf("verified output %d bytes is insufficient for the %d-byte retention limit", outputBytes, bound)
 	}
+	runtime.KeepAlive(retained)
 	grew := int64(peak) - int64(base)
-	t.Logf("served %d MB, heap grew at most %d MB", served.Load()>>20, grew>>20)
+	t.Logf("verified %d rows, %d output bytes; served %d bytes; sampled post-GC heap growth %d bytes (limit %d)", n, outputBytes, served.Load(), grew, bound)
 	if grew > bound {
-		t.Errorf("heap grew %d MB streaming %d MB: rows are being held", grew>>20, served.Load()>>20)
+		t.Errorf("sampled post-GC heap growth %d exceeds %d bytes", grew, bound)
+	}
+	// Require reclamation over substantial output intervals in both halves,
+	// despite transient heap fluctuations already constrained by the peak limit.
+	plateaus, shrinks := 0, 0
+	for half := range 2 {
+		section := samples[half*len(samples)/2 : (half+1)*len(samples)/2]
+		stable := false
+		for start := range section {
+			for end := start + 1; end < len(section); end++ {
+				if section[end].output-section[start].output >= 8<<20 && section[end].heap <= section[start].heap {
+					t.Logf("half %d: output advanced %d bytes; live heap changed %+d bytes", half+1, section[end].output-section[start].output, section[end].heap-section[start].heap)
+					stable = true
+					break
+				}
+			}
+			if stable {
+				plateaus++
+				break
+			}
+		}
+	}
+	for i := 1; i < len(samples); i++ {
+		if samples[i].heap < samples[i-1].heap && samples[i].output > samples[i-1].output {
+			shrinks++
+		}
+	}
+	t.Logf("memory trace: %d page checkpoints, %d non-growing output intervals, %d shrinking intervals while output advanced", len(samples), plateaus, shrinks)
+	if plateaus != 2 || shrinks == 0 {
+		t.Errorf("expected no net heap growth over an 8 MiB output interval in both halves and shrinking heap during output; plateaus=%d shrinking=%d", plateaus, shrinks)
 	}
 }
 
