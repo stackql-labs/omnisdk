@@ -79,10 +79,10 @@ never held across a wire call; cross-run exclusion is a durable, expiring lease.
   `omnisdk` query processing is
   upper bounded in the product of
   the exchange response sizes in the working set.  
-  And in the left outer join operator, the working can be deagerly disposed.
+  And in the left outer join operator, the working can be eagerly disposed.
   That is 
     $$
-    R_1 = \biguplus_k P_k
+    R_1 = \biguplus_k P_{1,k}
     \quad\implies\quad
     J(R_1,\ldots,R_n) = \biguplus_k J(P_k,R_2,\ldots,R_n)
     $$
