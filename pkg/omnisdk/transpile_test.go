@@ -769,7 +769,9 @@ func TestInsertIntoAJSONBody(t *testing.T) {
 			return
 		}
 		b, _ := io.ReadAll(r.Body)
-		method, rawQuery, body = r.Method, r.URL.RawQuery, string(b)
+		if r.Method == http.MethodPost {
+			method, rawQuery, body = r.Method, r.URL.RawQuery, string(b)
+		}
 		fmt.Fprint(w, `{"kind":"storage#bucket","id":"my-bucket","name":"my-bucket","location":"US"}`)
 	}))
 	defer srv.Close()
@@ -1004,7 +1006,9 @@ func TestInsertSeveralRowsIntoAJSONBody(t *testing.T) {
 		}
 		b, _ := io.ReadAll(r.Body)
 		mu.Lock()
-		bodies = append(bodies, r.URL.Query().Get("project")+" "+string(b))
+		if r.Method == http.MethodPost {
+			bodies = append(bodies, r.URL.Query().Get("project")+" "+string(b))
+		}
 		mu.Unlock()
 		fmt.Fprint(w, `{"kind":"storage#bucket"}`)
 	}))

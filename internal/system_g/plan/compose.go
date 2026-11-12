@@ -57,10 +57,44 @@ func ComposeRows(id int64, p Plan) facade.Operator {
 // composePipeline builds the staged bind-join pipeline (root → stages, egress-unshaped), shared by
 // Compose (byte terminal) and ComposeRows (row terminal). It stops before the terminal.
 func composePipeline(id int64, p Plan) (facade.Operator, error) {
+	var callbacks map[string]func(context.Context) error
+	for _, spec := range p.Exchanges() {
+		if c, ok := spec.(interface{ checkpoint(context.Context) error }); ok {
+			if callbacks == nil {
+				callbacks = map[string]func(context.Context) error{}
+			}
+			callbacks[spec.Name()] = c.checkpoint
+		}
+	}
+	checkpoint := func(op facade.Operator, components []component) facade.Operator {
+		var done []func(context.Context) error
+		for _, c := range components {
+			for _, name := range c.members {
+				if f := callbacks[name]; f != nil {
+					done = append(done, f)
+				}
+			}
+		}
+		if len(done) == 0 {
+			return op
+		}
+		return checkpointOp{Operator: op, callbacks: done}
+	}
 	p = controlled(p)
-	if err := Validate(p); err != nil {
+	hasAdmission, err := validateWithAdmission(p)
+	if err != nil {
 		return nil, err
 	}
+	if hasAdmission {
+		p, err = collapseAdmissions(p)
+		if err != nil {
+			return nil, err
+		}
+		if err := Validate(p); err != nil {
+			return nil, err
+		}
+	}
+
 	byName := make(map[string]ExchangeSpec, len(p.Exchanges()))
 	for _, x := range p.Exchanges() {
 		byName[x.Name()] = x
@@ -98,18 +132,18 @@ func composePipeline(id int64, p Plan) (facade.Operator, error) {
 		op = tap(&nid, seedOp{rec: bind.NewDocRecord(map[string]any{})}, "inputs")
 	} else {
 		name := comps[0].members[0]
-		op = tap(&nid, byName[name].Make(nil), name)
+		op = checkpoint(tap(&nid, Make(byName[name], nil), name), comps[:1])
 		stages = comps[1:]
 	}
 
 	// Components with no path between them are independent: each level of the condensation — every
 	// component whose sources all ran in an earlier level — runs its members side by side.
-	var err error
 	for _, level := range levels(p, comps, stages) {
 		if len(level) == 1 {
 			if op, err = stage(p, byName, comps, specs, level[0], op, &nid); err != nil {
 				return nil, err
 			}
+			op = checkpoint(op, level)
 			continue
 		}
 		sec := &section{up: op}
@@ -121,7 +155,7 @@ func composePipeline(id int64, p Plan) (facade.Operator, error) {
 			}
 			sec.slots, sec.members = append(sec.slots, slot), append(sec.members, member)
 		}
-		op = sec
+		op = checkpoint(sec, level)
 	}
 	return op, nil
 }
@@ -156,7 +190,11 @@ func stage(p Plan, byName map[string]ExchangeSpec, comps []component, specs []fa
 		}
 	}
 	*nid++
-	op = bind.NewBindJoinIn(*nid, op, bindings, bind.InnerFactory(node.Make), alphaInto(p.Alphas(), name), 1, node.Inbound())
+	if coordinator, ok := node.(interface{ Coordinator() bool }); ok && coordinator.Coordinator() {
+		op = bind.NewCoordinatorBindJoinIn(*nid, op, bindings, bind.InnerFactory(func(bound map[string]any) facade.Operator { return Make(node, bound) }), alphaInto(p.Alphas(), name), 1, node.Inbound())
+	} else {
+		op = bind.NewBindJoinIn(*nid, op, bindings, bind.InnerFactory(func(bound map[string]any) facade.Operator { return Make(node, bound) }), alphaInto(p.Alphas(), name), 1, node.Inbound())
+	}
 
 	flat := node.Flatten()
 	if flat == nil {
@@ -226,9 +264,20 @@ func Order(exchanges []ExchangeSpec, betas []BetaEdge) []string {
 // Validate is the AOT correctness check: every declared input (In) of every exchange must be
 // satisfiable — by a β edge that feeds it, or by a κ input present (and non-empty) in Inputs.
 // An input with neither is unsatisfiable and the plan is rejected before execution.
-func Validate(p Plan) error {
+func Validate(p Plan) error { _, err := validateWithAdmission(p); return err }
+func validateWithAdmission(p Plan) (bool, error) {
+	hasAdmission := false
 	var missing []string
 	for _, x := range p.Exchanges() {
+		inbound := x.Inbound()
+		if contextual, ok := inbound.(facade.InboxTransform); ok && contextual.Admission() != nil {
+			hasAdmission = true
+		}
+		if validator, ok := inbound.(interface{ Validate() error }); ok {
+			if err := validator.Validate(); err != nil {
+				return false, fmt.Errorf("%s inbound transform: %w", x.Name(), err)
+			}
+		}
 		for _, attr := range x.In() {
 			if _, ok := betaSrc(p.Betas(), x.Name(), attr); ok {
 				continue // produced by an upstream exchange at runtime
@@ -240,9 +289,9 @@ func Validate(p Plan) error {
 		}
 	}
 	if len(missing) > 0 {
-		return fmt.Errorf("plan: unsatisfied required inputs (no β source or κ input): %s", strings.Join(missing, ", "))
+		return false, fmt.Errorf("plan: unsatisfied required inputs (no β source or κ input): %s", strings.Join(missing, ", "))
 	}
-	return nil
+	return hasAdmission, nil
 }
 
 func emptyValue(v any) bool {

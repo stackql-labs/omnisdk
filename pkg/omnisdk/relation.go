@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"maps"
 	"slices"
+	"strings"
 
 	"github.com/stackql-labs/omnisdk/internal/system_g/bind"
 	"github.com/stackql-labs/omnisdk/internal/system_g/facade"
@@ -49,9 +50,20 @@ type readRelation struct {
 	open    func(context.Context, map[string]any) (Rows, error)
 }
 
+func relationPermission(address string) facade.Permission {
+	if strings.TrimSpace(address) == "" {
+		return facade.Permission{}
+	}
+	return facade.Permission{Resource: "relation/" + address, Action: "read"}
+}
+
 func (r *readRelation) Address() string            { return r.address }
 func (r *readRelation) Methods() []MethodSignature { return []MethodSignature{relationSignature{r}} }
 func (r *readRelation) Open(ctx context.Context, inputs map[string]any) (Rows, error) {
+	ctx, err := facade.Authorize(ctx, relationPermission(r.address))
+	if err != nil {
+		return nil, err
+	}
 	return r.open(ctx, inputs)
 }
 
@@ -99,7 +111,7 @@ func relationSpec(name string, relation Relation, arrivals map[string]any, wired
 			inbox = append(inbox, name)
 		}
 	}
-	return plan.NewExchangeSpec(name, inbox, methods[0].Columns(), source.Make, bind.NewInnerFlatten()), required, nil
+	return plan.WithAccess(plan.NewExchangeSpec(name, inbox, methods[0].Columns(), source.Make, bind.NewInnerFlatten()), false, relationPermission(relation.Address())), required, nil
 }
 
 type relationSource struct {
@@ -124,9 +136,6 @@ type relationOperator struct {
 
 func (o relationOperator) Open(ctx context.Context) facade.Records {
 	if err := ctx.Err(); err != nil {
-		return &relationRecords{err: err}
-	}
-	if err := facade.CheckAccess(ctx, "relation/"+o.relation.Address(), "read"); err != nil {
 		return &relationRecords{err: err}
 	}
 	rows, err := o.relation.Open(ctx, maps.Clone(o.inputs))

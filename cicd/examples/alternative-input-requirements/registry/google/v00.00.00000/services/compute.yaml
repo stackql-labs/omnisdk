@@ -1,0 +1,44 @@
+# Minimal mock-only excerpt of the Google Compute bulkInsert contract.
+openapi: 3.0.0
+info:
+  title: Alternative input requirements
+  version: v1
+servers:
+  - url: https://compute.googleapis.com/compute/v1
+paths:
+  /projects/{project}/zones/{zone}/instances/bulkInsert:
+    post:
+      operationId: compute.instances.bulkInsert
+      parameters:
+        - {name: project, in: path, required: true, schema: {type: string}}
+        - {name: zone, in: path, required: true, schema: {type: string}}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [count]
+              properties:
+                count: {type: string, format: int64}
+                sourceInstanceTemplate: {type: string}
+                instanceProperties: {type: object, additionalProperties: true}
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  name: {type: string}
+                  status: {type: string}
+components:
+  x-stackQL-resources:
+    instances:
+      methods:
+        bulk_insert:
+          operation: {$ref: '#/paths/~1projects~1{project}~1zones~1{zone}~1instances~1bulkInsert/post'}
+          response: {mediaType: application/json, openAPIDocKey: '200'}
+      sqlVerbs:
+        insert:
+          - {$ref: '#/components/x-stackQL-resources/instances/methods/bulk_insert'}

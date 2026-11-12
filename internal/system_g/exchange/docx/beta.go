@@ -32,6 +32,7 @@ type awaitedSpec struct {
 	follow  plan.ExchangeSpec
 	bind    map[string]string
 	errPath string
+	target  string
 }
 
 func (a awaitedSpec) Make(bound map[string]any) facade.Operator {
@@ -62,7 +63,7 @@ func awaited(spec plan.ExchangeSpec, b aot.Beta, inputs map[string]any, reg dsl.
 	if c, ok := follow.(compiled); ok {
 		follow = c.spec
 	}
-	return awaitedSpec{ExchangeSpec: spec, follow: follow, bind: b.Bind(), errPath: w.ErrorPath()}, nil
+	return awaitedSpec{ExchangeSpec: spec, follow: follow, bind: b.Bind(), errPath: w.ErrorPath(), target: b.Method().Request().Method() + " " + b.Method().Request().URL()}, nil
 }
 
 type awaitedOp struct {
@@ -103,6 +104,18 @@ func (o awaitedOp) await(ctx context.Context, row facade.Record) (facade.Record,
 			return nil, fmt.Errorf("docx: %s answered without %s, which its x-stackQL-beta reads: %w", o.a.Name(), field, ErrAwaitUnknown)
 		}
 		in[name] = v
+	}
+	names := make([]string, 0, len(o.a.bind)+len(o.a.follow.In()))
+	for name := range o.a.bind {
+		names = append(names, name)
+	}
+	for _, name := range o.a.follow.In() {
+		if in[name] != nil {
+			names = append(names, name)
+		}
+	}
+	if err := checkpointAwait(ctx, o.a.target, in, names); err != nil {
+		return nil, err
 	}
 	rows := o.a.follow.Make(in).Open(ctx)
 	defer rows.Close()

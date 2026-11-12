@@ -1,0 +1,12 @@
+name: google
+version: v00.00.00000
+config:
+  # This fixture isolates input requirements, not post-create observation.
+  lifecycle: null
+providerServices:
+  compute:
+    id: google:compute
+    name: compute
+    preferred: true
+    service:
+      $ref: google/v00.00.00000/services/compute.yaml

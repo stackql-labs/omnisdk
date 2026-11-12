@@ -19,6 +19,7 @@ import (
 	"github.com/stackql-labs/omnisdk/internal/system_g/exchange/docx"
 	"github.com/stackql-labs/omnisdk/internal/system_g/facade"
 	"github.com/stackql-labs/omnisdk/internal/system_g/plan"
+	"github.com/stackql-labs/omnisdk/internal/system_g/retry"
 	"github.com/stackql-labs/omnisdk/pkg/docparse/aot"
 	"github.com/stackql-labs/omnisdk/pkg/docparse/dsl"
 )
@@ -92,7 +93,7 @@ func (e *effector) Effect(ctx context.Context, exchange string, k facade.LedgerK
 	if bodied {
 		body = in.Mutation
 	}
-	row, err := e.run(ctx, addr, verb, inputs, body, in.Params)
+	row, err := e.run(retry.Disable(ctx), addr, verb, inputs, body, in.Params)
 	if err != nil {
 		return nil, fmt.Errorf("docrun: %s %s %s: %w", addr, verb, k, err)
 	}

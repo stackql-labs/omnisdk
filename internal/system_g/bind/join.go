@@ -51,11 +51,12 @@ type bindJoinExchange struct {
 	receives []facade.Beta
 	readers  int
 
-	outer    facade.Operator
-	bindings []Binding
-	inner    InnerFactory
-	alpha    facade.Alpha // behavioural (E_α) annotation on the outer→inner edge; nil = none
-	inbound  facade.Transform
+	outer       facade.Operator
+	bindings    []Binding
+	inner       InnerFactory
+	alpha       facade.Alpha // behavioural (E_α) annotation on the outer→inner edge; nil = none
+	inbound     facade.Transform
+	coordinator bool
 }
 
 // ApplyInbound runs T_in over an assembled inbox, for an executor other than the join that binds an
@@ -98,6 +99,14 @@ func NewBindJoinIn(id int64, outer facade.Operator, bindings []Binding, inner In
 	e := NewBindJoin(id, outer, bindings, inner, alpha, readers).(*bindJoinExchange)
 	e.inbound = inbound
 	return e
+}
+
+// NewCoordinatorBindJoinIn stages a coordinator whose child operations acquire
+// their own fan-out slots. Holding another slot here would deadlock at limit one.
+func NewCoordinatorBindJoinIn(id int64, outer facade.Operator, bindings []Binding, inner InnerFactory, alpha facade.Alpha, readers int, inbound facade.Transform) facade.Exchange {
+	join := NewBindJoinIn(id, outer, bindings, inner, alpha, readers, inbound).(*bindJoinExchange)
+	join.coordinator = true
+	return join
 }
 
 func NewBindJoin(id int64, outer facade.Operator, bindings []Binding, inner InnerFactory, alpha facade.Alpha, readers int) facade.Exchange {
@@ -215,7 +224,17 @@ func (e *bindJoinExchange) Open(ctx context.Context) facade.Records {
 			// binding has landed, because an input may be built from values several producers
 			// supplied — which is why it belongs to the consumer rather than to any one edge.
 			if e.inbound != nil {
-				shaped, err := applyInbound(e.inbound, bound)
+				var edgeStates map[string]facade.EdgeState
+				if needs, ok := e.inbound.(interface{ UsesEdgeSnapshots() bool }); ok && needs.UsesEdgeSnapshots() {
+					edgeStates = map[string]facade.EdgeState{}
+					for _, binding := range e.bindings {
+						if _, exists := edgeStates[binding.Tgt()]; !exists {
+							_, present := row[binding.Src()]
+							edgeStates[binding.Tgt()] = facade.EdgeState{Present: present, Value: bound[binding.Tgt()], Done: true}
+						}
+					}
+				}
+				shaped, err := ApplyInboundContext(ctx, e.inbound, bound, edgeStates)
 				if err != nil {
 					fail(err)
 					continue
@@ -241,7 +260,7 @@ func (e *bindJoinExchange) Open(ctx context.Context) facade.Records {
 // runRow acquires a fan-out slot (if a limiter is set), runs the row's inner, and releases it —
 // the per-row gate schedule.Run applied, kept for the eager streaming path.
 func runRow(ctx context.Context, n *rowNode, lim facade.Limiter) error {
-	if lim != nil {
+	if lim != nil && !n.e.coordinator {
 		tok, err := lim.Acquire(ctx)
 		if err != nil {
 			return err

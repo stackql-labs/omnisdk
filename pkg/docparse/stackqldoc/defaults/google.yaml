@@ -1,0 +1,13 @@
+# v1: observable existence is the default state derivation after create.
+- path: [google]
+  config:
+    lifecycle:
+      state_derivation: self_read_returns_data
+      interval: 2s
+      max_attempts: 150
+- path: [stackql_unstable_google]
+  config:
+    lifecycle:
+      state_derivation: self_read_returns_data
+      interval: 2s
+      max_attempts: 150

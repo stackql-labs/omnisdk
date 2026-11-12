@@ -127,33 +127,44 @@ func TestExampleVPCConvergesAndCorrectsDrift(t *testing.T) {
 // A failed run restores what it updated rather than deleting it: w1 existed before the run, so
 // undoing the run's update puts its prior intent back, and the object stays.
 func TestFailedRunRestoresAnUpdate(t *testing.T) {
-	store := &widgetStore{items: map[string]map[string]any{}}
-	srv := store.serve(t)
-	defer srv.Close()
-	state := t.TempDir()
-	widget := func(key, size string) omnisdk.ManagedResource {
-		return omnisdk.NewResource(key, "widgets", "things.widgets", []byte(fmt.Sprintf(`{"size":%q,"color":"red"}`, size)),
-			nil, nil, "", "", "id", "id", "")
-	}
-	run := func(runID string, rs ...omnisdk.ManagedResource) []omnisdk.Row {
-		t.Helper()
-		pl, err := omnisdk.Prepare(authRegistry, omnisdk.DesiredState(rs), omnisdk.NewLedger("demo", state, runID), omnisdk.Args{Endpoint: srv.URL})
-		if err != nil {
-			t.Fatalf("prepare: %v", err)
-		}
-		return drain(t, pl)
-	}
-	run("r1", widget("w1", "L"))
-	if got := strings.Join(store.took(), ","); got != "create" {
-		t.Fatalf("first run: %s, want a create", got)
-	}
-	rows := run("r2", widget("w1", "M"), widget("w2", "bad"))
-	last := rows[len(rows)-1]
-	if !strings.HasPrefix(fmt.Sprint(last["status"]), "failed") || last["key"] != "demo/w2" {
-		t.Fatalf("second run = %v, want it failed on w2", rows)
-	}
-	if len(store.items) != 1 || store.items["w-1"]["size"] != "L" {
-		t.Errorf("store = %v, want w1 kept and its size restored to L", store.items)
+	for _, rollback := range []bool{false, true} {
+		t.Run(fmt.Sprintf("rollback=%t", rollback), func(t *testing.T) {
+			store := &widgetStore{items: map[string]map[string]any{}}
+			srv := store.serve(t)
+			defer srv.Close()
+			state := t.TempDir()
+			widget := func(key, size string) omnisdk.ManagedResource {
+				return omnisdk.NewResource(key, "widgets", "things.widgets", []byte(fmt.Sprintf(`{"size":%q,"color":"red"}`, size)),
+					nil, nil, "", "", "id", "id", "")
+			}
+			run := func(runID string, rs ...omnisdk.ManagedResource) []omnisdk.Row {
+				t.Helper()
+				pl, err := omnisdk.Prepare(authRegistry, omnisdk.DesiredState(rs), omnisdk.NewLedger("demo", state, runID), omnisdk.Args{Endpoint: srv.URL, IACRollback: rollback})
+				if err != nil {
+					t.Fatalf("prepare: %v", err)
+				}
+				return drain(t, pl)
+			}
+			run("r1", widget("w1", "L"))
+			if got := strings.Join(store.took(), ","); got != "create" {
+				t.Fatalf("first run: %s, want a create", got)
+			}
+			rows := run("r2", widget("w1", "M"), widget("w2", "bad"))
+			last := rows[len(rows)-1]
+			if !strings.HasPrefix(fmt.Sprint(last["status"]), "failed") || last["key"] != "demo/w2" {
+				t.Fatalf("second run = %v, want it failed on w2", rows)
+			}
+			wantSize := "M"
+			if rollback {
+				wantSize = "L"
+			}
+			if len(store.items) != 1 || store.items["w-1"]["size"] != wantSize {
+				t.Errorf("store=%v want size=%s", store.items, wantSize)
+			}
+			if !rollback && last["rollback"] != "disabled" {
+				t.Fatalf("default update failure did not report rollback disabled: %v", last)
+			}
+		})
 	}
 }
 

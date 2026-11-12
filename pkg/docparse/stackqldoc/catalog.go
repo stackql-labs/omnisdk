@@ -304,7 +304,7 @@ func (c *catalog) doc(service string) (Doc, error) {
 		if fi, err := fs.Stat(c.fsys, file); err == nil {
 			key = fmt.Sprintf("%s/%s\x00%d\x00%d\x00%t", c.docKey, file, fi.Size(), fi.ModTime().UnixNano(), aliases)
 			if d, ok := c.docs.Get(key); ok {
-				return d, nil
+				return c.contextualDocument(d, service, file), nil
 			}
 		}
 	}
@@ -319,8 +319,10 @@ func (c *catalog) doc(service string) (Doc, error) {
 	if parsed, ok := d.(*document); ok && c.provider != nil {
 		parsed.source, parsed.resolver = file, bundleResolver{catalog: c}
 		parsed.providerName = c.provider.Name()
+		parsed.serviceName = service
 		if p, ok := c.provider.(*provider); ok {
 			parsed.snakeAliases = p.doc.Config.SnakeCaseAliases
+			parsed.providerConfig = p.doc.Config
 		}
 	}
 	if key != "" {
@@ -364,4 +366,20 @@ func (c *catalog) ResourceNames(service string) (map[string]string, error) {
 		names[key] = key
 	}
 	return names, nil
+}
+
+// Context belongs to the catalog, not a cached parse of unchanged service bytes.
+func (c *catalog) contextualDocument(doc Doc, service, file string) Doc {
+	parsed, ok := doc.(*document)
+	if !ok {
+		return doc
+	}
+	clone := *parsed
+	clone.source, clone.resolver = file, bundleResolver{catalog: c}
+	clone.providerName, clone.serviceName = c.provider.Name(), service
+	if provider, ok := c.provider.(*provider); ok {
+		clone.providerConfig = provider.doc.Config
+		clone.snakeAliases = provider.doc.Config.SnakeCaseAliases
+	}
+	return &clone
 }

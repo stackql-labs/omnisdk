@@ -16,7 +16,10 @@ import (
 
 type Authorizer = facade.AccessAuthorizer
 
-var ErrDenied = errors.New("access denied")
+var ErrDenied = facade.ErrAccessDenied
+
+// Permission declares the resource/action required by an operation.
+type Permission = facade.Permission
 
 // Rule grants one exact subject/group a resource glob and exact action (or *).
 // Subject is user:<id> or group:<id>. Membership always comes from the directory.
@@ -117,10 +120,17 @@ func (s session) Authorize(ctx context.Context, resource, action string) error {
 	return s.a.Authorize(ctx, s.p, resource, action)
 }
 
-// Check applies the session policy. Applications must establish a session before enabling access.
-func Check(ctx context.Context, resource, action string) error {
+// Authorize checks the complete operation contract and returns its inherited execution context.
+// A session is mandatory at this public protected boundary.
+func Authorize(ctx context.Context, permissions ...Permission) (context.Context, error) {
 	if !facade.AccessEnabled(ctx) {
-		return ErrDenied
+		return nil, ErrDenied
 	}
-	return facade.CheckAccess(ctx, resource, action)
+	return facade.Authorize(ctx, permissions...)
+}
+
+// Check applies the session policy for one permission.
+func Check(ctx context.Context, resource, action string) error {
+	_, err := Authorize(ctx, Permission{Resource: resource, Action: action})
+	return err
 }

@@ -179,3 +179,49 @@ func TestCreateReservesRunEvenWithoutEffects(t *testing.T) {
 		t.Fatalf("recovery cannot reopen journal: records=%v err=%v", records, err)
 	}
 }
+
+func TestRecoveryAboutSurvivesReopenAndRefusesConflicts(t *testing.T) {
+	ctx := context.Background()
+	root := t.TempDir()
+	appendAbout := func(run, key string, about []byte) {
+		t.Helper()
+		j := open(t, root, run).(interface {
+			AppendAbout(context.Context, facade.LedgerKey, string, facade.FormClass, []byte, []byte) (int, error)
+		})
+		if _, err := j.AppendAbout(ctx, facade.LedgerKey(key), "create", facade.FormCreate, nil, about); err != nil {
+			t.Fatal(err)
+		}
+	}
+	about := []byte(`{"address":"things.widgets"}`)
+	appendAbout("first", "demo/widget", about)
+	appendAbout("other-collection", "other/widget", []byte(`{"address":"wrong"}`))
+	got, err := journal.RecoveryAbout(ctx, root, "demo/widget")
+	if err != nil || string(got) != string(about) {
+		t.Fatalf("recovery=%s err=%v", got, err)
+	}
+	appendAbout("conflict", "demo/widget", []byte(`{"address":"other"}`))
+	if _, err := journal.RecoveryAbout(ctx, root, "demo/widget"); err == nil {
+		t.Fatal("conflicting metadata accepted")
+	}
+}
+
+func TestAwaitCheckpointsPersistWithoutBecomingCompensationSteps(t *testing.T) {
+	ctx := context.Background()
+	root := t.TempDir()
+	j := open(t, root, "run")
+	if _, err := j.Append(ctx, "demo/db", "create", facade.FormCreate, nil); err != nil {
+		t.Fatal(err)
+	}
+	if err := j.AppendAwait(ctx, "demo/db", "get_operation", map[string]any{"operation": "op-1", "project": "demo"}); err != nil {
+		t.Fatal(err)
+	}
+	reopened := open(t, root, "run")
+	records, err := reopened.Records(ctx)
+	if err != nil || len(records) != 1 || records[0].Exchange() != "create" {
+		t.Fatalf("compensation records=%v err=%v", records, err)
+	}
+	handles, err := journal.AwaitHandles(ctx, root, "run")
+	if err != nil || handles["demo/db"].Inputs["operation"] != "op-1" {
+		t.Fatalf("handles=%v err=%v", handles, err)
+	}
+}

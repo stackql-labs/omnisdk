@@ -3,8 +3,12 @@ package omnisdk
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"github.com/stackql-labs/omnisdk/internal/journal"
+	"github.com/stackql-labs/omnisdk/internal/system_g/httpx"
 	"maps"
+	"path/filepath"
 	"slices"
 	"strings"
 
@@ -39,23 +43,46 @@ type destroyPlan struct {
 
 func (p *destroyPlan) Open(ctx context.Context) (Rows, error) {
 	var accessErr error
-	ctx, accessErr = executionContext(ctx, p.args)
+	ctx, accessErr = authorizeExecution(ctx, p.args, facade.Permission{Resource: "collection/" + p.name, Action: "destroy"})
 	if accessErr != nil {
 		return nil, accessErr
-	}
-	if err := facade.CheckAccess(ctx, "collection/"+p.name, "destroy"); err != nil {
-		return nil, err
 	}
 	h, err := hold(ctx, p.state, p.name, p.runID)
 	if err != nil {
 		return nil, err
 	}
 	defer h.release()
+	ctx = h.ctx
 	entries, err := h.log.List(ctx, p.name+"/")
 	if err != nil {
 		return nil, err
 	}
 
+	// An unresolved child may exist remotely even when it has no recorded
+	// identity. Excluding it from the delete DAG would wrongly free its parents.
+	// Until recovery establishes the outcome, conservatively retain the scope.
+	for _, entry := range entries {
+		if entry.Phase() != facade.LedgerPending || strings.HasPrefix(strings.TrimPrefix(string(entry.Key()), p.name+"/"), ".") {
+			continue
+		}
+		var out []Row
+		for _, kept := range entries {
+			if strings.HasPrefix(strings.TrimPrefix(string(kept.Key()), p.name+"/"), ".") {
+				continue
+			}
+			out = append(out, Row{"key": string(kept.Key()), "status": "outstanding", "reason": fmt.Sprintf("%s has unresolved intent; recover its outcome before destroying this collection", entry.Key())})
+		}
+		return &sliceRows{rows: out, i: -1}, nil
+	}
+
+	// Recover only metadata; the ledger must still confirm identity and live state.
+	aboutOf := func(entry facade.LedgerEntry) ([]byte, error) {
+		var rec aboutRecord
+		if json.Unmarshal(entry.About(), &rec) == nil && rec.Address != "" {
+			return entry.About(), nil
+		}
+		return journal.RecoveryAbout(ctx, filepath.Join(p.state, "journal"), entry.Key())
+	}
 	selected := map[facade.LedgerKey]bool{}
 	for _, key := range p.keys {
 		if key == "" || strings.HasPrefix(key, ".") || strings.Contains(key, "..") {
@@ -71,7 +98,11 @@ func (p *destroyPlan) Open(ctx context.Context) (Rows, error) {
 			}
 			found[entry.Key()] = true
 			var rec aboutRecord
-			if err := json.Unmarshal(entry.About(), &rec); err != nil || rec.Address == "" {
+			metadata, err := aboutOf(entry)
+			if err != nil {
+				return nil, err
+			}
+			if err := json.Unmarshal(metadata, &rec); err != nil || rec.Address == "" {
 				return nil, fmt.Errorf("omnisdk: cannot check dependencies of %s", entry.Key())
 			}
 			if selected[entry.Key()] {
@@ -107,7 +138,11 @@ func (p *destroyPlan) Open(ctx context.Context) (Rows, error) {
 			continue
 		}
 		var rec aboutRecord
-		if err := json.Unmarshal(e.About(), &rec); err != nil || rec.Address == "" {
+		metadata, err := aboutOf(e)
+		if err != nil {
+			return nil, err
+		}
+		if err := json.Unmarshal(metadata, &rec); err != nil || rec.Address == "" {
 			out = append(out, Row{"key": string(e.Key()), "status": "outstanding",
 				"reason": "the ledger does not record what this is, so it cannot be addressed"})
 			continue
@@ -181,19 +216,60 @@ func (p *destroyPlan) Open(ctx context.Context) (Rows, error) {
 
 // delete removes one object: its intent to go into the journal first, the call, then the key.
 func (p *destroyPlan) delete(ctx context.Context, h *held, k facade.LedgerKey, exchange string, rec aboutRecord,
-	identity []byte, effector facade.Effector) error {
+	identity []byte, effector facade.Effector) (result error) {
+	stage := "validation"
+	defer func() {
+		diagnostic := journal.Diagnostic{Event: "success", Stage: "commit", Outcome: "committed"}
+		if result != nil {
+			diagnostic = failureDiagnostic(stage, result)
+		}
+		result = errors.Join(result, journal.RecordDiagnostic(ctx, h.journal, k, exchange, diagnostic))
+	}()
+	if err := h.check(ctx); err != nil {
+		return err
+	}
+	entry, v, found, err := h.log.Get(ctx, k)
+	if err != nil {
+		return err
+	}
+	if !found {
+		return nil
+	}
+	if entry.Phase() != facade.LedgerLive {
+		return fmt.Errorf("%s has an unresolved mutation; recover its outcome before another delete", k)
+	}
+	stage = "intent"
 	if _, err := h.journal.Append(ctx, k, exchange, facade.FormDelete, nil); err != nil {
 		return fmt.Errorf("recording the delete failed, so it was not sent: %w", err)
 	}
 	params := map[string]string{}
 	maps.Copy(params, p.args.Params)
 	maps.Copy(params, rec.inputs(ctx, h.log))
-	if _, err := effector.Effect(ctx, exchange, k, facade.EffectInput{Params: params, Identity: identity}); err != nil {
+	if err := h.log.Begin(ctx, k, entry.Plan(), v); err != nil {
 		return err
 	}
-	_, v, found, err := h.log.Get(ctx, k)
-	if err != nil || !found {
+	_, pendingVersion, _, err := h.log.Get(ctx, k)
+	if err != nil {
 		return err
 	}
-	return h.log.Forget(ctx, k, v)
+	if err := h.check(ctx); err != nil {
+		return err
+	}
+	stage = "effect"
+	if err := journal.RecordDiagnostic(ctx, h.journal, k, exchange, journal.Diagnostic{Event: "dispatch", Stage: stage, Outcome: "attempting"}); err != nil {
+		return err
+	}
+	if _, err := effector.Effect(retryNever(ctx), exchange, k, facade.EffectInput{Params: params, Identity: identity}); err != nil {
+		var status *httpx.StatusError
+		if errors.As(err, &status) && status.Status >= 400 && status.Status < 500 {
+			// A definite refusal permits retry after other dependents have gone.
+			return errors.Join(err, h.log.Resolve(ctx, k, entry.Identity(), entry.About(), pendingVersion))
+		}
+		return err // Unknown outcome remains pending and cannot be retried blindly.
+	}
+	if err := h.check(ctx); err != nil {
+		return err
+	}
+	stage = "commit"
+	return h.log.Forget(ctx, k, pendingVersion)
 }

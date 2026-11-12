@@ -57,6 +57,10 @@ func (r bundleResolver) ResolveDocument(reference, origin string) (*document, er
 				if parsed, ok := cached.(*document); ok {
 					clone := *parsed
 					clone.source, clone.resolver = file, r
+					clone.providerName = r.catalog.provider.Name()
+					if p, ok := r.catalog.provider.(*provider); ok {
+						clone.providerConfig = p.doc.Config
+					}
 					return &clone, nil
 				}
 			}
@@ -77,6 +81,7 @@ func (r bundleResolver) ResolveDocument(reference, origin string) (*document, er
 	d.providerName = r.catalog.provider.Name()
 	if p, ok := r.catalog.provider.(*provider); ok {
 		d.snakeAliases = p.doc.Config.SnakeCaseAliases
+		d.providerConfig = p.doc.Config
 	}
 	if len(d.Components.Resources) == 0 {
 		d.Components.Resources = d.ResourcesRoot
@@ -109,6 +114,7 @@ func (d *document) operationDocument(name, methodName string, m method) (*docume
 	if err != nil {
 		return nil, m, err
 	}
+	target.serviceName = d.serviceName
 	// The explicit file owns this local pointer. Do not follow another
 	// serviceDoc when resolving it (including cyclic wrapper references).
 	target.ServiceDoc = ref{}

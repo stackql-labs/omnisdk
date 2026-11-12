@@ -413,3 +413,66 @@ func TestPostgresRelationFiltersWithColumnExpression(t *testing.T) {
 		t.Fatalf("continuation=%v", rows.Err())
 	}
 }
+
+func TestKeyedLeftJoinPartitionsPreserveDuplicatesAndUnmatchedRows(t *testing.T) {
+	input := []omnisdk.Row{{"id": "one"}, {"id": "one"}, {"id": "missing"}, {"id": "two"}}
+	joined := func(part []omnisdk.Row) map[string]int {
+		t.Helper()
+		left, err := omnisdk.NewRelation("local.parents", nil, map[string]omnisdk.ColumnType{"id": {Type: "string"}},
+			func(context.Context, map[string]any) (omnisdk.Rows, error) { return &handleRows{rows: part}, nil })
+		if err != nil {
+			t.Fatal(err)
+		}
+		right, err := omnisdk.NewRelation("local.children", []omnisdk.Param{{Name: "owner", Required: true}}, map[string]omnisdk.ColumnType{"name": {Type: "string"}},
+			func(_ context.Context, in map[string]any) (omnisdk.Rows, error) {
+				var rows []omnisdk.Row
+				if in["owner"] != "missing" {
+					rows = []omnisdk.Row{{"name": in["owner"]}, {"name": in["owner"]}}
+				}
+				return &handleRows{rows: rows}, nil
+			})
+		if err != nil {
+			t.Fatal(err)
+		}
+		q, err := query.New([]query.Join{
+			query.NewJoin(query.NewResource("p", left.Address()), query.Base),
+			query.NewJoin(query.NewResource("c", right.Address()), query.Left,
+				query.NewEq(query.NewColumn("c", "owner"), query.NewColumn("p", "id"))),
+		}, nil, []query.Output{query.NewOutput("id", query.NewColumn("p", "id")), query.NewOutput("name", query.NewColumn("c", "name"))})
+		if err != nil {
+			t.Fatal(err)
+		}
+		resolved, err := omnisdk.Resolve(q, map[string]omnisdk.Table{"p": left, "c": right})
+		if err != nil {
+			t.Fatal(err)
+		}
+		planned, err := omnisdk.NewGraphQuery("unused", resolved.Graph(), omnisdk.Args{Params: resolved.Params(), Relations: map[string]omnisdk.Relation{left.Address(): left, right.Address(): right}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		bag := map[string]int{}
+		for _, row := range drain(t, planned) {
+			data, err := json.Marshal(row)
+			if err != nil {
+				t.Fatal(err)
+			}
+			bag[string(data)]++
+		}
+		return bag
+	}
+	whole := joined(input)
+	if whole[`{"id":"one","name":"one"}`] != 4 || whole[`{"id":"missing","name":null}`] != 1 {
+		t.Fatalf("incorrect duplicate/unmatched semantics: %v", whole)
+	}
+	for _, width := range []int{1, 2, 3} {
+		parts := map[string]int{}
+		for start := 0; start < len(input); start += width {
+			for row, count := range joined(input[start:min(start+width, len(input))]) {
+				parts[row] += count
+			}
+		}
+		if !reflect.DeepEqual(whole, parts) {
+			t.Errorf("partition width %d changed the result: whole=%v parts=%v", width, whole, parts)
+		}
+	}
+}

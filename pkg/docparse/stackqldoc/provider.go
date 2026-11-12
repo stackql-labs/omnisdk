@@ -24,6 +24,15 @@ func ParseProvider(b []byte) (aot.Provider, error) {
 	if err != nil {
 		return nil, err
 	}
+	resolved, err := resolveConfig([]string{raw.Name}, raw.Config)
+	if err != nil {
+		return nil, err
+	}
+	raw.Config = resolved
+	raw.Config.providerDefaultsResolved = true
+	if raw.Config.Auth == nil {
+		raw.Config.Auth = &authConfig{}
+	}
 	return &provider{doc: raw, updates: updates}, nil
 }
 
@@ -34,10 +43,7 @@ type providerDoc struct {
 	Name     string                     `yaml:"name"`
 	Version  string                     `yaml:"version"`
 	Services map[string]providerService `yaml:"providerServices"`
-	Config   struct {
-		SnakeCaseAliases bool       `yaml:"snake_case_aliases"`
-		Auth             authConfig `yaml:"auth"`
-	} `yaml:"config"`
+	Config   config                     `yaml:"config"`
 }
 
 type providerService struct {

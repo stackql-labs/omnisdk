@@ -14,6 +14,7 @@ import (
 	"github.com/stackql-labs/omnisdk/pkg/docparse/dsl"
 	"github.com/stackql-labs/omnisdk/pkg/docparse/dsl/gotemplate"
 	"github.com/stackql-labs/omnisdk/pkg/docparse/dsl/schemaxml"
+	starlarkdsl "github.com/stackql-labs/omnisdk/pkg/docparse/dsl/starlark"
 	"github.com/stackql-labs/omnisdk/pkg/docparse/stackqldoc"
 )
 
@@ -132,7 +133,7 @@ func providerWiring(registry string, resources []ManagedResource, args Args) (fa
 	if err != nil {
 		return nil, nil, err
 	}
-	dslReg, err := dsl.NewRegistry(append(gotemplate.Evaluators(), schemaxml.New())...)
+	dslReg, err := dsl.NewRegistry(append(gotemplate.Evaluators(), schemaxml.New(), starlarkdsl.New())...)
 	if err != nil {
 		return nil, nil, err
 	}

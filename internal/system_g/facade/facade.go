@@ -319,7 +319,7 @@ type LedgerKey string
 type LedgerPhase int
 
 const (
-	// LedgerPending — intent recorded, outcome unknown. Proposed is valid, Identity is not.
+	// LedgerPending — intent recorded, outcome unknown. Identity retains the prior resolved address, if any.
 	LedgerPending LedgerPhase = iota
 	// LedgerLive — applied. Plan and Identity are valid, Proposed is not.
 	LedgerLive
@@ -345,7 +345,8 @@ type LedgerEntry interface {
 	// Proposed is n: the intent of the run in flight. Valid only while LedgerPending.
 	Proposed() []byte
 	// Identity is everything the inverse call needs to address the object — not merely an id,
-	// since a compensation is derived from Plan and Identity alone.
+	// since a compensation is derived from Plan and Identity alone. While pending,
+	// it is the last resolved address, not confirmation of the current effect.
 	Identity() []byte
 	// About is what the key is, recorded when it was last resolved: opaque to the ledger, written by
 	// whoever converged it — what it is in the documents, how it is addressed, what it depends on —
@@ -398,13 +399,13 @@ type Merge interface {
 	Apply(prior, desired, actual []byte) (mutation []byte, err error)
 }
 
-// KeySet names the keys a lease covers. Conflict is set intersection over a single object, so
-// leases are never acquired one key at a time and acquisition order never arises — which is the
-// only place a genuine deadlock could appear.
+// KeySet names the keys a lease covers. Intersection identifies potential conflict;
+// shared read guards may coexist. A whole footprint is claimed with one CAS,
+// avoiding per-key acquisition ordering.
 type KeySet interface {
 	Contains(k LedgerKey) bool
 	Intersects(other KeySet) bool
-	// Keys enumerates the set, or reports false when the set is unbounded (v1 covers everything).
+	// Keys enumerates the set, or reports false when the set is unbounded.
 	Keys() ([]LedgerKey, bool)
 	String() string
 }
@@ -429,7 +430,7 @@ type Leaser interface {
 	Acquire(ctx context.Context, scope string, keys KeySet, holder string, ttl time.Duration) (Lease, error)
 }
 
-// ErrLeaseHeld — a live lease already covers part of the requested set.
+// ErrLeaseHeld — a live lease holds incompatible access to the requested set.
 var ErrLeaseHeld = errors.New("lease: held")
 
 // JournalRecord is one appended step of a run, in the order the run reached it.
@@ -456,6 +457,10 @@ type JournalRecord interface {
 type Journal interface {
 	// Append records intent ahead of the wire effect and returns the assigned sequence.
 	Append(ctx context.Context, k LedgerKey, exchange string, form FormClass, prior []byte) (int, error)
+	// AppendAbout also records resource addressing metadata before the effect.
+	AppendAbout(ctx context.Context, k LedgerKey, exchange string, form FormClass, prior, about []byte) (int, error)
+	// AppendAwait persists observation handles before polling, separately from mutations.
+	AppendAwait(ctx context.Context, key LedgerKey, method string, inputs map[string]any) error
 	// Records returns every entry in append order.
 	Records(ctx context.Context) ([]JournalRecord, error)
 }
@@ -621,4 +626,25 @@ type Typed interface {
 	// Lexeme is the value exactly as written. Valid only where the kind is Comparable — an
 	// unbounded value has no lexeme to hand back, and asking for one returns nil.
 	Lexeme() []byte
+}
+
+// EdgeState is a read-only snapshot for a named incoming contribution. Present
+// distinguishes an arrived null value from absence. Done means the producer
+// ended; Error is empty unless that producer failed.
+type EdgeState struct {
+	Present bool
+	Value   any
+	Done    bool
+	Error   string
+}
+
+type InboxAdmission interface {
+	Admit(context.Context, map[string]any, map[string]EdgeState) (bool, error)
+}
+
+// InboxTransform optionally evaluates admission before shaping an inbox.
+type InboxTransform interface {
+	Transform
+	Admission() InboxAdmission
+	ApplyInbox(context.Context, map[string]any, map[string]EdgeState) (Record, error)
 }

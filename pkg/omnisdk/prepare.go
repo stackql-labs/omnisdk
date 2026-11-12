@@ -19,8 +19,9 @@ type graphStatement struct {
 type desiredStatement struct{ resources []ManagedResource }
 
 type sqlStatement struct {
-	q      query.Unresolved
-	tables map[string]Table
+	q       query.Unresolved
+	tables  map[string]Table
+	managed []Managed
 }
 
 func (graphStatement) statement()   {}
@@ -35,9 +36,10 @@ func GraphStatement(g Graph, managed ...Managed) Statement {
 
 // SQLStatement is a parsed query, with the table each of its aliases names. It resolves to a graph
 // in Args.Dialect, and runs as that graph does; its constant bindings are Params for the run, over
-// any of the same name in Args.Params.
-func SQLStatement(q query.Unresolved, tables map[string]Table) Statement {
-	return sqlStatement{q: q, tables: tables}
+// any of the same name in Args.Params. Optional managed declarations permit
+// ordinary mutations to use NewLedger and Args.TxnRollback with a known footprint.
+func SQLStatement(q query.Unresolved, tables map[string]Table, managed ...Managed) Statement {
+	return sqlStatement{q: q, tables: tables, managed: managed}
 }
 
 // DesiredState is a set of resources to converge on. It needs NewLedger: converging is deciding
@@ -68,7 +70,9 @@ func NoWAL() WALConfig { return noWAL{} }
 func NewJournal(stateDir, runID string) WALConfig { return journalWAL{state: stateDir, runID: runID} }
 
 // NewLedger records each write per key in collection's ledger under stateDir, as well as in runID's
-// journal, holds the collection for the run, and compensates a failed run.
+// journal and coordinates its declared resource footprint. A failed run preserves
+// progress unless Args.IACRollback/TxnRollback explicitly enables compensation;
+// enabled rollback retains exclusive target locks from before the first effect.
 func NewLedger(collection, stateDir, runID string) WALConfig {
 	return ledgerWAL{collection: collection, state: stateDir, runID: runID}
 }
@@ -89,6 +93,8 @@ func Prepare(registry string, s Statement, w WALConfig, args Args) (Plan, error)
 	case graphStatement:
 		return prepareGraph(registry, st, w, args)
 	case sqlStatement:
+		// IAC-specific policy does not enable rollback for ordinary SQL.
+		args.IACRollback = false
 		res, err := ResolveIn(st.q, st.tables, args.Dialect)
 		if err != nil {
 			return nil, err
@@ -99,7 +105,13 @@ func Prepare(registry string, s Statement, w WALConfig, args Args) (Plan, error)
 		}
 		maps.Copy(params, res.Params())
 		args.Params = params
-		return prepareGraph(registry, graphStatement{g: res.Graph()}, w, args)
+		return prepareGraph(registry, graphStatement{g: res.Graph(), managed: st.managed}, w, args)
+	case recoveryStatement:
+		l, ok := w.(ledgerWAL)
+		if !ok {
+			return nil, fmt.Errorf("recovery needs NewLedger")
+		}
+		return recoveryPlan{config: l, decision: st, args: args}, nil
 	case destroyStatement:
 		l, ok := w.(ledgerWAL)
 		if !ok {
