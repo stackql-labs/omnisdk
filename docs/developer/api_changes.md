@@ -5,6 +5,10 @@ features already present there are not listed as additions.
 
 ## Required migration
 
+Method discovery: optional `SchemaMethodSignature` exposes recursive request/row schemas;
+`DescribeMethodFields` adds bounded depth/path views. Existing `MethodSignature` implementers
+remain compatible. See [method_schema.md](method_schema.md) for host integration and source-schema errors.
+
 Supplying `Args.MutationCompletion` suppresses config-based self-read waits, giving the host
 ownership of completion. Explicit document beta
 edges are unchanged; managed IaC keeps its readiness waits. This requires a release after

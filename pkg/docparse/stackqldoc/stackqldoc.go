@@ -20,6 +20,7 @@ import (
 	"slices"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"gopkg.in/yaml.v3"
@@ -49,6 +50,7 @@ type Doc interface {
 // Parse reads a stackql provider document.
 func Parse(b []byte) (Doc, error) {
 	var d document
+	d.globalCache = &globalQueryCache{}
 	sum := sha256.Sum256(b)
 	d.fingerprint = hex.EncodeToString(sum[:])
 	if err := yaml.Unmarshal(b, &d); err != nil {
@@ -70,6 +72,7 @@ func Parse(b []byte) (Doc, error) {
 // ---- document shape (only the parts an exchange needs) ----------------------
 
 type document struct {
+	globalCache *globalQueryCache
 	updates     []updateDeclaration
 	fingerprint string
 	Info        struct {
@@ -238,13 +241,17 @@ type opResponse struct {
 
 // pathParam is an operation parameter as the document declares it.
 type pathParam struct {
-	Name     string `yaml:"name"`
-	In       string `yaml:"in"`
-	Required bool   `yaml:"required"`
-	Schema   struct {
-		Default any    `yaml:"default"`
-		Type    string `yaml:"type"`
-		Ref     string `yaml:"$ref"`
+	Global      bool   `yaml:"-"`
+	Name        string `yaml:"name"`
+	Description string `yaml:"description"`
+	In          string `yaml:"in"`
+	Required    bool   `yaml:"required"`
+	Schema      struct {
+		Default any      `yaml:"default"`
+		Type    string   `yaml:"type"`
+		Format  string   `yaml:"format"`
+		Enum    []string `yaml:"enum"`
+		Ref     string   `yaml:"$ref"`
 	} `yaml:"schema"`
 	// Ref points at a shared declaration under components/parameters, in place of the fields.
 	Ref string `yaml:"$ref"`
@@ -497,6 +504,7 @@ func (d *document) parameters(path string, own []pathParam) ([]pathParam, error)
 				}
 				p = target
 			}
+			p.Global = p.In == aot.InQuery && !p.Required && d.globalQueryParameters()[p.Name]
 			out = append(out, p)
 		}
 		return out, nil
@@ -672,6 +680,20 @@ func (d *document) build(name, verb, path string, op pathOp, m method) aot.AOTEx
 	if m.Response.ObjectKey != "" {
 		rowSchema = d.responseSchemaAt(op, m.Response.OpenAPIDocKey, m.Response.ObjectKey, m.Response.MediaType, &m.Response.SchemaOverride)
 	}
+	// Some generated display overrides point line_items back at their own envelope.
+	// That is not a row contract. For the schema-driven XML wrapper, retain the
+	// declared wire row instead of exposing an infinitely nested line_items field.
+	if m.Response.Transform.Type == "schema_driven_xml_v0.1.0" && rowSchema != nil && slices.Equal(rowSchema.Properties(), []string{"line_items"}) {
+		if raw := d.responseSchemaAt(op, m.Response.OpenAPIDocKey, "", m.Response.MediaType); raw != nil && !slices.Equal(raw.Properties(), []string{"line_items"}) {
+			if item, ok := raw.Items(); ok {
+				raw = item
+			}
+			if row, ok := raw.(*materialised); ok {
+				rowSchema = raw
+				schema = &materialised{typ: "object", names: []string{"line_items"}, props: map[string]*materialised{"line_items": {typ: "array", items: row}}}
+			}
+		}
+	}
 	if op.GraphQL != nil {
 		graph = graphQL{op.GraphQL}
 		selection := graph.Selection()
@@ -718,7 +740,7 @@ func (d *document) build(name, verb, path string, op pathOp, m method) aot.AOTEx
 		bodySchema = newSchema(&node, components)
 		if declared, ok := bodySchema.(*materialised); ok && len(m.Request.Required) > 0 {
 			copy := *declared
-			copy.required = slices.Clone(declared.required)
+			copy.required = declared.RequiredProperties()
 			for _, name := range m.Request.Required {
 				if !slices.Contains(copy.required, name) {
 					copy.required = append(copy.required, name)
@@ -1376,3 +1398,69 @@ func (t transformDeclType) Admission() aot.Transform {
 }
 
 func (t transformDeclType) Required() []string { return slices.Clone(t.required) }
+
+func (p parameter) Format() string      { return p.p.Schema.Format }
+func (p parameter) Description() string { return p.p.Description }
+func (p parameter) Enum() []string      { return slices.Clone(p.p.Schema.Enum) }
+
+// Global discovery controls are optional query parameters common to every operation.
+// Derive them from the document, not provider-specific parameter names.
+func (d *document) globalQueryParameters() map[string]bool {
+	cache := d.globalCache
+	if cache == nil {
+		cache = &globalQueryCache{}
+	}
+	cache.once.Do(func() {
+		counts := map[string]int{}
+		total := 0
+		for _, path := range d.Paths {
+			for verb, node := range path {
+				switch verb {
+				case "get", "post", "put", "patch", "delete", "head", "options", "trace":
+				default:
+					continue
+				}
+				var op struct {
+					Parameters []pathParam `yaml:"parameters"`
+				}
+				if node.Decode(&op) != nil {
+					continue
+				}
+				total++
+				if shared, ok := path["parameters"]; ok {
+					var inherited []pathParam
+					if shared.Decode(&inherited) == nil {
+						op.Parameters = append(op.Parameters, inherited...)
+					}
+				}
+				seen := map[string]bool{}
+				for _, p := range op.Parameters {
+					for hops := 0; p.Ref != "" && hops < 8; hops++ {
+						target, ok := d.Components.Parameters[strings.TrimPrefix(p.Ref, "#/components/parameters/")]
+						if !ok {
+							break
+						}
+						p = target
+					}
+					if p.In == aot.InQuery && !p.Required && !seen[p.Name] {
+						counts[p.Name]++
+						seen[p.Name] = true
+					}
+				}
+			}
+		}
+		cache.queries = map[string]bool{}
+		for name, count := range counts {
+			if total > 1 && count == total {
+				cache.queries[name] = true
+			}
+		}
+	})
+	return cache.queries
+}
+func (p parameter) Global() bool { return p.p.Global }
+
+type globalQueryCache struct {
+	once    sync.Once
+	queries map[string]bool
+}

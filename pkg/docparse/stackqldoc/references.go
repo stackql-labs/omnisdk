@@ -71,6 +71,7 @@ func (r bundleResolver) ResolveDocument(reference, origin string) (*document, er
 		return nil, fmt.Errorf("stackqldoc: read referenced document %s: %w", file, err)
 	}
 	var d document
+	d.globalCache = &globalQueryCache{}
 	if err := yaml.Unmarshal(b, &d); err != nil {
 		return nil, fmt.Errorf("stackqldoc: parse referenced document %s: %w", file, err)
 	}

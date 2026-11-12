@@ -532,3 +532,9 @@ type AdmittedTransform interface{ Admission() Transform }
 
 // RequiredTransform names the raw inbox inputs needed before shaping.
 type RequiredTransform interface{ Required() []string }
+
+// DescribedSchema adds optional discovery metadata without changing Schema implementers.
+type DescribedSchema interface {
+	Description() string
+	Enum() []string
+}
