@@ -62,6 +62,10 @@ kept from a response, and identity means everything the inverse call needs to ad
 never special injected metadata. The ledger and journal are authoritative; cloud tags never
 recover intent, establish ownership or authorize adoption. Never stamp undeclared tracking data.
 
+## Journal and Ledger
+
+There are two persistent storage collections: journal and ledger.  These act in collaboration to support decalrative IAC and rolllback for bith SQL tansactions and also IAC.  This follows a SAGA pattern.
+
 ## Confidentiality
 
 **11. `.claude/local/` is confidential.** Never commit it, publish it, or send its contents to any
@@ -100,7 +104,7 @@ never held across a wire call; cross-run exclusion is a durable, expiring lease.
    Results can be emitted eagerly, and partition data discarded once no remaining work
    references it. This bounds retained response data; execution buffers and materialized
    join results must be accounted for separately. Global operations such as sorting or
-   aggregation may require retaining data across partitions.
+   aggregation require retaining data across partitions.
 
 2. After a successful IaC run, the ledger alone must suffice for subsequent operations.
    Journals since the last successful run may be consulted to recover interrupted or failed work.
