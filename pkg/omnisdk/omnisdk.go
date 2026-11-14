@@ -80,6 +80,7 @@ import (
 // with the standard environment, while a consumer (e.g. stackql) can inject secrets per-request by
 // setting the inline values. The parenthesised names are the canonical defaults.
 type Auth struct {
+	AssumeRole *AWSAssumeRole `json:"assume_role,omitempty"`
 	// OCI signing credentials.
 	TenancyOCID          string `json:"tenancy_ocid,omitempty"`
 	TenancyOCIDEnvVar    string `json:"tenancy_ocid_env_var,omitempty"`
@@ -367,7 +368,9 @@ type Args struct {
 	// keyed like AuthByProvider. Unset fields inherit Tuning and library defaults.
 	TuningByProvider map[string]ProviderTuning `json:"tuning_by_provider,omitempty"`
 	// cred is the entry for the provider being resolved, set by withCredential; authOf reads it.
-	cred *Auth
+	cred               *Auth
+	awsRoleSources     facade.AWSCredentialCache
+	awsCredentialScope string
 	// managed is the converging run a graph is planned for, nil for a query.
 	managed *managedRun
 	// Redaction decides which columns a result may not carry. Nil is DefaultRedaction: the values
@@ -1117,6 +1120,7 @@ func (builtin) GetMethod(path string) (Method, bool) {
 }
 
 func (builtin) New(method string, args Args) (Plan, error) {
+	args = withAWSRoleCache(args)
 	if args.TxnRollback {
 		return nil, fmt.Errorf("omnisdk: TxnRollback requires a scoped prepared query with managed mutation targets; legacy catalog methods cannot supply that contract")
 	}
@@ -1242,6 +1246,7 @@ func checkEndpoint(args Args) error {
 // provider names whose credentials the call uses — its key in Args.AuthByProvider. A document alone does not
 // say which provider it belongs to.
 func NewFromDoc(doc []byte, provider, resource string, args Args) (Plan, error) {
+	args = withAWSRoleCache(args)
 	if args.DocumentVerifier != nil {
 		var err error
 		doc, err = args.DocumentVerifier.Verify(doc)
@@ -1529,7 +1534,13 @@ func docOptions(args Args, sec aot.Security, oauth bool) ([]docx.Option, error) 
 	// document, whose scheme is not known until it compiles — each is offered where it resolves, and
 	// the document takes the one it declares.
 	if sec == nil {
-		if creds, err := awsKeys(args); err == nil {
+		if awsRoleConfigured(args) {
+			creds, err := awsRoleCreds(args)
+			if err != nil {
+				return nil, err
+			}
+			opts = append(opts, docx.WithAWSCredentials(creds))
+		} else if creds, err := awsKeys(args); err == nil {
 			opts = append(opts, docx.WithAWSCredentials(creds))
 		}
 		if tenant, clientID, clientSecret, err := azureNativeCreds(args); err == nil {
@@ -1545,6 +1556,8 @@ func docOptions(args Args, sec aot.Security, oauth bool) ([]docx.Option, error) 
 		// Unusable keys are reported where the request is signed, which names the provider.
 		if creds, err := awsCreds(args); err == nil {
 			opts = append(opts, docx.WithAWSCredentials(creds))
+		} else if awsRoleConfigured(args) {
+			return nil, err
 		}
 	case aot.SchemeOAuthClientCredentials:
 		if oauth {
@@ -1680,6 +1693,9 @@ func (a Args) withCredential(names ...string) Args {
 	for _, n := range names {
 		if au, ok := a.AuthByProvider[n]; ok && au != nil {
 			a.cred = au
+			if a.awsCredentialScope == "" {
+				a.awsCredentialScope = n
+			}
 			break
 		}
 	}
@@ -1848,6 +1864,9 @@ func awsKeys(args Args) (sdk.Credentials, error) {
 // awsCreds is the caller's keys, else the environment's, else the shared-config profile — the
 // order AWS's own tools use.
 func awsCreds(args Args) (sdk.Credentials, error) {
+	if awsRoleConfigured(args) {
+		return awsRoleCreds(args)
+	}
 	creds, err := awsKeys(args)
 	if err == nil {
 		return creds, nil

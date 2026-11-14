@@ -14,6 +14,7 @@ import (
 	"sync"
 
 	"github.com/stackql-labs/omnisdk/internal/sessionstate"
+	"github.com/stackql-labs/omnisdk/internal/system_g/awssts"
 	"github.com/stackql-labs/omnisdk/internal/system_g/facade"
 	"github.com/stackql-labs/omnisdk/public/secrets"
 )
@@ -87,6 +88,7 @@ func NewClientSession(base Args, store secrets.Store) (ClientSession, error) {
 		return nil, err
 	}
 	base.sharedPolicies = nil
+	base.awsRoleSources = awssts.NewCache()
 	s := &clientSession{state: sessionstate.New(), base: base, store: store, id: rand.Text(), secretVersions: map[string][32]byte{}}
 	for alias, binding := range base.ProviderAliases {
 		if err := s.SetProvider(alias, binding); err != nil {
@@ -120,6 +122,7 @@ func (s *clientSession) SetProvider(alias string, binding ProviderBinding) error
 	}
 	s.state.Set(alias, raw)
 	s.revision++
+	s.base.awsRoleSources = awssts.NewCache()
 	s.policies = nil
 	return nil
 }
@@ -131,6 +134,7 @@ func (s *clientSession) UnsetProvider(alias string) error {
 	}
 	s.state.Delete(alias)
 	s.revision++
+	s.base.awsRoleSources = awssts.NewCache()
 	s.policies = nil
 	return nil
 }
@@ -154,6 +158,7 @@ func (s *clientSession) changeAuth(alias string, change func(*ProviderBinding) e
 	}
 	s.state.Set(alias, raw)
 	s.revision++
+	s.base.awsRoleSources = awssts.NewCache()
 	return nil
 }
 func (s *clientSession) SetAuth(alias string, auth Auth) error {

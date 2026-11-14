@@ -204,3 +204,11 @@ for roots, stages, cycles and admission alternatives. Bespoke document/native/mu
 are removed. Direct ledger reads now require `collection/<name>:read`; sleep and application table
 functions require `intrinsic/sleep:execute` and `function/<name>:execute`. Legacy unprotected callers
 are unchanged. A new SDK release is required before consumers receive this behavior.
+
+### Explicit AWS STS roles
+
+`Auth.AssumeRole` (`AWSAssumeRole`) supports role ARN, external ID, session name,
+duration, explicit STS region/endpoint and source Auth. Acquisition and expiry
+refresh occur at request dispatch, coalesced per client session, with independent
+caller cancellation. Static AWS authentication remains unchanged. See
+[configuration and fixture](provider_sessions_and_secrets.md#aws-assumerole).

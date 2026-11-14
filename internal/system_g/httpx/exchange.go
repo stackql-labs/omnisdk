@@ -311,6 +311,9 @@ func (o *op) do(ctx context.Context, token, overrideURL string) (int, []byte, st
 		if t == nil {
 			continue
 		}
+		if _, dispatch := t.(facade.RequestAuthenticator); dispatch {
+			continue
+		}
 		next, err := t.Apply(rec) // rec is a Record, read by the transform as a Page
 		if err != nil {
 			return 0, nil, u, err
@@ -401,6 +404,13 @@ func (o *op) sendOnce(ctx context.Context, rec facade.Record) (int, []byte, http
 	}
 	if err := facade.CheckTransport(ctx, "transport/http/"+req.URL.Host, req.Method); err != nil {
 		return 0, nil, nil, err
+	}
+	for _, transform := range o.reqT {
+		if auth, ok := transform.(facade.RequestAuthenticator); ok {
+			if err := auth.Authenticate(ctx, req, ReqBody(rec)); err != nil {
+				return 0, nil, nil, err
+			}
+		}
 	}
 	resp, err := client.Do(req)
 	if err != nil {

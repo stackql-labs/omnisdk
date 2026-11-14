@@ -11,6 +11,8 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+
+	"github.com/stackql-labs/omnisdk/internal/system_g/facade"
 )
 
 // Credential sources an interactive user already has: the files and tools each cloud's own CLI
@@ -23,6 +25,11 @@ type AWSKeys struct{ AccessKeyID, SecretAccessKey, SessionToken string }
 // static keys or its credential_process. The files are AWS_SHARED_CREDENTIALS_FILE and
 // AWS_CONFIG_FILE where set, else ~/.aws/credentials and ~/.aws/config.
 func AWSProfile(profile string) (AWSKeys, error) {
+	return AWSProfileContext(context.Background(), profile)
+}
+
+// AWSProfileContext preserves cancellation for credential_process sources.
+func AWSProfileContext(ctx context.Context, profile string) (AWSKeys, error) {
 	if profile == "" {
 		profile = "default"
 	}
@@ -46,7 +53,7 @@ func AWSProfile(profile string) (AWSKeys, error) {
 		return k, nil
 	}
 	if proc := sec["credential_process"]; proc != "" {
-		return credentialProcess(proc)
+		return credentialProcessContext(ctx, proc)
 	}
 	return AWSKeys{}, fmt.Errorf("auth: AWS profile %q has no keys or credential_process (SSO and role chaining are not read)", profile)
 }
@@ -59,7 +66,10 @@ func staticKeys(sec map[string]string) (AWSKeys, bool) {
 
 // credentialProcess runs a profile's credential_process and reads the keys it prints.
 func credentialProcess(command string) (AWSKeys, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), execTimeout)
+	return credentialProcessContext(context.Background(), command)
+}
+func credentialProcessContext(parent context.Context, command string) (AWSKeys, error) {
+	ctx, cancel := context.WithTimeout(parent, execTimeout)
 	defer cancel()
 	out, err := shell(ctx, command).Output()
 	if err != nil {
@@ -161,4 +171,26 @@ func orEnv(name, fallback string) string {
 		return v
 	}
 	return fallback
+}
+
+// AWSKeySourceConfig is an already snapshotted source selection; it performs no IO at construction.
+type AWSKeySourceConfig struct{ AccessKeyID, SecretAccessKey, SessionToken, Profile string }
+type awsKeySource struct{ config AWSKeySourceConfig }
+
+func NewAWSKeySource(config AWSKeySourceConfig) facade.AWSCredentialSource {
+	return awsKeySource{config: config}
+}
+func (s awsKeySource) Retrieve(ctx context.Context) (facade.AWSCredentials, error) {
+	if err := ctx.Err(); err != nil {
+		return facade.AWSCredentials{}, err
+	}
+	c := s.config
+	if c.AccessKeyID != "" && c.SecretAccessKey != "" {
+		return facade.AWSCredentials{AccessKeyID: c.AccessKeyID, SecretAccessKey: c.SecretAccessKey, SessionToken: c.SessionToken}, nil
+	}
+	keys, err := AWSProfileContext(ctx, c.Profile)
+	if err != nil {
+		return facade.AWSCredentials{}, err
+	}
+	return facade.AWSCredentials{AccessKeyID: keys.AccessKeyID, SecretAccessKey: keys.SecretAccessKey, SessionToken: keys.SessionToken}, nil
 }

@@ -5,6 +5,7 @@
 package awsv4
 
 import (
+	"context"
 	"crypto/hmac"
 	"crypto/md5"
 	"crypto/sha256"
@@ -25,6 +26,7 @@ import (
 
 // Credentials is one AWS credential set. SessionToken is optional (STS/assumed-role).
 type Credentials struct {
+	Source          facade.AWSCredentialSource
 	AccessKeyID     string
 	SecretAccessKey string
 	SessionToken    string
@@ -86,6 +88,9 @@ const (
 // Authorization header to req. payload is the exact request body (nil = empty); now is the
 // signing instant, injected so signing is deterministic and testable.
 func (s sigV4Signer) Sign(req *http.Request, payload []byte, now time.Time) error {
+	if s.creds.Source != nil {
+		return fmt.Errorf("AWS temporary credentials require dispatch-time authentication")
+	}
 	if s.creds.AccessKeyID == "" || s.creds.SecretAccessKey == "" {
 		return errors.New("sdk: missing AWS credentials")
 	}
@@ -242,6 +247,9 @@ type sigV4Transform struct {
 
 // NewSigV4Transform builds the signing transform.
 func NewSigV4Transform(signer Signer) facade.Transform {
+	if dynamic, ok := signer.(sigV4Signer); ok && dynamic.creds.Source != nil {
+		return sourceSigV4{signer: dynamic}
+	}
 	return sigV4Transform{signer: signer}
 }
 
@@ -261,4 +269,21 @@ func (t sigV4Transform) Apply(in facade.Page) (facade.Record, error) {
 	}
 	// req.Header now carries the amz + Authorization headers; re-record it downstream.
 	return httpx.NewRequestRecord(method, u, req.Header, body), nil
+}
+
+// sourceSigV4 is intentionally not an IO-capable transform. httpx dispatches its
+// RequestAuthenticator contract after the pure request pipeline has completed.
+type sourceSigV4 struct{ signer sigV4Signer }
+
+func (s sourceSigV4) Apply(facade.Page) (facade.Record, error) {
+	return nil, fmt.Errorf("AWS credential acquisition requires HTTP dispatch")
+}
+func (s sourceSigV4) Authenticate(ctx context.Context, request *http.Request, payload []byte) error {
+	credentials, err := s.signer.creds.Source.Retrieve(ctx)
+	if err != nil {
+		return err
+	}
+	signer := s.signer
+	signer.creds = Credentials{AccessKeyID: credentials.AccessKeyID, SecretAccessKey: credentials.SecretAccessKey, SessionToken: credentials.SessionToken}
+	return signer.Sign(request, payload, time.Now())
 }

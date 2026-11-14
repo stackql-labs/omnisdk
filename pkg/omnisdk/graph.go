@@ -568,6 +568,7 @@ func (g graph) Projections() []Projection   { return g.projections }
 // response handling are unchanged. What the caller adds is the data flow between them — the part a
 // document cannot state, because it describes one provider and a relationship may span two.
 func NewGraphQuery(dir string, g Graph, args Args) (Plan, error) {
+	args = withAWSRoleCache(args)
 	if args.TxnRollback && args.managed == nil {
 		for _, node := range g.Nodes() {
 			if node.Verb() != "select" && node.Verb() != verbRecall && node.Verb() != verbDiff && node.Verb() != verbShape && node.Verb() != verbFunction {

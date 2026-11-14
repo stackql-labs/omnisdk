@@ -214,3 +214,29 @@ concurrent queries sharing account limits, independent accounts, cache separatio
 explicit tenancy permission, detached snapshots and file persistence. OS tool tests verify stdin
 transport without using real secret stores. The Windows backend is cross-compiled; live Windows
 Credential Manager and macOS/Linux service validation remain platform acceptance checks.
+
+## AWS AssumeRole
+
+Execution `Auth` accepts explicit role configuration:
+
+```json
+{
+  "type": "aws_assume_role",
+  "assume_role": {
+    "role_arn": "arn:aws:iam::123456789012:role/deployer",
+    "external_id_env_var": "AWS_ROLE_EXTERNAL_ID",
+    "session_name": "omnisdk",
+    "duration_seconds": 3600,
+    "sts_region": "ap-southeast-2",
+    "source": {"type": "aws_signing_v4", "profile": "source-profile"}
+  }
+}
+```
+
+`source` is optional: without it, the outer Auth supplies keys, key environment variables or profile. Static authentication is unchanged. `role_arn_env_var` is also supported; `sts_endpoint` overrides the regional endpoint for controlled fixtures. STS signing scope is independent of downstream service/region. Role chaining is unsupported.
+
+Acquisition happens at HTTP dispatch, outside pure transforms. A client session shares one acquisition among concurrent callers and refreshes before expiry. Separate sessions retain separate caches; changed authentication selects a new source. Failed or expired responses never become cached credentials. Canceling one caller leaves other waiters running; canceling the last aborts acquisition. Acquisition has a 30-second ceiling. No temporary credentials are written to the ledger.
+
+The separate Flask fixture `test/mock/sts.py` independently verifies source and downstream SigV4 signatures. `test/robot/sts_role.robot` covers concurrency, expiry and rejection; Go race tests cover waiter cancellation and cache isolation. Run Robot with `build/omnicli` built and the mock virtual environment active. Host adapters, including stackql, must map their configuration to this DTO separately.
+
+Protocol: [AWS AssumeRole](https://docs.aws.amazon.com/STS/latest/APIReference/API_AssumeRole.html).

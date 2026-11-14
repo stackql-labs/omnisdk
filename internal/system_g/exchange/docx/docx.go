@@ -855,7 +855,7 @@ func compile(ex aot.AOTExchange, inputs map[string]any, reg dsl.Registry, o opti
 	if !o.noSign && o.signer == nil {
 		switch sec.Scheme() {
 		case aot.SchemeAWSSigV4:
-			if o.creds.AccessKeyID == "" {
+			if o.creds.AccessKeyID == "" && o.creds.Source == nil {
 				return nil, fmt.Errorf("docx: exchange %q declares %s (%q) but no credentials were supplied",
 					ex.Name(), sec.Scheme(), sec.Name())
 			}
