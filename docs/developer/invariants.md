@@ -62,6 +62,10 @@ kept from a response, and identity means everything the inverse call needs to ad
 never special injected metadata. The ledger and journal are authoritative; cloud tags never
 recover intent, establish ownership or authorize adoption. Never stamp undeclared tracking data.
 
+## Journal and Ledger
+
+There are two persistent storage collections: journal and ledger.  These act in collaboration to support decalrative IAC and rolllback for bith SQL tansactions and also IAC.  This follows a SAGA pattern.
+
 ## Confidentiality
 
 **11. `.claude/local/` is confidential.** Never commit it, publish it, or send its contents to any
@@ -100,7 +104,7 @@ never held across a wire call; cross-run exclusion is a durable, expiring lease.
    Results can be emitted eagerly, and partition data discarded once no remaining work
    references it. This bounds retained response data; execution buffers and materialized
    join results must be accounted for separately. Global operations such as sorting or
-   aggregation may require retaining data across partitions.
+   aggregation require retaining data across partitions.
 
 2. After a successful IaC run, the ledger alone must suffice for subsequent operations.
    Journals since the last successful run may be consulted to recover interrupted or failed work.
@@ -135,6 +139,17 @@ never held across a wire call; cross-run exclusion is a durable, expiring lease.
 9. **Rollback:** opt-in saga compensation must support declared compensatable mutations
    in both IaC and ordinary queries. Compensation failure must remain explicit and recoverable.
 
+10. **Provider SQL transactions:** all stackql SQL transactions reuse IaC journal, ledger, leases and compensation;
+    do not require desired state. Bind handles to host sessions. When auth is enabled,
+    authorize every operation and verify ownership on resume; otherwise user ownership
+    is not guaranteed. Resume always issues new capabilities.
+    Retain write locks through commit/undo; growing scope must never release earlier locks.
+    Flush deferred dependencies before reads/results. Persist the exact declared inverse
+    before accepting completion. Reject unsupported inverses before dispatch; recover
+    uncertain outcomes explicitly with version fencing, never by replaying requests.
+
+    Current migration limits and SQL usage: [transactions](transactions.md).
+
 ## Verification of measurable quantities
 
 Tests cover specific guarantees, not blanket proof of each point.
@@ -150,3 +165,5 @@ Tests cover specific guarantees, not blanket proof of each point.
 | 7 | Common-gate access tests check denials before effects; `TestResultRedactionPrecedesPublicRows` checks the redaction hook. Automatic policy-to-mask binding is not established. |
 | 8 | `TestConcurrentSessionsKeepPrincipalPermissionsAndRowsIsolated`: 12 overlapping sessions, three principals; run under `-race`. |
 | 9 | `TestRollbackPreventsAdornmentThroughUndo` checks both rollback options; `TestSQLTxnRollbackLocksOnlyMutationScope` checks SQL integration; `TestFailedCompensationRemainsVisibleAndCanBeRecovered` checks failed undo and later cleanup. |
+
+| 10 | `transaction_test.go` covers retained locks, durable queues, explicit recovery, fresh authorization, concurrent ownership and stale handles. stackql Robot covers eager/lazy execution, read/RETURNING barriers, crash resume and recovery. The streaming memory test also exercises transaction reads. See migration limits above. |
