@@ -61,6 +61,7 @@ func (a Args) binding(address string) (string, Args, *ProviderBinding, error) {
 		a.AuthByProvider = map[string]*Auth{}
 	}
 	provider := strings.TrimPrefix(binding.Provider, aot.DefaultProviderPrefix)
+	a.awsCredentialScope = scopeName(provider, binding.Tenancy) + "\x00" + alias
 	a.AuthByProvider[provider] = binding.Auth
 	a.AuthByProvider[aot.DefaultProviderPrefix+provider] = binding.Auth
 	a.Params = maps.Clone(a.Params)
