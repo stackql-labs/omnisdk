@@ -212,3 +212,14 @@ duration, explicit STS region/endpoint and source Auth. Acquisition and expiry
 refresh occur at request dispatch, coalesced per client session, with independent
 caller cancellation. Static AWS authentication remains unchanged. See
 [configuration and fixture](provider_sessions_and_secrets.md#aws-assumerole).
+
+### Provider transaction lifecycle
+
+`NewTransactionSession` accepts a nil caller when host auth is disabled; configured auth
+remains enforced. It exposes session-bound transaction handles,
+shared IaC durability/locking, deferred barriers, commit/rollback and explicit
+version-fenced resume/recovery. See [transactions](transactions.md) for current limits.
+
+stackql SQL transactions now always use Omni; optional transaction configuration
+selects scope/mode rather than enabling the engine. Unconfigured dynamic creates
+use distinct intent keys and conservative resource-address locks.
