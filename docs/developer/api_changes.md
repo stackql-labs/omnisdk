@@ -219,3 +219,7 @@ caller cancellation. Static AWS authentication remains unchanged. See
 remains enforced. It exposes session-bound transaction handles,
 shared IaC durability/locking, deferred barriers, commit/rollback and explicit
 version-fenced resume/recovery. See [transactions](transactions.md) for current limits.
+
+stackql SQL transactions now always use Omni; optional transaction configuration
+selects scope/mode rather than enabling the engine. Unconfigured dynamic creates
+use distinct intent keys and conservative resource-address locks.

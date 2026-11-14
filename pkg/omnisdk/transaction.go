@@ -296,8 +296,8 @@ func (s *TransactionSession) lookup(handle TransactionHandle) (*transaction, err
 }
 
 // Execute runs an already resolved query graph using IaC's managed mutation
-// wrapper, journal, ledger and retained leases. Managed keys must be declared at
-// Begin. Until update/delete inversion is available on this path, those forms are
+// wrapper, journal, ledger and retained leases. Scope is declared at Begin or
+// extended atomically in dynamic mode. Until update/delete inversion is available, those forms are
 // rejected before dispatch, rather than advertised as rollback-safe.
 func (s *TransactionSession) Execute(ctx context.Context, handle TransactionHandle, registry string, g Graph, managed []Managed, args Args) (result Rows, retErr error) {
 	s.mu.Lock()
@@ -323,9 +323,16 @@ func (s *TransactionSession) Execute(ctx context.Context, handle TransactionHand
 		t.failed = err
 		return nil, err
 	}
+	var implicitLocks []string
+	if len(managed) == 0 && len(t.config.Targets) == 0 && t.config.DynamicScope {
+		managed, implicitLocks, err = implicitTransactionManaged(registry, g, handle.id, len(t.record.Effects), args)
+		if err != nil {
+			return nil, err
+		}
+	}
 	if t.config.DynamicScope {
 		expanded := t.config
-		expanded.Keys = append([]string(nil), expanded.Keys...)
+		expanded.Keys = append(append([]string(nil), expanded.Keys...), implicitLocks...)
 		for _, m := range managed {
 			if !lease.Exclusive(t.held.lease.Keys(), t.run.keyOf(m.Key())) {
 				expanded.Keys = append(expanded.Keys, m.Key())
@@ -835,7 +842,7 @@ type transactionPlan struct {
 }
 
 func (p transactionPlan) Open(ctx context.Context) (Rows, error) {
-	if len(p.managed) == 0 {
+	if len(p.managed) == 0 && transactionReadGraph(p.g) {
 		return p.session.openRead(ctx, p.handle, p.registry, p.g, p.args)
 	}
 	return p.session.Execute(ctx, p.handle, p.registry, p.g, p.managed, p.args)
@@ -1419,4 +1426,49 @@ func authorizeInverse(ctx context.Context, registry, address string, declaration
 		return facade.Authorize(ctx, facade.DocumentPermissions(compiled.catalog.Provider().Name(), method.ex.Name(), method.ex.OperationID())...)
 	}
 	return nil, fmt.Errorf("declared inverse not found")
+}
+
+// transactionReadGraph keeps only read graphs on the streaming read path.
+func transactionReadGraph(g Graph) bool {
+	for _, node := range g.Nodes() {
+		if node.Verb() != "select" {
+			return false
+		}
+	}
+	return true
+}
+
+// Implicit creates get distinct durable intent keys, plus a conservative shared
+// resource-address lock. Nothing is inferred about an undeclared inverse.
+func implicitTransactionManaged(registry string, g Graph, id string, offset int, args Args) ([]Managed, []string, error) {
+	var managed []Managed
+	var locks []string
+	for i, node := range g.Nodes() {
+		if node.Verb() == "select" {
+			continue
+		}
+		if node.Verb() != "insert" {
+			return nil, nil, fmt.Errorf("transaction has no verified inverse for %s", node.Verb())
+		}
+		inverse, err := DocInverse(registry, node.Address(), "insert", args.documentOptions()...)
+		if err != nil {
+			return nil, nil, err
+		}
+		if inverse == nil {
+			return nil, nil, fmt.Errorf("transaction create requires a declared inverse")
+		}
+		tokens := inverse.Tokens()
+		if len(tokens) != 1 {
+			return nil, nil, fmt.Errorf("transaction target %s requires explicit identity addressing", node.Address())
+		}
+		for parameter, token := range tokens {
+			if token.Location != "body" || token.Algorithm != "toString" || token.Key == "" {
+				return nil, nil, fmt.Errorf("transaction target %s requires explicit identity addressing", node.Address())
+			}
+			key := fmt.Sprintf("transactions/%s/%d/%s", id, offset+i, node.Alias())
+			managed = append(managed, NewManaged(key, []string{node.Alias()}, token.Key, parameter))
+		}
+		locks = append(locks, "resources/"+node.Address())
+	}
+	return managed, locks, nil
 }

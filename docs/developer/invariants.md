@@ -139,7 +139,7 @@ never held across a wire call; cross-run exclusion is a durable, expiring lease.
 9. **Rollback:** opt-in saga compensation must support declared compensatable mutations
    in both IaC and ordinary queries. Compensation failure must remain explicit and recoverable.
 
-10. **Provider SQL transactions:** reuse IaC journal, ledger, leases and compensation;
+10. **Provider SQL transactions:** all stackql SQL transactions reuse IaC journal, ledger, leases and compensation;
     do not require desired state. Bind handles to host sessions. When auth is enabled,
     authorize every operation and verify ownership on resume; otherwise user ownership
     is not guaranteed. Resume always issues new capabilities.

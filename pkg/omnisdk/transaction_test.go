@@ -425,3 +425,71 @@ func TestTransactionAuthIsOptIn(t *testing.T) {
 		t.Fatal(status, err)
 	}
 }
+
+func TestTransactionImplicitCreatesAreDistinctAndResourceLocked(t *testing.T) {
+	ctx := context.Background()
+	registry := transactionRegistry(t)
+	cfg := omnisdk.TransactionConfig{Collection: "sql", State: t.TempDir(), DynamicScope: true}
+	first, _ := omnisdk.NewTransactionSession(nil)
+	second, _ := omnisdk.NewTransactionSession(nil)
+	defer first.Close()
+	defer second.Close()
+	handle, err := first.Begin(ctx, cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	other, err := second.Begin(ctx, cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var creates, deletes atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.Method == "DELETE" {
+			deletes.Add(1)
+			fmt.Fprint(w, `{}`)
+			return
+		}
+		fmt.Fprintf(w, `{"id":"w-%d","size":"M"}`, creates.Add(1))
+	}))
+	defer server.Close()
+	graph, err := omnisdk.NewGraph([]omnisdk.Node{omnisdk.NewMutationNode("create", widgets, "insert", map[string]string{"size": "M"}, nil, nil)}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	args := omnisdk.Args{Endpoint: server.URL}
+	for range 2 {
+		rows, openErr := first.Plan(handle, registry, graph, nil, args).Open(ctx)
+		if openErr != nil {
+			t.Fatal(openErr)
+		}
+		for rows.Next() {
+		}
+		if rows.Err() != nil {
+			t.Fatal(rows.Err())
+		}
+		rows.Close()
+	}
+	if creates.Load() != 2 {
+		t.Fatal("SQL creates were deduplicated", creates.Load())
+	}
+	if _, err = second.Plan(other, registry, graph, nil, args).Open(ctx); !errors.Is(err, facade.ErrLeaseHeld) {
+		t.Fatalf("concurrent same-resource mutation was not blocked: %v", err)
+	}
+	if creates.Load() != 2 {
+		t.Fatal("contending create reached provider")
+	}
+	first.Close()
+	resumed, _ := omnisdk.NewTransactionSession(nil)
+	defer resumed.Close()
+	handle, err = resumed.Resume(ctx, cfg, handle.ID())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = resumed.Rollback(ctx, handle, registry, args); err != nil {
+		t.Fatal(err)
+	}
+	if deletes.Load() != 2 {
+		t.Fatal("distinct creates were not both compensated", deletes.Load())
+	}
+}

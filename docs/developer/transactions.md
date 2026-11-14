@@ -23,7 +23,13 @@ Leases use `lease_seconds` (default 300). Resume waits for prior claims to expir
 
 ## stackql usage
 
-Opt in before BEGIN; `state` is an optional name under the existing IaC state root,
+Every SQL BEGIN/COMMIT/ROLLBACK uses Omni. Plain BEGIN needs no configuration.
+Defaults use collection `sql`, existing IaC state storage and dynamic scope. Each
+create gets a distinct durable intent; a resource-address lock is retained through
+commit/undo. Identity is derived only from a single declared body/toString inverse
+token; ambiguous bindings require explicit targets.
+
+Optional configuration before BEGIN: `state` is a name under the existing IaC state root,
 including its principal/tenant partition when auth is enabled. Keys must match other users
 of the same objects and coordination store.
 
@@ -53,12 +59,14 @@ explicit `continue` decision. Recovery itself makes no provider request.
 - Stop or isolate the previous executor before takeover: local leases cannot fence a
   provider request already in flight. Verify uncertain outcomes before recovery.
 - Transaction configuration is frozen while active; nested transactions are unsupported.
-- Legacy coordinators remain for sessions without `$.transaction`; they are not upgraded
-  by this work. Remove them only after equivalent supported behavior is verified.
+  COMMIT/ROLLBACK without BEGIN fail.
+- stackql legacy TSM/coordinators and inverse execution are removed. `--acid` and
+  nested transaction depth configuration are removed. Unsupported provider/local
+  mutations fail before dispatch; backend SQL ACID isolation is not emulated.
 - Remote APIs do not provide database atomicity; other actors can observe effects.
   Changed versions or missing outcomes block continuation/undo rather than overwriting others.
 - GC is not implemented. Active, unresolved and compensating transactions pin their
   checkpoints, resource versions and journals; terminal retention remains a separate policy.
 
-Cross-repository validation uses a build-only modfile against local Omni. Publish the
+Cross-repository validation uses an isolated build workspace against local Omni. Publish the
 Omni API, then pin that release in stackql before running its normal CI build.
