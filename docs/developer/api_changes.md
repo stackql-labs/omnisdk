@@ -215,6 +215,7 @@ caller cancellation. Static AWS authentication remains unchanged. See
 
 ### Provider transaction lifecycle
 
-`NewTransactionSession` exposes authenticated, session-bound transaction handles,
+`NewTransactionSession` accepts a nil caller when host auth is disabled; configured auth
+remains enforced. It exposes session-bound transaction handles,
 shared IaC durability/locking, deferred barriers, commit/rollback and explicit
 version-fenced resume/recovery. See [transactions](transactions.md) for current limits.

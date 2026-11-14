@@ -6,9 +6,10 @@ an opaque session-bound capability. The transaction ID is only a recovery locato
 - Journal: ordered effects, inverse addressing and recovery attestations.
 - Ledger: resource intent/identity/version plus `.transactions/<id>` lifecycle checkpoints.
 - Leases: the same collection/resource namespace as IaC; held through commit or undo.
-- Authentication: required. Every operation is authorized; another session cannot use a
-  handle. Resume checks the owner, reacquires scope, validates resource versions and
-  issues a fresh capability. Queued work is not permission to replay an uncertain call.
+- Authentication/authorization: opt-in through host access configuration. When enabled,
+  every operation checks permissions and resume checks ownership. Without auth, there
+  is no verified user ownership. Handles remain session-bound in either mode; resume
+  reacquires scope, validates versions and issues a fresh capability. Never replay uncertain calls.
 
 `TransactionSession.BeginWithRegistry/Execute/Queue/Drain/Commit/Rollback/Resume/Status/Recover`
 compose the existing managed mutation machinery. `Plan` accepts host-translated graphs.
@@ -23,7 +24,7 @@ Leases use `lease_seconds` (default 300). Resume waits for prior claims to expir
 ## stackql usage
 
 Opt in before BEGIN; `state` is an optional name under the existing IaC state root,
-including its authenticated principal/tenant partition. Keys must match other users
+including its principal/tenant partition when auth is enabled. Keys must match other users
 of the same objects and coordination store.
 
 ```sql

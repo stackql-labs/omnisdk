@@ -33,7 +33,7 @@ type TransactionHandle struct {
 
 func (h TransactionHandle) ID() string { return h.id }
 
-// TransactionSession owns transaction capabilities for one authenticated host session.
+// TransactionSession owns transaction capabilities for one host session.
 // Hosts must allocate one per SQL connection, never share it between connections.
 type TransactionSession struct {
 	mu     sync.Mutex
@@ -133,18 +133,24 @@ type transaction struct {
 	draining     bool
 }
 
-// NewTransactionSession requires authenticated identity even when ordinary query
-// authorization is optional. Possession of a transaction ID grants no authority.
+// NewTransactionSession follows host authorization: nil leaves auth disabled.
+// Configured callers must have a resolved identity; handles remain session-bound.
 func NewTransactionSession(caller authorization.Session) (*TransactionSession, error) {
-	if caller == nil || caller.Principal() == nil || caller.Principal().ID() == "" {
+	if caller != nil && (caller.Principal() == nil || caller.Principal().ID() == "") {
 		return nil, fmt.Errorf("%w: transaction session requires an authenticated caller", authorization.ErrDenied)
 	}
 	return &TransactionSession{caller: caller, active: map[string]*transaction{}}, nil
 }
+func (s *TransactionSession) owner() string {
+	if s.caller == nil {
+		return ""
+	}
+	return s.caller.Principal().ID()
+}
 func (s *TransactionSession) authorize(ctx context.Context, collection, action string) (context.Context, error) {
 	permission := facade.Permission{Resource: "collection/" + collection, Action: action}
 	if principal := facade.AccessPrincipal(ctx); principal != nil {
-		if principal.ID() != s.caller.Principal().ID() {
+		if principal.ID() != s.owner() {
 			return nil, authorization.ErrDenied
 		}
 		return facade.Authorize(ctx, permission)
@@ -152,7 +158,7 @@ func (s *TransactionSession) authorize(ctx context.Context, collection, action s
 	if facade.AccessEnabled(ctx) {
 		return nil, authorization.ErrDenied
 	}
-	return authorizeExecution(ctx, Args{Caller: s.caller, RequireCaller: true}, permission)
+	return authorizeExecution(ctx, Args{Caller: s.caller, RequireCaller: s.caller != nil}, permission)
 }
 func transactionKey(collection, id string) facade.LedgerKey {
 	return facade.LedgerKey(collection + "/.transactions/" + id)
@@ -266,7 +272,7 @@ func (s *TransactionSession) Begin(ctx context.Context, config TransactionConfig
 	h.release = func() { release(); stopLifetime() }
 	config.Keys = append([]string(nil), config.Keys...)
 	config.Targets = maps.Clone(config.Targets)
-	t := &transaction{generation: rand.Text(), config: config, held: h, record: transactionRecord{Attachment: h.lease.Holder(), SchemaVersion: 1, LeaseSeconds: config.LeaseSeconds, Mode: config.Mode, Owner: s.caller.Principal().ID(), Status: "active", TimeoutSeconds: config.TimeoutSeconds, Keys: config.Keys, DynamicScope: config.DynamicScope, Targets: config.Targets, Journal: "txn-" + id}}
+	t := &transaction{generation: rand.Text(), config: config, held: h, record: transactionRecord{Attachment: h.lease.Holder(), SchemaVersion: 1, LeaseSeconds: config.LeaseSeconds, Mode: config.Mode, Owner: s.owner(), Status: "active", TimeoutSeconds: config.TimeoutSeconds, Keys: config.Keys, DynamicScope: config.DynamicScope, Targets: config.Targets, Journal: "txn-" + id}}
 	t.run = &managedRun{name: config.Collection, ledger: h.log, journal: h.journal, held: h}
 	if err = saveTransaction(ctx, t, id); err != nil {
 		h.release()
@@ -417,7 +423,7 @@ func (s *TransactionSession) Execute(ctx context.Context, handle TransactionHand
 	}
 	args.Caller = nil
 	args.ReadCache = nil
-	args.RequireCaller = true
+	args.RequireCaller = facade.AccessEnabled(ctx) || args.RequireCaller
 	args.TxnRollback = true
 	args.IACRollback = false
 	args.Journal = nil
@@ -588,7 +594,7 @@ func (s *TransactionSession) Rollback(ctx context.Context, handle TransactionHan
 		return err
 	}
 	args.Caller = nil
-	args.RequireCaller = true
+	args.RequireCaller = facade.AccessEnabled(ctx) || args.RequireCaller
 	args.TxnRollback = true
 	args.Journal = nil
 	if t.record.EndpointBound && t.record.Endpoint != args.Endpoint {
@@ -643,7 +649,7 @@ func InspectTransaction(ctx context.Context, config TransactionConfig, id string
 	if err != nil {
 		return "", err
 	}
-	if facade.AccessPrincipal(ctx) == nil {
+	if facade.AccessEnabled(ctx) && facade.AccessPrincipal(ctx) == nil {
 		return "", authorization.ErrDenied
 	}
 	log, err := ledger.NewFile(filepath.Join(config.State, "ledger"))
@@ -706,7 +712,7 @@ func (s *TransactionSession) Resume(ctx context.Context, config TransactionConfi
 	if record.SchemaVersion != 1 {
 		return TransactionHandle{}, fmt.Errorf("unsupported transaction schema version")
 	}
-	if record.Owner != s.caller.Principal().ID() {
+	if record.Owner != s.owner() {
 		return TransactionHandle{}, fmt.Errorf("%w: transaction owner differs", authorization.ErrDenied)
 	}
 	if record.Status != "active" && record.Status != "aborted" && record.Status != "executing" && !(pendingStatus && (record.Status == "committed" || record.Status == "rolled_back")) {
@@ -1009,7 +1015,7 @@ func (s *TransactionSession) openRead(ctx context.Context, handle TransactionHan
 		return nil, err
 	}
 	args.Caller = nil
-	args.RequireCaller = true
+	args.RequireCaller = facade.AccessEnabled(ctx) || args.RequireCaller
 	args.ReadCache = nil
 	args.TxnRollback = false
 	args.IACRollback = false

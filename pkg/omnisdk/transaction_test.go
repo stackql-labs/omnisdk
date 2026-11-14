@@ -144,9 +144,7 @@ func TestTransactionRejectsIrreversibleMutationBeforeDispatch(t *testing.T) {
 }
 
 func TestTransactionAuthorizationPrecedesPersistence(t *testing.T) {
-	if _, err := omnisdk.NewTransactionSession(nil); !errors.Is(err, authorization.ErrDenied) {
-		t.Fatal(err)
-	}
+
 	caller, _ := accessContractCaller(t, false)
 	session, err := omnisdk.NewTransactionSession(caller)
 	if err != nil {
@@ -394,5 +392,36 @@ func TestTransactionConcurrentSessionsCannotKidnapAnotherPrincipal(t *testing.T)
 	winner.session.Close()
 	if _, err := foreign.Resume(ctx, omnisdk.TransactionConfig{Collection: "concurrent", State: state}, winner.handle.ID()); !errors.Is(err, authorization.ErrDenied) {
 		t.Fatal("foreign principal resumed transaction", err)
+	}
+}
+
+func TestTransactionAuthIsOptIn(t *testing.T) {
+	ctx := context.Background()
+	session, err := omnisdk.NewTransactionSession(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer session.Close()
+	cfg := omnisdk.TransactionConfig{Collection: "unprotected", State: t.TempDir()}
+	handle, err := session.Begin(ctx, cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	denied, _ := accessContractCaller(t, false)
+	if _, err := session.Status(denied.Context(ctx), handle); !errors.Is(err, authorization.ErrDenied) {
+		t.Fatalf("protected context bypassed: %v", err)
+	}
+	session.Close()
+	resumed, _ := omnisdk.NewTransactionSession(nil)
+	defer resumed.Close()
+	handle, err = resumed.Resume(ctx, cfg, handle.ID())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := resumed.Commit(ctx, handle); err != nil {
+		t.Fatal(err)
+	}
+	if status, err := omnisdk.InspectTransaction(ctx, cfg, handle.ID(), omnisdk.Args{}); err != nil || status != "committed" {
+		t.Fatal(status, err)
 	}
 }
