@@ -212,3 +212,9 @@ duration, explicit STS region/endpoint and source Auth. Acquisition and expiry
 refresh occur at request dispatch, coalesced per client session, with independent
 caller cancellation. Static AWS authentication remains unchanged. See
 [configuration and fixture](provider_sessions_and_secrets.md#aws-assumerole).
+
+### Provider transaction lifecycle
+
+`NewTransactionSession` exposes authenticated, session-bound transaction handles,
+shared IaC durability/locking, deferred barriers, commit/rollback and explicit
+version-fenced resume/recovery. See [transactions](transactions.md) for current limits.

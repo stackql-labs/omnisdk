@@ -139,6 +139,16 @@ never held across a wire call; cross-run exclusion is a durable, expiring lease.
 9. **Rollback:** opt-in saga compensation must support declared compensatable mutations
    in both IaC and ordinary queries. Compensation failure must remain explicit and recoverable.
 
+10. **Provider SQL transactions:** reuse IaC journal, ledger, leases and compensation;
+    do not require desired state. Bind handles to authenticated sessions; authorize every
+    operation. Resume requires fresh authentication, ownership checks and new capabilities.
+    Retain write locks through commit/undo; growing scope must never release earlier locks.
+    Flush deferred dependencies before reads/results. Persist the exact declared inverse
+    before accepting completion. Reject unsupported inverses before dispatch; recover
+    uncertain outcomes explicitly with version fencing, never by replaying requests.
+
+    Current migration limits and SQL usage: [transactions](transactions.md).
+
 ## Verification of measurable quantities
 
 Tests cover specific guarantees, not blanket proof of each point.
@@ -154,3 +164,5 @@ Tests cover specific guarantees, not blanket proof of each point.
 | 7 | Common-gate access tests check denials before effects; `TestResultRedactionPrecedesPublicRows` checks the redaction hook. Automatic policy-to-mask binding is not established. |
 | 8 | `TestConcurrentSessionsKeepPrincipalPermissionsAndRowsIsolated`: 12 overlapping sessions, three principals; run under `-race`. |
 | 9 | `TestRollbackPreventsAdornmentThroughUndo` checks both rollback options; `TestSQLTxnRollbackLocksOnlyMutationScope` checks SQL integration; `TestFailedCompensationRemainsVisibleAndCanBeRecovered` checks failed undo and later cleanup. |
+
+| 10 | `transaction_test.go` covers retained locks, durable queues, explicit recovery, fresh authorization, concurrent ownership and stale handles. stackql Robot covers eager/lazy execution, read/RETURNING barriers, crash resume and recovery. The streaming memory test also exercises transaction reads. See migration limits above. |

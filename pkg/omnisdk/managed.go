@@ -158,12 +158,14 @@ type managedRun struct {
 }
 
 type appliedEffect struct {
-	key      facade.LedgerKey
-	resource Managed
-	address  string
-	verb     string
-	identity string
-	version  facade.LedgerVersion
+	inverseMethod string
+	inverseParams map[string]string
+	key           facade.LedgerKey
+	resource      Managed
+	address       string
+	verb          string
+	identity      string
+	version       facade.LedgerVersion
 }
 
 func (r *managedRun) keyOf(k string) facade.LedgerKey { return facade.LedgerKey(r.name + "/" + k) }
@@ -612,6 +614,25 @@ func (r *durableRecords) commit(ctx context.Context) error {
 		return err
 	}
 	op := r.inner.op
+	var inverseMethod string
+	var inverseParams map[string]string
+	if declared, ok := r.d.resource.(interface{ transactionInverse() DeclaredInverse }); ok && op.e.verb == "insert" {
+		inverse := declared.transactionInverse()
+		inverseMethod = inverse.Method()
+		inverseParams = map[string]string{}
+		for name, value := range op.bound {
+			if !strings.HasPrefix(name, "\x00") && !docx.IsCredential(name) && value != nil {
+				inverseParams[name] = fmt.Sprint(value)
+			}
+		}
+		for name, token := range inverse.Tokens() {
+			value, found := atPath(r.first, token.Key)
+			if !found || value == nil {
+				return &EffectError{Outcome: ErrOutcomeUnknown, Verb: op.e.verb, Alias: op.e.alias, Cause: fmt.Errorf("accepted mutation returned no inverse token %s; intent remains pending", name)}
+			}
+			inverseParams[name] = fmt.Sprint(value)
+		}
+	}
 	if op.e.verb == "insert" && identity == "" {
 		return &EffectError{Outcome: ErrOutcomeUnknown, Verb: op.e.verb, Alias: op.e.alias, Cause: fmt.Errorf("accepted create returned no resource identity; intent remains pending")}
 	}
@@ -646,7 +667,7 @@ func (r *durableRecords) commit(ctx context.Context) error {
 	}
 	r.d.run.mu.Lock()
 	r.d.run.applied = append(r.d.run.applied, appliedEffect{key: r.key, resource: r.d.resource, address: r.d.address,
-		verb: op.e.verb, identity: identity, version: committedVersion})
+		verb: op.e.verb, identity: identity, version: committedVersion, inverseMethod: inverseMethod, inverseParams: inverseParams})
 	r.d.run.mu.Unlock()
 	return nil
 }
@@ -781,6 +802,7 @@ type convergeGraphPlan struct {
 // held is a converging run's durable state, open and leased: the ledger, the run's journal, and the
 // resource footprint held until release.
 type held struct {
+	ttl      time.Duration
 	log      facade.Ledger
 	journals facade.Journals
 	journal  facade.Journal
@@ -791,6 +813,9 @@ type held struct {
 
 // hold opens collection name's ledger and journals under state, and holds the collection for runID.
 func hold(ctx context.Context, state, name, runID string, footprint ...facade.KeySet) (*held, error) {
+	return holdWithTTL(ctx, state, name, runID, leaseTTL, footprint...)
+}
+func holdWithTTL(ctx context.Context, state, name, runID string, ttl time.Duration, footprint ...facade.KeySet) (*held, error) {
 	log, err := ledger.NewFile(filepath.Join(state, "ledger"))
 	if err != nil {
 		return nil, err
@@ -803,7 +828,7 @@ func hold(ctx context.Context, state, name, runID string, footprint ...facade.Ke
 	if len(footprint) > 0 {
 		keys = footprint[0]
 	}
-	l, err := lease.NewLeaser(log, time.Now).Acquire(ctx, name, keys, runID, leaseTTL)
+	l, err := lease.NewLeaser(log, time.Now).Acquire(ctx, name, keys, runID, ttl)
 	if errors.Is(err, facade.ErrLeaseHeld) {
 		// How runs are kept apart is not the caller's business; that another is running is.
 		return nil, fmt.Errorf("omnisdk: collection %q is busy with another run", name)
@@ -817,7 +842,7 @@ func hold(ctx context.Context, state, name, runID string, footprint ...facade.Ke
 		return nil, err
 	}
 	h := &held{log: log, journals: journals, journal: j, lease: l}
-	h.maintain(ctx, leaseTTL)
+	h.maintain(ctx, ttl)
 	return h, nil
 }
 
@@ -968,7 +993,12 @@ func (p *convergeGraphPlan) compensate(ctx context.Context, run *managedRun) (do
 				continue
 			}
 			_, v, found, err := run.ledger.Get(ctx, e.key)
-			if err != nil || !found || v != e.version {
+			if err == nil && !found {
+				done = append(done, e.key)
+				progress = true
+				continue
+			}
+			if err != nil || v != e.version {
 				next = append(next, e)
 				continue
 			}
@@ -978,8 +1008,12 @@ func (p *convergeGraphPlan) compensate(ctx context.Context, run *managedRun) (do
 					continue
 				}
 			}
+			if e.inverseParams != nil {
+				undo.Params = maps.Clone(e.inverseParams)
+			}
 			undo.managed = &managedRun{name: run.name, ledger: run.ledger, journal: run.journal, held: run.held, nodes: map[string]Managed{"undo": e.resource}}
 			if err := deleteOne(ctx, p.registry, e, undo); err != nil {
+				_ = journal.RecordDiagnostic(ctx, run.journal, e.key, "compensation", failureDiagnostic("compensation", err))
 				next = append(next, e)
 				continue
 			}
@@ -1001,8 +1035,24 @@ func deleteOne(ctx context.Context, registry string, e appliedEffect, args Args)
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	g, err := NewGraph([]Node{NewMutationNode("undo", e.address, "delete",
-		map[string]string{e.resource.AddressedBy(): e.identity}, nil, nil)}, nil)
+	var undoNode Node = NewMutationNode("undo", e.address, "delete", map[string]string{e.resource.AddressedBy(): e.identity}, nil, nil)
+	if e.inverseMethod != "" {
+		params := maps.Clone(e.inverseParams)
+		if params == nil {
+			params = map[string]string{}
+		}
+		params[e.resource.AddressedBy()] = e.identity
+		var err error
+		params, err = InverseParameters(registry, e.address, e.inverseMethod, params, args.documentOptions()...)
+		if err != nil {
+			return err
+		}
+		undoNode, err = NewInverseMutationNode("undo", e.address, "delete", e.inverseMethod, params)
+		if err != nil {
+			return err
+		}
+	}
+	g, err := NewGraph([]Node{undoNode}, nil)
 	if err != nil {
 		return err
 	}

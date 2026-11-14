@@ -3,6 +3,7 @@ package omnisdk
 import (
 	"fmt"
 	"github.com/stackql-labs/omnisdk/pkg/docparse/aot"
+	"github.com/stackql-labs/omnisdk/pkg/docparse/stackqldoc"
 	"strings"
 )
 
@@ -20,8 +21,8 @@ type DeclaredInverse interface {
 }
 
 // DocInverse returns a mutation's declared inverse, if present.
-func DocInverse(dir, address, verb string) (DeclaredInverse, error) {
-	c, err := openDocs(dir, address)
+func DocInverse(dir, address, verb string, opts ...stackqldoc.Option) (DeclaredInverse, error) {
+	c, err := openDocs(dir, address, opts...)
 	if err != nil {
 		return nil, err
 	}
@@ -87,4 +88,26 @@ func NewInverseMutationNode(alias, address, verb, method string, params map[stri
 		return nil, fmt.Errorf("inverse method is required")
 	}
 	return node{alias: alias, address: address, verb: verb, pin: method, params: params, whole: true}, nil
+}
+
+// InverseParameters retains only the declared inverse's inputs, not unrelated
+// fields from the forward request or response.
+func InverseParameters(dir, address, method string, original map[string]string, opts ...stackqldoc.Option) (map[string]string, error) {
+	table, err := DescribeMutation(dir, address, "delete", opts...)
+	if err != nil {
+		return nil, err
+	}
+	for _, signature := range table.Methods() {
+		if signature.Method() != method {
+			continue
+		}
+		params := map[string]string{}
+		for _, parameter := range signature.Params() {
+			if value, found := original[parameter.Name()]; found {
+				params[parameter.Name()] = value
+			}
+		}
+		return params, nil
+	}
+	return nil, fmt.Errorf("declared inverse method %s not found", method)
 }
