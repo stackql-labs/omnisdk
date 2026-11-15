@@ -1032,6 +1032,16 @@ func NewGraphQuery(dir string, g Graph, args Args) (Plan, error) {
 		if mutating && args.MutationCompletion != nil {
 			spec = plan.WithMutationCompletion(spec, completionBridge{completion: args.MutationCompletion}, addr, n.Verb())
 		}
+		managedEffect := false
+		if mutating {
+			if run := args.managed; run != nil && run.ledger != nil {
+				if m, ok := run.nodes[alias]; ok {
+					spec = effect{ExchangeSpec: spec, alias: alias, verb: n.Verb(), exchange: exchangeOf(addr, n.Verb()), journal: wal,
+						durable: &durable{run: run, resource: m, address: addr, provider: c.Provider().Name(), deletes: deleteInputs(c, addr), dependsOn: dependsOn(g, run.nodes, m)}}
+					managedEffect = true
+				}
+			}
+		}
 		// The select list is applied to this node's rows before they travel an edge, so a join
 		// may be on a value a function computed. Attached after T_in for the same reason T_in is
 		// attached last: wrapping Make hides the compiled form the auth expansion reads.
@@ -1053,14 +1063,9 @@ func NewGraphQuery(dir string, g Graph, args Args) (Plan, error) {
 		// Nothing wired in means the same inputs for every upstream row: run once, replay the rest.
 		switch consumer := requestWired(g, alias); {
 		case mutating:
-			eff := effect{ExchangeSpec: spec, alias: alias, verb: n.Verb(), exchange: exchangeOf(addr, n.Verb()), journal: wal}
-			if run := args.managed; run != nil && run.ledger != nil {
-				if m, ok := run.nodes[alias]; ok {
-					eff.durable = &durable{run: run, resource: m, address: addr, provider: c.Provider().Name(),
-						deletes: deleteInputs(c, addr), dependsOn: dependsOn(g, run.nodes, m)}
-				}
+			if !managedEffect {
+				spec = effect{ExchangeSpec: spec, alias: alias, verb: n.Verb(), exchange: exchangeOf(addr, n.Verb()), journal: wal}
 			}
-			spec = eff
 		case !consumer:
 			solo := new(bool)
 			solos[name] = solo

@@ -106,13 +106,21 @@ func (l *resourceLocks) complete(ctx context.Context, alias string) error {
 	return lease.Change(ctx, l.h.lease, l.footprint())
 }
 func (h *held) check(ctx context.Context) error {
+	if h.ctx != nil && h.ctx.Err() != nil {
+		return context.Cause(h.ctx)
+	}
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	return h.lease.Renew(ctx, leaseTTL)
+	ttl := h.ttl
+	if ttl == 0 {
+		ttl = leaseTTL
+	}
+	return h.lease.Renew(ctx, ttl)
 }
 
 func (h *held) maintain(parent context.Context, ttl time.Duration) {
+	h.ttl = ttl
 	ctx, cancel := context.WithCancelCause(parent)
 	h.ctx = ctx
 	stopped := make(chan struct{})

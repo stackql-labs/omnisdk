@@ -242,6 +242,13 @@ func TestResolvedQueryStreamsInBoundedMemory(t *testing.T) {
 		if err != nil {
 			t.Fatalf("measuring process: %v", err)
 		}
+		transactional := exec.Command(os.Args[0], "-test.run=^TestResolvedQueryStreamsInBoundedMemory$", "-test.v")
+		transactional.Env = append(os.Environ(), "OMNISDK_MEMTEST=1", "OMNISDK_MEMTEST_TXN=1")
+		transactionalOutput, transactionalErr := transactional.CombinedOutput()
+		t.Logf("transaction streaming:\n%s", transactionalOutput)
+		if transactionalErr != nil {
+			t.Fatalf("transaction measuring process: %v", transactionalErr)
+		}
 		// Negative control: deliberately retaining every output row must breach the limit.
 		retaining := exec.Command(os.Args[0], "-test.run=^TestResolvedQueryStreamsInBoundedMemory$", "-test.v")
 		retaining.Env = append(os.Environ(), "OMNISDK_MEMTEST=1", "OMNISDK_MEMTEST_RETAIN=1")
@@ -313,9 +320,21 @@ func TestResolvedQueryStreamsInBoundedMemory(t *testing.T) {
 	// Pin read-ahead for this fixed heap budget; the separate read-ahead test
 	// covers the configured producer/consumer limits. Do not depend on defaults
 	// and scheduler timing while sampling process-wide heap use.
-	pl, err := omnisdk.NewGraphQuery(corpus, res.Graph(), omnisdk.Args{
-		Endpoint: srv.URL, Params: res.Params(), Tuning: omnisdk.Tuning{RowsAhead: 128, PagesAhead: 1},
-	})
+	streamArgs := omnisdk.Args{Endpoint: srv.URL, Params: res.Params(), Tuning: omnisdk.Tuning{RowsAhead: 128, PagesAhead: 1}}
+	pl, err := omnisdk.NewGraphQuery(corpus, res.Graph(), streamArgs)
+	if os.Getenv("OMNISDK_MEMTEST_TXN") == "1" {
+		caller, _ := accessContractCaller(t, true)
+		session, sessionErr := omnisdk.NewTransactionSession(caller)
+		if sessionErr != nil {
+			t.Fatal(sessionErr)
+		}
+		defer session.Close()
+		handle, beginErr := session.Begin(context.Background(), omnisdk.TransactionConfig{Collection: "memory", State: t.TempDir()})
+		if beginErr != nil {
+			t.Fatal(beginErr)
+		}
+		pl = session.Plan(handle, corpus, res.Graph(), nil, streamArgs)
+	}
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -96,3 +96,12 @@ type missingAccessController struct{}
 func (missingAccessController) Authorize(context.Context, string, string) error {
 	return ErrAccessDenied
 }
+
+// AccessPrincipal exposes only an authenticated controller's resolved principal.
+// It does not turn an arbitrary transport controller into authentication evidence.
+func AccessPrincipal(ctx context.Context) Principal {
+	if session, ok := ctx.Value(accessKey{}).(AccessSession); ok {
+		return session.Principal()
+	}
+	return nil
+}
