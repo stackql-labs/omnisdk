@@ -32,7 +32,7 @@ type component struct {
 // component follows the components it reads from (Kahn's, declaration order breaking ties). Members
 // of a component keep declaration order. Edges from a κ input (From "") are bindings, not
 // dependencies.
-func condense(exchanges []ExchangeSpec, betas []BetaEdge, alphas []AlphaEdge) []component {
+func condense(exchanges []ExchangeSpec, betas []BetaEdge, alphas []AlphaEdge, prioritized bool) []component {
 	for _, a := range alphas {
 		betas = append(betas, NewBetaEdge(a.From(), a.To(), "", ""))
 	}
@@ -126,7 +126,8 @@ func condense(exchanges []ExchangeSpec, betas []BetaEdge, alphas []AlphaEdge) []
 			ready = append(ready, c)
 		}
 	}
-	slices.SortFunc(ready, func(a, b int) int { return first(a) - first(b) })
+	compare := func(a, b int) int { return first(a) - first(b) }
+	slices.SortFunc(ready, compare)
 	out := make([]component, 0, len(comps))
 	for len(ready) > 0 {
 		c := ready[0]
@@ -136,6 +137,9 @@ func condense(exchanges []ExchangeSpec, betas []BetaEdge, alphas []AlphaEdge) []
 			if waiting[n]--; waiting[n] == 0 {
 				ready = append(ready, n)
 			}
+		}
+		if prioritized {
+			slices.SortFunc(ready, compare)
 		}
 	}
 	return out
@@ -171,7 +175,7 @@ func CheckCycles(p Plan) error {
 	for _, x := range p.Exchanges() {
 		byName[x.Name()] = x
 	}
-	for _, c := range condense(p.Exchanges(), p.Betas(), p.Alphas()) {
+	for _, c := range condense(p.Exchanges(), p.Betas(), p.Alphas(), false) {
 		if !c.cyclic {
 			continue
 		}

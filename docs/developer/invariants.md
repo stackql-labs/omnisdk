@@ -77,6 +77,7 @@ external service.
 never held across a wire call; cross-run exclusion is a durable, expiring lease.
 
 
+
 # Measurable quantities
 
 1. A chain of keyed `left outer join` operators can be evaluated one partition of its
@@ -156,7 +157,7 @@ Tests cover specific guarantees, not blanket proof of each point.
 
 | Point | Evidence / remaining gap |
 | --- | --- |
-| 1 | `TestKeyedLeftJoinPartitionsPreserveDuplicatesAndUnmatchedRows` checks partition equivalence. `TestResolvedQueryStreamsInBoundedMemory` verifies ~100 MiB of distinct output under a 35 MiB sampled post-GC heap-growth limit, with a full-retention negative control. It requires at least 8 MiB of further output with no net live-heap growth in each half, plus shrinking heap while output advances: evidence of streaming and reclamation without full-output retention for this workload. Full join-memory scaling remains unproved. |
+| 1 | `TestKeyedLeftJoinPartitionsPreserveDuplicatesAndUnmatchedRows` checks partition equivalence. `TestResolvedQueryStreamsInBoundedMemory` verifies ~100 MiB of distinct output under a 35 MiB sampled post-GC heap-growth limit, with a full-retention negative control. It requires at least 8 MiB of further output with no net live-heap growth in each half, plus shrinking heap while output advances: evidence of streaming and reclamation without full-output retention for this workload. `TestJoinWorkingSetHeap` checks keyed left and inner joins, a listed equality join, and a cross join. It gates the driver to one active partition inside a single open cursor, varies output and working payload independently, and checks sampled live heap against twice the working payload plus 1 MiB for execution overhead. The ungated bind join can queue additional driving rows, which are outside this one-active-partition bound. |
 | 2 | `TestCompletedLedgerSurvivesJournalAndDiagnosticsRemoval`; Robot `Completed Run History Is Not Required For Teardown`. |
 | 3 | Lease contention, shared guards, expiry and renewal-loss tests in `internal/lease` and `resource_locks_test.go`. |
 | 4 | Ledger conformance tests and `TestFileRecreateAfterForget` check retained state and stale-version rejection. Compaction is not implemented. |
@@ -167,3 +168,82 @@ Tests cover specific guarantees, not blanket proof of each point.
 | 9 | `TestRollbackPreventsAdornmentThroughUndo` checks both rollback options; `TestSQLTxnRollbackLocksOnlyMutationScope` checks SQL integration; `TestFailedCompensationRemainsVisibleAndCanBeRecovered` checks failed undo and later cleanup. |
 
 | 10 | `transaction_test.go` covers retained locks, durable queues, explicit recovery, fresh authorization, concurrent ownership and stale handles. stackql Robot covers eager/lazy execution, read/RETURNING barriers, crash resume and recovery. The streaming memory test also exercises transaction reads. See migration limits above. |
+
+
+# Appendices
+
+## Appendix I: Basic ideas review
+
+Relational algebra includes projections $\pi$, joins $\bowtie$, and filters $\sigma$. Filters only reduce row counts; ordinary column projections do not increase them. Joins can multiply row counts, making them the main consideration here. Table JT-1 describes retained response data; operator state and materialized output are accounted for separately.
+
+For keyed joins, $P_{a,k}$ is partition $k$ of the driving exchange $a$, and $R_i(P_{a,k})$ is the complete matching data needed from exchange $i$. For general execution, $C_{i,k}$ is exchange $i$'s response data retained during work unit $k$, whether in memory or on disk.
+
+**Table JT-1**: Join types and response-data working sets.
+
+**Enforced heap bound for the JT-1 regression**
+
+$$
+\max_{t\,\text{sampled}}\bigl(H_{\mathrm{post\text{-}GC}}(t)-H_{\mathrm{baseline}}\bigr)
+\;\le\; 2\max_k W_k + 1\,\mathrm{MiB}.
+$$
+
+`TestJoinWorkingSetHeap` enforces this bound with one active partition per open query and measures $W_k$ in input payload bytes. A 272 KiB working set has a hard test limit of **1,568 KiB**.
+
+| Join Type | Response-data working set | Comments |
+|---|---|---|
+| Left | $W_k = \sum_{i=1}^{n}\operatorname{size}(R_i(P_{1,k}))$ | Partition the leftmost preserved exchange, as in point 1. |
+| Right | $W_k = \sum_{i=1}^{n}\operatorname{size}(R_i(P_{n,k}))$ | Partition the rightmost preserved exchange; equivalent to the corresponding left join with operands swapped. |
+| Inner | $W_k = \sum_{i=1}^{n}\operatorname{size}(R_i(P_{a,k}))$ | Choose driving exchange $a$; returns matching pairs only. |
+| Full Outer Join | $W_k = \sum_{i=1}^{n}\operatorname{size}(C_{i,k})$ | Unmatched rows require accounting; a sorted merge can stream them. |
+| Cross Join (Cartesian product) | $W_k = \sum_{i=1}^{n}\operatorname{size}(C_{i,k})$ | Output row count is $\prod_{i=1}^{n}\lvert R_i\rvert$; retaining that output is a separate cost. |
+
+`TestMultiJoinHeapShrinksBetweenPages` checks that sampled post-GC live heap drops by at least 512 KiB after each of three drained pages while the simulated next page waits, in both a keyed lookup chain and a fan-out chain.
+
+**Table JT-2**: Binary join output cardinality, counting duplicate row occurrences.
+
+Let $a=\lvert A\rvert$, $b=\lvert B\rvert$, $h$ be the number of matching pairs, and $u_A,u_B$ count unmatched input rows.
+
+| Join type | $N_{\text{out}}$ | Tight upper bound |
+|---|---|---|
+| Inner | $h$ | $ab$ |
+| Left | $h+u_A$ | $a\max(1,b)$ |
+| Right | $h+u_B$ | $b\max(1,a)$ |
+| Full outer | $h+u_A+u_B$ | $\max(ab,a+b)$ |
+| Cross (Cartesian product) | $ab$ | $ab$ |
+
+Apply these bounds at each join in a chain. An $n$-way Cartesian product emits $N_{\text{out}}=\prod_{i=1}^{n}\lvert R_i\rvert$ rows. Its nested iteration needs only $O(n)$ cursor state, in addition to retained inputs and a bounded output buffer.
+
+These counts matter when a consumer retains the fragment's output. Its data size is $S_{\text{out}}=\sum_{r\in O}\operatorname{size}(r)$, counting every output row occurrence. General full sorting of unsorted output and explicit materialization require working storage proportional to that projected output size. A subquery alone does not require materialization.
+
+Exact median/percentiles and collection aggregates can also require storage proportional to their contributing values. Some window frames require an entire partition. DISTINCT and grouped aggregation can have linear-size state in the worst case; bounded accumulators such as SUM and COUNT need only constant state per group.
+
+For any join type, global or oversized pages add per-exchange response-data retention; they do not themselves multiply it. The response-data working-set bound is:
+
+$$
+W'_{\max} \le \max_k W_k + \sum_{i=1}^{n} B_i
+$$
+
+Here $B_i$ bounds extra bytes retained at exchange $i$ beyond the partition working set, with each retained input buffer stored once. Join direction and paging method determine those sizes.
+
+Sorting and aggregation may require state across partitions. Working-set size includes retained data in memory or on disk; spilling does not reduce it. Some aggregates need only bounded accumulator state. Other extension functions are treated as projection adaptors for this analysis.
+
+
+Looking at the general case, the uppper bound for one join in a larger query $Q$ composed of many joins, can be defined in terms of result set cardinality upper bounds $m_i$ and the maximum storage permitted per output row, termed $s_{max}$:
+
+
+$$
+S_{\mathrm{out}}(Q)\le s_{\max}\,U(Q),
+\qquad U(R_i)=m_i
+$$
+
+$$
+U(A\Join_t B)=
+\begin{cases}
+U(A)U(B) & t=\mathrm{inner,\ cross}\\
+U(A)\max(1,U(B)) & t=\mathrm{left}\\
+U(B)\max(1,U(A)) & t=\mathrm{right}\\
+\max\!\bigl(U(A)U(B),\,U(A)+U(B)\bigr) & t=\mathrm{full\ outer}
+\end{cases}
+$$
+
+That is an algebraic upper bound. Fixed predicates and constraints can make the actual maximum smaller.
