@@ -5,6 +5,13 @@ features already present there are not listed as additions.
 
 ## Required migration
 
+SQLite `json_equal` and `aws_policy_equal` now return SQL NULL when either
+argument is SQL NULL, including both-NULL inputs and a NULL paired with malformed
+text. Non-NULL malformed arguments still raise parse errors, and the policy
+function retains its byte-identical shortcut. This intentionally differs from
+the retired C behavior and matches StackQL issue #914 for nullable WHERE filters.
+The JSON text `null` remains a valid comparable document.
+
 Method discovery: optional `SchemaMethodSignature` exposes recursive request/row schemas;
 `DescribeMethodFields` adds bounded depth/path views. Existing `MethodSignature` implementers
 remain compatible. See [method_schema.md](method_schema.md) for host integration and source-schema errors.

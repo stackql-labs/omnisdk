@@ -76,6 +76,7 @@ func TestFunctionCatalogCalls(t *testing.T) {
 	if got, err := sqlite.Call("substr", []any{"abcdef", 2, 3}); err != nil || got != "bcd" {
 		t.Fatalf("substr = %#v, %v", got, err)
 	}
+
 	pg, _ := functionNames(t, sqlfn.Postgres)
 	rows, err := pg.Call("string_to_table", []any{"a,b", ","})
 	if err != nil {
@@ -92,5 +93,41 @@ func TestFunctionCatalogCalls(t *testing.T) {
 	}
 	if _, err := pg.Call("split_part", []any{"a,b"}); err == nil {
 		t.Fatal("arity is enforced by the catalog: want error, got none")
+	}
+}
+
+func TestFunctionCatalogNullableJSONComparisons(t *testing.T) {
+	catalog, _ := functionNames(t, sqlfn.SQLite)
+	for _, name := range []string{"json_equal", "aws_policy_equal"} {
+		t.Run(name, func(t *testing.T) {
+			for _, tc := range []struct {
+				name    string
+				lhs     any
+				rhs     any
+				want    any
+				wantErr bool
+			}{
+				{name: "null left", rhs: "{}"},
+				{name: "null right", lhs: "{}"},
+				{name: "both null"},
+				{name: "null before malformed left", lhs: "not json"},
+				{name: "null before malformed right", rhs: "not json"},
+				{name: "json null document", lhs: "null", rhs: "null", want: int64(1)},
+				{name: "malformed non-null", lhs: "not json", rhs: "{}", wantErr: true},
+			} {
+				t.Run(tc.name, func(t *testing.T) {
+					got, err := catalog.Call(name, []any{tc.lhs, tc.rhs})
+					if tc.wantErr {
+						if err == nil {
+							t.Fatalf("want parse error, got %#v", got)
+						}
+						return
+					}
+					if err != nil || got != tc.want {
+						t.Fatalf("got %#v, %v; want %#v, nil", got, err, tc.want)
+					}
+				})
+			}
+		})
 	}
 }

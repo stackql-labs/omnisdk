@@ -232,7 +232,11 @@ func extParseJSON(s string) (any, error) {
 }
 
 // extJSONEqual is json_equal(a, b): objects unordered, arrays ordered, numbers equal within epsilon.
+// Either SQL NULL argument yields SQL NULL before parsing.
 func extJSONEqual(a, b any) (any, error) {
+	if a == nil || b == nil {
+		return nil, nil //nolint:nilnil // SQL NULL is a valid scalar result.
+	}
 	sa, okA := extText(a)
 	sb, okB := extText(b)
 	if !okA || !okB {
@@ -294,8 +298,11 @@ var awsUnorderedFields = map[string]bool{
 }
 
 // extAWSPolicyEqual is aws_policy_equal(a, b): IAM policy equivalence by the rules stackql's C
-// implementation applied.
+// implementation applied, except either SQL NULL argument yields SQL NULL before parsing.
 func extAWSPolicyEqual(a, b any) (any, error) {
+	if a == nil || b == nil {
+		return nil, nil //nolint:nilnil // SQL NULL is a valid scalar result.
+	}
 	sa, okA := extText(a)
 	sb, okB := extText(b)
 	if !okA || !okB {
