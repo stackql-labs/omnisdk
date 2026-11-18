@@ -138,8 +138,8 @@
         null,
         "{}"
       ],
-      "error": true,
-      "note": "NULL arguments raise an error in the C implementation, not NULL"
+      "result": null,
+      "note": "Intentional divergence from C: SQL NULL propagates (stackql issue #914)"
     },
     {
       "id": "cref_null_rhs",
@@ -148,7 +148,8 @@
         "{}",
         null
       ],
-      "error": true
+      "result": null,
+      "note": "Intentional divergence from C: SQL NULL propagates (stackql issue #914)"
     },
     {
       "id": "cref_strcmp_shortcut",
