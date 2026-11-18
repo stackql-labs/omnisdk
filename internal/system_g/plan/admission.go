@@ -30,7 +30,7 @@ type externalBinding struct{ source, slot string }
 // unchanged. Unsupported sharing/cycles are refused before effects, never run
 // with misleading "early admission" semantics.
 func collapseAdmissions(p Plan) (Plan, error) {
-	components := condense(p.Exchanges(), p.Betas(), p.Alphas())
+	components := condense(p.Exchanges(), p.Betas(), p.Alphas(), false)
 	for _, target := range p.Exchanges() {
 		transform, ok := target.Inbound().(facade.InboxTransform)
 		if !ok || transform.Admission() == nil {

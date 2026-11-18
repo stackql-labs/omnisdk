@@ -85,6 +85,7 @@ func composePipeline(id int64, p Plan) (facade.Operator, error) {
 	if err != nil {
 		return nil, err
 	}
+	_, prioritized := p.(exchangePriority)
 	if hasAdmission {
 		p, err = collapseAdmissions(p)
 		if err != nil {
@@ -99,7 +100,7 @@ func composePipeline(id int64, p Plan) (facade.Operator, error) {
 	for _, x := range p.Exchanges() {
 		byName[x.Name()] = x
 	}
-	comps := condense(p.Exchanges(), p.Betas(), p.Alphas())
+	comps := condense(p.Exchanges(), p.Betas(), p.Alphas(), prioritized)
 	// Every cycle is proved to stop before anything runs: a cycle whose termination is not
 	// well-founded, or that nothing outside it can start, is refused here rather than discovered
 	// mid-run.
@@ -138,7 +139,7 @@ func composePipeline(id int64, p Plan) (facade.Operator, error) {
 
 	// Components with no path between them are independent: each level of the condensation — every
 	// component whose sources all ran in an earlier level — runs its members side by side.
-	for _, level := range levels(p, comps, stages) {
+	for _, level := range levels(p, comps, stages, prioritized) {
 		if len(level) == 1 {
 			if op, err = stage(p, byName, comps, specs, level[0], op, &nid); err != nil {
 				return nil, err
@@ -209,7 +210,14 @@ func stage(p Plan, byName map[string]ExchangeSpec, comps []component, specs []fa
 // component it depends on, so the members of a level depend on nothing else in it. Dependencies on a
 // component outside stages — the root, which already ran — are met. Within a level the order is the
 // condensation's.
-func levels(p Plan, comps, stages []component) [][]component {
+func levels(p Plan, comps, stages []component, prioritized bool) [][]component {
+	if prioritized {
+		out := make([][]component, 0, len(stages))
+		for i := range stages {
+			out = append(out, stages[i:i+1])
+		}
+		return out
+	}
 	of := map[string]int{}
 	for i, c := range comps {
 		for _, m := range c.members {
@@ -251,11 +259,11 @@ func levels(p Plan, comps, stages []component) [][]component {
 	return out
 }
 
-// Order is the order Compose runs a plan's exchanges in: components of the condensation in
-// dependency order, a cycle's members together in declaration order.
-func Order(exchanges []ExchangeSpec, betas []BetaEdge) []string {
+// Order returns the dependency order, with each cycle grouped in declaration order.
+// Prioritized plans choose the earliest declared exchange each time a stage becomes ready.
+func Order(exchanges []ExchangeSpec, betas []BetaEdge, prioritized bool) []string {
 	var out []string
-	for _, c := range condense(exchanges, betas, nil) {
+	for _, c := range condense(exchanges, betas, nil, prioritized) {
 		out = append(out, c.members...)
 	}
 	return out

@@ -135,6 +135,11 @@ func (p planData) Encoder() facade.Encoder    { return p.encoder }
 
 func (p planData) Terminations() map[string]facade.TerminationSpec { return nil }
 
+// WithExchangePriority uses declaration order to choose among ready exchanges.
+func WithExchangePriority(p Plan) Plan { return exchangePriority{p} }
+
+type exchangePriority struct{ Plan }
+
 // WithTerminations is p with its cycles bounded by specs, keyed by exchange name.
 func WithTerminations(p Plan, specs map[string]facade.TerminationSpec) Plan {
 	return terminated{Plan: p, specs: specs}

@@ -504,6 +504,7 @@ func ResolveIn(q query.Unresolved, tables map[string]Table, d sqlfn.Dialect) (Re
 	// Equi-joins go after every edge is known, so the one each adds cannot close a cycle. A listed
 	// join's ON is among them, whatever its methods take.
 	unbound = append(unbound, listed...)
+	r.joinOrder = r.costedJoinOrder(unbound)
 	for _, p := range unbound {
 		placed, err := r.hashJoin(p)
 		if err != nil {
@@ -866,6 +867,7 @@ type resolver struct {
 	dialect    sqlfn.Dialect
 	tables     map[string]Table
 	order      []string
+	joinOrder  []string
 	params     map[string]string
 	readBodies map[string]map[string]any
 	nodeParams map[string]map[string]string
@@ -1107,7 +1109,11 @@ func (r *resolver) hashJoin(p query.Predicate) (bool, error) {
 	if a == b {
 		return false, nil
 	}
-	if slices.Index(r.order, a) > slices.Index(r.order, b) {
+	order := r.order
+	if r.joinOrder != nil {
+		order = r.joinOrder
+	}
+	if slices.Index(order, a) > slices.Index(order, b) {
 		a, b = b, a
 	}
 	_, aOuter := r.outer[a]
@@ -1391,7 +1397,11 @@ func (r *resolver) build(sel []query.Output) (Resolution, error) {
 	}
 	var nodes []Node
 	var projections []Projection
-	for _, alias := range r.order {
+	order := r.order
+	if r.joinOrder != nil {
+		order = r.joinOrder
+	}
+	for _, alias := range order {
 		verb := "select"
 		if alias == r.mutating {
 			verb = r.verb
@@ -1462,6 +1472,7 @@ func (r *resolver) build(sel []query.Output) (Resolution, error) {
 	resolved := g.(graph)
 	resolved.resolvedParams = maps.Clone(r.params)
 	resolved.empty = r.empty
+	resolved.costedJoins = r.joinOrder != nil
 	g = resolved
 	return resolution{graph: g, params: r.params, selected: r.selected}, nil
 }

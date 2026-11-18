@@ -476,3 +476,74 @@ func TestKeyedLeftJoinPartitionsPreserveDuplicatesAndUnmatchedRows(t *testing.T)
 		}
 	}
 }
+
+type costedRelation struct {
+	omnisdk.Relation
+	rows, bytes uint64
+}
+
+func (r costedRelation) JoinCost() (uint64, uint64) { return r.rows, r.bytes }
+
+func TestResolveCostsJoinsAndDefersCrossInput(t *testing.T) {
+	for _, dependent := range []bool{false, true} {
+		name := "hash"
+		if dependent {
+			name = "dependent"
+		}
+		t.Run(name, func(t *testing.T) {
+			var step atomic.Int32
+			makeSource := func(alias string, position int32, params []omnisdk.Param) omnisdk.Relation {
+				t.Helper()
+				source, err := omnisdk.NewRelation("local."+alias, params,
+					map[string]omnisdk.ColumnType{"id": {Type: "string"}},
+					func(_ context.Context, inputs map[string]any) (omnisdk.Rows, error) {
+						if got := step.Add(1); got != position {
+							return nil, fmt.Errorf("%s opened at step %d, want %d", alias, got, position)
+						}
+						if len(params) > 0 && inputs["owner"] != "one" {
+							return nil, fmt.Errorf("wrong owner: %v", inputs)
+						}
+						return &handleRows{rows: []omnisdk.Row{{"id": "one"}}}, nil
+					})
+				if err != nil {
+					t.Fatal(err)
+				}
+				return source
+			}
+
+			var params []omnisdk.Param
+			joinColumn := "id"
+			if dependent {
+				params = []omnisdk.Param{{Name: "owner", Required: true}}
+				joinColumn = "owner"
+			}
+			// An unrelated source is first in FROM. In the hash case the smaller
+			// input is also declared before the larger one.
+			cross := makeSource("cross", 3, nil)
+			small := costedRelation{makeSource("small", 2, params), 1, 64}
+			large := costedRelation{makeSource("large", 1, nil), 20, 1280}
+			q, err := query.New([]query.Join{
+				query.NewJoin(query.NewResource("x", cross.Address()), query.Base),
+				query.NewJoin(query.NewResource("s", small.Address()), query.Cross),
+				query.NewJoin(query.NewResource("l", large.Address()), query.Inner,
+					query.NewEq(query.NewColumn("s", joinColumn), query.NewColumn("l", "id"))),
+			}, nil, []query.Output{query.NewOutput("id", query.NewColumn("l", "id"))})
+			if err != nil {
+				t.Fatal(err)
+			}
+			resolved, err := omnisdk.Resolve(q, map[string]omnisdk.Table{"x": cross, "s": small, "l": large})
+			if err != nil {
+				t.Fatal(err)
+			}
+			planned, err := omnisdk.NewGraphQuery("unused", resolved.Graph(), omnisdk.Args{
+				Relations: map[string]omnisdk.Relation{cross.Address(): cross, small.Address(): small, large.Address(): large},
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if rows := drain(t, planned); len(rows) != 1 || rows[0]["id"] != "one" {
+				t.Fatalf("unexpected rows: %v", rows)
+			}
+		})
+	}
+}

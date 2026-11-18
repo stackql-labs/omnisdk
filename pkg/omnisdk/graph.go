@@ -510,6 +510,7 @@ func deliverOn(nodes []Node, wirings []Wiring, known map[string]bool) ([]Wiring,
 type graph struct {
 	resolvedParams map[string]string
 	empty          bool
+	costedJoins    bool
 	nodes          []Node
 	wirings        []Wiring
 	overrides      []Override
@@ -568,6 +569,7 @@ func (g graph) Projections() []Projection   { return g.projections }
 // response handling are unchanged. What the caller adds is the data flow between them — the part a
 // document cannot state, because it describes one provider and a relationship may span two.
 func NewGraphQuery(dir string, g Graph, args Args) (Plan, error) {
+	resolved, _ := g.(graph)
 	args = withAWSRoleCache(args)
 	if args.TxnRollback && args.managed == nil {
 		for _, node := range g.Nodes() {
@@ -1102,7 +1104,7 @@ func NewGraphQuery(dir string, g Graph, args Args) (Plan, error) {
 	// The first node to run is opened once per distinct set of inputs: only a token exchange or a
 	// list of values runs before it, and neither repeats an identical request. Recording its rows
 	// for replay would hold the whole result in memory for nothing, so it streams instead.
-	for _, x := range plan.Order(specs, betas) {
+	for _, x := range plan.Order(specs, betas, resolved.costedJoins) {
 		if x == queryValues || strings.HasSuffix(x, "_auth") || strings.HasSuffix(x, "_values") {
 			continue
 		}
@@ -1167,6 +1169,9 @@ func NewGraphQuery(dir string, g Graph, args Args) (Plan, error) {
 			specs[planned[alias]] = t.spec()
 		}
 		pl = plan.WithTerminations(pl, specs)
+	}
+	if resolved.costedJoins {
+		pl = plan.WithExchangePriority(pl)
 	}
 	if err := plan.CheckCycles(pl); err != nil {
 		// The plan names its exchanges; the caller named aliases.
