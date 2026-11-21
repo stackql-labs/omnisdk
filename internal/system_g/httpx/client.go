@@ -3,7 +3,10 @@ package httpx
 import (
 	"context"
 	"crypto/tls"
+	"net"
 	"net/http"
+	"net/url"
+	"strconv"
 	"sync"
 	"time"
 
@@ -62,13 +65,72 @@ func WithClient(ctx context.Context, c *http.Client) context.Context {
 
 // ClientFrom returns the run's client, or fallback when none was set (nil fallback = the default).
 func ClientFrom(ctx context.Context, fallback *http.Client) *http.Client {
-	if c, ok := ctx.Value(clientKey{}).(*http.Client); ok && c != nil {
-		return c
+	client, _ := ctx.Value(clientKey{}).(*http.Client)
+	if client == nil {
+		client = fallback
 	}
-	if fallback != nil {
-		return fallback
+	if client == nil {
+		client = http.DefaultClient
 	}
-	return http.DefaultClient
+	if proxy, _ := ctx.Value(proxyPortKey{}).(*ProxyPort); proxy != nil {
+		return proxy.client(client)
+	}
+	return client
+}
+
+type proxyPortKey struct{}
+
+// ProxyPort keeps proxy-aware copies of the HTTP clients used by one provider policy.
+type ProxyPort struct {
+	port     string
+	mu       sync.Mutex
+	base     *http.Client
+	adjusted *http.Client
+}
+
+func NewProxyPort(port int) *ProxyPort {
+	if port <= 0 {
+		return nil
+	}
+	return &ProxyPort{port: strconv.Itoa(port)}
+}
+
+func WithProxyPort(ctx context.Context, proxy *ProxyPort) context.Context {
+	if current, _ := ctx.Value(proxyPortKey{}).(*ProxyPort); current == proxy {
+		return ctx
+	}
+	return context.WithValue(ctx, proxyPortKey{}, proxy)
+}
+
+func (p *ProxyPort) client(base *http.Client) *http.Client {
+	transport := base.Transport
+	if transport == nil {
+		transport = http.DefaultTransport
+	}
+	original, ok := transport.(*http.Transport)
+	if !ok || original.Proxy == nil {
+		return base
+	}
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.base == base {
+		return p.adjusted
+	}
+	cloned := original.Clone()
+	selectProxy := cloned.Proxy
+	cloned.Proxy = func(req *http.Request) (*url.URL, error) {
+		proxy, err := selectProxy(req)
+		if err != nil || proxy == nil {
+			return proxy, err
+		}
+		override := *proxy
+		override.Host = net.JoinHostPort(proxy.Hostname(), p.port)
+		return &override, nil
+	}
+	client := *base
+	client.Transport = cloned
+	p.base, p.adjusted = base, &client
+	return &client
 }
 
 var (

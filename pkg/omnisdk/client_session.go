@@ -83,6 +83,11 @@ func copyClientArgs(args Args) (Args, error) {
 	return args, nil
 }
 func NewClientSession(base Args, store secrets.Store) (ClientSession, error) {
+	for _, tuning := range base.TuningByProvider {
+		if err := validateProxyPort(tuning.ProxyPort); err != nil {
+			return nil, err
+		}
+	}
 	base, err := copyClientArgs(base)
 	if err != nil {
 		return nil, err
