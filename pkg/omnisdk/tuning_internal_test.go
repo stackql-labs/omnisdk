@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"errors"
 	"github.com/stackql-labs/omnisdk/internal/system_g/admit"
+	"net/http"
+	"net/url"
 	"strings"
 	"testing"
 	"time"
@@ -85,5 +87,48 @@ func TestProviderTuningJSONBinding(t *testing.T) {
 		if !strings.Contains(string(encoded), `"`+key+`":`) {
 			t.Errorf("missing JSON field %s in %s", key, encoded)
 		}
+	}
+}
+
+func TestProviderProxyPortInheritanceAndIsolation(t *testing.T) {
+	original, err := url.Parse("http://user:pass@[::1]:8030")
+	if err != nil {
+		t.Fatal(err)
+	}
+	transport := &http.Transport{Proxy: func(req *http.Request) (*url.URL, error) {
+		if req.URL.Hostname() == "direct.example" {
+			return nil, nil
+		}
+		return original, nil
+	}}
+	client := &http.Client{Transport: transport, Timeout: time.Second}
+	policies := newProviderPolicies(Args{
+		TuningByProvider: map[string]ProviderTuning{"widgets": {ProxyPort: 8031}},
+		ProviderAliases: map[string]ProviderBinding{
+			"override": {Provider: "widgets", Tenancy: "override", Tuning: ProviderTuning{ProxyPort: 8032}},
+			"original": {Provider: "widgets", Tenancy: "original", Tuning: ProviderTuning{ProxyPort: -1}},
+		},
+	})
+	for name, want := range map[string]string{
+		"widgets": "8031", scopeName("widgets", "inherit"): "8031",
+		scopeName("widgets", "override"): "8032", scopeName("widgets", "original"): "8030", "other": "8030",
+	} {
+		ctx := policies.ForProvider(httpx.WithClient(context.Background(), client), name)
+		resolved := httpx.ClientFrom(ctx, nil)
+		if resolved.Timeout != client.Timeout {
+			t.Fatalf("%s: proxy override dropped client timeout", name)
+		}
+		proxy := resolved.Transport.(*http.Transport).Proxy
+		got, err := proxy(&http.Request{URL: &url.URL{Host: "proxy.example"}})
+		if err != nil || got.Port() != want || got.Hostname() != "::1" || got.User != original.User {
+			t.Fatalf("%s: proxy=%v, want port %s with the original hostname and credentials, err=%v", name, got, want, err)
+		}
+		got, err = proxy(&http.Request{URL: &url.URL{Host: "direct.example"}})
+		if err != nil || got != nil {
+			t.Fatalf("%s: direct request produced proxy=%v, err=%v", name, got, err)
+		}
+	}
+	if original.Port() != "8030" {
+		t.Fatal("proxy override mutated the proxy URL")
 	}
 }

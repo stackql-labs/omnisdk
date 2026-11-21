@@ -32,6 +32,9 @@ func validBinding(alias string, b ProviderBinding, resolved bool) error {
 	if b.Tenancy == "" || strings.ContainsAny(b.Tenancy, "/\\\x00\r\n") {
 		return fmt.Errorf("tenancy must be an explicit identifier without path separators")
 	}
+	if err := validateProxyPort(b.Tuning.ProxyPort); err != nil {
+		return err
+	}
 	if b.Tuning.MaxPerHost < 0 || b.Tuning.RetryTries < 0 || b.Tuning.RetryRate < 0 {
 		return fmt.Errorf("binding retry and per-host limits cannot be negative")
 	}
@@ -90,7 +93,21 @@ func (a Args) binding(address string) (string, Args, *ProviderBinding, error) {
 	return aot.DefaultProviderPrefix + provider + "." + rest, a, &binding, nil
 }
 
-func validateProviderBindings(a Args) error { return validateBindingSet(a.ProviderAliases, true) }
+func validateProxyPort(port int) error {
+	if port < -1 || port > 65535 {
+		return fmt.Errorf("proxy_port must be -1, 0, or a TCP port between 1 and 65535")
+	}
+	return nil
+}
+
+func validateProviderBindings(a Args) error {
+	for _, tuning := range a.TuningByProvider {
+		if err := validateProxyPort(tuning.ProxyPort); err != nil {
+			return err
+		}
+	}
+	return validateBindingSet(a.ProviderAliases, true)
+}
 func validateBindingSet(bindings map[string]ProviderBinding, resolved bool) error {
 	scopes := map[string]ProviderTuning{}
 	for alias, binding := range bindings {

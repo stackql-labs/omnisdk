@@ -26,6 +26,9 @@ type ProviderTuning struct {
 	MaxConcurrent int `json:"max_concurrent,omitempty"`
 	// PageLimit inherits when zero; negative explicitly removes a global cap.
 	PageLimit int `json:"page_limit,omitempty"`
+	// ProxyPort replaces the port on the proxy selected by the HTTP transport.
+	// Zero inherits; -1 uses the transport's original proxy port.
+	ProxyPort int `json:"proxy_port,omitempty"`
 	// RequestTimeout uses a negative duration to explicitly disable its deadline.
 	RequestTimeout time.Duration `json:"request_timeout,omitempty"`
 	// RetryTries, RetryRate and MaxPerHost configure HTTP retries and admission,
@@ -73,6 +76,7 @@ func (o providerOperator) Open(ctx context.Context) facade.Records {
 
 type providerPolicy struct {
 	pageLimit  int
+	proxy      *httpx.ProxyPort
 	timeout    time.Duration
 	retry      facade.RetryPolicy
 	admissions facade.Admissions
@@ -131,6 +135,7 @@ func (p *providerPolicies) ForProvider(ctx context.Context, name string) context
 			t.MaxPerHost = o.MaxPerHost
 		}
 		policy = providerPolicy{timeout: t.RequestTimeout, pageLimit: t.PageLimit,
+			proxy: httpx.NewProxyPort(o.ProxyPort),
 			retry: retry.New(retry.Config{
 				Tries:    orInt(t.RetryTries, 4),
 				Backoff:  retry.NewDecorrelatedJitter(250*time.Millisecond, 30*time.Second),
@@ -150,6 +155,7 @@ func (p *providerPolicies) ForProvider(ctx context.Context, name string) context
 	p.mu.Unlock()
 	ctx = httpx.WithRequestTimeout(ctx, policy.timeout)
 	ctx = httpx.WithPageLimit(ctx, policy.pageLimit)
+	ctx = httpx.WithProxyPort(ctx, policy.proxy)
 	ctx = retry.WithPolicy(ctx, policy.retry)
 	return admit.WithAdmissions(ctx, policy.admissions)
 }
@@ -163,6 +169,9 @@ func mergeProviderTuning(base, override ProviderTuning) ProviderTuning {
 	}
 	if override.PageLimit != 0 {
 		base.PageLimit = override.PageLimit
+	}
+	if override.ProxyPort != 0 {
+		base.ProxyPort = override.ProxyPort
 	}
 	if override.RetryTries != 0 {
 		base.RetryTries = override.RetryTries
