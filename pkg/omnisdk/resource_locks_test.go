@@ -104,12 +104,19 @@ func TestLeaseRenewalAndLossCancelsRun(t *testing.T) {
 		t.Fatal("heartbeat failed:", err)
 	}
 	// Simulate store-level loss of the claim. The next renewal must cancel work.
-	_, v, found, err := log.Get(ctx, "demo/.lease")
-	if err != nil || !found {
-		t.Fatal(err)
-	}
-	if err := log.Forget(ctx, "demo/.lease", v); err != nil {
-		t.Fatal(err)
+	deadline := time.Now().Add(time.Second)
+	for {
+		_, v, found, err := log.Get(ctx, "demo/.lease")
+		if err != nil || !found {
+			t.Fatalf("read lease before removal: found=%v, err=%v", found, err)
+		}
+		err = log.Forget(ctx, "demo/.lease", v)
+		if err == nil {
+			break
+		}
+		if !errors.Is(err, facade.ErrLedgerConflict) || time.Now().After(deadline) {
+			t.Fatalf("remove lease: %v", err)
+		}
 	}
 	select {
 	case <-h.ctx.Done():
