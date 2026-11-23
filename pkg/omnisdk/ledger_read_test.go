@@ -2,6 +2,7 @@ package omnisdk
 
 import (
 	"context"
+	"maps"
 	"os"
 	"path/filepath"
 	"testing"
@@ -9,6 +10,32 @@ import (
 	"github.com/stackql-labs/omnisdk/internal/ledger"
 	"github.com/stackql-labs/omnisdk/internal/system_g/facade"
 )
+
+func TestLedgerReaderColumnTypesWithoutState(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "absent")
+	reader, ok := NewLedger("demo", root, "run").(LedgerReader)
+	if !ok {
+		t.Fatal("NewLedger does not expose LedgerReader")
+	}
+	want := map[string]ColumnType{
+		"address":      {Type: "string"},
+		"addressed_by": {Type: "string"},
+		"collection":   {Type: "string"},
+		"depends_on":   {Type: "array"},
+		"identity":     {Type: "string"},
+		"key":          {Type: "string"},
+		"phase":        {Type: "string"},
+		"provider":     {Type: "string"},
+		"resource_key": {Type: "string"},
+		"version":      {Type: "string"},
+	}
+	if got := reader.ColumnTypes(); !maps.Equal(got, want) {
+		t.Errorf("ledger schema = %v, want %v", got, want)
+	}
+	if _, err := os.Stat(root); !os.IsNotExist(err) {
+		t.Fatalf("schema lookup must leave state absent, stat error = %v", err)
+	}
+}
 
 func TestLedgerReadDoesNotCreateState(t *testing.T) {
 	root := filepath.Join(t.TempDir(), "absent")
