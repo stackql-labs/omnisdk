@@ -211,9 +211,8 @@ func targetOf(cat aot.Catalog, addr string, r ManagedResource, args Args, incomi
 		}
 	}
 
-	// The read: a GET is all that may read an object back — a POST bound to select, such as a key
-	// listing, is a call with effects of its own. Addressed by the identity where one takes it,
-	// else a list the identity is found in. The most specific satisfiable wins either way.
+	// Prefer GET because SELECT can include auxiliary calls such as Azure listKeys.
+	// Other transports support providers whose resource reads use POST, such as Athena.
 	have := map[string]bool{}
 	for k := range args.Params {
 		have[k] = true
@@ -227,11 +226,11 @@ func targetOf(cat aot.Catalog, addr string, r ManagedResource, args Args, incomi
 		have[in] = true
 	}
 	selects, _ := caps.Methods(addr, "select")
-	pick := func(addressed bool) facade.Method {
+	pick := func(addressed, get bool) facade.Method {
 		var best facade.Method
 		for _, m := range selects {
 			ex, ok := docsem.Exchange(m)
-			if !ok || ex.Request().Method() != "GET" {
+			if !ok || (ex.Request().Method() == "GET") != get {
 				continue
 			}
 			takes := r.AddressedBy() != "" && m.Accepts(r.AddressedBy())
@@ -247,8 +246,14 @@ func targetOf(cat aot.Catalog, addr string, r ManagedResource, args Args, incomi
 		}
 		return best
 	}
-	if t.read = pick(true); t.read == nil {
-		t.read, t.listed = pick(false), true
+	for _, get := range []bool{true, false} {
+		t.read, t.listed = pick(true, get), false
+		if t.read == nil {
+			t.read, t.listed = pick(false, get), true
+		}
+		if t.read != nil {
+			break
+		}
 	}
 	if t.read != nil {
 		t.readParams = map[string]string{}

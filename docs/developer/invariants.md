@@ -64,7 +64,20 @@ recover intent, establish ownership or authorize adoption. Never stamp undeclare
 
 ## Journal and Ledger
 
-There are two persistent storage collections: journal and ledger.  These act in collaboration to support decalrative IAC and rolllback for bith SQL tansactions and also IAC.  This follows a SAGA pattern.
+**Ledger.** The durable, versioned state of each managed resource key in a collection. It holds the
+last resolved intent, provider identity and resource metadata. Beginning a mutation adds a pending
+proposal while preserving that resolved state. Resolution commits the proposal and identity, or
+removes the key from live state after a confirmed delete. Writes check the version read by the caller.
+
+**Journal (run WAL).** The durable, append-only sequence of mutation intents for one run. Each
+mutation record identifies the resource key, exchange and operation form, and preserves prior intent
+where applicable. Recovery uses journal evidence to investigate uncertain outcomes. Compensation
+uses the sequence in reverse for effects known to have landed. Await checkpoints preserve the method
+and inputs needed to resume observation.
+
+Managed mutations in IaC and provider SQL transactions require both the pending ledger entry and
+the journal record to be durable before dispatch. Either record can survive a crash before dispatch,
+so recovery must establish the effect's outcome before treating the mutation as applied.
 
 ## Confidentiality
 
