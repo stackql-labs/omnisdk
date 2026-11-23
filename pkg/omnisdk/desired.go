@@ -230,8 +230,7 @@ func targetOf(cat aot.Catalog, addr string, r ManagedResource, args Args, incomi
 	pick := func(addressed bool) facade.Method {
 		var best facade.Method
 		for _, m := range selects {
-			ex, ok := docsem.Exchange(m)
-			if !ok || ex.Request().Method() != "GET" {
+			if _, ok := docsem.Exchange(m); !ok {
 				continue
 			}
 			takes := r.AddressedBy() != "" && m.Accepts(r.AddressedBy())
