@@ -12,6 +12,30 @@ import (
 	"github.com/stackql-labs/omnisdk/internal/system_g/facade"
 )
 
+// LedgerReader exposes the read-only ledger schema and rows. ColumnTypes is
+// available before reading a collection, including collections with no entries.
+type LedgerReader interface {
+	Read(context.Context) ([]Row, error)
+	ColumnTypes() map[string]ColumnType
+}
+
+var _ LedgerReader = ledgerWAL{}
+
+func (w ledgerWAL) ColumnTypes() map[string]ColumnType {
+	return map[string]ColumnType{
+		"address":      {Type: "string"},
+		"addressed_by": {Type: "string"},
+		"collection":   {Type: "string"},
+		"depends_on":   {Type: "array"},
+		"identity":     {Type: "string"},
+		"key":          {Type: "string"},
+		"phase":        {Type: "string"},
+		"provider":     {Type: "string"},
+		"resource_key": {Type: "string"},
+		"version":      {Type: "string"},
+	}
+}
+
 // Read inspects this collection without leases, journals, cloud calls or filesystem writes.
 // Entries are individually consistent; this is not a collection-wide transactional snapshot.
 // Pending identity is the previous committed identity, not proof of the pending effect.
