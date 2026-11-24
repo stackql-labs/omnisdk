@@ -41,6 +41,7 @@ import (
 // desiredPlan converges a flat desired state as a graph, lowered under the collection's lease so
 // the ledger it reads cannot change while it is read.
 type desiredPlan struct {
+	approved                     map[string]ResourceChange
 	registry, name, state, runID string
 	resources                    []ManagedResource
 	args                         Args
@@ -286,6 +287,11 @@ func (p *desiredPlan) Open(ctx context.Context) (Rows, error) {
 	}
 	defer h.release()
 	ctx = h.ctx
+	if p.approved != nil {
+		if err := p.verifyPreview(ctx, h.log); err != nil {
+			return nil, err
+		}
+	}
 	key := func(k string) facade.LedgerKey { return facade.LedgerKey(p.name + "/" + k) }
 	prior := func(k string) map[string]any {
 		e, _, found, err := h.log.Get(ctx, key(k))
@@ -313,6 +319,23 @@ func (p *desiredPlan) Open(ctx context.Context) (Rows, error) {
 	run := &managedRun{name: p.name, ledger: h.log, journal: h.journal, nodes: nodes, held: h}
 
 	a := p.args
+	if p.approved != nil {
+		a.ReadCache = nil
+		run.observeDiff = func(decision desiredDecision) error {
+			approved := p.approved[decision.key]
+			if approved.Action != "unknown" && (approved.Action != decision.action || approved.Precondition != decision.digest) {
+				return stalePreview(decision.key)
+			}
+			return nil
+		}
+		run.targets = p.targets
+		run.previewDependencies = make(map[string][]string, len(p.approved))
+		for key, change := range p.approved {
+			if change.Action != "unknown" {
+				run.previewDependencies[key] = p.externalDependencies(change.DependsOn)
+			}
+		}
+	}
 	a.managed = run
 	pl, err := NewGraphQuery(p.registry, g, a)
 	if err != nil {

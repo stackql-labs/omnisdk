@@ -144,6 +144,11 @@ func (m managed) AddressedBy() string { return m.addressedBy }
 
 // managedRun is the durable state one converging run shares with the graph it runs.
 type managedRun struct {
+	previewDependencies map[string][]string
+	preview             bool
+	observeDiff         func(desiredDecision) error
+	targets             map[string]*target
+
 	name    string
 	ledger  facade.Ledger
 	journal facade.Journal
@@ -395,6 +400,9 @@ func dependsOn(g Graph, owners map[string]Managed, m Managed) []string {
 }
 
 func (d durable) open(ctx context.Context, o effectOp) facade.Records {
+	if d.run.preview {
+		return failed(fmt.Errorf("omnisdk: preview reached mutation %s", o.e.alias))
+	}
 	k := d.run.keyOf(d.resource.Key())
 	dependencies := make([]facade.LedgerKey, 0, len(d.dependsOn))
 	for _, dependency := range d.dependsOn {
@@ -1098,6 +1106,15 @@ func (o diffOperator) Open(ctx context.Context) facade.Records {
 	row, err := diffRow(ctx, o.run, o.node, o.fields, o.desired, o.bound)
 	if err != nil {
 		return failed(err)
+	}
+	if o.run.observeDiff != nil {
+		if err := o.observe(ctx, row); err != nil {
+			return failed(err)
+		}
+		if o.run.preview {
+			delete(row, hidden(o.node.Alias(), "status"))
+			delete(row, hidden(o.node.Alias(), "update"))
+		}
 	}
 	return staticOp{rows: []map[string]any{row}}.Open(ctx)
 }

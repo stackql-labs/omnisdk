@@ -43,7 +43,7 @@ func TestResourceBindingsCLI(t *testing.T) {
 			if arg == "--" {
 				os.Args = append([]string{"omnicli"}, os.Args[i+1:]...)
 				main()
-				return
+				os.Exit(0)
 			}
 		}
 		os.Exit(2)
@@ -105,5 +105,50 @@ func TestResourceBindingsCLI(t *testing.T) {
 				t.Fatalf("request=%v", body)
 			}
 		})
+	}
+}
+
+func TestIaCChangeSetCLI(t *testing.T) {
+	var creates atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			t.Errorf("unexpected request: %s", r.Method)
+		}
+		creates.Add(1)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"id":"w-1","color":"blue"}`))
+	}))
+	defer server.Close()
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	run := func(action, spec string, flags ...string) []byte {
+		t.Helper()
+		args := []string{"-test.run=^TestResourceBindingsCLI$", "--", action, "../../pkg/omnisdk/testdata/authreg", spec, "--endpoint", server.URL}
+		cmd := exec.CommandContext(ctx, os.Args[0], append(args, flags...)...)
+		cmd.Env = append(os.Environ(), "OMNI_BINDING_CLI_CHILD=1")
+		out, err := cmd.Output()
+		if err != nil {
+			t.Fatalf("%s: %v", action, err)
+		}
+		return out
+	}
+	state := filepath.Join(t.TempDir(), "state")
+	spec := `[{"key":"widget","provider":"widgets","address":"things.widgets","identity":"id","addressed_by":"id","desired":{"color":{"from":"input","attribute":"color"}}}]`
+	input := `{"color":"blue"}`
+	raw := run("iac-plan", spec, "--name", "preview", "--state", state, "--input", input)
+	var set omnisdk.ChangeSet
+	if err := json.Unmarshal(raw, &set); err != nil {
+		t.Fatalf("invalid change set: %s: %v", raw, err)
+	}
+	if set.Changes[0].Action != "create" || creates.Load() != 0 {
+		t.Fatalf("preview=%+v creates=%d", set, creates.Load())
+	}
+	path := filepath.Join(t.TempDir(), "plan.json")
+	if err := os.WriteFile(path, raw, 0600); err != nil {
+		t.Fatal(err)
+	}
+	out := run("iac-apply", "@"+path, "--change-set", "--input", input)
+	if creates.Load() != 1 || !strings.Contains(string(out), "applied") {
+		t.Fatalf("apply=%s creates=%d", out, creates.Load())
 	}
 }

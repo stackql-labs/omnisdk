@@ -98,6 +98,30 @@ res, err := bp.Resources(map[string]string{
 
 `omnisdk.Blueprints()` lists them with the inputs each declares, which is what `iac-handles` prints.
 
+### Preview and apply a change set
+
+`omnisdk.Preview(ctx, registry, omnisdk.DesiredState(resources), wal, args)` returns a versioned
+`ChangeSet` that can be marshalled to JSON. It reads provider and ledger state without dispatching
+resource mutations. The `desired` field uses the existing IaC resource grammar.
+
+```sh
+./build/omnicli iac-plan ./registry @desired.json > plan.json
+./build/omnicli iac-apply ./registry @plan.json --change-set
+```
+
+Use the same provider scope, credentials, and binding inputs for both commands. Supply values from
+the original spec's `inputs` or `args` through `--input` or `--args` when applying a saved plan.
+
+In StackQL, `DESCRIBE stackql_preview.iac.plan` lists the preview columns. Pass the desired JSON as
+the `resources` predicate and select `resource_key`, `action`, `reason`, and `depends_on` to review
+the changes. Select `change_set` to retrieve the complete JSON artifact. Pass it to
+`INSERT INTO stackql_preview.iac.plan (collection, change_set) VALUES (...)` with the same state
+selection and provider scope.
+
+`ApplyChangeSet(registry, set, wal, args)` returns a `Plan` that rechecks the saved preconditions
+when opened. A stale decision requires a new preview. An `unknown` action means apply will decide
+that resource's action after an upstream resource supplies its identity.
+
 **3. SQL, already parsed** — what stackql sends. Describe each table, resolve, run:
 
 ```go

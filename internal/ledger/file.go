@@ -35,7 +35,10 @@ type state struct {
 	Tombstone bool               `json:"tombstone,omitempty"`
 }
 
-type fileLedger struct{ root string }
+type fileLedger struct {
+	root     string
+	readOnly bool
+}
 
 // NewFile returns a Ledger over a directory tree, one object per key. It is the v1 durable store,
 // and the same interface covers commodity object storage, where the ETag replaces the filename
@@ -48,6 +51,12 @@ func NewFile(root string) (facade.Ledger, error) {
 		return nil, fmt.Errorf("ledger root: %w", err)
 	}
 	return &fileLedger{root: root}, nil
+}
+
+// ReadOnlyFile reads a ledger even before its directory has been created.
+// Mutations are rejected.
+func ReadOnlyFile(root string) facade.Ledger {
+	return &fileLedger{root: root, readOnly: true}
 }
 
 // OpenFile opens an existing ledger without creating directories or changing files.
@@ -123,6 +132,9 @@ func (f *fileLedger) versionPath(dir, stem string, n uint64) string {
 // partially written file is never visible under a version name, and EEXIST on the link means a
 // concurrent writer claimed the version first.
 func (f *fileLedger) commit(k facade.LedgerKey, s state, ver uint64) error {
+	if f.readOnly {
+		return errors.New("ledger: read-only view")
+	}
 	dir, stem, err := f.paths(k)
 	if err != nil {
 		return err
