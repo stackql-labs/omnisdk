@@ -265,85 +265,135 @@ func main() {
 	// leaves unsaid. No Go entry is added for a new service — the same relationship doc-graph has to
 	// a query.
 	root.AddCommand(docMergeCommand())
-	iacApply := &cobra.Command{
-		Use:   "iac-apply <registry> <spec-json | @file>",
-		Short: "Converge resources declared inline or in a file against provider documents; CREATES REAL RESOURCES",
-		Long: `Converge resources declared inline or in a file against provider documents.
+	for _, preview := range []bool{false, true} {
+		command := &cobra.Command{
+			Use:   "iac-apply <registry> <spec-json | @file>",
+			Short: "Converge resources declared inline or in a file against provider documents; CREATES REAL RESOURCES",
+			Long: `Converge resources declared inline or in a file against provider documents.
 
 The spec is JSON, or @path to read it from a file. --name and --state name the collection and where
 its ledger lives, over whatever the spec says; a file holding only resources needs both.`,
-		Args: cobra.ExactArgs(2),
-		RunE: withSinks(func(cmd *cobra.Command, w, logw io.Writer) error {
-			raw := []byte(cmdArgs(cmd)[1])
-			if path, isFile := strings.CutPrefix(cmdArgs(cmd)[1], "@"); isFile {
-				b, err := os.ReadFile(path)
+			Args: cobra.ExactArgs(2),
+			RunE: withSinks(func(cmd *cobra.Command, w, logw io.Writer) error {
+				raw := []byte(cmdArgs(cmd)[1])
+				if path, isFile := strings.CutPrefix(cmdArgs(cmd)[1], "@"); isFile {
+					b, err := os.ReadFile(path)
+					if err != nil {
+						return fmt.Errorf("spec file: %w", err)
+					}
+					raw = b
+				}
+				var changeSet omnisdk.ChangeSet
+				applySaved, _ := cmd.Flags().GetBool("change-set")
+				if applySaved {
+					if err := json.Unmarshal(raw, &changeSet); err != nil {
+						return fmt.Errorf("change set: %w", err)
+					}
+					raw = changeSet.Desired
+				}
+				var spec struct {
+					Name   string         `json:"name"`
+					State  string         `json:"state"`
+					RunID  string         `json:"run_id,omitempty"`
+					Inputs map[string]any `json:"inputs,omitempty"`
+					Args   *omnisdk.Args  `json:"args,omitempty"`
+				}
+				if applySaved {
+					spec.Name, spec.State = changeSet.Target.Collection, changeSet.Target.State
+				}
+				// A file of resources alone is a list; it carries no collection, state or args.
+				if trimmed := bytes.TrimSpace(raw); len(trimmed) > 0 && trimmed[0] == '{' {
+					decoder := json.NewDecoder(bytes.NewReader(raw))
+					decoder.UseNumber()
+					if err := decoder.Decode(&spec); err != nil {
+						return fmt.Errorf("spec json: %w", err)
+					}
+				}
+				resources, err := omnisdk.ParseResources(raw)
 				if err != nil {
-					return fmt.Errorf("spec file: %w", err)
+					return fmt.Errorf("spec: %w", err)
 				}
-				raw = b
-			}
-			var spec struct {
-				Name   string         `json:"name"`
-				State  string         `json:"state"`
-				RunID  string         `json:"run_id,omitempty"`
-				Inputs map[string]any `json:"inputs,omitempty"`
-				Args   *omnisdk.Args  `json:"args,omitempty"`
-			}
-			// A file of resources alone is a list; it carries no collection, state or args.
-			if trimmed := bytes.TrimSpace(raw); len(trimmed) > 0 && trimmed[0] == '{' {
-				decoder := json.NewDecoder(bytes.NewReader(raw))
-				decoder.UseNumber()
-				if err := decoder.Decode(&spec); err != nil {
-					return fmt.Errorf("spec json: %w", err)
+				for flag, field := range map[string]*string{"name": &spec.Name, "state": &spec.State, "run-id": &spec.RunID} {
+					if v, _ := cmd.Flags().GetString(flag); v != "" {
+						*field = v
+					}
 				}
-			}
-			resources, err := omnisdk.ParseResources(raw)
-			if err != nil {
-				return fmt.Errorf("spec: %w", err)
-			}
-			for flag, field := range map[string]*string{"name": &spec.Name, "state": &spec.State, "run-id": &spec.RunID} {
-				if v, _ := cmd.Flags().GetString(flag); v != "" {
-					*field = v
+				a := omnisdk.Args{}
+				if spec.Args != nil {
+					a = *spec.Args
 				}
-			}
-			a := omnisdk.Args{}
-			if spec.Args != nil {
-				a = *spec.Args
-			}
-			bindingInput, _ := cmd.Flags().GetString("input")
-			if err := configureResourceBindings(resources, &a, spec.Inputs, bindingInput); err != nil {
-				return err
-			}
-			if a.Params == nil {
-				a.Params = map[string]string{}
-			}
-			if _, given := a.Params["region"]; !given && awsRegion != "" {
-				a.Params["region"] = awsRegion
-			}
-			a.Log = logw
-			if a.Endpoint == "" {
-				a.Endpoint = endpoint
-			}
-			if !a.InsecureSkipTLSVerify {
-				a.InsecureSkipTLSVerify = insecureTLS
-			}
-			// The spec's own tuning wins; the flags apply where it says nothing, as for run.
-			if (a.Tuning == omnisdk.Tuning{}) {
-				a.Tuning = t.facade()
-			}
-			pl, err := omnisdk.Prepare(cmdArgs(cmd)[0], omnisdk.DesiredState(resources),
-				omnisdk.NewLedger(spec.Name, spec.State, runIDOr(spec.RunID)), a)
-			if err != nil {
-				return err
-			}
-			return streamIACRows(pl, w)
-		}),
+				argsJSON, _ := cmd.Flags().GetString("args")
+				if argsJSON != "" {
+					argsRaw := []byte(argsJSON)
+					if path, file := strings.CutPrefix(argsJSON, "@"); file {
+						argsRaw, err = os.ReadFile(path)
+						if err != nil {
+							return err
+						}
+					}
+					decoder := json.NewDecoder(bytes.NewReader(argsRaw))
+					decoder.UseNumber()
+					if err := decoder.Decode(&a); err != nil {
+						return fmt.Errorf("args: %w", err)
+					}
+				}
+				bindingInput, _ := cmd.Flags().GetString("input")
+				if err := configureResourceBindings(resources, &a, spec.Inputs, bindingInput); err != nil {
+					return err
+				}
+				if a.Params == nil {
+					a.Params = map[string]string{}
+				}
+				if _, given := a.Params["region"]; !given && awsRegion != "" {
+					a.Params["region"] = awsRegion
+				}
+				a.Log = logw
+				if a.Endpoint == "" {
+					a.Endpoint = endpoint
+				}
+				if !a.InsecureSkipTLSVerify {
+					a.InsecureSkipTLSVerify = insecureTLS
+				}
+				// The spec's own tuning wins; the flags apply where it says nothing, as for run.
+				if (a.Tuning == omnisdk.Tuning{}) {
+					a.Tuning = t.facade()
+				}
+				registry := cmdArgs(cmd)[0]
+				desired := omnisdk.DesiredState(resources)
+				wal := omnisdk.NewLedger(spec.Name, spec.State, runIDOr(spec.RunID))
+				if preview {
+					set, err := omnisdk.Preview(cmd.Context(), registry, desired, wal, a)
+					if err != nil {
+						return err
+					}
+					return json.NewEncoder(w).Encode(set)
+				}
+				var pl omnisdk.Plan
+				if applySaved {
+					pl, err = omnisdk.ApplyChangeSet(registry, changeSet, wal, a)
+				} else {
+					pl, err = omnisdk.Prepare(registry, desired, wal, a)
+				}
+				if err != nil {
+					return err
+				}
+				return streamIACRows(pl, w)
+			}),
+		}
+		command.Flags().String("input", "", "explicit binding inputs as a JSON object or @file; overrides matching file inputs")
+		command.Flags().String("name", "", "collection to apply under, over the spec's name")
+		command.Flags().String("state", "", "directory holding the collection's ledger, over the spec's state")
+		command.Flags().String("run-id", "", "journal name for this run, over the spec's (default: a UTC timestamp)")
+		command.Flags().String("args", "", "execution options as a JSON object or @file")
+		if preview {
+			command.Use = "iac-plan <registry> <spec-json | @file>"
+			command.Short = "Preview desired-state changes and emit a JSON change set"
+			command.Long = ""
+		} else {
+			command.Flags().Bool("change-set", false, "apply a saved change set from iac-plan")
+		}
+		root.AddCommand(command)
 	}
-	iacApply.Flags().String("input", "", "explicit binding inputs as a JSON object or @file; overrides matching file inputs")
-	iacApply.Flags().String("name", "", "collection to apply under, over the spec's name")
-	iacApply.Flags().String("state", "", "directory holding the collection's ledger, over the spec's state")
-	iacApply.Flags().String("run-id", "", "journal name for this run, over the spec's (default: a UTC timestamp)")
-	root.AddCommand(iacApply)
 
 	iacCmd := &cobra.Command{
 		Use:   "iac",
