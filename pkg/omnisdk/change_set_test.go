@@ -164,3 +164,57 @@ func readChangeSetRows(t *testing.T, rows omnisdk.Rows) []omnisdk.Row {
 	}
 	return result
 }
+
+func TestIaCExplicitLookup(t *testing.T) {
+	store := &widgetStore{items: map[string]map[string]any{"existing": {"id": "existing", "size": "S", "color": "red"}}}
+	server := store.serve(t)
+	defer server.Close()
+	args := omnisdk.Args{Endpoint: server.URL}
+	wal := omnisdk.NewLedger("widgets", t.TempDir(), "lookup")
+	resources, err := omnisdk.ParseResources([]byte(`[{"key":"widget","provider":"widgets","address":"things.widgets","addressed_by":"id","identity":"id","lookup_identity":"existing","desired":{"size":"S"}}]`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	preview := func() (omnisdk.ChangeSet, error) {
+		return omnisdk.Preview(ctx, authRegistry, omnisdk.DesiredState(resources), wal, args)
+	}
+	plan, err := preview()
+	if err != nil || plan.Changes[0].Action != "no-op" {
+		t.Fatalf("initial plan: %+v %v", plan, err)
+	}
+	store.items["existing"]["size"] = "M"
+	plan, err = preview()
+	if err != nil || plan.Changes[0].Action != "update" {
+		t.Fatalf("drift: %+v %v", plan, err)
+	}
+	pl, err := omnisdk.ApplyChangeSet(authRegistry, plan, wal, args)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rows, err := pl.Open(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	readChangeSetRows(t, rows)
+	if got := store.items["existing"]; got["size"] != "S" || got["color"] != "red" {
+		t.Fatalf("after update: %v", got)
+	}
+	plan, err = preview()
+	if err != nil || plan.Changes[0].Action != "no-op" {
+		t.Fatalf("repeat: %+v %v", plan, err)
+	}
+	delete(store.items, "existing")
+	if _, err := preview(); err == nil {
+		t.Fatal("missing lookup target must fail")
+	}
+	var writes []string
+	for _, call := range store.took() {
+		if call != "find" {
+			writes = append(writes, call)
+		}
+	}
+	if len(writes) != 1 || writes[0] != "update" {
+		t.Fatalf("writes: %v", writes)
+	}
+}

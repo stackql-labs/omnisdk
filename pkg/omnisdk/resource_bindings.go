@@ -12,9 +12,18 @@ import (
 
 type bindingResource struct {
 	ManagedResource
+	lookup    string
 	rawParams map[string]any
 	params    map[string]string
 	desired   []byte
+}
+
+// lookupIdentity is an explicit opt-in to read an existing resource by primary key.
+func lookupIdentity(r ManagedResource) string {
+	if v, ok := r.(bindingResource); ok {
+		return v.lookup
+	}
+	return ""
 }
 
 func (r bindingResource) Params() map[string]string { return maps.Clone(r.params) }
@@ -110,7 +119,7 @@ func resolveResourceBindings(resources []ManagedResource, args Args, collection 
 			}
 			boundParams[k] = text
 		}
-		out[i] = bindingResource{ManagedResource: r, desired: raw, params: boundParams, rawParams: resolvedObject["write_once"].(map[string]any)}
+		out[i] = bindingResource{ManagedResource: r, lookup: lookupIdentity(r), desired: raw, params: boundParams, rawParams: resolvedObject["write_once"].(map[string]any)}
 	}
 	return out, nil
 }

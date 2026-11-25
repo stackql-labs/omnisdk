@@ -127,8 +127,15 @@ func resourceFrom(m map[string]json.RawMessage) (ManagedResource, error) {
 		}
 	}
 	r := WithDebugCorrelationParam(NewResource(fields[0], fields[1], fields[2], desired, params, inbound, fields[5], fields[6], fields[3], fields[4], ""), debug)
-	if rawParams != nil {
-		return bindingResource{ManagedResource: r, rawParams: rawParams, params: params}, nil
+	lookup, err := str("lookup_identity")
+	if err != nil {
+		return nil, err
+	}
+	if _, set := m["lookup_identity"]; set && (lookup == "" || fields[4] == "" || fields[3] == "") {
+		return nil, fmt.Errorf("%s: lookup_identity requires an identity, addressed_by and nonempty primary key", fields[0])
+	}
+	if rawParams != nil || lookup != "" {
+		return bindingResource{ManagedResource: r, lookup: lookup, rawParams: rawParams, params: params}, nil
 	}
 	return r, nil
 }

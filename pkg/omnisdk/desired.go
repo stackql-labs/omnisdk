@@ -672,8 +672,14 @@ func (p *desiredPlan) lower(prior func(string) map[string]any, outside func(stri
 			ln.pin, ln.requires = t.read.Name(), []string{r.AddressedBy()}
 			wirings = append(wirings, NewWiring(live, append([]Inbound{NewInbound(recall, "identity", r.AddressedBy())}, readIn...), "", ""))
 		}
-		nodes = append(nodes, NewRecallNode(recall, r.Key()), ln)
+		recallNode := NewRecallNode(recall, r.Key()).(intrinsicNode)
+		recallNode.lookupIdentity = lookupIdentity(r)
+		if recallNode.lookupIdentity != "" && (t.read == nil || t.listed || t.updateVerb != "update") {
+			return nil, nil, nil, fmt.Errorf("%s: lookup_identity requires a keyed read and update operation", r.Key())
+		}
+		nodes = append(nodes, recallNode, ln)
 		d := NewDiffNode(diff, r.Key(), live, liveIdentity, want).(intrinsicNode)
+		d.lookupIdentity = recallNode.lookupIdentity
 		d.createUnsupported = updateOnly
 		d.route = p.route(r, t, all)
 		nodes = append(nodes, d)

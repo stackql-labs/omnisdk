@@ -54,6 +54,7 @@ const (
 )
 
 type intrinsicNode struct {
+	lookupIdentity string
 	// Update-only intent must never be silently dropped when an object is absent.
 	createUnsupported []string
 	node
@@ -199,13 +200,16 @@ func intrinsicSpec(name string, n intrinsicNode, run *managedRun, planned map[st
 		return plan.WithInbound(spec, docx.InboundProgram(reg, n.viaType, n.viaBody)), nil, nil
 	case verbRecall:
 		return plan.NewExchangeSpec(name, nil, []string{out("identity")}, func(map[string]any) facade.Operator {
-			row := map[string]any{out("identity"): ""}
+			row := map[string]any{out("identity"): n.lookupIdentity}
 			if run.ledger != nil {
 				e, _, found, err := run.ledger.Get(context.Background(), run.keyOf(n.key))
 				if err != nil {
 					return failedOp{err}
 				}
 				if found {
+					if n.lookupIdentity != "" && (e.Phase() != facade.LedgerLive || string(e.Identity()) != n.lookupIdentity) {
+						return failedOp{fmt.Errorf("%s: ledger identity or phase conflicts with lookup_identity", n.key)}
+					}
 					row[out("identity")] = string(e.Identity())
 				}
 			}
@@ -243,6 +247,9 @@ func diffRow(ctx context.Context, run *managedRun, n intrinsicNode, fields []str
 	id := fmt.Sprint(bound[hidden(n.live, n.liveIdentity)])
 	if bound[hidden(n.live, n.liveIdentity)] == nil {
 		id = ""
+	}
+	if n.lookupIdentity != "" && id != n.lookupIdentity {
+		return nil, fmt.Errorf("%s: keyed read did not return the declared lookup_identity", n.key)
 	}
 	actual := map[string]any{}
 	for _, f := range fields {

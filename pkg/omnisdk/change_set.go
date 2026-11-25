@@ -154,6 +154,9 @@ func marshalDesiredResources(resources []ManagedResource) (json.RawMessage, erro
 			"write_once": resourceParams(r), "inbound": inbound, "via_type": typ, "via": body,
 			"identity": r.Identity(), "addressed_by": r.AddressedBy(),
 		})
+		if id := lookupIdentity(r); id != "" {
+			specs[len(specs)-1]["lookup_identity"] = id
+		}
 	}
 	return json.Marshal(specs)
 }
