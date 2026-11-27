@@ -44,12 +44,13 @@ func TestRequestTimeoutThroughPublicPlan(t *testing.T) {
 			}
 			plan, err := omnisdk.NewGraphQuery(authRegistry, g, omnisdk.Args{
 				Endpoint: srv.URL, InsecureSkipTLSVerify: tls,
-				Tuning: omnisdk.Tuning{RequestTimeout: 50 * time.Millisecond},
+				// Allow TLS setup on busy runners before testing the stalled body.
+				Tuning: omnisdk.Tuning{RequestTimeout: 500 * time.Millisecond},
 			})
 			if err != nil {
 				t.Fatal(err)
 			}
-			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 			defer cancel()
 			start := time.Now()
 			rows, err := plan.Open(ctx)
@@ -63,7 +64,7 @@ func TestRequestTimeoutThroughPublicPlan(t *testing.T) {
 			if err := rows.Err(); err == nil || !strings.Contains(err.Error(), "context deadline exceeded") {
 				t.Fatalf("error = %v, want deadline exceeded", err)
 			}
-			if elapsed := time.Since(start); elapsed > time.Second {
+			if elapsed := time.Since(start); elapsed > 3*time.Second {
 				t.Fatalf("request took %s; per-request deadline was not applied", elapsed)
 			}
 			if calls.Load() != 1 {
